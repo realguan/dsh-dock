@@ -21,7 +21,6 @@ use crate::manifest::ProductManifest;
 /// 一个被产品壳托管的 dsh 子进程。
 pub struct DshProcess {
     pub child: Child,
-    pub pid: u32,
     pub log_path: PathBuf,
 }
 
@@ -71,9 +70,12 @@ pub fn spawn_dsh(
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn {}", node_bin.display()))?;
-    let pid = child.id();
-    tracing::info!("dsh 已启动：pid={pid} profile={}", manifest.snapshot.profile);
-    Ok(DshProcess { child, pid, log_path })
+    tracing::info!(
+        "dsh 已启动：pid={} profile={}",
+        child.id(),
+        manifest.snapshot.profile
+    );
+    Ok(DshProcess { child, log_path })
 }
 
 /// 从日志文件轮询 dsh 报告的访问地址（最长 `timeout`）。

@@ -13,7 +13,6 @@
 mod manifest;
 mod shell;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent};
@@ -22,7 +21,6 @@ use tauri::{Manager, RunEvent};
 struct ShellState {
     dsh: Mutex<Option<shell::DshProcess>>,
     window: tauri::WebviewWindow,
-    data_dir: PathBuf,
 }
 
 /// dsh 启动等待上限：超过即认为装配有问题，进错误页。
@@ -58,7 +56,7 @@ pub fn run() {
             };
 
             // spawn dsh（快速失败路径：零部件缺失 → 错误页）。
-            let mut dsh = match shell::spawn_dsh(&manifest, &resources_dir, &data_dir) {
+            let dsh = match shell::spawn_dsh(&manifest, &resources_dir, &data_dir) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::error!("启动 dsh 失败: {e}");
@@ -73,7 +71,6 @@ pub fn run() {
             let state = Arc::new(ShellState {
                 dsh: Mutex::new(Some(dsh)),
                 window: window.clone(),
-                data_dir,
             });
             app.manage(state.clone());
 
@@ -104,7 +101,7 @@ pub fn run() {
                         loop {
                             std::thread::sleep(std::time::Duration::from_millis(500));
                             let exited = {
-                                let guard = state.dsh.lock().unwrap();
+                                let mut guard = state.dsh.lock().unwrap();
                                 guard
                                     .as_mut()
                                     .and_then(|p| p.child.try_wait().ok())
