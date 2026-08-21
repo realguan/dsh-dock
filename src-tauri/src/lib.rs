@@ -27,13 +27,21 @@ struct ShellState {
 /// dsh 启动等待上限：超过即认为装配有问题，进错误页。
 const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// 定位含 product.manifest.json 的资源根（见 setup 注释的 dev/prod 差异）。
+/// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
 fn resolve_resources_dir(app: &tauri::App) -> PathBuf {
     let runtime = app.path().resource_dir().ok().unwrap_or_default();
+    // 生产（bundle）：Tauri v2 打包器保留相对 src-tauri 的路径前缀——
+    // 配置 `"resources": ["resources/**"]` 时，文件实际落在 `<资源根>/resources/`
+    // 下（打包 e2e 实测，2026-08-21）。优先探测嵌套布局。
+    let bundled = runtime.join("resources");
+    if bundled.join("product.manifest.json").is_file() {
+        return bundled;
+    }
+    // 兼容平铺布局：不同 bundler 版本/配置可能把资源直接放在资源根。
     if runtime.join("product.manifest.json").is_file() {
         return runtime;
     }
-    // dev 回退链
+    // dev 回退链（Windows 语义的 tauri-build 副本 → 源码树，本仓库开发常态）。
     let exe_res = app.path().executable_dir().ok().unwrap_or_default().join("resources");
     if exe_res.join("product.manifest.json").is_file() {
         return exe_res;
@@ -55,8 +63,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // 资源根解析（dev/prod 差异见下）：
-            //   - 生产（bundle）：resource_dir() = .app/Contents/Resources，manifest + 快照都在。
+            // 资源根解析（dev/prod 差异）：
+            //   - 生产（bundle）：Tauri v2 保留相对 src-tauri 的路径前缀，
+            //     `resources/**` 落在 `.app/Contents/Resources/resources/`；
             //   - dev（cargo run，macOS）：resource_dir() 指向不存在的 target/Resources，
             //     回退链：exe_dir/resources（tauri-build 的副本，Windows 语义）→
             //     CARGO_MANIFEST_DIR/resources（源码树，本仓库开发常态）。

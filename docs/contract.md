@@ -30,6 +30,11 @@ resources/
 > `dsh/` 的物化方式 = **整树原样复制**启动器版本库 `runtimes/<v>/node_modules`
 > （pnpm 隔离布局的符号链接是树内相对路径，整体复制后依然有效；等价于 `pnpm deploy` 产物），
 > 不重链接、不触网、不复用宿主 store——自包含是硬指标。
+>
+> **发布态嵌套（2026-08-21 e2e 实测）**：Tauri v2 打包器保留相对 `src-tauri/` 的路径前缀，
+> 上述 `resources/*` 在安装包内实际落在 `<资源根>/resources/` 下（如
+> `.app/Contents/Resources/resources/product.manifest.json`）。壳的 `resolve_resources_dir`
+> 优先探测嵌套布局、兼容平铺布局；生产验证以 `cargo tauri build` 产物为准。
 
 ## product.manifest.json（v1）
 
