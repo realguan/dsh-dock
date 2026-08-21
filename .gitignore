@@ -6,3 +6,4 @@ src-tauri/gen/schemas
 src-tauri/resources/dsh-snapshot/*
 !src-tauri/resources/dsh-snapshot/.gitkeep
 *.log
+/src-tauri/target
