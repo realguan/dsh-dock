@@ -37,6 +37,11 @@
     "resources": [
       "resources/product.manifest.json",
       "resources/dsh-snapshot/**/*"
-    ]
+    ],
+    "linux": {
+      "rpm": {
+        "compression": { "type": "zstd", "level": 19 }
+      }
+    }
   }
 }
