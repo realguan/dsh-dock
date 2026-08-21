@@ -46,6 +46,14 @@ cd src-tauri && cargo tauri build
 三平台安装包由 [.github/workflows/build.yml](.github/workflows/build.yml) 的 CI matrix
 自动产出（macOS / Windows / Ubuntu）。
 
+## 品牌与图标
+
+- 桌面客户端全部图标（安装包图标 / Dock / 任务栏 / 加载页 logo）一律使用 **dsh 官方标**，
+  源自 dsh-web-frontend 的 `favicon.svg`（深色模式官方渲染即白标，本壳忠实采用）。
+- 图标是**生成产物**，不手绘：改标请改 `assets/icon-master.svg`（官方 path 合成 + 深色圆角底），
+  再跑 `scripts/regen-icons.sh` 重生成全部平台产物（`rsvg-convert` → `cargo tauri icon`）。
+- 官方原始 SVG 落于 `ui/assets/dsh-logo.svg`（溯源副本）。
+
 ## 结构
 
 ```

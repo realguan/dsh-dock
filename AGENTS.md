@@ -20,6 +20,14 @@
 | 壳自带前端 | 静态 HTML/CSS/JS（`ui/`），**禁止引入构建器/框架/依赖** |
 | 错误处理 | anyhow（壳无 IPC、无 services 分层，用不上 AppError 枚举） |
 | Rust 日志 | tracing（禁止 println!） |
+| 品牌 | dsh 官方标（来源：dsh-web-frontend `favicon.svg`；白标 = 官方深色模式渲染） |
+
+## 品牌规则
+
+- 桌面图标 / 加载页 logo 一律用 dsh 官方标；**禁止手绘或自造占位 logo**。
+- 改图标 = 改 `assets/icon-master.svg`（官方 path 合成 + 深色圆角底）→
+  跑 `scripts/regen-icons.sh` 整体重生成（rsvg-convert → cargo tauri icon）。
+- 官方原始 SVG 溯源于 `ui/assets/dsh-logo.svg`；未获官方新版本前不得偏离该几何。
 
 ## Rust 规则
 
