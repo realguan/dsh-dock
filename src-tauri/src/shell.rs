@@ -62,6 +62,9 @@ pub fn spawn_dsh(
         .arg(&manifest.snapshot.profile)
         .arg("--port")
         .arg("0")
+        // 桌面壳接管呈现：禁止 dsh 自开系统浏览器（冒烟实测：不加会在
+        // 每次启动时弹外部浏览器，把用户从壳里拽出去）。
+        .arg("--no-open")
         .env("DSH_HOME", &dsh_home)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().context("克隆日志句柄")?))
@@ -209,5 +212,21 @@ mod tests {
             Some("http://127.0.0.1:34567")
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 优雅停止路径实测：SIGTERM 后子进程应在 grace 内退出（而非等满超时被强杀）。
+    /// dsh 对 SIGTERM 以 exit 0 收尾，sleep 在 macOS 上以信号终止（code=None），
+    /// 断言只要求「提前退出」与「已回收」，不抠具体退出码。
+    #[cfg(unix)]
+    #[test]
+    fn stop_sigterm_exits_within_grace() {
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let t0 = Instant::now();
+        let _code = stop_dsh(&mut child, Duration::from_secs(3));
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "SIGTERM 路径应在 grace 内提前退出"
+        );
+        assert!(matches!(child.try_wait().unwrap(), Some(_)), "子进程应已回收");
     }
 }
