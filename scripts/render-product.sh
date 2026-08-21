@@ -7,12 +7,12 @@
 #   3) 改写 tauri.conf.json 的构建期身份（productName / identifier / 窗口标题）。
 #
 # 自包含是硬指标（ADR-0004 三条硬指标之二）：`--dsh-pkg` 传入的必须是**完整**的
-# @deepseek-ai/dsh 包目录（含 node_modules），由打包侧从仓库物化，本脚本不触网不取 store。
+# @deepseek-ai/dsh 运行时依赖树根（node_modules，pnpm 布局），由打包侧物化，本脚本不触网不取 store。
 #
 # 用法：
 #   scripts/render-product.sh \
 #     --node      <path-to-node-bin>    # 目标平台 node 可执行文件（node / node.exe）
-#     --dsh-pkg   <path-to-dsh-pkg>     # 完整 @deepseek-ai/dsh 包目录（含 node_modules）
+#     --dsh-runtime <path-to-node-modules> # 完整运行时依赖树根（pnpm 布局，含 .pnpm/ 与 @deepseek-ai/）
 #     --dsh-home  <path-to-virtual-home># 装配好的虚拟 $DSH_HOME（含 profiles/<profile>）
 #     --profile   <profile>             # 要 boot 的 profile
 #     --name      "产品名"              # 构建期身份：productName + 窗口标题
@@ -27,11 +27,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_TAURI="$ROOT/src-tauri"
 
 # ---- 解析参数 ----
-NODE_BIN=""; DSH_PKG=""; DSH_HOME=""; PROFILE="default"; NAME="DeepSeek Harness Desktop"; ID="dev.deepseek.dsh-desktop"; ICONS_DIR=""
+NODE_BIN=""; DSH_RUNTIME=""; DSH_HOME=""; PROFILE="default"; NAME="DeepSeek Harness Desktop"; ID="dev.deepseek.dsh-desktop"; ICONS_DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --node) NODE_BIN="$2"; shift 2;;
-    --dsh-pkg) DSH_PKG="$2"; shift 2;;
+    --dsh-runtime) DSH_RUNTIME="$2"; shift 2;;
     --dsh-home) DSH_HOME="$2"; shift 2;;
     --profile) PROFILE="$2"; shift 2;;
     --name) NAME="$2"; shift 2;;
@@ -41,11 +41,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for v in NODE_BIN DSH_PKG DSH_HOME; do
+for v in NODE_BIN DSH_RUNTIME DSH_HOME; do
   [[ -n "${!v}" ]] || { echo "缺少 --${v,,} 参数" >&2; exit 2; }
 done
 [[ -f "$NODE_BIN" ]] || { echo "--node 不是文件: $NODE_BIN" >&2; exit 2; }
-[[ -f "$DSH_PKG/lib/bin.js" ]] || { echo "--dsh-pkg 缺少 lib/bin.js（传入的应是 @deepseek-ai/dsh 包根目录）" >&2; exit 2; }
+[[ -f "$DSH_RUNTIME/@deepseek-ai/dsh/lib/bin.js" ]] || { echo "--dsh-runtime 缺少 @deepseek-ai/dsh/lib/bin.js（应传入运行时 node_modules 根）" >&2; exit 2; }
 [[ -d "$DSH_HOME/profiles" ]] || { echo "--dsh-home 缺少 profiles/（应是虚拟 $DSH_HOME）" >&2; exit 2; }
 
 # ---- 1) staging 自包含快照（全新重建，幂等） ----
@@ -55,11 +55,11 @@ mkdir -p "$snap/node/bin" "$snap/dsh" "$snap/home"
 
 cp -f "$NODE_BIN" "$snap/node/bin/dsh-node"
 chmod +x "$snap/node/bin/dsh-node" 2>/dev/null || true
-cp -fR "$DSH_PKG"/. "$snap/dsh/"
+cp -fR "$DSH_RUNTIME"/. "$snap/dsh/"
 cp -fR "$DSH_HOME"/. "$snap/home/"
 
 # 兜底校验：三件套就位
-[[ -f "$snap/dsh/lib/bin.js" ]] || { echo "错误：快照未含 dsh 入口" >&2; exit 1; }
+[[ -f "$snap/dsh/@deepseek-ai/dsh/lib/bin.js" ]] || { echo "错误：快照未含 dsh 入口" >&2; exit 1; }
 [[ -f "$snap/home/profiles/$PROFILE/package.json" || -d "$snap/home/profiles/$PROFILE" ]] || {
   echo "警告：快照 home 下找不到 profile '$PROFILE'，请核对 --profile" >&2
 }
@@ -71,7 +71,7 @@ cat > "$SRC_TAURI/resources/product.manifest.json" <<JSON
   "productName": "$NAME",
   "snapshot": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
-    "dshBinJs": "dsh-snapshot/dsh/lib/bin.js",
+    "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",
     "profile": "$PROFILE"
   }

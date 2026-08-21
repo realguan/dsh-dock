@@ -38,7 +38,7 @@ cargo tauri build
 
 # 注入一个真实产品后出包：
 ../scripts/render-product.sh \
-  --node <platform-node> --dsh-pkg <dsh-pkg-dir> --dsh-home <virtual-home> \
+  --node <platform-node> --dsh-runtime <node-modules-root> --dsh-home <virtual-home> \
   --profile default --name "我的 DeepSeek Harness" --id com.me.dshdesktop
 cd src-tauri && cargo tauri build
 ```

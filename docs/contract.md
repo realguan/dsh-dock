@@ -18,14 +18,18 @@ resources/
 └── dsh-snapshot/                # 自包含运行快照（与平台无关的载荷）
     ├── node/                    # 目标平台 Node 运行时（node / node.exe / 单二进制）
     │   └── bin/<node-bin>
-    ├── dsh/                     # @deepseek-ai/dsh 完整依赖树（node_modules）
-    │   └── node_modules/@deepseek-ai/dsh/lib/bin.js
+    ├── dsh/                     # 自包含运行时依赖树根（node_modules，pnpm 布局）
+    │   └── @deepseek-ai/dsh/lib/bin.js        # 含 .pnpm/ 与各包相对符号链接
     └── home/                    # 虚拟 $DSH_HOME
         └── profiles/<profile>/  # 装配好的工作台 profile（配置 + 插件 + 依赖）
 ```
 
 > 平台差异只出现在 `node/` 一列：同一份载荷，三平台各自注入自己的 Node 二进制后，
 > 分别执行 `tauri build`。这正是 ADR-0004「快照平台无关、装配分平台」的落地形态。
+>
+> `dsh/` 的物化方式 = **整树原样复制**启动器版本库 `runtimes/<v>/node_modules`
+> （pnpm 隔离布局的符号链接是树内相对路径，整体复制后依然有效；等价于 `pnpm deploy` 产物），
+> 不重链接、不触网、不复用宿主 store——自包含是硬指标。
 
 ## product.manifest.json（v1）
 
@@ -34,7 +38,7 @@ resources/
 | `format` | number | ✅ | 契约版本，必须为 `1`。不匹配 → 壳拒绝启动（错误页提示重新打包） |
 | `productName` | string | ✅ | 人类可读产品名（展示/日志用） |
 | `snapshot.nodeBin` | string | ✅ | 相对 resources 根的 Node 可执行文件 |
-| `snapshot.dshBinJs` | string | ✅ | 相对 resources 根的 dsh 入口（`bin.js`） |
+| `snapshot.dshBinJs` | string | ✅ | 相对 resources 根的 dsh 入口（`dsh/@deepseek-ai/dsh/lib/bin.js`） |
 | `snapshot.dshHome` | string | ✅ | 相对 resources 根的虚拟 `$DSH_HOME` |
 | `snapshot.profile` | string | ✅ | 要 boot 的 profile 名 |
 
@@ -44,7 +48,7 @@ resources/
   "productName": "DeepSeek Harness Desktop",
   "snapshot": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
-    "dshBinJs": "dsh-snapshot/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js",
+    "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",
     "profile": "default"
   }

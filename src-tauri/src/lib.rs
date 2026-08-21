@@ -13,6 +13,7 @@
 mod manifest;
 mod shell;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent};
@@ -26,6 +27,25 @@ struct ShellState {
 /// dsh 启动等待上限：超过即认为装配有问题，进错误页。
 const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// 定位含 product.manifest.json 的资源根（见 setup 注释的 dev/prod 差异）。
+fn resolve_resources_dir(app: &tauri::App) -> PathBuf {
+    let runtime = app.path().resource_dir().ok().unwrap_or_default();
+    if runtime.join("product.manifest.json").is_file() {
+        return runtime;
+    }
+    // dev 回退链
+    let exe_res = app.path().executable_dir().ok().unwrap_or_default().join("resources");
+    if exe_res.join("product.manifest.json").is_file() {
+        return exe_res;
+    }
+    let src_res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+    if src_res.join("product.manifest.json").is_file() {
+        return src_res;
+    }
+    // 全落空：返回运行时路径，让契约读取给出可行动错误（A6）。
+    runtime
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 幂等初始化：测试/外部可能已设全局日志。
@@ -35,7 +55,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let resources_dir = app.path().resource_dir()?;
+            // 资源根解析（dev/prod 差异见下）：
+            //   - 生产（bundle）：resource_dir() = .app/Contents/Resources，manifest + 快照都在。
+            //   - dev（cargo run，macOS）：resource_dir() 指向不存在的 target/Resources，
+            //     回退链：exe_dir/resources（tauri-build 的副本，Windows 语义）→
+            //     CARGO_MANIFEST_DIR/resources（源码树，本仓库开发常态）。
+            let resources_dir = resolve_resources_dir(app);
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 

@@ -73,7 +73,7 @@ mod tests {
           "productName": "DeepSeek Harness Desktop",
           "snapshot": {
             "nodeBin": "dsh-snapshot/node/bin/dsh-node",
-            "dshBinJs": "dsh-snapshot/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js",
+            "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
             "dshHome": "dsh-snapshot/home",
             "profile": "default"
           }
