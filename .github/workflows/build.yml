@@ -1,0 +1,56 @@
+# 三平台构建验证：证明壳在 macOS / Windows / Linux 都能编译 + 出安装包。
+#
+# ADR-0004 D5：单机一键只产本平台安装包；跨 OS 产物由本矩阵全自动产出。
+# 本 workflow 用「默认壳」（sample manifest、无真实快照）验证流水线；
+# 启动器 packaging 服务接入后，可在 workflow_dispatch 里注入快照 artifact +
+# 先跑 scripts/render-product.sh 再 build（见 docs/contract.md 构建流程）。
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Ubuntu system deps (widgets, tray, a11y, ...)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build installers
+        working-directory: src-tauri
+        run: cargo tauri build
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          path: |
+            src-tauri/target/release/bundle/*
+          if-no-files-found: error

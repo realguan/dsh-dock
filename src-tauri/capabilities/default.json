@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认能力：允许主窗口加载 127.0.0.1 回环地址的 dsh Web UI（ADR-0004 探针定论：/api 非鉴权、无 CSP、同源回环直达）",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default"
+  ]
+}
