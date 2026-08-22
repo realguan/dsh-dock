@@ -406,15 +406,8 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
     } else {
         let cut: String = line.chars().take(200).collect();
         let suffix = if line.chars().count() > 200 { "…" } else { "" };
-        format!("<br/>错误摘要：{}{}", html_escape(&cut), suffix)
+        format!("\n错误摘要：{}{}", cut, suffix)
     }
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 #[cfg(test)]

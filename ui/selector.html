@@ -42,13 +42,36 @@
       const errBox = document.getElementById("errorBox");
       const beacon = progress.querySelector(".beacon");
 
-      function showError(title, detail) {
+      function showError(payload) {
+        const title = payload.title || "启动失败";
+        const detail = payload.detail || "";
+        const suggestion = payload.suggestion || "";
+        const log = payload.log || "";
+        const actions = (payload.actions || ["retry"]).map((a) => {
+          const label = a === "upgrade" ? "升级 dsh 并重试" : "重试启动";
+          const cls = a === "upgrade" ? "primary" : "ghost";
+          return `<button class="${cls}" data-action="${a}">${label}</button>`;
+        }).join("");
         errBox.innerHTML =
           `<div class="error-card">` +
           `<div class="e-title">${title}</div>` +
           `<div class="e-detail">${(detail || "").replace(/</g, "&lt;")}</div>` +
-          `<div class="e-actions"><button class="ghost" onclick="location.reload()">返回重选</button></div>` +
+          (suggestion ? `<div class="e-suggest">${suggestion}</div>` : "") +
+          `<div class="e-actions">${actions}` +
+          `<button class="ghost" data-action="reselect">返回重选</button></div>` +
+          (log ? `<details><summary>原始日志尾部</summary><pre>${log.replace(/</g, "&lt;")}</pre></details>` : "") +
           `</div>`;
+        errBox.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const a = btn.dataset.action;
+            if (a === "reselect") { location.reload(); return; }
+            btn.disabled = true;
+            errBox.querySelectorAll("button").forEach((b) => (b.disabled = true));
+            window.__TAURI__.core.invoke("terminal_action", { action: a }).catch((e) => {
+              showError({ title: "动作失败", detail: (e && (e.message || e)) + "（可返回重选）" });
+            });
+          });
+        });
       }
 
       profiles.forEach((name) => {
@@ -65,7 +88,7 @@
           bpText.textContent = "正在启动「" + name + "」…";
           window.__TAURI__.core
             .invoke("choose_profile", { profile: name })
-            .catch((e) => showError("启动失败", (e && (e.message || e)) + "（可返回重选）"));
+            .catch((e) => showError({ title: "启动失败", detail: (e && (e.message || e)) + "（可返回重选）", actions: ["retry"] }));
         });
         list.appendChild(btn);
       });
@@ -84,7 +107,7 @@
       });
       window.__TAURI__.event.listen("boot:error", (ev) => {
         beacon.style.animation = "none";
-        showError(ev.payload.title || "启动失败", ev.payload.detail || "");
+        showError(ev.payload);
       });
     </script>
   </body>
