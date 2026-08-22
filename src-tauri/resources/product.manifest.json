@@ -6,7 +6,6 @@
     "resolution": {
       "node": {
         "tiers": [
-          "bundle",
           "system",
           "download"
         ],
@@ -14,19 +13,12 @@
       },
       "dsh": {
         "tiers": [
-          "bundle",
           "system",
           "download"
         ],
-        "minVersion": "0.1.0-rc.6",
+        "minVersion": "0.1.0-rc.4",
         "requireEngines": true
       }
     }
-  },
-  "fallback": {
-    "nodeBin": "dsh-snapshot/node/bin/dsh-node",
-    "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
-    "dshHome": "dsh-snapshot/home",
-    "profile": "web"
   }
 }

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::manifest::{FallbackSpec, ProductManifest, TierKind, TierSpec};
 
@@ -238,8 +238,13 @@ pub fn resolve_launch(
                 let fb = manifest.fallback.clone().ok_or_else(|| {
                     anyhow::anyhow!("契约声明 bundle 档但缺少 fallback（自洽性校验应拦截，此属异常）")
                 })?;
-                // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile
-                return Ok(launch_from_fallback(&fb, resources_dir, fb.profile.clone()));
+                // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
+                let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
+                // 快照 home 在 bundle 内只读（ADR-0005 开放问题 1 落定）：首启同步到
+                // 可写数据目录，dsh 的会话/设置才落得下；仅覆盖不删除，运行数据保留。
+                spec.dsh_home = sync_fallback_home(&spec.dsh_home, data_dir)
+                    .map_err(|e| anyhow::anyhow!("同步兜底 home 到数据目录失败：{e}"))?;
+                return Ok(spec);
             }
             TierKind::Download => {
                 // 实时下载：node 执行器（系统优先，无则缓存下载）→ npm 全局装官方最新 dsh
@@ -288,6 +293,32 @@ fn probe_system(spec: &TierSpec, path_env: &str) -> SystemOutcome {
 struct SystemHit {
     node: SystemNode,
     dsh: SystemDsh,
+}
+
+/// 把兜底 home 同步到可写数据目录（`<data_dir>/runtimes/fallback-home`）。
+/// 语义：覆盖同路径文件、**不删除**目标多余内容（dsh 写过的会话/设置保留）；
+/// 每次启动重同步（home 只有装配的 profile/settings，体积小）。
+pub fn sync_fallback_home(src: &Path, data_dir: &Path) -> Result<PathBuf> {
+    let dest = data_dir.join("runtimes").join("fallback-home");
+    fs::create_dir_all(&dest).with_context(|| format!("创建数据目录 {}", dest.display()))?;
+    copy_tree(src, &dest)?;
+    Ok(dest)
+}
+
+/// 递归复制：覆盖文件、保留目标多余项。
+fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+    for entry in fs::read_dir(src).with_context(|| format!("读取 {}", src.display()))? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            fs::create_dir_all(&to).with_context(|| format!("创建 {}", to.display()))?;
+            copy_tree(&from, &to)?;
+        } else {
+            fs::copy(&from, &to).with_context(|| format!("复制 {} → {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// bundle 档：fallback 三件套（相对 resources 根）。
@@ -489,11 +520,37 @@ mod tests {
             "profile": "desktop-demo"
           }
         }"#;
+        // fallback home 必须真实存在（sync 语义）
+        std::fs::create_dir_all(res.join("dsh-snapshot/home/profiles/desktop-demo")).unwrap();
+        std::fs::write(res.join("dsh-snapshot/home/settings.yaml"), "k: v\n").unwrap();
         let m: ProductManifest = serde_json::from_str(json).unwrap();
         let spec = resolve_launch(&m, &res, "", &root).unwrap();
         assert_eq!(spec.tier, TierKind::Bundle);
         assert_eq!(spec.profile, "desktop-demo");
         assert!(spec.node_bin.ends_with("dsh-snapshot/node/bin/dsh-node"));
+        // bundle 档 home 已被同步到数据目录（可写）
+        assert!(spec.dsh_home.starts_with(root.join("runtimes/fallback-home")));
+        assert!(spec.dsh_home.join("settings.yaml").is_file());
+    }
+
+    #[test]
+    fn sync_fallback_home_overwrites_and_keeps_extras() {
+        let root = tmp();
+        let src = root.join("src");
+        std::fs::create_dir_all(src.join("profiles/a")).unwrap();
+        std::fs::write(src.join("settings.yaml"), "v1\n").unwrap();
+        std::fs::write(src.join("profiles/a/package.json"), "{}").unwrap();
+        let dest = sync_fallback_home(&src, &root).unwrap();
+        assert!(dest.join("settings.yaml").is_file());
+        // 运行数据：目标多出的文件不被删
+        std::fs::create_dir_all(dest.join("sessions")).unwrap();
+        std::fs::write(dest.join("sessions/run.log"), "run\n").unwrap();
+        // 源变更 → 再同步覆盖，多余保留
+        std::fs::write(src.join("settings.yaml"), "v2\n").unwrap();
+        sync_fallback_home(&src, &root).unwrap();
+        assert_eq!(std::fs::read_to_string(dest.join("settings.yaml")).unwrap(), "v2\n");
+        assert!(dest.join("sessions/run.log").is_file());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
