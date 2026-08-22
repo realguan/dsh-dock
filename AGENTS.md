@@ -51,6 +51,14 @@
 - 无状态库：本仓库**不持久化任何核心态**。运行期只写：数据目录的 `dsh-shell.log`（排查用）。
 - **同生命周期**：壳与 dsh 严格 1:1；退出/崩溃都要把子进程收干净，不留孤儿。
 
+## IPC 与网络面（最小面例外册）
+
+- 唯一 IPC 命令：`choose_profile`（②b 选择器）。selector.html 通过
+  `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）——
+  这是「禁手写 invoke」的**注册例外**；新加命令必须先在 AGENTS 登记。
+- 唯一网络面：`updates.rs`（npm registry 镜像链 / nodejs.org）。其余模块不得触网。
+  网络动作一律后台线程 + 超时；非 updates.rs 的网络需求先登记再写。
+
 ## 试验协议（AI 协作）
 
 - 修改运行时契约或快照布局前，先对照 `docs/contract.md` 确认两侧同步方案。

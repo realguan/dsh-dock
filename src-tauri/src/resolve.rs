@@ -194,27 +194,45 @@ pub fn engines_satisfied(node_version: &str, engines_node: Option<&str>) -> bool
 
 // ---------- 解析链 ----------
 
+/// system 档探测结果：命中 / 缺失（含 engines 不达标）/ 版本过低。
+enum SystemOutcome {
+    Hit(SystemHit),
+    Miss,
+    /// 用户已有 dsh 但低于下限：**不自动覆盖**（H：提示+经确认），携带版本信息出可行动文案。
+    TooOld { found: String, min: String },
+}
+
 /// 按档序解析本次启动的 LaunchSpec。
 pub fn resolve_launch(
     manifest: &ProductManifest,
     resources_dir: &Path,
     path_env: &str,
+    data_dir: &Path,
 ) -> Result<LaunchSpec> {
     let spec = &manifest.terminal.resolution.dsh;
 
     for tier in &spec.tiers {
         match tier {
             TierKind::System => {
-                if let Some(hit) = resolve_system(spec, path_env) {
-                    return Ok(LaunchSpec {
-                        node_bin: hit.node.bin,
-                        dsh_bin_js: hit.dsh.bin_js,
-                        dsh_home: user_dsh_home(),
-                        profile: manifest.terminal.default_profile.clone(),
-                        tier: TierKind::System,
-                    });
+                match probe_system(spec, path_env) {
+                    SystemOutcome::Hit(hit) => {
+                        return Ok(LaunchSpec {
+                            node_bin: hit.node.bin,
+                            dsh_bin_js: hit.dsh.bin_js,
+                            dsh_home: user_dsh_home(),
+                            profile: manifest.terminal.default_profile.clone(),
+                            tier: TierKind::System,
+                        });
+                    }
+                    SystemOutcome::TooOld { found, min } => {
+                        anyhow::bail!(
+                            "您机器上的 dsh 版本过低（{found} < 终端要求 {min}）。                             终端不会自动覆盖您的全局安装；请确认后执行 `npm i -g @deepseek-ai/dsh`                              升级，或安装内置档桌面版。"
+                        );
+                    }
+                    SystemOutcome::Miss => {
+                        tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
+                    }
                 }
-                tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
             }
             TierKind::Bundle => {
                 let fb = manifest.fallback.clone().ok_or_else(|| {
@@ -224,10 +242,16 @@ pub fn resolve_launch(
                 return Ok(launch_from_fallback(&fb, resources_dir, fb.profile.clone()));
             }
             TierKind::Download => {
-                anyhow::bail!(
-                    "本机未发现官方 dsh 且当前包未内置兜底。实时下载档将在 updates 模块落地；\
-                     您可以先通过 `npm i -g @deepseek-ai/dsh` 安装，或安装内置档桌面版。"
-                );
+                // 实时下载：node 执行器（系统优先，无则缓存下载）→ npm 全局装官方最新 dsh
+                let (node, tree) = crate::updates::install_latest_global(data_dir)
+                    .map_err(|e| anyhow::anyhow!("实时下载档失败：{e}"))?;
+                return Ok(LaunchSpec {
+                    node_bin: node,
+                    dsh_bin_js: tree.join("lib").join("bin.js"),
+                    dsh_home: user_dsh_home(),
+                    profile: manifest.terminal.default_profile.clone(),
+                    tier: TierKind::Download,
+                });
             }
         }
     }
@@ -235,25 +259,30 @@ pub fn resolve_launch(
 }
 
 /// system 档三重闸：dsh 树存在 + 版本 ≥ 下限 + node 可用且 engines 通过。
-fn resolve_system(spec: &TierSpec, path_env: &str) -> Option<SystemHit> {
-    let dsh = detect_system_dsh(path_env)?;
+fn probe_system(spec: &TierSpec, path_env: &str) -> SystemOutcome {
+    let Some(dsh) = detect_system_dsh(path_env) else {
+        return SystemOutcome::Miss;
+    };
     if let Some(min) = &spec.min_version {
         if !version_at_least(&dsh.version, min) {
             tracing::info!("system dsh 版本过低：{} < {}", dsh.version, min);
-            return None;
+            return SystemOutcome::TooOld { found: dsh.version, min: min.clone() };
         }
     }
-    let node = detect_system_node(path_env)?;
+    let Some(node) = detect_system_node(path_env) else {
+        tracing::info!("system 档未命中（无系统 node，下载档会自备执行器）");
+        return SystemOutcome::Miss;
+    };
     if spec.require_engines && !engines_satisfied(&node.version, dsh.engines_node.as_deref()) {
         tracing::info!(
             "system node 不满足 dsh engines（node {} / {:?}）",
             node.version,
             dsh.engines_node
         );
-        return None;
+        return SystemOutcome::Miss;
     }
     // 平台校验：system 树是就地安装的（npm 全局），架构天然一致；显式保留钩子。
-    Some(SystemHit { node, dsh })
+    SystemOutcome::Hit(SystemHit { node, dsh })
 }
 
 struct SystemHit {
@@ -461,7 +490,7 @@ mod tests {
           }
         }"#;
         let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let spec = resolve_launch(&m, &res, "").unwrap();
+        let spec = resolve_launch(&m, &res, "", &root).unwrap();
         assert_eq!(spec.tier, TierKind::Bundle);
         assert_eq!(spec.profile, "desktop-demo");
         assert!(spec.node_bin.ends_with("dsh-snapshot/node/bin/dsh-node"));
@@ -472,7 +501,7 @@ mod tests {
         let json = r#"{"format": 2, "productName": "T",
           "terminal": {"resolution": {"dsh": {"tiers": []}}}}"#;
         let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let err = resolve_launch(&m, Path::new("/res"), "").unwrap_err();
+        let err = resolve_launch(&m, Path::new("/res"), "", Path::new("/tmp/none")).unwrap_err();
         assert!(err.to_string().contains("档序为空"));
     }
 }

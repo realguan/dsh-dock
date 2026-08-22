@@ -1,28 +1,101 @@
-//! dsh-desktop-shell —— ADR-0004 的「产品壳」：一个极小的 Tauri 桌面壳。
+//! dsh-desktop-shell —— ADR-0005 的「桌面终端」：一个极小的 Tauri 桌面壳。
 //!
-//! 职责只有四件（见 docs/contract.md）：
-//!   1. 读取 resources 里的 product.manifest.json（运行时契约）；
-//!   2. spawn 快照内的 node + dsh（`--port 0`），从日志解析实际访问地址；
-//!   3. 把主窗口 WebView 导航到 `http://127.0.0.1:<port>/`（同源回环，无鉴权——
-//!      探针定论，见 dsh-launcher ADR-0004 开放问题 1）；
+//! 职责（docs/contract.md「运行时策略」）：
+//!   1. 读取 product.manifest.json（运行时契约，v2 终端 + 宿主解析策略）；
+//!   2. 宿主解析链：system（用户官方 dsh）→ bundle（内置档）→ download（实时下载）；
+//!   3. system 档多 webUi profile 时先出选择器（F-b），选定后 spawn dsh（`--port 0`）
+//!      并从日志解析实际地址，主窗口 WebView 导航进 `http://127.0.0.1:<port>/`；
 //!   4. 应用退出时优雅停止 dsh（SIGTERM → SIGKILL 兜底）。
 //!
-//! 刻意保持薄：没有 IPC、没有状态库、没有领域服务——壳是通用机制，产品是数据。
-//! 任何变多变的逻辑都属于打包侧（启动器 packaging 服务）或快照本身，不进本仓库。
+//! IPC 面最小化（AGENTS 例外册）：唯一命令 `choose_profile`（profile 选择器用），
+//! 对应交给 ui/selector.html 的 `window.__TAURI__.core.invoke`；壳其余保持薄。
 
 mod manifest;
 mod resolve;
 mod shell;
+mod updates;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent};
 
-/// 壳运行时状态：dsh 子进程 + 主窗口句柄（供后台线程导航与 Exit 时停止）。
+/// 壳运行时状态：dsh 子进程 + 主窗口句柄 + 待选 profile 的启动规格。
 struct ShellState {
     dsh: Mutex<Option<shell::DshProcess>>,
     window: tauri::WebviewWindow,
+    /// 选择器场景：解析完成但尚未 spawn 的 LaunchSpec（用户选择后落地）。
+    pending: Mutex<Option<crate::resolve::LaunchSpec>>,
+}
+
+/// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
+fn boot(state: Arc<ShellState>, launch: crate::resolve::LaunchSpec, data_dir: PathBuf) -> Result<(), String> {
+    let dsh = shell::spawn_dsh(&launch, &data_dir).map_err(|e| e.to_string())?;
+    let log_path = dsh.log_path.clone();
+    *state.dsh.lock().unwrap() = Some(dsh);
+
+    let _ = std::thread::spawn(move || {
+        match shell::detect_url(&log_path, BOOT_TIMEOUT) {
+            None => {
+                let detail = read_error_detail(&log_path);
+                let _ = state.window.navigate(error_page(&format!("dsh 未在预期时间内就绪{detail}")));
+            }
+            Some(raw) => {
+                match tauri::Url::parse(&raw) {
+                    Ok(url) => {
+                        tracing::info!("dsh 已就绪，进入 {url}");
+                        let _ = state.window.navigate(url);
+                    }
+                    Err(e) => {
+                        let _ = state.window.navigate(error_page(&format!(
+                            "dsh 报告了无效地址（{raw}）：{e}"
+                        )));
+                        return;
+                    }
+                }
+                // 监护：终端与 dsh 同生命周期——dsh 崩溃即错误页。
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let exited = {
+                        let mut guard = state.dsh.lock().unwrap();
+                        guard.as_mut().and_then(|p| p.child.try_wait().ok()).flatten()
+                    };
+                    if let Some(status) = exited {
+                        let code = status.code().unwrap_or(-1);
+                        let detail = read_error_detail(&log_path);
+                        tracing::error!("dsh 异常退出 code={code}{detail}");
+                        let _ = state.window.navigate(error_page(&format!(
+                            "dsh 进程已退出（code={code}）{detail}"
+                        )));
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+/// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的 LaunchSpec 启动。
+#[tauri::command]
+fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+    let state = app
+        .state::<Arc<ShellState>>()
+        .inner()
+        .clone();
+    let launch = state
+        .pending
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| "无待启动任务（请重新打开终端）".to_string())?;
+    let mut launch = launch;
+    launch.profile = profile;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    boot(state, launch, data_dir)
 }
 
 /// dsh 启动等待上限：超过即认为装配有问题，进错误页。
@@ -90,10 +163,9 @@ pub fn run() {
                 }
             };
 
-            // 宿主解析链（ADR-0005）：system → bundle → download
-            // （download 档由 updates 模块③实装，当前给出可行动文案）。
+            // 宿主解析链（ADR-0005）：system → bundle → download。
             let path_env = std::env::var("PATH").unwrap_or_default();
-            let launch = match resolve::resolve_launch(&manifest, &resources_dir, &path_env) {
+            let launch = match resolve::resolve_launch(&manifest, &resources_dir, &path_env, &data_dir) {
                 Ok(l) => l,
                 Err(e) => {
                     tracing::error!("宿主解析失败: {e}");
@@ -101,74 +173,37 @@ pub fn run() {
                     return Ok(());
                 }
             };
-            // spawn dsh（快速失败路径：零部件缺失 → 错误页）。
-            let dsh = match shell::spawn_dsh(&launch, &data_dir) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::error!("启动 dsh 失败: {e}");
-                    let _ = window.navigate(error_page(&format!(
-                        "启动 dsh 失败：{e}<br/>请检查终端安装完整性或重新安装。"
-                    )));
-                    return Ok(());
-                }
-            };
-            let log_path = dsh.log_path.clone();
 
             let state = Arc::new(ShellState {
-                dsh: Mutex::new(Some(dsh)),
+                dsh: Mutex::new(None),
                 window: window.clone(),
+                pending: Mutex::new(None),
             });
             app.manage(state.clone());
 
-            // 后台线程：等 dsh 报告 URL → 导航进 dsh UI；此后持续监护子进程。
-            // 超时 / 子进程死亡 → 导航回错误页。
-            let _ = std::thread::spawn(move || {
-                match shell::detect_url(&log_path, BOOT_TIMEOUT) {
-                    None => {
-                        let detail = read_error_detail(&log_path);
-                        let _ = state.window.navigate(error_page(&format!(
-                            "dsh 未在预期时间内就绪{detail}"
-                        )));
-                    }
-                    Some(raw) => {
-                        match tauri::Url::parse(&raw) {
-                            Ok(url) => {
-                                tracing::info!("dsh 已就绪，进入 {url}");
-                                let _ = state.window.navigate(url);
-                            }
-                            Err(e) => {
-                                let _ = state.window.navigate(error_page(&format!(
-                                    "dsh 报告了无效地址（{raw}）：{e}"
-                                )));
-                                return;
-                            }
-                        }
-                        // 监护：产品壳与 dsh 同生命周期——dsh 崩溃即错误页。
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                            let exited = {
-                                let mut guard = state.dsh.lock().unwrap();
-                                guard
-                                    .as_mut()
-                                    .and_then(|p| p.child.try_wait().ok())
-                                    .flatten()
-                            };
-                            if let Some(status) = exited {
-                                let code = status.code().unwrap_or(-1);
-                                let detail = read_error_detail(&log_path);
-                                tracing::error!("dsh 异常退出 code={code}{detail}");
-                                let _ = state.window.navigate(error_page(&format!(
-                                    "dsh 进程已退出（code={code}）{detail}"
-                                )));
-                                return;
-                            }
-                        }
-                    }
+            // F-b：system 档且用户世界有多个 webUi profile → 先出选择器，选定再 spawn。
+            if launch.tier == crate::manifest::TierKind::System {
+                let profiles = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+                if profiles.len() > 1 {
+                    *state.pending.lock().unwrap() = Some(launch);
+                    let _ = window.eval(&format!(
+                        "location.assign('selector.html?profiles={}')",
+                        profiles.join(",")
+                    ));
+                    return Ok(());
                 }
-            });
+            }
 
+            // 默认路径：直接启动。
+            if let Err(e) = boot(state, launch, data_dir) {
+                tracing::error!("启动 dsh 失败: {e}");
+                let _ = window.navigate(error_page(&format!(
+                    "启动 dsh 失败：{e}<br/>请检查终端安装完整性或重新安装。"
+                )));
+            }
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![choose_profile])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
         .run(|app_handle, event| {
@@ -179,6 +214,8 @@ pub fn run() {
                         let code = shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
                         tracing::info!("dsh 已停止（exit {code}）");
                     }
+                    // 选择器场景可能尚未 spawn：清理 pending，不留状态。
+                    state.pending.lock().unwrap().take();
                 }
             }
         });
