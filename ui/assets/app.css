@@ -1,77 +1,327 @@
+/* dsh-desktop-shell · 启动遥测台
+   工业控制台美学：全等宽排版 / 点阵网格 / 单色强调 + 状态信标，
+   无外链字体（离线硬要求）——系统等宽栈承担全部字形。 */
+
 :root {
   color-scheme: dark;
   --bg: #0b0e14;
-  --card: #111722;
-  --fg: #e6edf3;
-  --muted: #9aa7b4;
+  --panel: #10141d;
+  --panel-2: #151c2b;
+  --line: #1e2637;
+  --line-soft: #171d2a;
+  --fg: #dbe4f0;
+  --muted: #7d8aa0;
+  --faint: #4a5568;
   --accent: #4d94ff;
+  --ok: #4ade80;
+  --warn: #ffb86b;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-body.boot {
-  min-height: 100vh;
+html, body { height: 100%; }
+
+body {
+  background-color: var(--bg);
+  /* 点阵网格：24px 周期、1px 圆点、深蓝微光 */
+  background-image:
+    radial-gradient(circle at 50% -20%, rgba(77, 148, 255, 0.10), transparent 55%),
+    radial-gradient(rgba(148, 170, 210, 0.075) 1px, transparent 1.2px);
+  background-size: 100% 100%, 24px 24px;
+  color: var(--fg);
+  font-family: var(--mono);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* 顶部辉光线：单像素强调，遥测台「通电」感 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+  opacity: 0.55;
+}
+
+.console {
+  width: min(720px, calc(100vw - 64px));
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  padding: 34px 38px 30px;
+  background: linear-gradient(180deg, var(--panel), var(--panel) 92%, rgba(16, 20, 29, 0.85));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---- 头部 ---- */
+.head { display: flex; align-items: center; gap: 14px; }
+
+.head .mark { flex: none; }
+
+.brand { min-width: 0; }
+
+.brand .name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  text-transform: uppercase;
 }
 
-.boot-card {
-  text-align: center;
-  padding: 32px 48px;
-  border-radius: 18px;
-  background: var(--card);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
-  animation: rise-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+.brand .sub {
+  margin-top: 3px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--faint);
 }
 
-.logo svg {
-  display: block;
-  margin: 0 auto 18px;
+.head .meta {
+  margin-left: auto;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  line-height: 1.8;
 }
 
-.boot-card h1 {
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+/* ---- 时间线 ---- */
+.timeline { margin-top: 28px; display: flex; flex-direction: column; }
+
+.step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 14px;
+  padding: 11px 12px 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+  transition: border-color 0.2s;
+  animation: rise 0.4s ease-out both;
 }
 
-.status {
-  margin: 10px 0 22px;
+.step:last-child { border-bottom: none; }
+
+.step.active { border-left-color: var(--accent); background: linear-gradient(90deg, rgba(77,148,255,0.05), transparent 70%); }
+
+.step .idx { font-size: 11px; letter-spacing: 0.1em; color: var(--faint); padding-top: 1px; }
+
+.step .body { min-width: 0; }
+
+.step .title {
   font-size: 13px;
+  letter-spacing: 0.04em;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.spinner {
-  width: 26px;
-  height: 26px;
-  margin: 0 auto;
+.step .title .st-name { transition: color 0.2s; }
+
+.step.running .title .st-name,
+.step.done .title .st-name { color: var(--fg); font-weight: 600; }
+
+.step .detail {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step.done .detail { color: rgba(74, 222, 128, 0.55); }
+.step.error .detail { color: rgba(255, 184, 107, 0.7); }
+
+/* 状态信标 */
+.beacon {
+  width: 9px; height: 9px;
   border-radius: 50%;
-  border: 3px solid rgba(77, 148, 255, 0.18);
-  border-top-color: var(--accent);
-  animation: spin 0.9s linear infinite;
+  flex: none;
+  border: 1px solid var(--faint);
+  position: relative;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.step.running .beacon {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: pulse 1.1s ease-out infinite;
 }
 
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.step.done .beacon { background: var(--ok); border-color: var(--ok); box-shadow: 0 0 8px rgba(74, 222, 128, 0.5); }
+
+.step.error .beacon {
+  background: var(--warn);
+  border-color: var(--warn);
+  border-radius: 2px;
+  transform: rotate(45deg);
+  box-shadow: 0 0 8px rgba(255, 184, 107, 0.5);
 }
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(77, 148, 255, 0.55); }
+  70% { box-shadow: 0 0 0 9px rgba(77, 148, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(77, 148, 255, 0); }
+}
+
+/* ---- 底部日志带 ---- */
+.logstrip {
+  margin-top: 22px;
+  padding: 11px 14px;
+  background: rgba(5, 8, 13, 0.6);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  min-height: 66px;
+  font-size: 10.5px;
+  line-height: 1.75;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+}
+
+.logstrip .row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.logstrip .row:first-child { color: var(--muted); }
+
+.logstrip .row.err { color: var(--warn); }
+
+.logstrip.empty::after {
+  content: "awaiting telemetry…";
+  animation: blink 1.4s steps(2, start) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0.25; } }
+
+/* ---- 错误卡 ---- */
+.error-card {
+  margin-top: 22px;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(255, 184, 107, 0.35);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 184, 107, 0.07), rgba(255, 184, 107, 0.02));
+  animation: rise 0.35s ease-out both;
+}
+
+.error-card .e-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--warn);
+  text-transform: uppercase;
+}
+
+.error-card .e-detail {
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-card .e-suggest {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.error-card .e-actions { margin-top: 14px; display: flex; gap: 10px; }
+
+.error-card button {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  padding: 9px 16px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, opacity 0.2s;
+}
+
+.error-card button.primary {
+  background: var(--warn);
+  color: #171207;
+  font-weight: 700;
+}
+
+.error-card button.ghost {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--line);
+}
+
+.error-card button:hover { transform: translateY(-1px); }
+
+.error-card button:active { transform: translateY(0); }
+
+.error-card button:disabled { opacity: 0.45; cursor: wait; transform: none; }
+
+.error-card details {
+  margin-top: 12px;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.error-card details summary { cursor: pointer; letter-spacing: 0.06em; }
+
+.error-card details pre {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(5, 8, 13, 0.7);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* ---- 选择器（selector.html 共用） ---- */
+.pick-list { display: flex; flex-direction: column; gap: 9px; margin-top: 26px; }
+
+.pick-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 13px;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+}
+
+.pick-item:hover { border-color: var(--accent); background: #18213a; transform: translateX(2px); }
+
+.pick-item .tag { font-size: 10px; letter-spacing: 0.08em; color: var(--faint); }
+
+.pick-hint { margin-top: 14px; font-size: 10.5px; color: var(--faint); line-height: 1.7; letter-spacing: 0.02em; }
+
+.boot-progress { margin-top: 22px; }
+
+.boot-progress .bp-line { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; display: flex; gap: 10px; align-items: center; }
+
+.boot-progress .bp-line .beacon { width: 8px; height: 8px; }
+
+.boot-progress .bp-log { margin-top: 9px; font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -7,8 +7,10 @@
 //!      并从日志解析实际地址，主窗口 WebView 导航进 `http://127.0.0.1:<port>/`；
 //!   4. 应用退出时优雅停止 dsh（SIGTERM → SIGKILL 兜底）。
 //!
-//! IPC 面最小化（AGENTS 例外册）：唯一命令 `choose_profile`（profile 选择器用），
-//! 对应交给 ui/selector.html 的 `window.__TAURI__.core.invoke`；壳其余保持薄。
+//! IPC 面最小化（AGENTS 例外册）：`choose_profile`（选择器）与 `terminal_action`
+//! （错误卡动作：retry / upgrade）。前端经 `window.__TAURI__.core.invoke` +
+//! `window.__TAURI__.event.listen` 接收 `boot:step` / `boot:error` 事件流，
+//! 启动过程全链路可视化（见 ui/index.html）。
 
 mod manifest;
 mod resolve;
@@ -29,31 +31,38 @@ struct ShellState {
 }
 
 /// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
-fn boot(state: Arc<ShellState>, launch: crate::resolve::LaunchSpec, data_dir: PathBuf) -> Result<(), String> {
+/// 进度经 `boot:step` 推给前端；失败经 `boot:error`（前端渲染错误卡）。
+fn boot(state: Arc<ShellState>, app: tauri::AppHandle, launch: crate::resolve::LaunchSpec, data_dir: PathBuf) -> Result<(), String> {
+    emit_step(&app, 2, "running", &format!("spawn dsh（{} · tier={:?}）", launch.profile, launch.tier));
+    let log_path = data_dir.join("dsh-shell.log");
     let dsh = shell::spawn_dsh(&launch, &data_dir).map_err(|e| e.to_string())?;
-    let log_path = dsh.log_path.clone();
+    let child_log = dsh.log_path.clone();
     *state.dsh.lock().unwrap() = Some(dsh);
 
     let _ = std::thread::spawn(move || {
-        match shell::detect_url(&log_path, BOOT_TIMEOUT) {
+        match shell::detect_url(&child_log, BOOT_TIMEOUT) {
             None => {
-                let detail = read_error_detail(&log_path);
-                let _ = state.window.navigate(error_page(&format!("dsh 未在预期时间内就绪{detail}")));
+                let detail = read_error_detail(&child_log);
+                let tail = read_log_tail(&child_log);
+                emit_step(&app, 3, "error", "等待超时");
+                emit_boot_error(&app, &format!("dsh 未在预期时间内就绪{detail}"), &tail);
             }
             Some(raw) => {
                 match tauri::Url::parse(&raw) {
                     Ok(url) => {
                         tracing::info!("dsh 已就绪，进入 {url}");
+                        emit_step(&app, 3, "done", &format!("dsh 已就绪：{url}"));
+                        emit_step(&app, 4, "running", "导航到工作台界面");
                         let _ = state.window.navigate(url);
+                        emit_step(&app, 4, "done", "已进入工作台");
                     }
                     Err(e) => {
-                        let _ = state.window.navigate(error_page(&format!(
-                            "dsh 报告了无效地址（{raw}）：{e}"
-                        )));
+                        emit_step(&app, 3, "error", "无效地址");
+                        emit_boot_error(&app, &format!("dsh 报告了无效地址（{raw}）：{e}"), "");
                         return;
                     }
                 }
-                // 监护：终端与 dsh 同生命周期——dsh 崩溃即错误页。
+                // 监护：终端与 dsh 同生命周期——dsh 崩溃即错误卡。
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     let exited = {
@@ -62,18 +71,33 @@ fn boot(state: Arc<ShellState>, launch: crate::resolve::LaunchSpec, data_dir: Pa
                     };
                     if let Some(status) = exited {
                         let code = status.code().unwrap_or(-1);
-                        let detail = read_error_detail(&log_path);
+                        let detail = read_error_detail(&child_log);
+                        let tail = read_log_tail(&child_log);
                         tracing::error!("dsh 异常退出 code={code}{detail}");
-                        let _ = state.window.navigate(error_page(&format!(
-                            "dsh 进程已退出（code={code}）{detail}"
-                        )));
+                        emit_boot_error(&app, &format!("dsh 进程已退出（code={code}）{detail}"), &tail);
                         return;
                     }
                 }
             }
         }
     });
+    // 保持 log_path 变量绑定（避免未读警告）：boot 日志路径即 dsh-shell.log
+    let _ = log_path;
     Ok(())
+}
+
+/// 日志尾部（错误卡「查看原始日志」区）。
+fn read_log_tail(log_path: &std::path::Path) -> String {
+    std::fs::read_to_string(log_path)
+        .unwrap_or_default()
+        .lines()
+        .rev()
+        .take(10)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的 LaunchSpec 启动。
@@ -91,18 +115,86 @@ fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
         .ok_or_else(|| "无待启动任务（请重新打开终端）".to_string())?;
     let mut launch = launch;
     launch.profile = profile;
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    boot(state, launch, data_dir)
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    // 后台线程启动（npm/下载动作不阻塞）
+    std::thread::spawn(move || {
+        let _ = boot(state, handle.clone(), launch, data_dir);
+    });
+    Ok(())
+}
+
+/// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
+#[tauri::command]
+fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    let state = app
+        .state::<Arc<ShellState>>()
+        .inner()
+        .clone();
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // upgrade：动用户全局 dsh（按钮确认即授权，动作本身在后台线程）
+        if action == "upgrade" {
+            emit_step(&handle, 2, "running", "升级官方 dsh（npm 全局，最新版）…");
+            match crate::updates::install_latest_global(&data_dir) {
+                Ok(_) => emit_step(&handle, 2, "done", "dsh 升级完成"),
+                Err(e) => {
+                    emit_boot_error(&handle, &format!("升级失败：{e}"), "");
+                    return;
+                }
+            }
+        }
+        // 重新走解析链 + 启动
+        crate::lib_boot_again(state, handle.clone(), data_dir);
+        let _ = handle;
+    });
+    Ok(())
+}
+
+/// retry/upgrade 共用：从 manifest 重新解析并启动。
+fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
+    let resources_dir = resolve_resources_dir(&app);
+    let manifest = match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json")) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_boot_error(&app, &format!("产品清单读取失败：{e}"), "");
+            return;
+        }
+    };
+    let path_env = crate::resolve::effective_path();
+    emit_step(&app, 0, "running", "重新扫描用户环境");
+    match crate::resolve::resolve_launch(&manifest, &resources_dir, &path_env, &data_dir) {
+        Ok(launch) => {
+            emit_step(&app, 0, "done", "环境扫描完成");
+            emit_step(&app, 1, "done", &format!("命中档位：{:?}", launch.tier));
+            if launch.tier == crate::manifest::TierKind::System {
+                let profiles = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+                if profiles.len() > 1 {
+                    *state.pending.lock().unwrap() = Some(launch);
+                    let _ = state.window.eval(&format!(
+                        "location.assign('selector.html?profiles={}')",
+                        profiles.join(",")
+                    ));
+                    return;
+                }
+            }
+            if let Err(e) = boot(state, app.clone(), launch, data_dir) {
+                tracing::error!("重启 dsh 失败: {e}");
+            }
+        }
+        Err(e) => {
+            tracing::error!("重新解析失败: {e}");
+            emit_boot_error(&app, &format!("重新解析失败：{e}"), "");
+        }
+    }
 }
 
 /// dsh 启动等待上限：超过即认为装配有问题，进错误页。
 const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
-fn resolve_resources_dir(app: &tauri::App) -> PathBuf {
+fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
     let runtime = app.path().resource_dir().ok().unwrap_or_default();
     // 生产（bundle）：Tauri v2 打包器保留相对 src-tauri 的路径前缀——
     // 配置 `"resources": ["resources/**"]` 时，文件实际落在 `<资源根>/resources/`
@@ -162,17 +254,20 @@ pub fn run() {
             let window = app
                 .get_webview_window("main")
                 .expect("main 窗口应由 tauri.conf.json 创建");
+            let app_handle = app.handle().clone();
             let manifest = match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json"))
             {
                 Ok(m) => m,
                 Err(e) => {
                     tracing::error!("product.manifest 读取失败: {e}");
-                    let _ = window.navigate(error_page(&format!(
-                        "产品清单读取失败：{e}<br/>该安装包缺少装配快照，请从启动器重新打包后安装。"
-                    )));
+                    emit_boot_error(&app_handle, &e.to_string(), "");
                     return Ok(());
                 }
             };
+
+            // 进度事件：环境检测 / 宿主解析
+            emit_step(&app_handle, 0, "running", "扫描用户环境（PATH · 版本闸）");
+            emit_step(&app_handle, 1, "running", "解析宿主档位");
 
             // 宿主解析链（ADR-0005）：system → bundle → download。
             // GUI 启动 PATH 是系统最小集：用合并后的用户环境 PATH 探测（环境感知修复）。
@@ -181,10 +276,13 @@ pub fn run() {
                 Ok(l) => l,
                 Err(e) => {
                     tracing::error!("宿主解析失败: {e}");
-                    let _ = window.navigate(error_page(&format!("无法启动终端：{e}")));
+                    emit_step(&app_handle, 1, "error", &e.to_string());
+                    emit_boot_error(&app_handle, &e.to_string(), "");
                     return Ok(());
                 }
             };
+            emit_step(&app_handle, 0, "done", "环境扫描完成");
+            emit_step(&app_handle, 1, "done", &format!("命中档位：{:?}", launch.tier));
 
             let state = Arc::new(ShellState {
                 dsh: Mutex::new(None),
@@ -198,6 +296,7 @@ pub fn run() {
                 let profiles = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
                 if profiles.len() > 1 {
                     *state.pending.lock().unwrap() = Some(launch);
+                    emit_step(&app_handle, 2, "running", "选择器：多个 webUi 工作台");
                     let _ = window.eval(&format!(
                         "location.assign('selector.html?profiles={}')",
                         profiles.join(",")
@@ -207,15 +306,12 @@ pub fn run() {
             }
 
             // 默认路径：直接启动。
-            if let Err(e) = boot(state, launch, data_dir) {
+            if let Err(e) = boot(state, app_handle, launch, data_dir) {
                 tracing::error!("启动 dsh 失败: {e}");
-                let _ = window.navigate(error_page(&format!(
-                    "启动 dsh 失败：{e}<br/>请检查终端安装完整性或重新安装。"
-                )));
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![choose_profile])
+        .invoke_handler(tauri::generate_handler![choose_profile, terminal_action])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
         .run(|app_handle, event| {
@@ -231,6 +327,65 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// 发射 boot:step 事件（state: pending|running|done|error）。
+fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(
+        "boot:step",
+        serde_json::json!({
+            "step": step,
+            "state": state,
+            "detail": detail,
+        }),
+    );
+}
+
+/// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。
+fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
+    use tauri::Emitter;
+    let (title, suggestion, actions) = classify_boot_error(detail);
+    let _ = app.emit(
+        "boot:error",
+        serde_json::json!({
+            "title": title,
+            "detail": detail,
+            "suggestion": suggestion,
+            "actions": actions,
+            "log": log_tail,
+        }),
+    );
+}
+
+/// 错误分类：把 dsh 世界的问题归到可行动动作（upgrade / retry）。
+fn classify_boot_error(detail: &str) -> (&'static str, &'static str, Vec<&'static str>) {
+    let d = detail.to_lowercase();
+    if d.contains("credentials") || d.contains("must be a string") {
+        (
+            "宿主 dsh 与您的凭据格式不匹配",
+            "通常是 dsh 版本过旧：升级到官方最新版可解决（升级只动 npm 全局，不碰您的数据）。",
+            vec!["upgrade", "retry"],
+        )
+    } else if d.contains("unknown option") || d.contains("incompatible") {
+        (
+            "宿主 dsh 参数不兼容",
+            "请升级您的 dsh 到支持当前终端行为的版本。",
+            vec!["upgrade", "retry"],
+        )
+    } else if d.contains("network") || d.contains("registry") || d.contains("timeout") {
+        (
+            "网络不可用",
+            "实时下载需要网络连接；检查网络后重试。",
+            vec!["retry"],
+        )
+    } else {
+        (
+            "dsh 世界启动失败",
+            "详情见日志；可重试，若持续请反馈。",
+            vec!["retry"],
+        )
+    }
 }
 
 /// 从日志提取崩溃原因摘要（首条顶层 Error 行，截断 200 字符），带 `<br/>` 前缀。
@@ -255,27 +410,6 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
     }
 }
 
-/// 一个自包含的错误页（data: URL），错误就地呈现（ADR-0004 A6）。
-fn error_page(msg: &str) -> tauri::Url {
-    let html = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>无法启动 {}</title></head>\
-         <body style=\"margin:0;height:100vh;display:flex;align-items:center;justify-content:center;\
-         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0b0e14;color:#e6edf3\">\
-         <div style=\"max-width:560px;padding:32px\">\
-         <div style=\"font-size:15px;font-weight:600;letter-spacing:.08em;color:#4d94ff\">DEEPSEEK HARNESS</div>\
-         <h1 style=\"margin:14px 0 10px;font-size:22px\">请重新打包后安装</h1>\
-         <p style=\"font-size:14px;line-height:1.7;color:#9aa7b4\">该桌面版以冻结快照方式分发。遇到启动问题时，\
-         请回到 dsh 启动器，在装配好的工作台上重新执行「打包为桌面版」，再安装新版本。</p>\
-         <pre style=\"margin-top:18px;padding:14px;border-radius:10px;background:#111722;font-size:13px;color:#ffb86b;\
-         white-space:pre-wrap;word-break:break-word\">{}</pre>\
-         </div></body></html>",
-        html_escape("DeepSeek Harness"),
-        html_escape(msg)
-    );
-    tauri::Url::parse(&format!("data:text/html;charset=utf-8,{}", url_encode(&html)))
-        .expect("错误页 data URL 必可解析")
-}
-
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -283,15 +417,36 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// 极简百分号编码（data: URL 用），保留 RFC3986 unreserved。
-fn url_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
+#[cfg(test)]
+mod tests {
+    use super::classify_boot_error;
+
+    #[test]
+    fn credential_mismatch_classifies_upgrade() {
+        let (title, _, actions) = classify_boot_error(
+            "credentials-local: the value for \"version\" in ~/.dsh/.credentials.yaml must be a string",
+        );
+        assert!(title.contains("凭据"));
+        assert!(actions.contains(&"upgrade"));
+        assert!(actions.contains(&"retry"));
     }
-    out
+
+    #[test]
+    fn network_classifies_retry_only() {
+        let (_, _, actions) = classify_boot_error("registry 不可达：network timeout");
+        assert_eq!(actions, vec!["retry"]);
+    }
+
+    #[test]
+    fn unknown_option_classifies_upgrade() {
+        let (_, _, actions) = classify_boot_error("error: unknown option '--no-open'");
+        assert!(actions.contains(&"upgrade"));
+    }
+
+    #[test]
+    fn generic_failure_classifies_retry() {
+        let (title, _, actions) = classify_boot_error("some weird crash");
+        assert!(title.contains("启动失败"));
+        assert_eq!(actions, vec!["retry"]);
+    }
 }

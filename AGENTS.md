@@ -53,9 +53,13 @@
 
 ## IPC 与网络面（最小面例外册）
 
-- 唯一 IPC 命令：`choose_profile`（②b 选择器）。selector.html 通过
-  `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）——
-  这是「禁手写 invoke」的**注册例外**；新加命令必须先在 AGENTS 登记。
+- IPC 命令（已登记）：`choose_profile`（选择器）、`terminal_action`（错误卡
+  动作 retry/upgrade）。前端经 `window.__TAURI__.core.invoke` 调用（tauri.conf
+  已开 withGlobalTauri），事件流 `boot:step` / `boot:error` 由 lib.rs 发射、
+  ui/index.html 与 ui/selector.html 消费——**注册例外**；新命令必须先在 AGENTS 登记。
+- 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
+  启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
+  前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
 - 唯一网络面：`updates.rs`（npm registry 镜像链 / nodejs.org）。其余模块不得触网。
   网络动作一律后台线程 + 超时；非 updates.rs 的网络需求先登记再写。
 
