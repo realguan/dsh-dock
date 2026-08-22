@@ -58,10 +58,13 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         .arg("--profile")
         .arg(&launch.profile)
         .arg("--port")
-        .arg("0")
-        // 桌面壳接管呈现：禁止 dsh 自开系统浏览器（冒烟实测：不加会在
-        // 每次启动时弹外部浏览器，把用户从壳里拽出去）。
-        .arg("--no-open")
+        .arg("0");
+    // 桌面壳接管呈现：禁止 dsh 自开系统浏览器——但仅当该版本支持
+    // （system 档旧版 dsh 如 rc.5 收到未知参数会直接秒退，须按版本适配）。
+    if launch.no_open {
+        cmd.arg("--no-open");
+    }
+    cmd
         .env("DSH_HOME", &dsh_home)
         // 用户环境感知：dsh 世界运行在用户 PATH 上（GUI 启动环境不含用户工具）
         .env("PATH", crate::resolve::effective_path())

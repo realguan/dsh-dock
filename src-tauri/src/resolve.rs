@@ -27,6 +27,9 @@ pub struct LaunchSpec {
     pub dsh_home: PathBuf,
     pub profile: String,
     pub tier: TierKind,
+    /// dsh 是否支持 `--no-open`（system 档按版本探测；旧版不支持时不得传，
+    /// 否则 dsh 秒退——rc.5 实测）。False 时 dsh 会自开浏览器（妥协但能启动）。
+    pub no_open: bool,
 }
 
 // ---------- 用户 home ----------
@@ -345,12 +348,14 @@ pub fn resolve_launch(
             TierKind::System => {
                 match probe_system(spec, path_env) {
                     SystemOutcome::Hit(hit) => {
+                        let no_open = system_no_open_supported(&hit);
                         return Ok(LaunchSpec {
                             node_bin: hit.node.bin,
                             dsh_bin_js: hit.dsh.bin_js,
                             dsh_home: user_dsh_home(),
                             profile: manifest.terminal.default_profile.clone(),
                             tier: TierKind::System,
+                            no_open,
                         });
                     }
                     SystemOutcome::TooOld { found, min } => {
@@ -369,10 +374,15 @@ pub fn resolve_launch(
                 })?;
                 // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
                 let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
+                spec.no_open = true;
                 // 快照 home 在 bundle 内只读（ADR-0005 开放问题 1 落定）：首启同步到
                 // 可写数据目录，dsh 的会话/设置才落得下；仅覆盖不删除，运行数据保留。
-                spec.dsh_home = sync_fallback_home(&spec.dsh_home, data_dir)
-                    .map_err(|e| anyhow::anyhow!("同步兜底 home 到数据目录失败：{e}"))?;
+                match sync_fallback_home(&spec.dsh_home, data_dir) {
+                    Ok(home) => spec.dsh_home = home,
+                    Err(e) => {
+                        anyhow::bail!("同步兜底 home 到数据目录失败：{e}");
+                    }
+                }
                 return Ok(spec);
             }
             TierKind::Download => {
@@ -385,6 +395,7 @@ pub fn resolve_launch(
                     dsh_home: user_dsh_home(),
                     profile: manifest.terminal.default_profile.clone(),
                     tier: TierKind::Download,
+                    no_open: true,
                 });
             }
         }
@@ -458,6 +469,42 @@ fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String
         dsh_home: fb.resolve_path(resources_dir, &fb.dsh_home),
         profile,
         tier: TierKind::Bundle,
+        no_open: true,
+    }
+}
+
+/// system 档：探测该 dsh 版本是否支持 `--no-open`（`--profile web --help` 一次，进程内缓存）。
+/// 探测失败 → 不支持（宁可不传，避免旧版 dsh 秒退）。
+fn system_no_open_supported(hit: &SystemHit) -> bool {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, PathBuf, bool)>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    if let Ok(mut guard) = cache.lock() {
+        if let Some((_, _, v)) = guard
+            .iter()
+            .find(|(n, b, _)| n == &hit.node.bin && b == &hit.dsh.bin_js)
+        {
+            return *v;
+        }
+        let v = probe_no_open(&hit.node.bin, &hit.dsh.bin_js);
+        guard.push((hit.node.bin.clone(), hit.dsh.bin_js.clone(), v));
+        return v;
+    }
+    false
+}
+
+fn probe_no_open(node: &Path, dsh_bin: &Path) -> bool {
+    let out = Command::new(node)
+        .arg(dsh_bin)
+        .args(["--profile", "web", "--help"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&o.stderr));
+            text.contains("--no-open")
+        }
+        _ => false,
     }
 }
 

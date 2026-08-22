@@ -238,8 +238,13 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
     let text = std::fs::read_to_string(log_path).unwrap_or_default();
     let line = text
         .lines()
-        .find(|l| l.starts_with("Error:"))
-        .map(|l| l.trim_start_matches("Error:").trim().to_string())
+        .find(|l| l.starts_with("Error:") || l.starts_with("error:"))
+        .map(|l| {
+            l.trim_start_matches("Error:")
+                .trim_start_matches("error:")
+                .trim()
+                .to_string()
+        })
         .unwrap_or_default();
     if line.is_empty() {
         String::new()
