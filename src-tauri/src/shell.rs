@@ -63,6 +63,8 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         // 每次启动时弹外部浏览器，把用户从壳里拽出去）。
         .arg("--no-open")
         .env("DSH_HOME", &dsh_home)
+        // 用户环境感知：dsh 世界运行在用户 PATH 上（GUI 启动环境不含用户工具）
+        .env("PATH", crate::resolve::effective_path())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().context("克隆日志句柄")?))
         .stderr(Stdio::from(log));

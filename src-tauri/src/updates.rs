@@ -189,7 +189,7 @@ pub fn download_node(data_dir: &Path) -> Result<PathBuf> {
 
 /// 取得可用执行器：系统 node 优先，否则下载缓存 node。
 pub fn ensure_node(data_dir: &Path) -> Result<PathBuf> {
-    let path_env = std::env::var("PATH").unwrap_or_default();
+    let path_env = resolve::effective_path();
     if let Some(sys) = resolve::detect_system_node(&path_env) {
         return Ok(sys.bin);
     }

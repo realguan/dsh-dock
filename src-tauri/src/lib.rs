@@ -130,13 +130,24 @@ fn resolve_resources_dir(app: &tauri::App) -> PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 幂等初始化：测试/外部可能已设全局日志。
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .try_init();
-
+    // 日志初始化移入 setup（落 shell.log；GUI 下 stdout 不可见）。
+    // 测试/外部如需独立日志可自行 try_init（幂等）。
     tauri::Builder::default()
         .setup(|app| {
+            // 壳侧诊断日志落 `<数据目录>/shell.log`（GUI 下 stderr 不可见）。
+            // 子进程输出在 dsh-shell.log（shell.rs）；两者分离。
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                if let Ok(file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(data_dir.join("shell.log"))
+                {
+                    let _ = tracing_subscriber::fmt()
+                        .with_max_level(tracing::Level::INFO)
+                        .with_writer(std::sync::Arc::new(file))
+                        .try_init();
+                }
+            }
             // 资源根解析（dev/prod 差异）：
             //   - 生产（bundle）：Tauri v2 保留相对 src-tauri 的路径前缀，
             //     `resources/**` 落在 `.app/Contents/Resources/resources/`；
@@ -164,7 +175,8 @@ pub fn run() {
             };
 
             // 宿主解析链（ADR-0005）：system → bundle → download。
-            let path_env = std::env::var("PATH").unwrap_or_default();
+            // GUI 启动 PATH 是系统最小集：用合并后的用户环境 PATH 探测（环境感知修复）。
+            let path_env = crate::resolve::effective_path();
             let launch = match resolve::resolve_launch(&manifest, &resources_dir, &path_env, &data_dir) {
                 Ok(l) => l,
                 Err(e) => {

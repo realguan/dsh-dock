@@ -92,6 +92,104 @@ fn major_of(v: &str) -> Option<u64> {
     s.split('.').next()?.parse::<u64>().ok()
 }
 
+// ---------- 环境感知（GUI 启动的 PATH 是系统最小集，必须先补全） ----------
+
+/// 带超时执行并取 stdout（login shell 拉 PATH 用）。
+fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
+    let mut child = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().ok().flatten() {
+            if !status.success() {
+                return None;
+            }
+            let mut out = String::new();
+            use std::io::Read;
+            child.stdout.take()?.read_to_string(&mut out).ok()?;
+            let t = out.trim();
+            return if t.is_empty() { None } else { Some(t.to_string()) };
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// 登录 shell 的 PATH（zsh → bash，HOME 注入；GUI app 不含用户 PATH 的来源）。
+fn login_shell_path() -> Option<String> {
+    // macOS 官方登录 shell 是 zsh；Linux 一般为 bash
+    for shell in ["/bin/zsh", "/bin/bash"] {
+        if !Path::new(shell).is_file() {
+            continue;
+        }
+        let mut cmd = Command::new(shell);
+        cmd.args(["-lc", "echo -n \"$PATH\""]);
+        if let Some(home) = std::env::var_os("HOME") {
+            cmd.env("HOME", &home);
+        }
+        if let Some(p) = run_with_timeout(&mut cmd, std::time::Duration::from_secs(2)) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 常见安装目录（GUI 下除登录 shell 之外的第二来源）。
+fn fixed_path_dirs(home: &Path) -> Vec<PathBuf> {
+    [
+        home.join(".npm-global/bin"),
+        home.join(".local/bin"),
+        home.join(".volta/bin"),
+        home.join(".nvm/versions/node"),
+        home.join(".local/share/fnm/node-versions"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/opt/homebrew/sbin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ]
+    .into_iter()
+    .filter(|p| p.is_dir())
+    .collect()
+}
+
+/// 合并多路 PATH 源（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
+pub fn merge_paths(sources: &[String]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut dirs: Vec<String> = Vec::new();
+    for source in sources {
+        for d in source.split(':') {
+            if d.is_empty() || !seen.insert(d.to_string()) {
+                continue;
+            }
+            dirs.push(d.to_string());
+        }
+    }
+    dirs.join(":")
+}
+
+/// 合并后的探测 PATH 串（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
+/// 本函数是 shell 侧环境感知的唯一入口；dsh 子进程启动时也应继承同一份。
+pub fn effective_path() -> String {
+    fn build() -> String {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        merge_paths(&[
+            login_shell_path().unwrap_or_default(),
+            fixed_path_dirs(&home)
+                .into_iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(":"),
+            std::env::var("PATH").unwrap_or_default(),
+        ])
+    }
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(build).clone()
+}
+
 // ---------- system 探测 ----------
 
 pub struct SystemDsh {
@@ -101,10 +199,15 @@ pub struct SystemDsh {
     pub engines_node: Option<String>,
 }
 
-/// 在 PATH 上找官方安装的 dsh（npm/pnpm 全局）：`which dsh` → 解符号链 →
+/// 在合并 PATH 上找官方安装的 dsh（npm/pnpm 全局）：`which dsh` → 解符号链 →
 /// 逐级上溯找包根 → 读 package.json。找不到返回 None。
 pub fn detect_system_dsh(path_env: &str) -> Option<SystemDsh> {
-    let bin = path_dirs(path_env).into_iter().find_map(|dir| {
+    // fnm/nvm 版本目录里也可能有全局 dsh（版本目录的 bin/）
+    let mut dirs = path_dirs(path_env);
+    for extra in fnm_nvm_bin_dirs() {
+        dirs.push(extra);
+    }
+    let bin = dirs.into_iter().find_map(|dir| {
         let cand = dir.join("dsh");
         if cand.is_file() && is_executable(&cand) {
             Some(cand)
@@ -149,6 +252,28 @@ fn find_package_root(start: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// fnm/nvm 版本目录里的 bin/（node、可能的全局 dsh）；取最新版本目录。
+fn fnm_nvm_bin_dirs() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut out = Vec::new();
+    for root in [home.join(".local/share/fnm/node-versions"), home.join(".nvm/versions/node")] {
+        if !root.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&root) else { continue };
+        let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        versions.sort_by(|a, b| compare_versions_asc(
+            &a.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            &b.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+        ));
+        if let Some(latest) = versions.last() {
+            out.push(latest.join("installation/bin"));
+            out.push(latest.join("bin"));
+        }
+    }
+    out
+}
+
 /// PATH 上的系统 node 及其版本（"--version"）。
 pub struct SystemNode {
     pub bin: PathBuf,
@@ -156,7 +281,11 @@ pub struct SystemNode {
 }
 
 pub fn detect_system_node(path_env: &str) -> Option<SystemNode> {
-    let bin = path_dirs(path_env).into_iter().find_map(|dir| {
+    let mut dirs = path_dirs(path_env);
+    for extra in fnm_nvm_bin_dirs() {
+        dirs.push(extra);
+    }
+    let bin = dirs.into_iter().find_map(|dir| {
         let cand = dir.join("node");
         if cand.is_file() && is_executable(&cand) {
             Some(cand)
@@ -419,6 +548,16 @@ mod tests {
         assert!(!version_at_least("0.1.0-rc.5", "0.1.0-rc.6"));
         assert!(version_at_least("0.1.0", "0.1.0-rc.9"));
         assert!(version_at_least("0.1.0-rc.6", "0.1.0-rc.6"));
+    }
+
+    #[test]
+    fn merge_paths_deduplicates_keeping_first() {
+        let s = merge_paths(&[
+            "/usr/local/bin:/usr/bin".to_string(),
+            "/usr/bin:/bin".to_string(),
+            "/opt/homebrew/bin:/usr/local/bin".to_string(),
+        ]);
+        assert_eq!(s, "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin");
     }
 
     #[test]
