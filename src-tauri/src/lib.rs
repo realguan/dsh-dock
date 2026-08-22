@@ -11,6 +11,7 @@
 //! 任何变多变的逻辑都属于打包侧（启动器 packaging 服务）或快照本身，不进本仓库。
 
 mod manifest;
+mod resolve;
 mod shell;
 
 use std::path::PathBuf;
@@ -89,24 +90,24 @@ pub fn run() {
                 }
             };
 
-            // 兜底副本解析（内置档）；极简档（无 fallback）在此过渡期给出明确文案，
-            // 宿主解析链（system→download）在 ② 落地时替换本块。
-            let fallback = match &manifest.fallback {
-                Some(fb) => fb.clone(),
-                None => {
-                    let _ = window.navigate(error_page(
-                        "本安装为极简档，未内置 dsh 兜底副本。<br/>终端将优先复用您机器上的官方 dsh；                         如未安装将实时下载（该解析链即将随版本提供），请稍后重试或先安装 dsh。",
-                    ));
+            // 宿主解析链（ADR-0005）：system → bundle → download
+            // （download 档由 updates 模块③实装，当前给出可行动文案）。
+            let path_env = std::env::var("PATH").unwrap_or_default();
+            let launch = match resolve::resolve_launch(&manifest, &resources_dir, &path_env) {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!("宿主解析失败: {e}");
+                    let _ = window.navigate(error_page(&format!("无法启动终端：{e}")));
                     return Ok(());
                 }
             };
             // spawn dsh（快速失败路径：零部件缺失 → 错误页）。
-            let dsh = match shell::spawn_dsh(&fallback, &resources_dir, &data_dir) {
+            let dsh = match shell::spawn_dsh(&launch, &data_dir) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::error!("启动 dsh 失败: {e}");
                     let _ = window.navigate(error_page(&format!(
-                        "启动 dsh 失败：{e}<br/>请从启动器重新打包包含完整快照的桌面版。"
+                        "启动 dsh 失败：{e}<br/>请检查终端安装完整性或重新安装。"
                     )));
                     return Ok(());
                 }

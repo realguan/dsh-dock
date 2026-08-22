@@ -67,12 +67,6 @@ impl Default for TierSpec {
     }
 }
 
-impl TierSpec {
-    pub fn has_tier(&self, kind: TierKind) -> bool {
-        self.tiers.contains(&kind)
-    }
-}
-
 /// terminal 区块：终端行为（ADR-0005 Q4：webUi profile 选择器）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,7 +211,7 @@ impl ProductManifest {
 mod tests {
     use super::*;
 
-    fn write_temp(json: &str) -> (std::path::PathBuf, temp_guard) {
+    fn write_temp(json: &str) -> (std::path::PathBuf, TempGuard) {
         // 每个测试独立目录：cargo test 并行跑，共享路径会互相覆盖。
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -228,12 +222,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("product.manifest.json");
         std::fs::write(&path, json).unwrap();
-        (path, temp_guard { dir })
+        (path, TempGuard { dir })
     }
-    struct temp_guard {
+    struct TempGuard {
         dir: std::path::PathBuf,
     }
-    impl Drop for temp_guard {
+    impl Drop for TempGuard {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }

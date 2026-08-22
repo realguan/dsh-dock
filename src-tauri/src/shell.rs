@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::manifest::FallbackSpec;
+use crate::resolve::LaunchSpec;
 
 /// 一个被产品壳托管的 dsh 子进程。
 pub struct DshProcess {
@@ -24,26 +24,23 @@ pub struct DshProcess {
     pub log_path: PathBuf,
 }
 
-/// 启动 dsh：`<node> <dsh-bin.js> --profile <p> --port 0`，`DSH_HOME` 指向
-/// 兜底副本的虚拟 home（内置档）。stdout/stderr 进数据目录日志文件（可排查故障）。
-pub fn spawn_dsh(
-    fallback: &FallbackSpec,
-    resources_dir: &Path,
-    data_dir: &Path,
-) -> Result<DshProcess> {
-    let node_bin = fallback.resolve_path(resources_dir, &fallback.node_bin);
-    let dsh_bin = fallback.resolve_path(resources_dir, &fallback.dsh_bin_js);
-    let dsh_home = fallback.resolve_path(resources_dir, &fallback.dsh_home);
+/// 启动 dsh：`<node> <dsh-bin.js> --profile <p> --port 0`，`DSH_HOME` 来自
+/// LaunchSpec（system=用户 home；bundle=兜底副本 home）。stdout/stderr
+/// 进数据目录日志文件（可排查故障）。
+pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
+    let node_bin = &launch.node_bin;
+    let dsh_bin = &launch.dsh_bin_js;
+    let dsh_home = &launch.dsh_home;
 
-    // 快照零部件缺一不可：慢一点把错误讲清楚，别让 node 裸奔报「command not found」。
+    // 解析出的宿主零部件缺一不可：慢一点把错误讲清楚，别让 node 裸奔报「command not found」。
     if !node_bin.is_file() {
-        anyhow::bail!("快照缺少 Node 可执行文件: {}", node_bin.display());
+        anyhow::bail!("Node 可执行文件不存在: {}", node_bin.display());
     }
     if !dsh_bin.is_file() {
-        anyhow::bail!("快照缺少 dsh 入口: {}", dsh_bin.display());
+        anyhow::bail!("dsh 入口不存在: {}", dsh_bin.display());
     }
     if !dsh_home.is_dir() {
-        anyhow::bail!("快照缺少虚拟 DSH_HOME 目录: {}", dsh_home.display());
+        anyhow::bail!("DSH_HOME 目录不存在: {}", dsh_home.display());
     }
 
     std::fs::create_dir_all(data_dir).context("创建数据目录")?;
@@ -59,7 +56,7 @@ pub fn spawn_dsh(
     let mut cmd = Command::new(&node_bin);
     cmd.arg(&dsh_bin)
         .arg("--profile")
-        .arg(&fallback.profile)
+        .arg(&launch.profile)
         .arg("--port")
         .arg("0")
         // 桌面壳接管呈现：禁止 dsh 自开系统浏览器（冒烟实测：不加会在
@@ -74,9 +71,10 @@ pub fn spawn_dsh(
         .spawn()
         .with_context(|| format!("spawn {}", node_bin.display()))?;
     tracing::info!(
-        "dsh 已启动：pid={} profile={}",
+        "dsh 已启动：pid={} profile={} tier={:?}",
         child.id(),
-        fallback.profile
+        launch.profile,
+        launch.tier
     );
     Ok(DshProcess { child, log_path })
 }
