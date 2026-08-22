@@ -96,3 +96,52 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 
 任何字段/布局变更 → 本文件先改 → `format` 升版本 → 壳 `MANIFEST_FORMAT` 同步 →
 打包侧同步 → 三步用同一版本号发布，缺一不可。
+
+---
+
+# 运行时策略：终端宿主解析（ADR-0005，2026-08-21）
+
+本产物是 **dsh 的桌面终端**（独立 Tauri 应用，与 web/tui/headless 前端并列），dsh 是宿主。
+运行时不固定「内置快照」，而是走 **宿主解析链**：
+
+```
+宿主 dsh / node 解析
+  ① 用户环境复用：官方安装（npm/pnpm 全局，PATH 可探）→ realpath 包树
+       → 三重校验闸：版本 ∈ 声明区间 / engines.node 达标 / 平台一致 —— 过闸才复用
+  ② 内置兜底：bundle 内自包含副本（离线保证，随包）
+  ③ 实时下载：官方 registry/npm 通道拉取并安置版本库（缓存 + integrity，网络动作）
+```
+
+**两条铁律**
+- **内置 = 保证，优先 = 策略**（正交）：离线启动链路必经 × 平台不承诺的件必须内置兜底；
+  使用次序是独立配置，node 与 dsh 同构适用。
+- **借执行器，不借配置**：复用宿主 dsh 只借其 bin.js/树，产品仍用自己的虚拟 home 与
+  默认连接 profile；npx 缓存形态非复用源（版本漂移）；自研 launcher 版本库不视为官方形态。
+
+## manifest v2 草案（resolution 策略）
+
+```json
+{
+  "format": 2,
+  "productName": "DeepSeek Harness Desktop",
+  "terminal": {
+    "defaultProfile": "desktop-demo",
+    "resolution": {
+      "node":     { "tiers": ["system", "bundle", "download"], "requireEngines": true },
+      "dsh":      { "tiers": ["system", "bundle", "download"],
+                    "versionRange": ">=0.1.0-rc.6 <0.2.0", "requireEngines": true }
+    }
+  },
+  "fallback": {
+    "nodeBin": "dsh-snapshot/node/bin/dsh-node",
+    "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
+    "dshHome": "dsh-snapshot/home",
+    "profile": "desktop-demo"
+  }
+}
+```
+
+- `terminal.resolution.*.tiers`：解析次序；`system` 缺失/不达标即进下一 tier。
+- `fallback`：离线兜底副本（v1 快照三件套的归宿，只读种子）。
+- `versionRange`：SEMVER 区间（装配时定，宽区间以让复用成立）。
+- v2 升版时机：随 updates 模块开工一并落地（壳 `MANIFEST_FORMAT` 同步 + 迁移提示）。
