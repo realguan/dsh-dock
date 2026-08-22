@@ -89,8 +89,19 @@ pub fn run() {
                 }
             };
 
+            // 兜底副本解析（内置档）；极简档（无 fallback）在此过渡期给出明确文案，
+            // 宿主解析链（system→download）在 ② 落地时替换本块。
+            let fallback = match &manifest.fallback {
+                Some(fb) => fb.clone(),
+                None => {
+                    let _ = window.navigate(error_page(
+                        "本安装为极简档，未内置 dsh 兜底副本。<br/>终端将优先复用您机器上的官方 dsh；                         如未安装将实时下载（该解析链即将随版本提供），请稍后重试或先安装 dsh。",
+                    ));
+                    return Ok(());
+                }
+            };
             // spawn dsh（快速失败路径：零部件缺失 → 错误页）。
-            let dsh = match shell::spawn_dsh(&manifest, &resources_dir, &data_dir) {
+            let dsh = match shell::spawn_dsh(&fallback, &resources_dir, &data_dir) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::error!("启动 dsh 失败: {e}");

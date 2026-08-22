@@ -118,7 +118,7 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 - **借执行器，不借配置**：复用宿主 dsh 只借其 bin.js/树，产品仍用自己的虚拟 home 与
   默认连接 profile；npx 缓存形态非复用源（版本漂移）；自研 launcher 版本库不视为官方形态。
 
-## manifest v2 草案（resolution 策略）
+## manifest v2（2026-08-21 定稿，resolution 策略）
 
 ```json
 {
@@ -144,4 +144,5 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 - `terminal.resolution.*.tiers`：解析次序；`system` 缺失/不达标即进下一 tier。
 - `fallback`：离线兜底副本（v1 快照三件套的归宿，只读种子）。
 - `versionRange`：SEMVER 区间（装配时定，宽区间以让复用成立）。
-- v2 升版时机：随 updates 模块开工一并落地（壳 `MANIFEST_FORMAT` 同步 + 迁移提示）。
+- v1（format=1）兼容：壳按 snapshot 三件套迁移为 bundle-only 解析 + fallback（壳 `MANIFEST_MIN_COMPAT=1`）。
+- 极简档语义：不写 `fallback`、resolution 缺省即 `system → download`（终端默认形态）；内置档由 launcher 装配产物显式声明 `bundle` 档 + `fallback`。

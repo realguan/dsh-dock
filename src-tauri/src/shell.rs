@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::manifest::ProductManifest;
+use crate::manifest::FallbackSpec;
 
 /// 一个被产品壳托管的 dsh 子进程。
 pub struct DshProcess {
@@ -25,15 +25,15 @@ pub struct DshProcess {
 }
 
 /// 启动 dsh：`<node> <dsh-bin.js> --profile <p> --port 0`，`DSH_HOME` 指向
-/// 快照内的虚拟 home。stdout/stderr 进数据目录日志文件（可排查故障）。
+/// 兜底副本的虚拟 home（内置档）。stdout/stderr 进数据目录日志文件（可排查故障）。
 pub fn spawn_dsh(
-    manifest: &ProductManifest,
+    fallback: &FallbackSpec,
     resources_dir: &Path,
     data_dir: &Path,
 ) -> Result<DshProcess> {
-    let node_bin = manifest.snapshot_path(resources_dir, &manifest.snapshot.node_bin);
-    let dsh_bin = manifest.snapshot_path(resources_dir, &manifest.snapshot.dsh_bin_js);
-    let dsh_home = manifest.snapshot_path(resources_dir, &manifest.snapshot.dsh_home);
+    let node_bin = fallback.resolve_path(resources_dir, &fallback.node_bin);
+    let dsh_bin = fallback.resolve_path(resources_dir, &fallback.dsh_bin_js);
+    let dsh_home = fallback.resolve_path(resources_dir, &fallback.dsh_home);
 
     // 快照零部件缺一不可：慢一点把错误讲清楚，别让 node 裸奔报「command not found」。
     if !node_bin.is_file() {
@@ -59,7 +59,7 @@ pub fn spawn_dsh(
     let mut cmd = Command::new(&node_bin);
     cmd.arg(&dsh_bin)
         .arg("--profile")
-        .arg(&manifest.snapshot.profile)
+        .arg(&fallback.profile)
         .arg("--port")
         .arg("0")
         // 桌面壳接管呈现：禁止 dsh 自开系统浏览器（冒烟实测：不加会在
@@ -76,7 +76,7 @@ pub fn spawn_dsh(
     tracing::info!(
         "dsh 已启动：pid={} profile={}",
         child.id(),
-        manifest.snapshot.profile
+        fallback.profile
     );
     Ok(DshProcess { child, log_path })
 }

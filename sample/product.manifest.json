@@ -1,10 +1,32 @@
 {
-  "format": 1,
+  "format": 2,
   "productName": "DeepSeek Harness Desktop",
-  "snapshot": {
+  "terminal": {
+    "defaultProfile": "web",
+    "resolution": {
+      "node": {
+        "tiers": [
+          "bundle",
+          "system",
+          "download"
+        ],
+        "requireEngines": true
+      },
+      "dsh": {
+        "tiers": [
+          "bundle",
+          "system",
+          "download"
+        ],
+        "minVersion": "0.1.0-rc.6",
+        "requireEngines": true
+      }
+    }
+  },
+  "fallback": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
     "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",
-    "profile": "default"
+    "profile": "web"
   }
 }

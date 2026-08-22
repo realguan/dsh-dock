@@ -65,11 +65,19 @@ cp -fR "$DSH_HOME"/. "$snap/home/"
 }
 
 # ---- 2) product.manifest.json ----
+MIN_VERSION="${MIN_VERSION:-0.1.0-rc.6}"
 cat > "$SRC_TAURI/resources/product.manifest.json" <<JSON
 {
-  "format": 1,
+  "format": 2,
   "productName": "$NAME",
-  "snapshot": {
+  "terminal": {
+    "defaultProfile": "$PROFILE",
+    "resolution": {
+      "node": { "tiers": ["bundle", "system", "download"], "requireEngines": true },
+      "dsh": { "tiers": ["bundle", "system", "download"], "minVersion": "$MIN_VERSION", "requireEngines": true }
+    }
+  },
+  "fallback": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
     "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",
