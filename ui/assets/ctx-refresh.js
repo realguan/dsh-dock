@@ -29,15 +29,18 @@
       .catch(() => {});
   });
 })();
-// 沉浸式标题栏衬垫：**常驻固定条**（fixed 顶层 10px，永不随滚动消失）。
+// 沉浸式标题栏衬垫：**常驻固定条**，永不随滚动消失。
 // 早期实现是 html 内边距——滚动时衬垫跟着内容滚走（观感回退，2026-08-23 修正）。
-// 内容本体仍由 10px padding 保持基线间距；本条在下层提供持久呼吸带。
+// 实测交通灯悬浮区约 y0..22、品牌胶囊 y24 起，故遮罩取 24px 与胶囊上缘平齐：
+// 滚动后内容最多露到 y24，交通灯下方永远是浅色呼吸带（2026-08-23 视觉验证）。
+// 内容本体仍由 PAD 保持静止基线间距；本条在下层提供持久遮罩。
 (() => {
   const PAD = 10;
+  const MASK_H = 24;
   document.documentElement.style.paddingTop = PAD + "px";
   const band = document.createElement("div");
   band.style.cssText =
-    "position:fixed;top:0;left:0;right:0;height:" + PAD + "px;" +
+    "position:fixed;top:0;left:0;right:0;height:" + MASK_H + "px;" +
     "background:rgba(249,250,251,0.98);" + // 与浅色主题 --bg 一致
     "z-index:2147483645;pointer-events:none;";
   document.documentElement.appendChild(band);
