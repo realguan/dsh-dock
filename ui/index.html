@@ -17,9 +17,9 @@
         </svg>
         <div class="brand">
           <div class="name">DSH Dock</div>
-          <div class="sub">DESKTOP TERMINAL · BOOT TELEMETRY</div>
+          <div class="sub">DSH Dock · 启动遥测</div>
         </div>
-        <div class="meta" id="meta">standby</div>
+        <div class="meta" id="meta">待机中</div>
       </header>
 
       <!-- 版本行：当前宿主 dsh + 后台更新检测（首启自动 + 手动检查） -->
@@ -126,7 +126,7 @@
         const meta = document.getElementById("meta");
         if (meta) {
           const idx = "01234".includes(String(p.step)) ? ["01","02","03","04","05"][p.step] : "?";
-          meta.textContent = p.state === "done" ? `step ${idx} ✓` : p.state === "error" ? `step ${idx} ✕` : `step ${idx} · ${p.state}`;
+          meta.textContent = p.state === "done" ? `步骤 ${idx} ✓` : p.state === "error" ? `步骤 ${idx} ✕` : `步骤 ${idx} · ${p.state}`;
         }
       });
 
