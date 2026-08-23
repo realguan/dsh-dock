@@ -26,6 +26,10 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # secrets 存在性先求值为 job env（step 级 if 不能直接读 secrets context）
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_APPLE_API_KEY: ${{ secrets.APPLE_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +56,7 @@ jobs:
       # macOS 签名证书导入（Developer ID Application .p12）。
       # secrets 未配置时跳过 → ad-hoc 签名（本机可跑，分发会被 Gatekeeper 拦）。
       - name: Import signing certificate
-        if: runner.os == 'macOS' && ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -80,7 +84,7 @@ jobs:
 
       # 公证用 API Key 落盘：tauri 需要 APPLE_API_KEY_PATH 指到含 .p8 内容的文件
       - name: Write API key file (macOS)
-        if: runner.os == 'macOS' && ${{ secrets.APPLE_API_KEY != '' }}
+        if: runner.os == 'macOS' && env.HAS_APPLE_API_KEY == 'true'
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
@@ -104,7 +108,7 @@ jobs:
         run: cargo tauri build
 
       - name: Verify signature (macOS)
-        if: runner.os == 'macOS' && ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         working-directory: src-tauri
         run: |
           codesign --verify --deep --strict --verbose=2 \
