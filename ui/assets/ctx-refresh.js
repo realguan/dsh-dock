@@ -29,6 +29,13 @@
       .catch(() => {});
   });
 })();
+// 沉浸式标题栏透明衬垫：把内容整体下移 14px（可 8/12/16 调），
+// 让交通灯与 dsh 品牌区留出 ~10px 缝隙（2026-08-23 观感裁定）。
+(() => {
+  const PAD = 14;
+  document.documentElement.style.paddingTop = PAD + "px";
+})();
+
 // 沉浸式标题栏拖拽热区：全宽 y0..20 透明条（实测 y0..22 全视图无交互元素），
 // 承担窗口拖动；data-tauri-drag-region 为 Tauri 原生拖拽协议。
 (() => {
