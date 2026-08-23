@@ -67,8 +67,9 @@ Apple 现在推荐用 **API Key** 而非账户密码公证：
 3. 验证步骤：`codesign --verify --deep --strict` 确认签名有效
 4. tag `v*` → release job 把带公证票的 .dmg / .zip 发到 GitHub Release
 
-**没配 secrets 时**：签名步骤被 `if: env.APPLE_CERTIFICATE != ''` 跳过 → ad-hoc 签名，
-构建照常出包（CI 可用、本机可跑），只是分发会被 Gatekeeper 拦。
+**没配 secrets 时**：CI 用 tauri.conf 默认的 ad-hoc 身份（`signingIdentity: "-"`）签名，
+构建照常出包（CI 可用、本机可跑），但分发会被 Gatekeeper 拦（"无法验证开发者"）。
+配了 `APPLE_SIGNING_IDENTITY` 后自动升格为 Developer ID 真签名。
 
 ---
 

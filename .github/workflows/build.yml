@@ -91,10 +91,12 @@ jobs:
           printf '%s\n' "$APPLE_API_KEY" > "$RUNNER_TEMP/apple-api-key.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple-api-key.p8" >> "$GITHUB_ENV"
 
-      # 构建 + 打包。macOS 带签名/公证 env 时，tauri 自动 codesign + notarize + staple：
-      #   签名：APPLE_SIGNING_IDENTITY（默认自动取 keychain 中的 Developer ID）
-      #   公证：APPLE_API_KEY/PATH/ISSUER/KEY_ID（App Store Connect API）或
-      #         APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID（应用专用密码）
+      # 构建 + 打包。macOS 签名身份：
+      #   无 APPLE_SIGNING_IDENTITY → tauri.conf 默认 "-"（ad-hoc，无证书也能出包）
+      #   有 → 用 --config 覆盖为真实 Developer ID 身份
+      # 公证 env 存在时 tauri 自动 notarize + staple：
+      #   APPLE_API_KEY/PATH/ISSUER/KEY_ID（App Store Connect API）或
+      #   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID（应用专用密码）
       - name: Build installers
         working-directory: src-tauri
         env:
@@ -105,7 +107,13 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: cargo tauri build
+        run: |
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            echo '{"bundle":{"macOS":{"signingIdentity":"'"$APPLE_SIGNING_IDENTITY"'"}}}' > /tmp/sign-config.json
+            cargo tauri build --config /tmp/sign-config.json
+          else
+            cargo tauri build
+          fi
 
       - name: Verify signature (macOS)
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'

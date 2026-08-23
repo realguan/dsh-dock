@@ -41,7 +41,7 @@
       "resources/dsh-snapshot/**/*"
     ],
     "macOS": {
-      "signingIdentity": null,
+      "signingIdentity": "-",
       "entitlements": "entitlements.plist"
     }
   }
