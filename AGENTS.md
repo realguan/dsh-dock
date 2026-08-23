@@ -62,7 +62,7 @@
   `boot:update`（更新检测结果，版本行芯片）。
 - 更新常驻落点 = **macOS 应用菜单**（托盘已砍，2026-08-23 裁定）：
   根菜单 id `st`（状态行，禁用）/ `check`（检查更新…，⌘U）/ `upgrade`
-  （升级到 X，新版才可用）/ `about`（关于 DSH 终端，开 ui/about.html 小窗）；
+  （升级到 X，新版才可用）/ `about`（关于，开 ui/about.html 小窗）；
   on_menu_event 对应 check→后台检测 / upgrade→upgrade_only→检测 / about→开窗。
   `upgrade_only` 不打断会话（升级下次启动生效）；about 窗口 label 须在
   capabilities windows 列表。

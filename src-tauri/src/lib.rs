@@ -557,7 +557,7 @@ fn build_app_menu(
         status.newer,
         None::<&str>,
     )?;
-    let about = MenuItem::with_id(app, "about", "关于 DSH 终端", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
@@ -644,7 +644,7 @@ fn open_about(app: &tauri::AppHandle) {
         "about",
         tauri::WebviewUrl::App("about.html".into()),
     )
-    .title("关于 DSH 终端")
+    .title("关于")
     .inner_size(460.0, 360.0)
     .resizable(false)
     .center();
