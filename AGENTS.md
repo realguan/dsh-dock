@@ -66,6 +66,10 @@
   on_menu_event 对应 check→后台检测 / upgrade→upgrade_only→检测 / about→开窗。
   `upgrade_only` 不打断会话（升级下次启动生效）；about 窗口 label 须在
   capabilities windows 列表。
+- 右键行为面（主窗口 init script `ui/assets/ctx-refresh.js`）：空白处右击 →
+  原生菜单「刷新」（window.__TAURI__.menu popup）；**选中文本 / 输入框 / 可编辑区
+  一律放行系统菜单**。主窗口改由 setup 内 WebviewWindowBuilder 创建（挂该脚本，
+  对每个文档含 dsh Web UI 持久生效）；tauri.conf windows 配置已移除。
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
