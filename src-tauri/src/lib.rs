@@ -328,9 +328,8 @@ pub fn run() {
             });
             app.manage(state.clone());
 
-            // 更新检测（首启后台异步 + 托盘常驻）：先给一个"检测中"初始状态，
-            // 背景线程完成后经 boot:update 推送并刷新托盘菜单。
-            setup_update_tray(app, &state)?;
+            // 更新检测（首启后台异步 + 应用菜单常驻）：先给"检测中"初始状态，
+            // 背景线程完成后经 boot:update 推送并刷新应用菜单。
             {
                 let status = crate::updates::UpdateStatus {
                     current: crate::updates::detect_current_version(),
@@ -339,7 +338,7 @@ pub fn run() {
                     error: None,
                 };
                 *state.update_status.lock().unwrap() = Some(status.clone());
-                refresh_tray_menu(&app_handle, &state);
+                refresh_app_menu(&app_handle, &state);
                 emit_update(&app_handle, &status);
             }
             let s2 = state.clone();
@@ -365,6 +364,25 @@ pub fn run() {
                 tracing::error!("启动 dsh 失败: {e}");
             }
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let state = app.state::<Arc<ShellState>>().inner().clone();
+            let handle = app.clone();
+            match event.id().as_ref() {
+                "check" => {
+                    std::thread::spawn(move || refresh_update_ui(&handle, &state));
+                }
+                "upgrade" => {
+                    std::thread::spawn(move || {
+                        if let Ok(data_dir) = handle.path().app_data_dir() {
+                            let _ = crate::updates::install_latest_global(&data_dir);
+                            refresh_update_ui(&handle, &state);
+                        }
+                    });
+                }
+                "about" => open_about(&handle),
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             choose_profile,
@@ -504,29 +522,32 @@ mod tests {
     }
 }
 
-// ---------- 更新托盘（macOS 菜单栏常驻） ----------
+// ---------- 更新应用菜单（macOS 菜单栏；托盘已砍，裁定 2026-08-23） ----------
 
-/// 组装托盘菜单：版本行 + 检测状态 + 检查/升级/退出。
-fn build_update_menu(
+/// 组装应用菜单（根菜单 = macOS App 菜单）：
+/// 状态行 → 检查更新…（⌘U）→ 升级到 X（有新版才可用）→ 关于 → 标准项。
+fn build_app_menu(
     app: &tauri::AppHandle,
     status: &crate::updates::UpdateStatus,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem};
 
-    let version_line = format!("dsh {}", status.current.clone().unwrap_or_else(|| "未知/内置".into()));
     let state_line = if status.error.is_some() {
         "检测失败（网络不可达）".to_string()
     } else if status.newer {
-        format!("发现新版 {} · 点击升级", status.latest.clone().unwrap_or_default())
+        format!(
+            "Dsh {} · 发现新版 {}",
+            status.current.clone().unwrap_or_else(|| "?".into()),
+            status.latest.clone().unwrap_or_default()
+        )
     } else if status.latest.is_some() {
-        "已是最新".to_string()
+        format!("Dsh {} · 已是最新", status.current.clone().unwrap_or_else(|| "?".into()))
     } else {
-        "检测中…".to_string()
+        format!("Dsh {} · 检测中…", status.current.clone().unwrap_or_else(|| "?".into()))
     };
 
-    let v = MenuItem::with_id(app, "ver", version_line, false, None::<&str>)?;
-    let s = MenuItem::with_id(app, "st", state_line, false, None::<&str>)?;
-    let check = MenuItem::with_id(app, "check", "检查更新", true, None::<&str>)?;
+    let st = MenuItem::with_id(app, "st", state_line, false, None::<&str>)?;
+    let check = MenuItem::with_id(app, "check", "检查更新…", true, Some("CmdOrCtrl+U"))?;
     let upgrade = MenuItem::with_id(
         app,
         "upgrade",
@@ -534,22 +555,67 @@ fn build_update_menu(
         status.newer,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "退出终端", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "关于 DSH 终端", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    MenuBuilder::new(app)
-        .item(&v)
-        .item(&s)
+    let services = PredefinedMenuItem::services(app, None)?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let show_all = PredefinedMenuItem::show_all(app, None)?;
+    let quit = PredefinedMenuItem::quit(app, None)?;
+
+    use tauri::menu::SubmenuBuilder;
+    let edit_menu = SubmenuBuilder::new(app, "编辑")
+        .item(&PredefinedMenuItem::undo(app, None)?)
+        .item(&PredefinedMenuItem::redo(app, None)?)
         .item(&sep)
+        .item(&PredefinedMenuItem::cut(app, None)?)
+        .item(&PredefinedMenuItem::copy(app, None)?)
+        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .build()?;
+
+    MenuBuilder::new(app)
+        .item(&st)
         .item(&check)
         .item(&upgrade)
         .item(&sep)
+        .item(&about)
+        .item(&sep)
+        .item(&services)
+        .item(&sep)
+        .item(&hide)
+        .item(&hide_others)
+        .item(&show_all)
+        .item(&sep)
         .item(&quit)
+        .separator()
+        .item(&edit_menu)
         .build()
 }
 
-/// 重建托盘菜单（状态变更后调用）。
-fn refresh_tray_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
+/// 发射 boot:update 事件（前端版本行芯片消费）。
+fn emit_update(app: &tauri::AppHandle, status: &crate::updates::UpdateStatus) {
+    use tauri::Emitter;
+    let _ = app.emit("boot:update", status);
+}
+
+/// 后台检测一次并同步应用菜单 + 事件（首启/手动/升级后共用）。
+fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
+    let status = crate::updates::check_now();
+    tracing::info!(
+        "更新检测：current={:?} latest={:?} newer={}",
+        status.current,
+        status.latest,
+        status.newer
+    );
+    *state.update_status.lock().unwrap() = Some(status.clone());
+    refresh_app_menu(app, state);
+    emit_update(app, &status);
+}
+
+/// 用最近状态重建并设置应用菜单（检测完成/升级后调用）。
+fn refresh_app_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
     let status = state
         .update_status
         .lock()
@@ -561,67 +627,27 @@ fn refresh_tray_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
             newer: false,
             error: None,
         });
-    if let Ok(menu) = build_update_menu(app, &status) {
-        if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_menu(Some(menu));
-        }
+    if let Ok(menu) = build_app_menu(app, &status) {
+        let _ = app.set_menu(menu);
     }
 }
 
-/// 发射 boot:update 事件（前端 chip 消费）。
-fn emit_update(app: &tauri::AppHandle, status: &crate::updates::UpdateStatus) {
-    use tauri::Emitter;
-    let _ = app.emit("boot:update", status);
+/// 关于面板：独立小窗（壳版本 + 宿主 dsh 版本 + 检查/升级），复用 ui/about.html。
+fn open_about(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("about") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "about",
+        tauri::WebviewUrl::App("about.html".into()),
+    )
+    .title("关于 DSH 终端")
+    .inner_size(460.0, 360.0)
+    .resizable(false)
+    .center();
+    let _ = builder.build();
 }
 
-/// 后台检测一次并同步托盘 + 事件（首启/手动/升级后共用）。
-fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
-    let status = crate::updates::check_now();
-    tracing::info!(
-        "更新检测：current={:?} latest={:?} newer={}",
-        status.current,
-        status.latest,
-        status.newer
-    );
-    *state.update_status.lock().unwrap() = Some(status.clone());
-    refresh_tray_menu(app, state);
-    emit_update(app, &status);
-}
-
-/// setup：托盘图标 + 菜单事件。
-fn setup_update_tray(app: &tauri::App, state: &Arc<ShellState>) -> tauri::Result<()> {
-    use tauri::tray::TrayIconBuilder;
-    let handle = app.handle().clone();
-    let s = state.clone();
-    let menu = build_update_menu(&handle, &crate::updates::UpdateStatus {
-        current: crate::updates::detect_current_version(),
-        latest: None,
-        newer: false,
-        error: None,
-    })?;
-    TrayIconBuilder::new()
-        .icon(app.default_window_icon().expect("bundle 图标应存在").clone())
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "check" => {
-                let s = s.clone();
-                let h = app.clone();
-                std::thread::spawn(move || refresh_update_ui(&h, &s));
-            }
-            "upgrade" => {
-                let s = s.clone();
-                let h = app.clone();
-                std::thread::spawn(move || {
-                    if let Ok(data_dir) = h.path().app_data_dir() {
-                        let _ = crate::updates::install_latest_global(&data_dir);
-                        refresh_update_ui(&h, &s);
-                    }
-                });
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .build(app)?;
-    Ok(())
-}

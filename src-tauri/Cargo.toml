@@ -22,7 +22,7 @@ flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tar = "0.4"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = [] }  # 托盘已砍（2026-08-23 裁定），更新入应用菜单
 ureq = "2" # 唯一网络面（updates 模块）：阻塞式小客户端，后台线程使用
 tracing = "0.1"
 tracing-subscriber = "0.3"

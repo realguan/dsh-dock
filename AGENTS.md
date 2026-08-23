@@ -59,9 +59,13 @@
   （tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
   消费——**注册例外**；新命令必须先在 AGENTS 登记。
 - 事件协议：`boot:step` / `boot:error`（启动遥测，index/selector 两页）+
-  `boot:update`（更新检测结果，版本行芯片）。macOS 菜单栏托盘（tauri tray-icon
-  feature）为版本/升级的常驻落点：菜单项 check/upgrade/quit；`upgrade_only`
-  不打断进行中的会话（升级下次启动生效）。
+  `boot:update`（更新检测结果，版本行芯片）。
+- 更新常驻落点 = **macOS 应用菜单**（托盘已砍，2026-08-23 裁定）：
+  根菜单 id `st`（状态行，禁用）/ `check`（检查更新…，⌘U）/ `upgrade`
+  （升级到 X，新版才可用）/ `about`（关于 DSH 终端，开 ui/about.html 小窗）；
+  on_menu_event 对应 check→后台检测 / upgrade→upgrade_only→检测 / about→开窗。
+  `upgrade_only` 不打断会话（升级下次启动生效）；about 窗口 label 须在
+  capabilities windows 列表。
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
