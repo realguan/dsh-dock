@@ -50,13 +50,13 @@
       }
 
       .about {
-        width: 380px;
-        padding: 40px 44px 30px;
+        width: 400px;
+        padding: 30px 36px 26px;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78));
         -webkit-backdrop-filter: blur(16px);
         backdrop-filter: blur(16px);
         border: 1px solid var(--line);
-        border-radius: 18px;
+        border-radius: 16px;
         box-shadow:
           0 24px 64px rgba(21, 23, 42, 0.1),
           inset 0 1px 0 rgba(255, 255, 255, 0.9);
@@ -72,71 +72,68 @@
       .head {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 14px;
       }
 
       .emblem {
         flex: none;
-        width: 46px;
-        height: 46px;
-        border-radius: 13px;
-        box-shadow: 0 10px 24px rgba(13, 18, 32, 0.35);
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        box-shadow: 0 8px 20px rgba(13, 18, 32, 0.3);
         display: block;
       }
 
       .brand .name {
         font-size: 16px;
         font-weight: 700;
-        letter-spacing: 0.2em;
+        letter-spacing: 0.18em;
         color: var(--fg);
       }
 
       .brand .role {
-        margin-top: 4px;
+        margin-top: 3px;
         font-size: 11px;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
         color: var(--faint);
       }
 
-      /* ---------- 版本行 ---------- */
+      /* ---------- 版本规格表（紧凑，标签固定列 + 值左对齐） ---------- */
       .versions {
-        margin-top: 26px;
+        margin-top: 22px;
         border-top: 1px solid var(--line);
-        padding-top: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+        padding-top: 14px;
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        row-gap: 9px;
+        column-gap: 18px;
       }
 
-      .row {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 14px;
-      }
-
-      .row .k {
+      .versions .k {
         font-size: 11px;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.08em;
         color: var(--faint);
       }
 
-      .row .v {
+      .versions .v {
         font-family: var(--mono);
         font-size: 12px;
         color: var(--fg);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
-      .row .v.upd { color: var(--warn); }
+      .versions .v.upd { color: var(--warn); }
 
       /* ---------- 更新状态行 ---------- */
       .updline {
-        margin-top: 18px;
+        margin-top: 16px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        min-height: 30px;
+        min-height: 28px;
       }
 
       .updline .st {
@@ -150,8 +147,8 @@
         flex: none;
         font-family: var(--sans);
         font-size: 11px;
-        letter-spacing: 0.06em;
-        padding: 6px 14px;
+        letter-spacing: 0.05em;
+        padding: 5px 13px;
         border-radius: 999px;
         border: 1px solid var(--line);
         background: rgba(255, 255, 255, 0.7);
@@ -170,12 +167,12 @@
 
       /* ---------- 页脚 ---------- */
       .foot {
-        margin-top: 22px;
-        padding-top: 14px;
+        margin-top: 18px;
+        padding-top: 12px;
         border-top: 1px solid var(--line);
         font-size: 10px;
-        line-height: 1.7;
-        letter-spacing: 0.04em;
+        line-height: 1.6;
+        letter-spacing: 0.03em;
         color: var(--faint);
       }
     </style>
@@ -202,11 +199,11 @@
         </div>
       </header>
 
-      <!-- 版本信息（客户端 + 宿主 dsh + 官方最新） -->
+      <!-- 版本规格表（客户端 + dsh + 官方最新） -->
       <div class="versions">
-        <div class="row"><span class="k">客户端</span><span class="v">DSH Dock 0.1.0</span></div>
-        <div class="row"><span class="k">dsh</span><span class="v" id="hostVer">检测中…</span></div>
-        <div class="row"><span class="k">官方最新</span><span class="v" id="latestVer">—</span></div>
+        <span class="k">客户端</span><span class="v">DSH Dock 0.1.0</span>
+        <span class="k">dsh</span><span class="v" id="hostVer">检测中…</span>
+        <span class="k">官方最新</span><span class="v" id="latestVer">—</span>
       </div>
 
       <!-- 更新状态 + 动作（实时渲染） -->
