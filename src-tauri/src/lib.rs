@@ -282,6 +282,23 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
+            // 主窗口改在 setup 内创建（2026-08-23）：挂初始化脚本
+            // ctx-refresh.js（空白右击→原生「刷新」，对每个文档含 dsh UI 持久生效）。
+            let _window = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("DeepSeek Harness")
+            .inner_size(1280.0, 820.0)
+            .min_inner_size(960.0, 640.0)
+            .center()
+            .resizable(true)
+            .initialization_script(include_str!("../../ui/assets/ctx-refresh.js"))
+            .background_color(tauri::window::Color(0xf9, 0xfa, 0xfb, 0xff)) // 浅色防白闪
+            .build()
+            .expect("main 窗口创建失败");
+
             // 契约缺失/不兼容 → 直接在窗口里给出可行动错误（A6：就地呈现）。
             let window = app
                 .get_webview_window("main")
