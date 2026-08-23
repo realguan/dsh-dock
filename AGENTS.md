@@ -66,6 +66,10 @@
   on_menu_event 对应 check→后台检测 / upgrade→upgrade_only→检测 / about→开窗。
   `upgrade_only` 不打断会话（升级下次启动生效）；about 窗口 label 须在
   capabilities windows 列表。
+- **沉浸式标题栏（2026-08-23 裁定）**：主窗口 titleBarStyle=Overlay + hiddenTitle
+  （WebView 顶到窗口上沿，交通灯悬浮进 dsh UI 顶部空白带——实测 y0..22 全视图
+  无交互元素、品牌胶囊 y24 起，故全宽 20px 拖拽热区与之零重叠；胶囊左上角
+  56×12px 与交通灯重叠属已接受裁决，功能无损）。改动记得同时维护 ctx-refresh.js。
 - 右键行为面（主窗口 init script `ui/assets/ctx-refresh.js`）：空白处右击 →
   原生菜单「刷新」（window.__TAURI__.menu popup）；**选中文本 / 输入框 / 可编辑区
   一律放行系统菜单**。主窗口改由 setup 内 WebviewWindowBuilder 创建（挂该脚本，

@@ -29,3 +29,14 @@
       .catch(() => {});
   });
 })();
+// 沉浸式标题栏拖拽热区：全宽 y0..20 透明条（实测 y0..22 全视图无交互元素），
+// 承担窗口拖动；data-tauri-drag-region 为 Tauri 原生拖拽协议。
+(() => {
+  const strip = document.createElement("div");
+  strip.setAttribute("data-tauri-drag-region", "");
+  strip.style.cssText =
+    "position:fixed;top:0;left:0;right:0;height:20px;z-index:2147483646;" +
+    "-webkit-user-select:none;user-select:none;cursor:default;";
+  strip.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.documentElement.appendChild(strip);
+})();
