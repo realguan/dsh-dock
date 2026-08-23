@@ -29,11 +29,18 @@
       .catch(() => {});
   });
 })();
-// 沉浸式标题栏透明衬垫：把内容整体下移 14px（可 8/12/16 调），
-// 让交通灯与 dsh 品牌区留出 ~10px 缝隙（2026-08-23 观感裁定）。
+// 沉浸式标题栏衬垫：**常驻固定条**（fixed 顶层 10px，永不随滚动消失）。
+// 早期实现是 html 内边距——滚动时衬垫跟着内容滚走（观感回退，2026-08-23 修正）。
+// 内容本体仍由 10px padding 保持基线间距；本条在下层提供持久呼吸带。
 (() => {
   const PAD = 10;
   document.documentElement.style.paddingTop = PAD + "px";
+  const band = document.createElement("div");
+  band.style.cssText =
+    "position:fixed;top:0;left:0;right:0;height:" + PAD + "px;" +
+    "background:rgba(249,250,251,0.98);" + // 与浅色主题 --bg 一致
+    "z-index:2147483645;pointer-events:none;";
+  document.documentElement.appendChild(band);
 })();
 
 // 沉浸式标题栏拖拽热区：全宽 y0..20 透明条（实测 y0..22 全视图无交互元素），
