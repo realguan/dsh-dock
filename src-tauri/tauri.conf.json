@@ -39,6 +39,10 @@
     "resources": [
       "resources/product.manifest.json",
       "resources/dsh-snapshot/**/*"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": null,
+      "entitlements": "entitlements.plist"
+    }
   }
 }

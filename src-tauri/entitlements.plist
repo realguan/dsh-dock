@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime 的 JIT 例外：WebView/渲染进程必需 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- 允许非签名可执行内存：WKWebView 渲染进程需要 -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- 关闭库校验：允许加载注入的框架/脚本（Tauri v2 惯例） -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

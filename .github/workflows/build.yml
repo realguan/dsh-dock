@@ -49,21 +49,68 @@ jobs:
             librsvg2-dev \
             patchelf
 
+      # macOS 签名证书导入（Developer ID Application .p12）。
+      # secrets 未配置时跳过 → ad-hoc 签名（本机可跑，分发会被 Gatekeeper 拦）。
+      - name: Import signing certificate
+        if: runner.os == 'macOS' && ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/apple-cert.p12
+          security create-keychain -p github build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p github build.keychain
+          security import /tmp/apple-cert.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/notarytool
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k github build.keychain
+          security find-identity -v build.keychain
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked
+        run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
 
       - name: Unit tests
         working-directory: src-tauri
         run: cargo test
 
+      # 公证用 API Key 落盘：tauri 需要 APPLE_API_KEY_PATH 指到含 .p8 内容的文件
+      - name: Write API key file (macOS)
+        if: runner.os == 'macOS' && ${{ secrets.APPLE_API_KEY != '' }}
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          printf '%s\n' "$APPLE_API_KEY" > "$RUNNER_TEMP/apple-api-key.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple-api-key.p8" >> "$GITHUB_ENV"
+
+      # 构建 + 打包。macOS 带签名/公证 env 时，tauri 自动 codesign + notarize + staple：
+      #   签名：APPLE_SIGNING_IDENTITY（默认自动取 keychain 中的 Developer ID）
+      #   公证：APPLE_API_KEY/PATH/ISSUER/KEY_ID（App Store Connect API）或
+      #         APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID（应用专用密码）
       - name: Build installers
         working-directory: src-tauri
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: cargo tauri build
+
+      - name: Verify signature (macOS)
+        if: runner.os == 'macOS' && ${{ secrets.APPLE_CERTIFICATE != '' }}
+        working-directory: src-tauri
+        run: |
+          codesign --verify --deep --strict --verbose=2 \
+            "target/release/bundle/macos/DSH Dock.app"
+          spctl --assess --type execute --verbose=4 \
+            "target/release/bundle/macos/DSH Dock.app" 2>&1 || echo "(公证票未 stapled 时不通过 spctl，已记录)"
 
       - name: Upload bundles (CI artifact)
         uses: actions/upload-artifact@v4
