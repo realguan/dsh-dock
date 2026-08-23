@@ -287,6 +287,10 @@ pub fn run() {
                 .get_webview_window("main")
                 .expect("main 窗口应由 tauri.conf.json 创建");
             let app_handle = app.handle().clone();
+            // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.clear_all_browsing_data();
+            }
             let manifest = match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json"))
             {
                 Ok(m) => m,
