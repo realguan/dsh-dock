@@ -99,6 +99,7 @@ jobs:
       #   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID（应用专用密码）
       - name: Build installers
         working-directory: src-tauri
+        shell: bash
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -108,7 +109,7 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+          if [ "$RUNNER_OS" = "macOS" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
             echo '{"bundle":{"macOS":{"signingIdentity":"'"$APPLE_SIGNING_IDENTITY"'"}}}' > /tmp/sign-config.json
             cargo tauri build --config /tmp/sign-config.json
           else
