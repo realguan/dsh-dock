@@ -1,16 +1,16 @@
 [package]
-name = "dsh-desktop-shell"
+name = "dsh-dock"
 version = "0.1.0"
 edition = "2021"
-description = "Tauri product shell for standalone DeepSeek Harness desktop builds (ADR-0004)"
+description = "DSH Dock — Tauri product shell for standalone dsh desktop builds (ADR-0004)"
 rust-version = "1.77.2"
 
 [lib]
-name = "dsh_desktop_shell_lib"
+name = "dsh_dock_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "dsh-desktop-shell"
+name = "dsh-dock"
 path = "src/main.rs"
 
 [build-dependencies]

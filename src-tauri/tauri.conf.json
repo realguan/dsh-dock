@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "dsh-desktop-shell",
+  "productName": "dsh-dock",
   "version": "0.1.0",
-  "identifier": "dev.deepseek.dsh-desktop",
+  "identifier": "dev.deepseek.dsh-dock",
   "build": {
     "frontendDist": "../ui"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DeepSeek Harness",
+        "title": "DSH Dock",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

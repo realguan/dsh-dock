@@ -237,7 +237,7 @@ mod tests {
     fn loads_v2_terminal_manifest() {
         let json = r#"{
           "format": 2,
-          "productName": "DeepSeek Harness Desktop",
+          "productName": "DSH Dock",
           "terminal": {
             "defaultProfile": "web",
             "resolution": {

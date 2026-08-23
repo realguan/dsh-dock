@@ -1,4 +1,4 @@
-# 产品壳契约 v1（dsh-desktop-shell）
+# 产品壳契约 v1（dsh-dock / DSH Dock）
 
 本文是**启动器 packaging 服务 ↔ 产品壳**之间的接口定义（ADR-0004）。
 两侧共同遵守，任何一侧改动须先修订本文件并升 `format`。
@@ -50,7 +50,7 @@ resources/
 ```json
 {
   "format": 1,
-  "productName": "DeepSeek Harness Desktop",
+  "productName": "DSH Dock",
   "snapshot": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
     "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
@@ -123,7 +123,7 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 ```json
 {
   "format": 2,
-  "productName": "DeepSeek Harness Desktop",
+  "productName": "DSH Dock",
   "terminal": {
     "defaultProfile": "desktop-demo",
     "resolution": {

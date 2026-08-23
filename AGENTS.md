@@ -1,4 +1,4 @@
-# 项目级 AI 编码规范（dsh-desktop-shell）
+# 项目级 AI 编码规范（dsh-dock / DSH Dock）
 
 ## 定位（必须理解再动手）
 

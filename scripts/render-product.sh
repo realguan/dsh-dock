@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_TAURI="$ROOT/src-tauri"
 
 # ---- 解析参数 ----
-NODE_BIN=""; DSH_RUNTIME=""; DSH_HOME=""; PROFILE="default"; NAME="DeepSeek Harness Desktop"; ID="dev.deepseek.dsh-desktop"; ICONS_DIR=""
+NODE_BIN=""; DSH_RUNTIME=""; DSH_HOME=""; PROFILE="default"; NAME="DSH Dock"; ID="dev.deepseek.dsh-dock"; ICONS_DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --node) NODE_BIN="$2"; shift 2;;

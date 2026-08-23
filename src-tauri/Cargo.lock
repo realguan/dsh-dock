@@ -677,7 +677,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dsh-desktop-shell"
+name = "dsh-dock"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -1,4 +1,4 @@
-//! dsh-desktop-shell —— ADR-0005 的「桌面终端」：一个极小的 Tauri 桌面壳。
+//! dsh-dock —— DSH Dock：一个极小的 Tauri 桌面壳。
 //!
 //! 职责（docs/contract.md「运行时策略」）：
 //!   1. 读取 product.manifest.json（运行时契约，v2 终端 + 宿主解析策略）；
@@ -561,7 +561,7 @@ fn build_app_menu(
     let sep = PredefinedMenuItem::separator(app)?;
 
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
-    let app_menu = SubmenuBuilder::new(app, "dsh-desktop-shell")
+    let app_menu = SubmenuBuilder::new(app, "dsh-dock")
         .item(&st)
         .item(&check)
         .item(&upgrade)

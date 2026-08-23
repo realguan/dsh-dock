@@ -1,7 +1,7 @@
-# dsh-desktop-shell
+# dsh-dock（DSH Dock）
 
 ADR-0004 的「产品壳」：一个极小的 **Tauri v2 桌面壳**，把装配好的 dsh 工作台以一个
-**独立、可安装、跨平台**的桌面版 DeepSeek Harness 呈现给最终用户。
+**独立、可安装、跨平台**的桌面版 DSH Dock 呈现给最终用户。
 
 > 位置关系（见 [dsh-launcher ADR-0004](https://github.com/realguan/dsh-plugin-hub/tree/main/dsh-launcher/docs/adr/0004-standalone-desktop-package.md)）：
 > 启动器是装配车间，工作台是装配工位；本仓库是「样机的可复刻外壳」——同一份壳，
@@ -39,7 +39,7 @@ cargo tauri build
 # 注入一个真实产品后出包：
 ../scripts/render-product.sh \
   --node <platform-node> --dsh-runtime <node-modules-root> --dsh-home <virtual-home> \
-  --profile default --name "我的 DeepSeek Harness" --id com.me.dshdesktop
+  --profile default --name "我的 DSH Dock" --id com.me.dshdock
 cd src-tauri && cargo tauri build
 ```
 
@@ -57,7 +57,7 @@ cd src-tauri && cargo tauri build
 ## 结构
 
 ```
-dsh-desktop-shell/
+dsh-dock/
 ├── ui/                    # 壳自带加载页（静态，无框架无构建器）
 ├── src-tauri/
 │   ├── src/
