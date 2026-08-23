@@ -1,18 +1,26 @@
-# 三平台构建验证：证明壳在 macOS / Windows / Linux 都能编译 + 出安装包。
+# 跨平台桌面客户端构建（DSH Dock）
 #
-# ADR-0004 D5：单机一键只产本平台安装包；跨 OS 产物由本矩阵全自动产出。
-# 本 workflow 用「默认壳」（sample manifest、无真实快照）验证流水线；
-# 启动器 packaging 服务接入后，可在 workflow_dispatch 里注入快照 artifact +
-# 先跑 scripts/render-product.sh 再 build（见 docs/contract.md 构建流程）。
+# 两段式：
+# 1) push / PR / 手动 → 三平台矩阵构建验证 + artifact 上传（开发态）
+# 2) tag v* → 同一矩阵构建 + 聚合为 GitHub Release（发布态）
+#
+# 默认壳：本仓库 resources/product.manifest.json（极简档：system → download，
+# 不携带快照；见 docs/contract.md）。产物为自解压安装包 / .app / .dmg / .deb。
 name: build
 
 on:
   push:
+    branches: [master]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
+env:
+  TAURI_CLI_VERSION: "2.8.4"
+
 jobs:
   build:
+    name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -24,12 +32,22 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Ubuntu system deps (widgets, tray, a11y, ...)
+      # Tauri v2 官方要求的系统依赖（Linux 构建安装包必需）
+      - name: Ubuntu system deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libgtk-3-dev
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -37,7 +55,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version '^2' --locked
+        run: cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked
 
       - name: Unit tests
         working-directory: src-tauri
@@ -47,10 +65,57 @@ jobs:
         working-directory: src-tauri
         run: cargo tauri build
 
-      - name: Upload bundles
+      - name: Upload bundles (CI artifact)
         uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}
           path: |
             src-tauri/target/release/bundle/*
           if-no-files-found: error
+          retention-days: 14
+
+  # tag v* 时把三平台产物聚合成 GitHub Release（发布态）
+  release:
+    name: release (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          path: bundles
+
+      - name: List bundles
+        run: find bundles -type f ! -path "*/macos/*.app/*" | sort
+
+      # 只发布「文件型」产物：macOS 的 .dmg、Windows 的 .msi/.exe、Linux 的 .deb/.rpm/.AppImage。
+      # .app 是目录（macOS），不能作为 Release asset——需要 .dmg 或先 zip。
+      - name: Prepare macOS .app (zip)
+        if: matrix.os == 'macos-latest'
+        working-directory: bundles/macos
+        run: |
+          ditto -c -k --keepParent "DSH Dock.app" "DSH Dock.app.zip" || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: false
+          files: |
+            bundles/dmg/*
+            bundles/windows/*
+            bundles/deb/*
+            bundles/rpm/*
+            bundles/appimage/*
+            bundles/macos/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
