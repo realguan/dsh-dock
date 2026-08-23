@@ -524,13 +524,15 @@ mod tests {
 
 // ---------- 更新应用菜单（macOS 菜单栏；托盘已砍，裁定 2026-08-23） ----------
 
-/// 组装应用菜单（根菜单 = macOS App 菜单）：
-/// 状态行 → 检查更新…（⌘U）→ 升级到 X（有新版才可用）→ 关于 → 标准项。
+/// 组装应用菜单：macOS 菜单栏结构 = 根菜单内放「App 子菜单」+「编辑」子菜单。
+/// 第一个子菜单被 macOS 自动视为 App 菜单（标题取 app 名、图标取 bundle 图标）——
+/// 平铺 MenuItem 会导致菜单栏出现齿轮占位图标（2026-08-23 实测）。
+/// App 菜单内容：状态行 → 检查更新…（⌘U）→ 升级到 X → 关于 → 标准项。
 fn build_app_menu(
     app: &tauri::AppHandle,
     status: &crate::updates::UpdateStatus,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem};
+    use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 
     let state_line = if status.error.is_some() {
         "检测失败（网络不可达）".to_string()
@@ -558,13 +560,24 @@ fn build_app_menu(
     let about = MenuItem::with_id(app, "about", "关于 DSH 终端", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    let services = PredefinedMenuItem::services(app, None)?;
-    let hide = PredefinedMenuItem::hide(app, None)?;
-    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
-    let show_all = PredefinedMenuItem::show_all(app, None)?;
-    let quit = PredefinedMenuItem::quit(app, None)?;
+    // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
+    let app_menu = SubmenuBuilder::new(app, "dsh-desktop-shell")
+        .item(&st)
+        .item(&check)
+        .item(&upgrade)
+        .item(&sep)
+        .item(&about)
+        .item(&sep)
+        .item(&PredefinedMenuItem::services(app, None)?)
+        .item(&sep)
+        .item(&PredefinedMenuItem::hide(app, None)?)
+        .item(&PredefinedMenuItem::hide_others(app, None)?)
+        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .item(&sep)
+        .item(&PredefinedMenuItem::quit(app, None)?)
+        .build()?;
 
-    use tauri::menu::SubmenuBuilder;
+    // 编辑子菜单（WebView 文本编辑可用）
     let edit_menu = SubmenuBuilder::new(app, "编辑")
         .item(&PredefinedMenuItem::undo(app, None)?)
         .item(&PredefinedMenuItem::redo(app, None)?)
@@ -576,20 +589,7 @@ fn build_app_menu(
         .build()?;
 
     MenuBuilder::new(app)
-        .item(&st)
-        .item(&check)
-        .item(&upgrade)
-        .item(&sep)
-        .item(&about)
-        .item(&sep)
-        .item(&services)
-        .item(&sep)
-        .item(&hide)
-        .item(&hide_others)
-        .item(&show_all)
-        .item(&sep)
-        .item(&quit)
-        .separator()
+        .item(&app_menu)
         .item(&edit_menu)
         .build()
 }
