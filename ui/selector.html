@@ -36,7 +36,44 @@
       <section id="errorBox"></section>
     </main>
 
+    <!-- 单脚本块（2026-08-23 重构：合并版本行与选择器逻辑，杜绝脚本块间残留文本） -->
     <script>
+      // ================= 版本行 / 更新芯片 =================
+      // 协议：get_update_status（即读）+ check_updates（手动后台）+ boot:update（事件）
+      const updEl = document.getElementById("upd");
+      function renderUpd(s) {
+        if (!updEl) return;
+        const ver = s.current ? `dsh ${s.current}` : "dsh 未知";
+        let html = `<span class="ver">${ver}</span>`;
+        if (s.error) {
+          html += `<span class="st">检测失败（网络不可达）</span><button class="chip" id="updCheck">检查</button>`;
+        } else if (s.latest && s.newer) {
+          html += `<span class="st new">▲ 发现新版 ${s.latest}</span>` +
+                  `<button class="chip primary" id="updGo">升级到 ${s.latest}</button>` +
+                  `<button class="chip" id="updCheck">检查</button>`;
+        } else if (s.latest) {
+          html += `<span class="st ok">● 已是最新 ${s.latest}</span><button class="chip" id="updCheck">检查</button>`;
+        } else {
+          html += `<span class="st">◐ 检测中…</span>`;
+        }
+        updEl.innerHTML = html;
+        const go = document.getElementById("updGo");
+        if (go) go.addEventListener("click", () => {
+          go.disabled = true; go.textContent = "升级中…";
+          window.__TAURI__.core.invoke("terminal_action", { action: "upgrade_only" }).catch((e) => {
+            go.textContent = "升级失败";
+          });
+        });
+        const chk = document.getElementById("updCheck");
+        if (chk) chk.addEventListener("click", () => {
+          chk.disabled = true; chk.textContent = "检测中…";
+          window.__TAURI__.core.invoke("check_updates").catch(() => { chk.disabled = false; chk.textContent = "检查"; });
+        });
+      }
+      window.__TAURI__.core.invoke("get_update_status").then(renderUpd);
+      window.__TAURI__.event.listen("boot:update", (ev) => renderUpd(ev.payload));
+
+      // ================= 工作台选择（F-b） =================
       const qs = new URLSearchParams(location.search);
       const profiles = (qs.get("profiles") || "web").split(",").filter(Boolean);
       const list = document.getElementById("list");
@@ -97,7 +134,7 @@
         list.appendChild(btn);
       });
 
-      // 消费与遥测台一致的事件流：选择后全程可视
+      // 选择后消费与遥测台一致的事件流：进度全程可视
       window.__TAURI__.event.listen("boot:step", (ev) => {
         const p = ev.payload;
         beacon.className = "beacon" + (p.state === "running" ? "" : "");
@@ -114,41 +151,5 @@
         showError(ev.payload);
       });
     </script>
-  
-      // ---- 版本行 / 更新芯片（get_update_status + boot:update + check_updates）----
-    <script>
-const updEl = document.getElementById("upd");
-      function renderUpd(s) {
-        if (!updEl) return;
-        const ver = s.current ? `dsh ${s.current}` : "dsh 未知";
-        let html = `<span class="ver">${ver}</span>`;
-        if (s.error) {
-          html += `<span class="st">检测失败（网络不可达）</span><button class="chip" id="updCheck">检查</button>`;
-        } else if (s.latest && s.newer) {
-          html += `<span class="st new">▲ 发现新版 ${s.latest}</span>` +
-                  `<button class="chip primary" id="updGo">升级到 ${s.latest}</button>` +
-                  `<button class="chip" id="updCheck">检查</button>`;
-        } else if (s.latest) {
-          html += `<span class="st ok">● 已是最新 ${s.latest}</span><button class="chip" id="updCheck">检查</button>`;
-        } else {
-          html += `<span class="st">◐ 检测中…</span>`;
-        }
-        updEl.innerHTML = html;
-        const go = document.getElementById("updGo");
-        if (go) go.addEventListener("click", () => {
-          go.disabled = true; go.textContent = "升级中…";
-          window.__TAURI__.core.invoke("terminal_action", { action: "upgrade_only" }).catch((e) => {
-            go.textContent = "升级失败";
-          });
-        });
-        const chk = document.getElementById("updCheck");
-        if (chk) chk.addEventListener("click", () => {
-          chk.disabled = true; chk.textContent = "检测中…";
-          window.__TAURI__.core.invoke("check_updates").catch(() => { chk.disabled = false; chk.textContent = "检查"; });
-        });
-      }
-      window.__TAURI__.core.invoke("get_update_status").then(renderUpd);
-      window.__TAURI__.event.listen("boot:update", (ev) => renderUpd(ev.payload));
-    </script>
   </body>
-  </html>
+</html>
