@@ -65,8 +65,9 @@ jobs:
           security create-keychain -p github build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p github build.keychain
+          # 只授 codesign 信任；notarytool 走 xcrun（runner 上不在 /usr/bin）
           security import /tmp/apple-cert.p12 -k build.keychain \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/notarytool
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k github build.keychain
           security find-identity -v build.keychain
 
