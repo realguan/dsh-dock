@@ -6,8 +6,24 @@
     <meta http-equiv="Cache-Control" content="no-store" />
     <title>关于 DSH 终端</title>
     <link rel="stylesheet" href="assets/app.css" />
+    <style>
+      /* 关于面板：遥测台袖珍版——单栏信息 + 更新动作 */
+      .about { width: 400px; padding: 26px 28px 24px; }
+      .about .head { gap: 12px; }
+      .about .name { font-size: 13px; letter-spacing: .24em; }
+      .about .sub { font-size: 10px; }
+      .kv { margin-top: 20px; display: flex; flex-direction: column; gap: 7px; }
+      .kv .row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; letter-spacing: .04em; }
+      .kv .row .k { color: var(--faint); }
+      .kv .row .v { color: var(--fg); }
+      .kv .row .v.upd { color: var(--warn); }
+      #upd { margin-top: 14px; }
+      .about .actions { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+      .about .actions .chip { font-size: 11px; padding: 7px 16px; }
+      .about .foot { margin-top: 16px; font-size: 9.5px; color: var(--faint); letter-spacing: .06em; }
+    </style>
   </head>
-  <body class="about-page">
+  <body style="align-items:start;padding-top:6vh;">
     <main class="console about">
       <header class="head">
         <!-- 官方 dsh 标（同源风格） -->
