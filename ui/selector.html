@@ -19,6 +19,9 @@
         </div>
       </header>
 
+      <!-- 版本行：当前宿主 dsh + 后台更新检测 -->
+      <div class="updline" id="upd"></div>
+
       <h1 style="margin-top:26px;font-size:16px;letter-spacing:.14em;color:var(--fg)">选择工作台</h1>
 
       <div class="pick-list" id="list"></div>
@@ -110,5 +113,41 @@
         showError(ev.payload);
       });
     </script>
+  
+      // ---- 版本行 / 更新芯片（get_update_status + boot:update + check_updates）----
+    <script>
+const updEl = document.getElementById("upd");
+      function renderUpd(s) {
+        if (!updEl) return;
+        const ver = s.current ? `dsh ${s.current}` : "dsh 未知";
+        let html = `<span class="ver">${ver}</span>`;
+        if (s.error) {
+          html += `<span class="st">检测失败（网络不可达）</span><button class="chip" id="updCheck">检查</button>`;
+        } else if (s.latest && s.newer) {
+          html += `<span class="st new">▲ 发现新版 ${s.latest}</span>` +
+                  `<button class="chip primary" id="updGo">升级到 ${s.latest}</button>` +
+                  `<button class="chip" id="updCheck">检查</button>`;
+        } else if (s.latest) {
+          html += `<span class="st ok">● 已是最新 ${s.latest}</span><button class="chip" id="updCheck">检查</button>`;
+        } else {
+          html += `<span class="st">◐ 检测中…</span>`;
+        }
+        updEl.innerHTML = html;
+        const go = document.getElementById("updGo");
+        if (go) go.addEventListener("click", () => {
+          go.disabled = true; go.textContent = "升级中…";
+          window.__TAURI__.core.invoke("terminal_action", { action: "upgrade_only" }).catch((e) => {
+            go.textContent = "升级失败";
+          });
+        });
+        const chk = document.getElementById("updCheck");
+        if (chk) chk.addEventListener("click", () => {
+          chk.disabled = true; chk.textContent = "检测中…";
+          window.__TAURI__.core.invoke("check_updates").catch(() => { chk.disabled = false; chk.textContent = "检查"; });
+        });
+      }
+      window.__TAURI__.core.invoke("get_update_status").then(renderUpd);
+      window.__TAURI__.event.listen("boot:update", (ev) => renderUpd(ev.payload));
+    </script>
   </body>
-</html>
+  </html>

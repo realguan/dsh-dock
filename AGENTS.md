@@ -54,9 +54,14 @@
 ## IPC 与网络面（最小面例外册）
 
 - IPC 命令（已登记）：`choose_profile`（选择器）、`terminal_action`（错误卡
-  动作 retry/upgrade）。前端经 `window.__TAURI__.core.invoke` 调用（tauri.conf
-  已开 withGlobalTauri），事件流 `boot:step` / `boot:error` 由 lib.rs 发射、
-  ui/index.html 与 ui/selector.html 消费——**注册例外**；新命令必须先在 AGENTS 登记。
+  动作 retry/upgrade/upgrade_only）、`get_update_status`（版本状态即读）、
+  `check_updates`（手动后台检测）。前端经 `window.__TAURI__.core.invoke` 调用
+  （tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
+  消费——**注册例外**；新命令必须先在 AGENTS 登记。
+- 事件协议：`boot:step` / `boot:error`（启动遥测，index/selector 两页）+
+  `boot:update`（更新检测结果，版本行芯片）。macOS 菜单栏托盘（tauri tray-icon
+  feature）为版本/升级的常驻落点：菜单项 check/upgrade/quit；`upgrade_only`
+  不打断进行中的会话（升级下次启动生效）。
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。

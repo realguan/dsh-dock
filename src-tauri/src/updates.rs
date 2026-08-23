@@ -70,6 +70,47 @@ pub fn fetch_latest_version() -> Option<String> {
     parse_versions(&packument).into_iter().next()
 }
 
+// ---------- 版本状态（更新检测） ----------
+
+/// 更新检测结果（前端 chip 与托盘菜单共用）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UpdateStatus {
+    /// 当前宿主 dsh 版本（system 探测；None = 内置/未知）。
+    pub current: Option<String>,
+    /// registry 排序最高版本（rc 也追）。
+    pub latest: Option<String>,
+    /// 有新版：current < latest 且两者都已知。
+    pub newer: bool,
+    /// 检测失败原因（仅展示）。
+    pub error: Option<String>,
+}
+
+/// 有新版判定（纯函数，供测试）。
+pub fn is_newer(current: &str, latest: &str) -> bool {
+    crate::resolve::compare_versions_asc(current, latest) == std::cmp::Ordering::Less
+}
+
+/// 当前宿主 dsh 版本：system 档探测（跟随启动链语义）。
+pub fn detect_current_version() -> Option<String> {
+    let path = crate::resolve::effective_path();
+    crate::resolve::detect_system_dsh(&path).map(|d| d.version)
+}
+
+/// 一次完整检测（当前版本 + 官方最新 + 比较）。网络失败不视为致命：error 展示。
+pub fn check_now() -> UpdateStatus {
+    let current = detect_current_version();
+    let network = fetch_latest_version();
+    let (latest, error) = match network {
+        Some(v) => (Some(v), None),
+        None => (None, Some("registry 不可达或返回异常".to_string())),
+    };
+    let newer = match (&current, &latest) {
+        (Some(c), Some(l)) => is_newer(c, l),
+        _ => false,
+    };
+    UpdateStatus { current, latest, newer, error }
+}
+
 // ---------- node 私有缓存 ----------
 
 /// node 缓存根：<data_dir>/tools/node/<version>/。
@@ -281,6 +322,14 @@ mod tests {
         .unwrap();
         let vs = parse_versions(&packument);
         assert_eq!(vs, vec!["0.1.0", "0.1.0-rc.9", "0.1.0-rc.7", "0.1.0-rc.5"]);
+    }
+
+    #[test]
+    fn newer_detection_uses_rc_ordering() {
+        assert!(is_newer("0.1.0-rc.6", "0.1.1-rc.2"));
+        assert!(is_newer("0.1.1-rc.2", "0.1.1"));
+        assert!(!is_newer("0.1.1-rc.2", "0.1.1-rc.2"));
+        assert!(!is_newer("0.1.1", "0.1.1-rc.9"));
     }
 
     #[test]

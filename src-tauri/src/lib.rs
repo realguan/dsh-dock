@@ -28,6 +28,8 @@ struct ShellState {
     window: tauri::WebviewWindow,
     /// 选择器场景：解析完成但尚未 spawn 的 LaunchSpec（用户选择后落地）。
     pending: Mutex<Option<crate::resolve::LaunchSpec>>,
+    /// 最近一次更新检测结果（前端 chip / 托盘菜单共用）。
+    update_status: Mutex<Option<crate::updates::UpdateStatus>>,
 }
 
 /// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
@@ -124,7 +126,30 @@ fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
     Ok(())
 }
 
+/// 前端/托盘读取最近一次检测结果（即读，不触网）。
+#[tauri::command]
+fn get_update_status(app: tauri::AppHandle) -> Result<crate::updates::UpdateStatus, String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    let cached = state.update_status.lock().unwrap().clone();
+    Ok(cached.unwrap_or(crate::updates::UpdateStatus {
+        current: None,
+        latest: None,
+        newer: false,
+        error: None,
+    }))
+}
+
+/// 手动触发后台检测（异步：立即返回，完成时 boot:update + 托盘刷新）。
+#[tauri::command]
+fn check_updates(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    let handle = app.clone();
+    std::thread::spawn(move || refresh_update_ui(&handle, &state));
+    Ok(())
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
+/// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
 #[tauri::command]
 fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     let state = app
@@ -134,15 +159,22 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
     std::thread::spawn(move || {
-        // upgrade：动用户全局 dsh（按钮确认即授权，动作本身在后台线程）
-        if action == "upgrade" {
+        // upgrade / upgrade_only：动用户全局 dsh（按钮确认即授权，动作在后台线程）
+        if action == "upgrade" || action == "upgrade_only" {
             emit_step(&handle, 2, "running", "升级官方 dsh（npm 全局，最新版）…");
             match crate::updates::install_latest_global(&data_dir) {
-                Ok(_) => emit_step(&handle, 2, "done", "dsh 升级完成"),
+                Ok(_) => {
+                    emit_step(&handle, 2, "done", "dsh 升级完成");
+                    // 刷新版本状态（托盘/前端 chip）
+                    refresh_update_ui(&handle, &state);
+                }
                 Err(e) => {
                     emit_boot_error(&handle, &format!("升级失败：{e}"), "");
                     return;
                 }
+            }
+            if action == "upgrade_only" {
+                return;
             }
         }
         // 重新走解析链 + 启动
@@ -288,8 +320,27 @@ pub fn run() {
                 dsh: Mutex::new(None),
                 window: window.clone(),
                 pending: Mutex::new(None),
+                update_status: Mutex::new(None),
             });
             app.manage(state.clone());
+
+            // 更新检测（首启后台异步 + 托盘常驻）：先给一个"检测中"初始状态，
+            // 背景线程完成后经 boot:update 推送并刷新托盘菜单。
+            setup_update_tray(app, &state)?;
+            {
+                let status = crate::updates::UpdateStatus {
+                    current: crate::updates::detect_current_version(),
+                    latest: None,
+                    newer: false,
+                    error: None,
+                };
+                *state.update_status.lock().unwrap() = Some(status.clone());
+                refresh_tray_menu(&app_handle, &state);
+                emit_update(&app_handle, &status);
+            }
+            let s2 = state.clone();
+            let h2 = app.handle().clone();
+            std::thread::spawn(move || refresh_update_ui(&h2, &s2));
 
             // F-b：system 档且用户世界有多个 webUi profile → 先出选择器，选定再 spawn。
             if launch.tier == crate::manifest::TierKind::System {
@@ -311,7 +362,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![choose_profile, terminal_action])
+        .invoke_handler(tauri::generate_handler![
+            choose_profile,
+            terminal_action,
+            get_update_status,
+            check_updates
+        ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
         .run(|app_handle, event| {
@@ -442,4 +498,126 @@ mod tests {
         assert!(title.contains("启动失败"));
         assert_eq!(actions, vec!["retry"]);
     }
+}
+
+// ---------- 更新托盘（macOS 菜单栏常驻） ----------
+
+/// 组装托盘菜单：版本行 + 检测状态 + 检查/升级/退出。
+fn build_update_menu(
+    app: &tauri::AppHandle,
+    status: &crate::updates::UpdateStatus,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem};
+
+    let version_line = format!("dsh {}", status.current.clone().unwrap_or_else(|| "未知/内置".into()));
+    let state_line = if status.error.is_some() {
+        "检测失败（网络不可达）".to_string()
+    } else if status.newer {
+        format!("发现新版 {} · 点击升级", status.latest.clone().unwrap_or_default())
+    } else if status.latest.is_some() {
+        "已是最新".to_string()
+    } else {
+        "检测中…".to_string()
+    };
+
+    let v = MenuItem::with_id(app, "ver", version_line, false, None::<&str>)?;
+    let s = MenuItem::with_id(app, "st", state_line, false, None::<&str>)?;
+    let check = MenuItem::with_id(app, "check", "检查更新", true, None::<&str>)?;
+    let upgrade = MenuItem::with_id(
+        app,
+        "upgrade",
+        format!("升级到 {}", status.latest.clone().unwrap_or_default()),
+        status.newer,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "退出终端", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+
+    MenuBuilder::new(app)
+        .item(&v)
+        .item(&s)
+        .item(&sep)
+        .item(&check)
+        .item(&upgrade)
+        .item(&sep)
+        .item(&quit)
+        .build()
+}
+
+/// 重建托盘菜单（状态变更后调用）。
+fn refresh_tray_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
+    let status = state
+        .update_status
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or(crate::updates::UpdateStatus {
+            current: None,
+            latest: None,
+            newer: false,
+            error: None,
+        });
+    if let Ok(menu) = build_update_menu(app, &status) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
+/// 发射 boot:update 事件（前端 chip 消费）。
+fn emit_update(app: &tauri::AppHandle, status: &crate::updates::UpdateStatus) {
+    use tauri::Emitter;
+    let _ = app.emit("boot:update", status);
+}
+
+/// 后台检测一次并同步托盘 + 事件（首启/手动/升级后共用）。
+fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
+    let status = crate::updates::check_now();
+    tracing::info!(
+        "更新检测：current={:?} latest={:?} newer={}",
+        status.current,
+        status.latest,
+        status.newer
+    );
+    *state.update_status.lock().unwrap() = Some(status.clone());
+    refresh_tray_menu(app, state);
+    emit_update(app, &status);
+}
+
+/// setup：托盘图标 + 菜单事件。
+fn setup_update_tray(app: &tauri::App, state: &Arc<ShellState>) -> tauri::Result<()> {
+    use tauri::tray::TrayIconBuilder;
+    let handle = app.handle().clone();
+    let s = state.clone();
+    let menu = build_update_menu(&handle, &crate::updates::UpdateStatus {
+        current: crate::updates::detect_current_version(),
+        latest: None,
+        newer: false,
+        error: None,
+    })?;
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().expect("bundle 图标应存在").clone())
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "check" => {
+                let s = s.clone();
+                let h = app.clone();
+                std::thread::spawn(move || refresh_update_ui(&h, &s));
+            }
+            "upgrade" => {
+                let s = s.clone();
+                let h = app.clone();
+                std::thread::spawn(move || {
+                    if let Ok(data_dir) = h.path().app_data_dir() {
+                        let _ = crate::updates::install_latest_global(&data_dir);
+                        refresh_update_ui(&h, &s);
+                    }
+                });
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
 }

@@ -325,3 +325,55 @@ body::before {
 .boot-progress .bp-line .beacon { width: 8px; height: 8px; }
 
 .boot-progress .bp-log { margin-top: 9px; font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- 版本行 / 更新芯片 ---- */
+.updline {
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.updline .ver {
+  color: var(--muted);
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.02);
+  white-space: nowrap;
+}
+
+.updline .st {
+  color: var(--faint);
+}
+
+.updline .st.new { color: var(--warn); }
+
+.updline .st.ok { color: rgba(74, 222, 128, 0.7); }
+
+.updline .chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.15s;
+}
+
+.updline .chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+.updline .chip.primary {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #171207;
+  font-weight: 700;
+}
+
+.updline .chip:disabled { opacity: 0.45; cursor: wait; transform: none; }
