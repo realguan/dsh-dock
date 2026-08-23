@@ -7,6 +7,20 @@
     "frontendDist": "../ui"
   },
   "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DeepSeek Harness",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "backgroundColor": "#f9fafb"
+      }
+    ],
     "security": {
       "csp": null
     },

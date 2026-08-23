@@ -5,7 +5,6 @@ fn main() {
         "../ui/index.html",
         "../ui/selector.html",
         "../ui/assets/app.css",
-        "../ui/assets/ctx-refresh.js",
         "../ui/assets/dsh-logo.svg",
     ] {
         println!("cargo:rerun-if-changed={f}");
