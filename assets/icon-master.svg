@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 桌面客户端主图标（源）：官方白色标 + 深色圆角底。
-     官方 logo path 直接取自 dsh-web-frontend/dist/favicon.svg（见 ui/assets/dsh-logo.svg），
-     深色模式下官方即白标（prefers-color-scheme: dark → fill: #fff），此为忠实再现。
+<!-- 桌面客户端主图标（源）：dsh 官方品牌蓝底 + 白色 logo。
+     官方 logo path 取自 dsh-web-frontend/dist/favicon.svg（见 ui/assets/dsh-logo.svg），
+     品牌蓝 #4176e6 为 dsh 标准 accent 色，渐变至深蓝 保留立体感。
      重生成流程见 scripts/regen-icons.sh。 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a2233"/>
-      <stop offset="1" stop-color="#0d1220"/>
+      <stop offset="0" stop-color="#5b9bf5"/>
+      <stop offset="1" stop-color="#2563eb"/>
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bgGrad)"/>
