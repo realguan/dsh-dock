@@ -1,0 +1,14 @@
+{
+  "name": "@dsh-dock/node-map",
+  "version": "0.0.1",
+  "description": "Signed Node runtime version map consumed by DSH Dock (ed25519). Update Node without shipping a new shell.",
+  "private": false,
+  "license": "MIT",
+  "files": [
+    "map.json",
+    "map.json.sig"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
