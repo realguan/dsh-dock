@@ -24,6 +24,20 @@ pub struct DshProcess {
     pub log_path: PathBuf,
 }
 
+/// 确保 dsh 的用户数据目录可用。
+///
+/// dsh 本身会在首次启动时写入 profiles/storage；桌面壳不能把“首次使用时
+/// 目录尚未存在”误判成宿主缺失。若路径是普通文件，`create_dir_all` 会返回
+/// 明确错误，交给上层错误卡展示。
+fn ensure_dsh_home(dsh_home: &Path) -> Result<()> {
+    if dsh_home.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dsh_home)
+        .with_context(|| format!("创建 DSH_HOME 目录 {}", dsh_home.display()))?;
+    Ok(())
+}
+
 /// 启动 dsh：`<node> <dsh-bin.js> --profile <p> --port 0`，`DSH_HOME` 来自
 /// LaunchSpec（system=用户 home；bundle=兜底副本 home）。stdout/stderr
 /// 进数据目录日志文件（可排查故障）。
@@ -39,9 +53,7 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     if !dsh_bin.is_file() {
         anyhow::bail!("dsh 入口不存在: {}", dsh_bin.display());
     }
-    if !dsh_home.is_dir() {
-        anyhow::bail!("DSH_HOME 目录不存在: {}", dsh_home.display());
-    }
+    ensure_dsh_home(dsh_home)?;
 
     std::fs::create_dir_all(data_dir).context("创建数据目录")?;
     let log_path = data_dir.join("dsh-shell.log");
@@ -64,10 +76,13 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     if launch.no_open {
         cmd.arg("--no-open");
     }
-    cmd
-        .env("DSH_HOME", &dsh_home)
-        // 用户环境感知：dsh 世界运行在用户 PATH 上（GUI 启动环境不含用户工具）
-        .env("PATH", crate::resolve::effective_path())
+    cmd.env("DSH_HOME", &dsh_home)
+        // 用户环境感知：dsh 世界运行在用户 PATH 上；download 档还要把私有
+        // Node 放在首位，确保 dsh 拉起 helper 时不会找错执行器。
+        .env(
+            "PATH",
+            crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().context("克隆日志句柄")?))
         .stderr(Stdio::from(log));
@@ -153,10 +168,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn creates_missing_dsh_home() {
+        let root = std::env::temp_dir().join(format!("dsh-shell-home-{}", std::process::id()));
+        let home = root.join("nested/.dsh");
+        let _ = std::fs::remove_dir_all(&root);
+        ensure_dsh_home(&home).unwrap();
+        assert!(home.is_dir());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn detects_url_from_line() {
         assert_eq!(
-            parse_detected_url("DSH web listening on http://127.0.0.1:34567/\n")
-                .as_deref(),
+            parse_detected_url("DSH web listening on http://127.0.0.1:34567/\n").as_deref(),
             Some("http://127.0.0.1:34567")
         );
     }
@@ -207,8 +231,11 @@ mod tests {
         let path2 = path.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
-            std::fs::write(&path2, "booting...\nDSH web listening on http://127.0.0.1:34567/\n")
-                .unwrap();
+            std::fs::write(
+                &path2,
+                "booting...\nDSH web listening on http://127.0.0.1:34567/\n",
+            )
+            .unwrap();
         });
         assert_eq!(
             detect_url(&path, Duration::from_millis(2000)).as_deref(),
@@ -230,6 +257,9 @@ mod tests {
             t0.elapsed() < Duration::from_secs(2),
             "SIGTERM 路径应在 grace 内提前退出"
         );
-        assert!(matches!(child.try_wait().unwrap(), Some(_)), "子进程应已回收");
+        assert!(
+            matches!(child.try_wait().unwrap(), Some(_)),
+            "子进程应已回收"
+        );
     }
 }

@@ -108,13 +108,14 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 宿主 dsh / node 解析
   ① 用户环境复用：官方安装（npm/pnpm 全局，PATH 可探）→ realpath 包树
        → 三重校验闸：版本 ∈ 声明区间 / engines.node 达标 / 平台一致 —— 过闸才复用
-  ② 内置兜底：bundle 内自包含副本（离线保证，随包）
-  ③ 实时下载：官方 registry/npm 通道拉取并安置版本库（缓存 + integrity，网络动作）
+  ② 内置兜底：可选 bundle 副本（本产品极简档不携带，保持安装包轻量）
+  ③ 实时下载：国内镜像优先，经 registry + pnpm/npm 拉取并安置版本库（缓存 + integrity，网络动作）
 ```
 
 **两条铁律**
-- **内置 = 保证，优先 = 策略**（正交）：离线启动链路必经 × 平台不承诺的件必须内置兜底；
-  使用次序是独立配置，node 与 dsh 同构适用。
+- **在线极简档不承诺离线启动**：新电脑首次运行必须联网；缺少 Node/npm/pnpm/dsh 时按下载链自动补齐。
+  bundle 仍是可选的产品能力，不能把它误读成当前安装包的离线保证。
+- 使用次序是独立配置，node 与 dsh 同构适用。
 - **借执行器，不借配置**：复用宿主 dsh 只借其 bin.js/树，产品仍用自己的虚拟 home 与
   默认连接 profile；npx 缓存形态非复用源（版本漂移）；自研 launcher 版本库不视为官方形态。
 
@@ -142,7 +143,20 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 ```
 
 - `terminal.resolution.*.tiers`：解析次序；`system` 缺失/不达标即进下一 tier。
-- `fallback`：离线兜底副本（v1 快照三件套的归宿，只读种子）。
+- `fallback`：可选的 bundle 副本（只读种子）；极简在线档不声明该字段。
 - `versionRange`：SEMVER 区间（装配时定，宽区间以让复用成立）。
 - v1（format=1）兼容：壳按 snapshot 三件套迁移为 bundle-only 解析 + fallback（壳 `MANIFEST_MIN_COMPAT=1`）。
 - 极简档语义：不写 `fallback`、resolution 缺省即 `system → download`（终端默认形态）；内置档由 launcher 装配产物显式声明 `bundle` 档 + `fallback`。
+
+实时下载的网络与包管理顺序固定为：
+
+1. 包元数据、dsh 安装：`https://registry.npmmirror.com` → `https://registry.npmjs.org`
+2. Node 执行器：`https://cdn.npmmirror.com/binaries/node` → `https://nodejs.org/dist`
+3. 包管理器：用户 PATH 中的 `pnpm` → 下载/缓存 Node 自带的 `npm-cli`
+
+Node 下载按目标平台选择官方包格式（macOS/Linux 为 `tar.gz`，Windows 为 `zip`），并使用
+内置 SHA-256 校验和；Windows 安装器同时使用在线 WebView2 bootstrapper，保持安装包轻量。
+
+pnpm 的全局目录或安装动作失败时回退 npm；因此 pnpm 是优先路径，不是桌面应用的硬依赖。
+对 npm 11 显式放行 dsh 所需的 native/helper install scripts；系统全局目录无写权限时，
+自动切换到应用数据目录下的私有 prefix，不要求管理员权限。

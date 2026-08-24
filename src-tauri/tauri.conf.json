@@ -43,6 +43,12 @@
     "macOS": {
       "signingIdentity": "-",
       "entitlements": "entitlements.plist"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
     }
   }
 }

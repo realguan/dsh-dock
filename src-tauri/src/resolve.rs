@@ -6,7 +6,7 @@
 //!   - **system**：探测用户官方安装（PATH → realpath → 包树），过三重校验闸
 //!     （版本下限 / engines.node / 平台——system 树是就地安装的，平台天然一致）。
 //!   - **bundle**：manifest.fallback（内置档兜底副本）。
-//!   - **download**：v2 占位——由 updates 模块（③）实装，当前返回可行动文案。
+//!   - **download**：updates 模块在线补齐 Node 与官方 dsh（pnpm 优先、npm 回退）。
 //!
 //! 借执行器、不借配置（Q2b）：system 命中时 DSH_HOME 指向**用户自身 home**
 //! （$DSH_HOME 或 ~/.dsh），boot 的是用户 dsh 世界里的官方/自定义 profile。
@@ -34,11 +34,24 @@ pub struct LaunchSpec {
 
 // ---------- 用户 home ----------
 
+/// GUI 启动时统一取用户 home：Windows 常见的是 USERPROFILE，Unix 使用 HOME。
+fn user_home_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    } else {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+    }
+}
+
 /// 终端在 system 档 boot 用户世界：$DSH_HOME 或 ~/.dsh。
 pub fn user_dsh_home() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".dsh")))
+        .or_else(|| user_home_dir().map(|home| home.join(".dsh")))
         .unwrap_or_else(|| PathBuf::from(".dsh"))
 }
 
@@ -70,7 +83,11 @@ pub fn compare_versions_asc(a: &str, b: &str) -> std::cmp::Ordering {
         }
     }
     if ka.len() != kb.len() {
-        let long_seg = if ka.len() > kb.len() { &ka[kb.len()] } else { &kb[ka.len()] };
+        let long_seg = if ka.len() > kb.len() {
+            &ka[kb.len()]
+        } else {
+            &kb[ka.len()]
+        };
         // 多出来的段是纯文本（rc/beta 等预发布标记）→ 长列表是预发布，更小
         if !long_seg.0 {
             // 长列表 = 带预发布标记的版本 → 它更小
@@ -99,7 +116,11 @@ fn major_of(v: &str) -> Option<u64> {
 
 /// 带超时执行并取 stdout（login shell 拉 PATH 用）。
 fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
-    let mut child = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait().ok().flatten() {
@@ -110,7 +131,11 @@ fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<S
             use std::io::Read;
             child.stdout.take()?.read_to_string(&mut out).ok()?;
             let t = out.trim();
-            return if t.is_empty() { None } else { Some(t.to_string()) };
+            return if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            };
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
@@ -130,7 +155,7 @@ fn login_shell_path() -> Option<String> {
         }
         let mut cmd = Command::new(shell);
         cmd.args(["-lc", "echo -n \"$PATH\""]);
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = user_home_dir() {
             cmd.env("HOME", &home);
         }
         if let Some(p) = run_with_timeout(&mut cmd, std::time::Duration::from_secs(2)) {
@@ -140,57 +165,115 @@ fn login_shell_path() -> Option<String> {
     None
 }
 
+fn path_separator() -> char {
+    if cfg!(windows) {
+        ';'
+    } else {
+        ':'
+    }
+}
+
+fn path_separator_string() -> &'static str {
+    if cfg!(windows) {
+        ";"
+    } else {
+        ":"
+    }
+}
+
+fn join_path_dirs(dirs: impl IntoIterator<Item = PathBuf>) -> String {
+    dirs.into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(path_separator_string())
+}
+
 /// 常见安装目录（GUI 下除登录 shell 之外的第二来源）。
 fn fixed_path_dirs(home: &Path) -> Vec<PathBuf> {
-    [
-        home.join(".npm-global/bin"),
-        home.join(".local/bin"),
-        home.join(".volta/bin"),
-        home.join(".nvm/versions/node"),
-        home.join(".local/share/fnm/node-versions"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/opt/homebrew/sbin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/usr/bin"),
-        PathBuf::from("/bin"),
-    ]
-    .into_iter()
-    .filter(|p| p.is_dir())
-    .collect()
+    let dirs = if cfg!(windows) {
+        vec![
+            // npm / pnpm 的默认全局命令目录。新电脑首次下载后，下一次启动也能从这里复用。
+            home.join("AppData/Roaming/npm"),
+            home.join("AppData/Local/pnpm"),
+            home.join(".volta/bin"),
+            home.join("AppData/Local/Volta/bin"),
+            home.join("scoop/shims"),
+            std::env::var_os("ProgramFiles")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
+                .join("nodejs"),
+        ]
+    } else {
+        vec![
+            home.join(".npm-global/bin"),
+            home.join(".local/bin"),
+            home.join("Library/pnpm"),
+            home.join(".local/share/pnpm"),
+            home.join(".volta/bin"),
+            home.join(".nvm/versions/node"),
+            home.join(".local/share/fnm/node-versions"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/opt/homebrew/sbin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+        ]
+    };
+    dirs.into_iter().filter(|path| path.is_dir()).collect()
 }
 
 /// 合并多路 PATH 源（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
 pub fn merge_paths(sources: &[String]) -> String {
+    merge_paths_with_separator(sources, path_separator())
+}
+
+/// 可指定分隔符的 PATH 合并实现，供 Windows 路径回归测试复用。
+fn merge_paths_with_separator(sources: &[String], separator: char) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut dirs: Vec<String> = Vec::new();
     for source in sources {
-        for d in source.split(':') {
+        for d in source.split(separator) {
             if d.is_empty() || !seen.insert(d.to_string()) {
                 continue;
             }
             dirs.push(d.to_string());
         }
     }
-    dirs.join(":")
+    dirs.join(&separator.to_string())
 }
 
 /// 合并后的探测 PATH 串（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
 /// 本函数是 shell 侧环境感知的唯一入口；dsh 子进程启动时也应继承同一份。
 pub fn effective_path() -> String {
     fn build() -> String {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let home = user_home_dir().unwrap_or_default();
         merge_paths(&[
             login_shell_path().unwrap_or_default(),
-            fixed_path_dirs(&home)
-                .into_iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(":"),
+            join_path_dirs(fixed_path_dirs(&home)),
+            // fnm/nvm 的 Node 实际落在版本目录的 bin/；Finder 启动时 login
+            // shell 不会读 .zshrc，因此不能只依赖 shell 注入的 PATH。
+            join_path_dirs(fnm_nvm_bin_dirs()),
             std::env::var("PATH").unwrap_or_default(),
         ])
     }
     static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     CACHE.get_or_init(build).clone()
+}
+
+/// 把选中的 Node 可执行目录放到 PATH 首位。
+///
+/// download 档的 Node 存在应用数据目录，不会出现在用户登录 shell 的 PATH；
+/// dsh 启动后若再拉起 helper/子命令，仍需要通过 PATH 找到同一份 Node。
+pub fn path_with_bin(bin: &Path, path_env: &str) -> String {
+    let Some(parent) = bin.parent() else {
+        return path_env.to_string();
+    };
+    let separator = path_separator();
+    if path_env.is_empty() {
+        parent.display().to_string()
+    } else {
+        format!("{}{}{}", parent.display(), separator, path_env)
+    }
 }
 
 // ---------- system 探测 ----------
@@ -210,16 +293,23 @@ pub fn detect_system_dsh(path_env: &str) -> Option<SystemDsh> {
     for extra in fnm_nvm_bin_dirs() {
         dirs.push(extra);
     }
+    let names: &[&str] = if cfg!(windows) {
+        &["dsh.cmd", "dsh.exe", "dsh"]
+    } else {
+        &["dsh"]
+    };
     let bin = dirs.into_iter().find_map(|dir| {
-        let cand = dir.join("dsh");
-        if cand.is_file() && is_executable(&cand) {
-            Some(cand)
-        } else {
-            None
-        }
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file() && is_executable(candidate))
     })?;
-    let real = fs::canonicalize(&bin).ok()?;
-    let tree = find_package_root(&real, "@deepseek-ai/dsh")?;
+    // Unix shim 一般是指向 lib/bin.js 的符号链接。Windows 的 .cmd shim 不会被
+    // canonicalize 到包树，因此额外从 npm 全局前缀的 node_modules 查一次。
+    let tree = fs::canonicalize(&bin)
+        .ok()
+        .and_then(|real| find_package_root(&real, "@deepseek-ai/dsh"))
+        .or_else(|| find_global_package_root_from_command(&bin, "@deepseek-ai/dsh"))?;
     let manifest_path = tree.join("package.json");
     let text = fs::read_to_string(&manifest_path).ok()?;
     let pkg: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -236,19 +326,45 @@ pub fn detect_system_dsh(path_env: &str) -> Option<SystemDsh> {
     })
 }
 
+/// 从 npm 全局命令所在的 prefix 推导包树，覆盖 Windows 的 dsh.cmd shim。
+fn find_global_package_root_from_command(command: &Path, name: &str) -> Option<PathBuf> {
+    let mut dir = command.parent()?;
+    for _ in 0..4 {
+        let mut candidates = vec![dir.join("node_modules").join(name)];
+        // pnpm setup 的 Windows 全局布局：<PNPM_HOME>/global/<major>/node_modules/<name>。
+        candidates.extend((3..=10).map(|major| {
+            dir.join("global")
+                .join(major.to_string())
+                .join("node_modules")
+                .join(name)
+        }));
+        if let Some(candidate) = candidates
+            .into_iter()
+            .find(|candidate| package_root_matches(candidate, name))
+        {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+    None
+}
+
+fn package_root_matches(dir: &Path, name: &str) -> bool {
+    let manifest = dir.join("package.json");
+    fs::read_to_string(&manifest)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|pkg| pkg.get("name").and_then(|n| n.as_str()).map(str::to_owned))
+        .as_deref()
+        == Some(name)
+}
+
 /// 从可执行文件路径逐级上溯，找到 name 匹配的 package.json 所在的包根。
 fn find_package_root(start: &Path, name: &str) -> Option<PathBuf> {
     let mut dir = start.parent()?;
     for _ in 0..8 {
-        let manifest = dir.join("package.json");
-        if manifest.is_file() {
-            if let Ok(text) = fs::read_to_string(&manifest) {
-                if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if pkg.get("name").and_then(|n| n.as_str()) == Some(name) {
-                        return Some(dir.to_path_buf());
-                    }
-                }
-            }
+        if package_root_matches(dir, name) {
+            return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
     }
@@ -257,19 +373,50 @@ fn find_package_root(start: &Path, name: &str) -> Option<PathBuf> {
 
 /// fnm/nvm 版本目录里的 bin/（node、可能的全局 dsh）；取最新版本目录。
 fn fnm_nvm_bin_dirs() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = user_home_dir().unwrap_or_default();
+    fnm_nvm_bin_dirs_in(&home)
+}
+
+/// 枚举指定 home 中最新 fnm/nvm Node 的可执行目录，供环境补全和测试共用。
+fn fnm_nvm_bin_dirs_in(home: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for root in [home.join(".local/share/fnm/node-versions"), home.join(".nvm/versions/node")] {
+    let roots = if cfg!(windows) {
+        vec![
+            home.join("AppData/Roaming/fnm/node-versions"),
+            home.join(".fnm/node-versions"),
+        ]
+    } else {
+        vec![
+            home.join(".local/share/fnm/node-versions"),
+            home.join(".nvm/versions/node"),
+        ]
+    };
+    for root in roots {
         if !root.is_dir() {
             continue;
         }
-        let Ok(entries) = fs::read_dir(&root) else { continue };
-        let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-        versions.sort_by(|a, b| compare_versions_asc(
-            &a.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
-            &b.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
-        ));
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        let mut versions: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        versions.sort_by(|a, b| {
+            compare_versions_asc(
+                &a.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                &b.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            )
+        });
         if let Some(latest) = versions.last() {
+            if cfg!(windows) {
+                out.push(latest.join("installation"));
+            }
             out.push(latest.join("installation/bin"));
             out.push(latest.join("bin"));
         }
@@ -288,13 +435,16 @@ pub fn detect_system_node(path_env: &str) -> Option<SystemNode> {
     for extra in fnm_nvm_bin_dirs() {
         dirs.push(extra);
     }
+    let names: &[&str] = if cfg!(windows) {
+        &["node.exe", "node"]
+    } else {
+        &["node"]
+    };
     let bin = dirs.into_iter().find_map(|dir| {
-        let cand = dir.join("node");
-        if cand.is_file() && is_executable(&cand) {
-            Some(cand)
-        } else {
-            None
-        }
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file() && is_executable(candidate))
     })?;
     let version = Command::new(&bin).arg("--version").output().ok()?;
     if !version.status.success() {
@@ -311,10 +461,12 @@ pub fn detect_system_node(path_env: &str) -> Option<SystemNode> {
 /// engines 缺失/解析失败视为通过（不挡复用，栅栏只拦明显不满足）。
 pub fn engines_satisfied(node_version: &str, engines_node: Option<&str>) -> bool {
     let Some(req) = engines_node else { return true };
-    let Some(required) = req
-        .split(['>', '=', '<', '~', '^', ' '])
-        .find_map(|t| t.chars().next().filter(|c| c.is_ascii_digit()).and_then(|_| major_of(t)))
-    else {
+    let Some(required) = req.split(['>', '=', '<', '~', '^', ' ']).find_map(|t| {
+        t.chars()
+            .next()
+            .filter(|c| c.is_ascii_digit())
+            .and_then(|_| major_of(t))
+    }) else {
         return true;
     };
     let Some(have) = major_of(node_version) else {
@@ -331,7 +483,10 @@ enum SystemOutcome {
     Hit(SystemHit),
     Miss,
     /// 用户已有 dsh 但低于下限：**不自动覆盖**（H：提示+经确认），携带版本信息出可行动文案。
-    TooOld { found: String, min: String },
+    TooOld {
+        found: String,
+        min: String,
+    },
 }
 
 /// 按档序解析本次启动的 LaunchSpec。
@@ -345,32 +500,32 @@ pub fn resolve_launch(
 
     for tier in &spec.tiers {
         match tier {
-            TierKind::System => {
-                match probe_system(spec, path_env) {
-                    SystemOutcome::Hit(hit) => {
-                        let no_open = system_no_open_supported(&hit);
-                        return Ok(LaunchSpec {
-                            node_bin: hit.node.bin,
-                            dsh_bin_js: hit.dsh.bin_js,
-                            dsh_home: user_dsh_home(),
-                            profile: manifest.terminal.default_profile.clone(),
-                            tier: TierKind::System,
-                            no_open,
-                        });
-                    }
-                    SystemOutcome::TooOld { found, min } => {
-                        anyhow::bail!(
+            TierKind::System => match probe_system(spec, path_env) {
+                SystemOutcome::Hit(hit) => {
+                    let no_open = system_no_open_supported(&hit);
+                    return Ok(LaunchSpec {
+                        node_bin: hit.node.bin,
+                        dsh_bin_js: hit.dsh.bin_js,
+                        dsh_home: user_dsh_home(),
+                        profile: manifest.terminal.default_profile.clone(),
+                        tier: TierKind::System,
+                        no_open,
+                    });
+                }
+                SystemOutcome::TooOld { found, min } => {
+                    anyhow::bail!(
                             "您机器上的 dsh 版本过低（{found} < 终端要求 {min}）。                             终端不会自动覆盖您的全局安装；请确认后执行 `npm i -g @deepseek-ai/dsh`                              升级，或安装内置档桌面版。"
                         );
-                    }
-                    SystemOutcome::Miss => {
-                        tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
-                    }
                 }
-            }
+                SystemOutcome::Miss => {
+                    tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
+                }
+            },
             TierKind::Bundle => {
                 let fb = manifest.fallback.clone().ok_or_else(|| {
-                    anyhow::anyhow!("契约声明 bundle 档但缺少 fallback（自洽性校验应拦截，此属异常）")
+                    anyhow::anyhow!(
+                        "契约声明 bundle 档但缺少 fallback（自洽性校验应拦截，此属异常）"
+                    )
                 })?;
                 // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
                 let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
@@ -386,7 +541,7 @@ pub fn resolve_launch(
                 return Ok(spec);
             }
             TierKind::Download => {
-                // 实时下载：node 执行器（系统优先，无则缓存下载）→ npm 全局装官方最新 dsh
+                // 实时下载：node 执行器（系统优先，无则缓存下载）→ pnpm 优先、npm 回退，全局装官方最新 dsh
                 let (node, tree) = crate::updates::install_latest_global(data_dir)
                     .map_err(|e| anyhow::anyhow!("实时下载档失败：{e}"))?;
                 return Ok(LaunchSpec {
@@ -411,7 +566,10 @@ fn probe_system(spec: &TierSpec, path_env: &str) -> SystemOutcome {
     if let Some(min) = &spec.min_version {
         if !version_at_least(&dsh.version, min) {
             tracing::info!("system dsh 版本过低：{} < {}", dsh.version, min);
-            return SystemOutcome::TooOld { found: dsh.version, min: min.clone() };
+            return SystemOutcome::TooOld {
+                found: dsh.version,
+                min: min.clone(),
+            };
         }
     }
     let Some(node) = detect_system_node(path_env) else {
@@ -455,7 +613,8 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
             fs::create_dir_all(&to).with_context(|| format!("创建 {}", to.display()))?;
             copy_tree(&from, &to)?;
         } else {
-            fs::copy(&from, &to).with_context(|| format!("复制 {} → {}", from.display(), to.display()))?;
+            fs::copy(&from, &to)
+                .with_context(|| format!("复制 {} → {}", from.display(), to.display()))?;
         }
     }
     Ok(())
@@ -512,7 +671,7 @@ fn probe_no_open(node: &Path, dsh_bin: &Path) -> bool {
 
 fn path_dirs(path_env: &str) -> Vec<PathBuf> {
     path_env
-        .split(':')
+        .split(path_separator())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .collect()
@@ -550,21 +709,23 @@ pub fn list_web_ui_profiles(home: &Path) -> Vec<String> {
             continue;
         }
         let manifest = dir.join("package.json");
-        let Ok(text) = fs::read_to_string(&manifest) else { continue };
+        let Ok(text) = fs::read_to_string(&manifest) else {
+            continue;
+        };
         let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else {
             continue;
         };
-        let has_web =
-            pkg.get("dsh")
-                .and_then(|d| d.get("profile"))
-                .and_then(|p| p.get("bundles"))
-                .and_then(|b| b.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str())
-                        .any(|s| s == "@deepseek-ai/dsh-web-app")
-                })
-                .unwrap_or(false);
+        let has_web = pkg
+            .get("dsh")
+            .and_then(|d| d.get("profile"))
+            .and_then(|p| p.get("bundles"))
+            .and_then(|b| b.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .any(|s| s == "@deepseek-ai/dsh-web-app")
+            })
+            .unwrap_or(false);
         if has_web {
             out.push(name);
         }
@@ -599,12 +760,58 @@ mod tests {
 
     #[test]
     fn merge_paths_deduplicates_keeping_first() {
-        let s = merge_paths(&[
-            "/usr/local/bin:/usr/bin".to_string(),
-            "/usr/bin:/bin".to_string(),
-            "/opt/homebrew/bin:/usr/local/bin".to_string(),
-        ]);
-        assert_eq!(s, "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin");
+        let separator = path_separator();
+        let sep = separator.to_string();
+        let s = merge_paths_with_separator(
+            &[
+                format!("/usr/local/bin{sep}/usr/bin"),
+                format!("/usr/bin{sep}/bin"),
+                format!("/opt/homebrew/bin{sep}/usr/local/bin"),
+            ],
+            separator,
+        );
+        assert_eq!(
+            s,
+            format!("/usr/local/bin{sep}/usr/bin{sep}/bin{sep}/opt/homebrew/bin")
+        );
+    }
+
+    #[test]
+    fn windows_path_separator_preserves_drive_letters() {
+        let s = merge_paths_with_separator(
+            &[
+                "C:/Users/demo/AppData/Roaming/npm;C:/Windows/System32".to_string(),
+                "C:/Windows/System32;C:/Program Files/nodejs".to_string(),
+            ],
+            ';',
+        );
+        assert_eq!(
+            s,
+            "C:/Users/demo/AppData/Roaming/npm;C:/Windows/System32;C:/Program Files/nodejs"
+        );
+    }
+
+    #[test]
+    fn selected_node_is_prepended_to_runtime_path() {
+        let node = Path::new("/private/dsh-dock/node/bin/node");
+        let path = path_with_bin(node, "/usr/local/bin:/usr/bin");
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        assert_eq!(
+            path.split(separator).next(),
+            Some("/private/dsh-dock/node/bin")
+        );
+    }
+
+    #[test]
+    fn fnm_paths_include_latest_installation_bin() {
+        let root = tmp();
+        let versions = root.join(".local/share/fnm/node-versions");
+        std::fs::create_dir_all(versions.join("v20.0.0/installation/bin")).unwrap();
+        std::fs::create_dir_all(versions.join("v24.18.0/installation/bin")).unwrap();
+
+        let dirs = fnm_nvm_bin_dirs_in(&root);
+        assert!(dirs.contains(&versions.join("v24.18.0/installation/bin")));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -632,6 +839,46 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    #[test]
+    fn windows_command_shim_resolves_npm_global_package_tree() {
+        let root = tmp();
+        let command = root.join("bin/dsh.cmd");
+        let pkg = root.join("node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(command.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(&command, "@echo off\n").unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.9"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            find_global_package_root_from_command(&command, "@deepseek-ai/dsh"),
+            Some(pkg)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn windows_pnpm_shim_resolves_global_package_tree() {
+        let root = tmp();
+        let command = root.join("pnpm-home/dsh.cmd");
+        let pkg = root.join("pnpm-home/global/5/node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(command.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(&command, "@echo off\n").unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.9"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            find_global_package_root_from_command(&command, "@deepseek-ai/dsh"),
+            Some(pkg)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[cfg(unix)]
     #[test]
     fn detects_system_dsh_via_fake_path() {
@@ -649,7 +896,8 @@ mod tests {
         )
         .unwrap();
         std::fs::write(&pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
-        std::fs::set_permissions(&pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
+            .unwrap();
         // npm 全局形态：bin 目录里的 dsh 是指向包内入口的符号链接
         std::os::unix::fs::symlink(&pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
 
@@ -715,7 +963,9 @@ mod tests {
         assert_eq!(spec.profile, "desktop-demo");
         assert!(spec.node_bin.ends_with("dsh-snapshot/node/bin/dsh-node"));
         // bundle 档 home 已被同步到数据目录（可写）
-        assert!(spec.dsh_home.starts_with(root.join("runtimes/fallback-home")));
+        assert!(spec
+            .dsh_home
+            .starts_with(root.join("runtimes/fallback-home")));
         assert!(spec.dsh_home.join("settings.yaml").is_file());
     }
 
@@ -734,7 +984,10 @@ mod tests {
         // 源变更 → 再同步覆盖，多余保留
         std::fs::write(src.join("settings.yaml"), "v2\n").unwrap();
         sync_fallback_home(&src, &root).unwrap();
-        assert_eq!(std::fs::read_to_string(dest.join("settings.yaml")).unwrap(), "v2\n");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("settings.yaml")).unwrap(),
+            "v2\n"
+        );
         assert!(dest.join("sessions/run.log").is_file());
         std::fs::remove_dir_all(&root).ok();
     }

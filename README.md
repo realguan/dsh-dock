@@ -1,6 +1,6 @@
 # dsh-dock（DSH Dock）
 
-ADR-0004 的「产品壳」：一个极小的 **Tauri v2 桌面壳**，把装配好的 dsh 工作台以一个
+ADR-0004 的「产品壳」：一个极小的 **Tauri v2 桌面壳**，把 dsh 工作台以一个
 **独立、可安装、跨平台**的桌面版 DSH Dock 呈现给最终用户。
 
 > 位置关系（见 [dsh-launcher ADR-0004](https://github.com/realguan/dsh-plugin-hub/tree/main/dsh-launcher/docs/adr/0004-standalone-desktop-package.md)）：
@@ -16,6 +16,9 @@ ADR-0004 的「产品壳」：一个极小的 **Tauri v2 桌面壳**，把装配
 - **内嵌 WebView 呈现**：主窗口加载 `http://127.0.0.1:<port>/` 的 dsh Web UI。
   可加载性由 [探针](https://github.com/realguan/dsh-plugin-hub/tree/main/dsh-launcher/docs/adr/0004-standalone-desktop-package.md)
   实证：无 CSP/XFO、全应用同源、`/api` 非鉴权。
+- **联网极简档**：安装包不内置 Node 或 dsh。首次启动必须联网；无 Node/npm/pnpm/dsh 时，
+  应用依次使用 npmmirror、官方源、已有 pnpm、缓存 Node 自带 npm 自动补齐。没有 pnpm
+  不是阻断条件，npm 是自动回退路径。
 
 ## 契约与装配
 
@@ -30,7 +33,7 @@ ADR-0004 的「产品壳」：一个极小的 **Tauri v2 桌面壳**，把装配
 # 单元测试（URL 解析、manifest 校验等）
 cd src-tauri && cargo test
 
-# 本地运行（用默认 sample manifest；真实快照需先 render）
+# 本地运行（默认在线极简 manifest；首次运行需网络）
 cargo run
 
 # 当前平台出安装包
@@ -63,10 +66,10 @@ dsh-dock/
 │   ├── src/
 │   │   ├── main.rs        # 入口
 │   │   ├── lib.rs         # run()：读契约 → spawn dsh → 导航 WebView → 退出优雅停止
-│   │   ├── manifest.rs    # product.manifest.json 契约（format=1）
+│   │   ├── manifest.rs    # product.manifest.json 契约（format=2）
 │   │   └── shell.rs       # spawn/URL 解析/优雅停止（移植自 dsh-launcher process_guard）
 │   ├── capabilities/default.json   # remote: http://127.0.0.1:*（回环 Web UI）
-│   ├── resources/         # product.manifest.json + dsh-snapshot/（自包含快照）
+│   ├── resources/         # product.manifest.json（可选 dsh-snapshot/ 仅供离线产品档）
 │   └── tauri.conf.json    # 默认身份；render-product.sh 在此注入产品身份
 ├── scripts/render-product.sh
 ├── sample/product.manifest.json

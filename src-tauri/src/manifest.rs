@@ -30,7 +30,7 @@ pub enum TierKind {
     System,
     /// 内置兜底（bundle 内 offline 副本；存在即优先——内置档语义）。
     Bundle,
-    /// 实时下载（npm/registry 官方通道；网络动作）。
+    /// 实时下载（国内镜像优先，pnpm/npm 官方包管理通道；网络动作）。
     Download,
 }
 
@@ -215,10 +215,7 @@ mod tests {
         // 每个测试独立目录：cargo test 并行跑，共享路径会互相覆盖。
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "dsh-shell-man-{}-{seq}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("dsh-shell-man-{}-{seq}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("product.manifest.json");
         std::fs::write(&path, json).unwrap();
@@ -277,7 +274,10 @@ mod tests {
         let (path, _g) = write_temp(r#"{"format": 2, "productName": "T"}"#);
         let m = ProductManifest::load(&path).unwrap();
         assert_eq!(m.terminal.default_profile, "web");
-        assert_eq!(m.terminal.resolution.dsh.tiers, vec![TierKind::System, TierKind::Download]);
+        assert_eq!(
+            m.terminal.resolution.dsh.tiers,
+            vec![TierKind::System, TierKind::Download]
+        );
         assert!(m.fallback.is_none());
     }
 

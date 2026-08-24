@@ -34,10 +34,27 @@ struct ShellState {
 
 /// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
 /// 进度经 `boot:step` 推给前端；失败经 `boot:error`（前端渲染错误卡）。
-fn boot(state: Arc<ShellState>, app: tauri::AppHandle, launch: crate::resolve::LaunchSpec, data_dir: PathBuf) -> Result<(), String> {
-    emit_step(&app, 2, "running", &format!("spawn dsh（{} · tier={:?}）", launch.profile, launch.tier));
+fn boot(
+    state: Arc<ShellState>,
+    app: tauri::AppHandle,
+    launch: crate::resolve::LaunchSpec,
+    data_dir: PathBuf,
+) -> Result<(), String> {
+    emit_step(
+        &app,
+        2,
+        "running",
+        &format!("spawn dsh（{} · tier={:?}）", launch.profile, launch.tier),
+    );
     let log_path = data_dir.join("dsh-shell.log");
-    let dsh = shell::spawn_dsh(&launch, &data_dir).map_err(|e| e.to_string())?;
+    let dsh = match shell::spawn_dsh(&launch, &data_dir) {
+        Ok(dsh) => dsh,
+        Err(e) => {
+            let detail = e.to_string();
+            report_boot_failure(&app, &detail);
+            return Err(detail);
+        }
+    };
     let child_log = dsh.log_path.clone();
     *state.dsh.lock().unwrap() = Some(dsh);
 
@@ -69,14 +86,21 @@ fn boot(state: Arc<ShellState>, app: tauri::AppHandle, launch: crate::resolve::L
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     let exited = {
                         let mut guard = state.dsh.lock().unwrap();
-                        guard.as_mut().and_then(|p| p.child.try_wait().ok()).flatten()
+                        guard
+                            .as_mut()
+                            .and_then(|p| p.child.try_wait().ok())
+                            .flatten()
                     };
                     if let Some(status) = exited {
                         let code = status.code().unwrap_or(-1);
                         let detail = read_error_detail(&child_log);
                         let tail = read_log_tail(&child_log);
                         tracing::error!("dsh 异常退出 code={code}{detail}");
-                        emit_boot_error(&app, &format!("dsh 进程已退出（code={code}）{detail}"), &tail);
+                        emit_boot_error(
+                            &app,
+                            &format!("dsh 进程已退出（code={code}）{detail}"),
+                            &tail,
+                        );
                         return;
                     }
                 }
@@ -105,10 +129,7 @@ fn read_log_tail(log_path: &std::path::Path) -> String {
 /// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的 LaunchSpec 启动。
 #[tauri::command]
 fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
-    let state = app
-        .state::<Arc<ShellState>>()
-        .inner()
-        .clone();
+    let state = app.state::<Arc<ShellState>>().inner().clone();
     let launch = state
         .pending
         .lock()
@@ -121,7 +142,9 @@ fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
     let handle = app.clone();
     // 后台线程启动（npm/下载动作不阻塞）
     std::thread::spawn(move || {
-        let _ = boot(state, handle.clone(), launch, data_dir);
+        if let Err(e) = boot(state, handle.clone(), launch, data_dir) {
+            tracing::error!("启动 dsh 失败: {e}");
+        }
     });
     Ok(())
 }
@@ -129,14 +152,36 @@ fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
 /// 前端/托盘读取最近一次检测结果（即读，不触网）。
 #[tauri::command]
 fn get_update_status(app: tauri::AppHandle) -> Result<crate::updates::UpdateStatus, String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let cached = state.update_status.lock().unwrap().clone();
-    Ok(cached.unwrap_or(crate::updates::UpdateStatus {
+    // 启动清单或宿主解析失败时，前端仍会请求版本状态。这里不能用
+    // `state()`：它在状态尚未注册时会 panic，反而让本应展示错误卡的应用崩溃。
+    Ok(cached_update_status(&app))
+}
+
+/// 无可读更新状态时交给前端的安全初始值。
+fn empty_update_status() -> crate::updates::UpdateStatus {
+    crate::updates::UpdateStatus {
         current: None,
         latest: None,
         newer: false,
         error: None,
-    }))
+    }
+}
+
+/// 读取缓存状态；启动早期尚未注册 ShellState 时必须安全返回默认值。
+fn cached_update_status<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> crate::updates::UpdateStatus {
+    let cached = app
+        .try_state::<Arc<ShellState>>()
+        .and_then(|state| state.update_status.lock().ok().and_then(|s| s.clone()));
+    cached_status_or_default(cached)
+}
+
+/// 把尚未产生的缓存映射为前端可消费的初始状态。
+fn cached_status_or_default(
+    cached: Option<crate::updates::UpdateStatus>,
+) -> crate::updates::UpdateStatus {
+    cached.unwrap_or_else(empty_update_status)
 }
 
 /// 手动触发后台检测（异步：立即返回，完成时 boot:update + 托盘刷新）。
@@ -152,16 +197,18 @@ fn check_updates(app: tauri::AppHandle) -> Result<(), String> {
 /// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
 #[tauri::command]
 fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
-    let state = app
-        .state::<Arc<ShellState>>()
-        .inner()
-        .clone();
+    let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
     std::thread::spawn(move || {
         // upgrade / upgrade_only：动用户全局 dsh（按钮确认即授权，动作在后台线程）
         if action == "upgrade" || action == "upgrade_only" {
-            emit_step(&handle, 2, "running", "升级官方 dsh（npm 全局，最新版）…");
+            emit_step(
+                &handle,
+                2,
+                "running",
+                "升级官方 dsh（pnpm 优先，npm 回退，最新版）…",
+            );
             match crate::updates::install_latest_global(&data_dir) {
                 Ok(_) => {
                     emit_step(&handle, 2, "done", "dsh 升级完成");
@@ -187,13 +234,14 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
 /// retry/upgrade 共用：从 manifest 重新解析并启动。
 fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
     let resources_dir = resolve_resources_dir(&app);
-    let manifest = match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json")) {
-        Ok(m) => m,
-        Err(e) => {
-            emit_boot_error(&app, &format!("产品清单读取失败：{e}"), "");
-            return;
-        }
-    };
+    let manifest =
+        match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json")) {
+            Ok(m) => m,
+            Err(e) => {
+                emit_boot_error(&app, &format!("产品清单读取失败：{e}"), "");
+                return;
+            }
+        };
     let path_env = crate::resolve::effective_path();
     emit_step(&app, 0, "running", "重新扫描用户环境");
     match crate::resolve::resolve_launch(&manifest, &resources_dir, &path_env, &data_dir) {
@@ -201,7 +249,8 @@ fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathB
             emit_step(&app, 0, "done", "环境扫描完成");
             emit_step(&app, 1, "done", &format!("命中档位：{:?}", launch.tier));
             if launch.tier == crate::manifest::TierKind::System {
-                let profiles = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+                let profiles =
+                    crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
                 if profiles.len() > 1 {
                     *state.pending.lock().unwrap() = Some(launch);
                     let _ = state.window.eval(&format!(
@@ -240,7 +289,12 @@ fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
         return runtime;
     }
     // dev 回退链（Windows 语义的 tauri-build 副本 → 源码树，本仓库开发常态）。
-    let exe_res = app.path().executable_dir().ok().unwrap_or_default().join("resources");
+    let exe_res = app
+        .path()
+        .executable_dir()
+        .ok()
+        .unwrap_or_default()
+        .join("resources");
     if exe_res.join("product.manifest.json").is_file() {
         return exe_res;
     }
@@ -287,39 +341,9 @@ pub fn run() {
                 .get_webview_window("main")
                 .expect("main 窗口应由 tauri.conf.json 创建");
             let app_handle = app.handle().clone();
-            // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.clear_all_browsing_data();
-            }
-            let manifest = match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json"))
-            {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::error!("product.manifest 读取失败: {e}");
-                    emit_boot_error(&app_handle, &e.to_string(), "");
-                    return Ok(());
-                }
-            };
-
-            // 进度事件：环境检测 / 宿主解析
-            emit_step(&app_handle, 0, "running", "扫描用户环境（PATH · 版本闸）");
-            emit_step(&app_handle, 1, "running", "解析宿主档位");
-
-            // 宿主解析链（ADR-0005）：system → bundle → download。
-            // GUI 启动 PATH 是系统最小集：用合并后的用户环境 PATH 探测（环境感知修复）。
-            let path_env = crate::resolve::effective_path();
-            let launch = match resolve::resolve_launch(&manifest, &resources_dir, &path_env, &data_dir) {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!("宿主解析失败: {e}");
-                    emit_step(&app_handle, 1, "error", &e.to_string());
-                    emit_boot_error(&app_handle, &e.to_string(), "");
-                    return Ok(());
-                }
-            };
-            emit_step(&app_handle, 0, "done", "环境扫描完成");
-            emit_step(&app_handle, 1, "done", &format!("命中档位：{:?}", launch.tier));
-
+            // 必须在任何可失败的检查之前注册：即使 manifest 或 dsh 解析失败，
+            // 启动页的 IPC（版本状态、重试）也有可用状态，不能因 `state()` panic
+            // 把原本可展示的错误卡变成整个应用退出。
             let state = Arc::new(ShellState {
                 dsh: Mutex::new(None),
                 window: window.clone(),
@@ -327,7 +351,10 @@ pub fn run() {
                 update_status: Mutex::new(None),
             });
             app.manage(state.clone());
-
+            // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.clear_all_browsing_data();
+            }
             // 更新检测（首启后台异步 + 应用菜单常驻）：先给"检测中"初始状态，
             // 背景线程完成后经 boot:update 推送并刷新应用菜单。
             {
@@ -345,24 +372,73 @@ pub fn run() {
             let h2 = app.handle().clone();
             std::thread::spawn(move || refresh_update_ui(&h2, &s2));
 
-            // F-b：system 档且用户世界有多个 webUi profile → 先出选择器，选定再 spawn。
-            if launch.tier == crate::manifest::TierKind::System {
-                let profiles = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
-                if profiles.len() > 1 {
-                    *state.pending.lock().unwrap() = Some(launch);
-                    emit_step(&app_handle, 2, "running", "选择器：多个 webUi 工作台");
-                    let _ = window.eval(&format!(
-                        "location.assign('selector.html?profiles={}')",
-                        profiles.join(",")
-                    ));
-                    return Ok(());
-                }
-            }
+            // 宿主解析可能触发网络下载和 npm 安装，必须在后台执行：setup 运行在
+            // 主线程，阻塞它会让 macOS 把窗口判定为无响应，也会让早期错误事件丢失。
+            let boot_state = state.clone();
+            let boot_app = app_handle.clone();
+            let boot_resources = resources_dir.clone();
+            let boot_data = data_dir.clone();
+            std::thread::spawn(move || {
+                let manifest = match manifest::ProductManifest::load(
+                    &boot_resources.join("product.manifest.json"),
+                ) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::error!("product.manifest 读取失败: {e}");
+                        emit_boot_error(&boot_app, &e.to_string(), "");
+                        return;
+                    }
+                };
 
-            // 默认路径：直接启动。
-            if let Err(e) = boot(state, app_handle, launch, data_dir) {
-                tracing::error!("启动 dsh 失败: {e}");
-            }
+                // 进度事件：环境检测 / 宿主解析
+                emit_step(&boot_app, 0, "running", "扫描用户环境（PATH · 版本闸）");
+                emit_step(&boot_app, 1, "running", "解析宿主档位");
+
+                // 宿主解析链（ADR-0005）：system → bundle → download。
+                // GUI 启动 PATH 是系统最小集：用合并后的用户环境 PATH 探测（环境感知修复）。
+                let path_env = crate::resolve::effective_path();
+                let launch = match resolve::resolve_launch(
+                    &manifest,
+                    &boot_resources,
+                    &path_env,
+                    &boot_data,
+                ) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!("宿主解析失败: {e}");
+                        emit_step(&boot_app, 1, "error", &e.to_string());
+                        emit_boot_error(&boot_app, &e.to_string(), "");
+                        return;
+                    }
+                };
+                emit_step(&boot_app, 0, "done", "环境扫描完成");
+                emit_step(
+                    &boot_app,
+                    1,
+                    "done",
+                    &format!("命中档位：{:?}", launch.tier),
+                );
+
+                // F-b：system 档且用户世界有多个 webUi profile → 先出选择器，选定再 spawn。
+                if launch.tier == crate::manifest::TierKind::System {
+                    let profiles =
+                        crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+                    if profiles.len() > 1 {
+                        *boot_state.pending.lock().unwrap() = Some(launch);
+                        emit_step(&boot_app, 2, "running", "选择器：多个 webUi 工作台");
+                        let _ = boot_state.window.eval(&format!(
+                            "location.assign('selector.html?profiles={}')",
+                            profiles.join(",")
+                        ));
+                        return;
+                    }
+                }
+
+                // 默认路径：直接启动。
+                if let Err(e) = boot(boot_state, boot_app.clone(), launch, boot_data) {
+                    tracing::error!("启动 dsh 失败: {e}");
+                }
+            });
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -397,7 +473,8 @@ pub fn run() {
             if let RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<Arc<ShellState>>() {
                     if let Some(mut dsh) = state.dsh.lock().unwrap().take() {
-                        let code = shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
+                        let code =
+                            shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
                         tracing::info!("dsh 已停止（exit {code}）");
                     }
                     // 选择器场景可能尚未 spawn：清理 pending，不留状态。
@@ -418,6 +495,15 @@ fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
             "detail": detail,
         }),
     );
+}
+
+/// 把 spawn/初始化阶段的错误统一回传给启动页。
+///
+/// 这些错误发生在监护线程建立之前；若只写日志，前端会永远停在“启动 dsh”。
+fn report_boot_failure(app: &tauri::AppHandle, detail: &str) {
+    tracing::error!("启动 dsh 失败: {detail}");
+    emit_step(app, 2, "error", detail);
+    emit_boot_error(app, detail, "");
 }
 
 /// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。
@@ -442,7 +528,7 @@ fn classify_boot_error(detail: &str) -> (&'static str, &'static str, Vec<&'stati
     if d.contains("credentials") || d.contains("must be a string") {
         (
             "宿主 dsh 与您的凭据格式不匹配",
-            "通常是 dsh 版本过旧：升级到官方最新版可解决（升级只动 npm 全局，不碰您的数据）。",
+            "通常是 dsh 版本过旧：升级到官方最新版可解决（升级只动 pnpm/npm 全局，不碰您的数据）。",
             vec!["upgrade", "retry"],
         )
     } else if d.contains("unknown option") || d.contains("incompatible") {
@@ -483,14 +569,29 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
         String::new()
     } else {
         let cut: String = line.chars().take(200).collect();
-        let suffix = if line.chars().count() > 200 { "…" } else { "" };
+        let suffix = if line.chars().count() > 200 {
+            "…"
+        } else {
+            ""
+        };
         format!("\n错误摘要：{}{}", cut, suffix)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::classify_boot_error;
+    use super::{cached_status_or_default, classify_boot_error};
+
+    #[test]
+    fn update_status_is_safe_before_shell_state_is_managed() {
+        // 解析失败时 setup 可能尚未注册状态；release 的 panic=abort 不能让
+        // 前端这次普通的版本查询把整个桌面进程带崩。
+        let status = cached_status_or_default(None);
+        assert!(status.current.is_none());
+        assert!(status.latest.is_none());
+        assert!(!status.newer);
+        assert!(status.error.is_none());
+    }
 
     #[test]
     fn credential_mismatch_classifies_upgrade() {
@@ -543,9 +644,15 @@ fn build_app_menu(
             status.latest.clone().unwrap_or_default()
         )
     } else if status.latest.is_some() {
-        format!("Dsh {} · 已是最新", status.current.clone().unwrap_or_else(|| "?".into()))
+        format!(
+            "Dsh {} · 已是最新",
+            status.current.clone().unwrap_or_else(|| "?".into())
+        )
     } else {
-        format!("Dsh {} · 检测中…", status.current.clone().unwrap_or_else(|| "?".into()))
+        format!(
+            "Dsh {} · 检测中…",
+            status.current.clone().unwrap_or_else(|| "?".into())
+        )
     };
 
     let st = MenuItem::with_id(app, "st", state_line, false, None::<&str>)?;
@@ -616,17 +723,18 @@ fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
 
 /// 用最近状态重建并设置应用菜单（检测完成/升级后调用）。
 fn refresh_app_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
-    let status = state
-        .update_status
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or(crate::updates::UpdateStatus {
-            current: None,
-            latest: None,
-            newer: false,
-            error: None,
-        });
+    let status =
+        state
+            .update_status
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(crate::updates::UpdateStatus {
+                current: None,
+                latest: None,
+                newer: false,
+                error: None,
+            });
     if let Ok(menu) = build_app_menu(app, &status) {
         let _ = app.set_menu(menu);
     }
@@ -639,15 +747,11 @@ fn open_about(app: &tauri::AppHandle) {
         let _ = win.set_focus();
         return;
     }
-    let builder = tauri::WebviewWindowBuilder::new(
-        app,
-        "about",
-        tauri::WebviewUrl::App("about.html".into()),
-    )
-    .title("关于")
-    .inner_size(460.0, 360.0)
-    .resizable(false)
-    .center();
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, "about", tauri::WebviewUrl::App("about.html".into()))
+            .title("关于")
+            .inner_size(460.0, 360.0)
+            .resizable(false)
+            .center();
     let _ = builder.build();
 }
-
