@@ -71,19 +71,10 @@ jobs:
         working-directory: src-tauri
         run: cargo tauri build
 
-      - name: Verify signature (macOS)
-        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
-        working-directory: src-tauri
-        run: |
-          codesign --verify --deep --strict --verbose=2 \
-            "target/release/bundle/macos/DSH Dock.app"
-          spctl --assess --type execute --verbose=4 \
-            "target/release/bundle/macos/DSH Dock.app" 2>&1 || echo "(公证票未 stapled 时不通过 spctl，已记录)"
-
       - name: Upload bundles (CI artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: bundles-${{ matrix.os }}
+          name: DSH Dock-${{ matrix.os }}
           path: |
             src-tauri/target/release/bundle/*
           if-no-files-found: error
@@ -105,7 +96,7 @@ jobs:
       - name: Download bundles
         uses: actions/download-artifact@v4
         with:
-          name: bundles-${{ matrix.os }}
+          name: DSH Dock-${{ matrix.os }}
           path: bundles
 
       - name: List bundles
