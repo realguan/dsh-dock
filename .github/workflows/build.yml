@@ -18,6 +18,10 @@ on:
 env:
   TAURI_CLI_VERSION: "2.8.4"
 
+# release job 需要创建 GitHub Release → GITHUB_TOKEN 显式授 contents: write
+permissions:
+  contents: write
+
 jobs:
   build:
     name: build (${{ matrix.os }})
@@ -104,11 +108,12 @@ jobs:
 
       # 只发布「文件型」产物：macOS 的 .dmg、Windows 的 .msi/.exe、Linux 的 .deb/.rpm/.AppImage。
       # .app 是目录（macOS），不能作为 Release asset——需要 .dmg 或先 zip。
+      # release job 跑在 ubuntu（ditto 不存在）→ 用跨平台 zip 命令。
       - name: Prepare macOS .app (zip)
         if: matrix.os == 'macos-latest'
         working-directory: bundles/macos
         run: |
-          ditto -c -k --keepParent "DSH Dock.app" "DSH Dock.app.zip" || true
+          zip -rq "DSH Dock.app.zip" "DSH Dock.app" || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
