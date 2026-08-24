@@ -83,14 +83,18 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # 公证用 API Key 落盘：tauri 需要 APPLE_API_KEY_PATH 指到含 .p8 内容的文件
+      # 公证用 API Key 落盘：tauri 会校验文件名匹配 AuthKey_<KEY_ID>.p8
+      # （默认搜索 ~/private_keys/ 下的该命名文件）；直接写同名文件最稳。
       - name: Write API key file (macOS)
         if: runner.os == 'macOS' && env.HAS_APPLE_API_KEY == 'true'
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         run: |
-          printf '%s\n' "$APPLE_API_KEY" > "$RUNNER_TEMP/apple-api-key.p8"
-          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/apple-api-key.p8" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/private_keys"
+          printf '%s\n' "$APPLE_API_KEY" > "$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
+          chmod 600 "$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
+          echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8" >> "$GITHUB_ENV"
 
       # 构建 + 打包。macOS 签名身份：
       #   无 APPLE_SIGNING_IDENTITY → tauri.conf 默认 "-"（ad-hoc，无证书也能出包）
@@ -106,7 +110,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
