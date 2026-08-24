@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DSH Dock",
-  "version": "0.1.0",
-  "identifier": "dev.deepseek.dsh-dock",
+  "version": "0.2.0",
+  "identifier": "io.github.realguan.dsh-dock",
   "build": {
     "frontendDist": "../ui"
   },

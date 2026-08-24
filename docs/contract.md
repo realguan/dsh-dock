@@ -1,6 +1,6 @@
 # 产品壳契约 v1（dsh-dock / DSH Dock）
 
-本文是**启动器 packaging 服务 ↔ 产品壳**之间的接口定义（ADR-0004）。
+本文是**装配方 ↔ 产品壳**之间的接口定义。
 两侧共同遵守，任何一侧改动须先修订本文件并升 `format`。
 
 ## 核心原则
@@ -76,7 +76,7 @@ resources/
 ## 构建流程（谁来调用什么）
 
 ```
-启动器 packaging 服务（或 CI）
+装配方（外部打包工具或 CI）
    │  render-product.sh --product '<json>' --node <bin> --dsh-bin <js> --dsh-home <dir>
    ▼
 桌面积淀到 src-tauri/resources/（product.manifest.json + dsh-snapshot/）
@@ -117,7 +117,7 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
   bundle 仍是可选的产品能力，不能把它误读成当前安装包的离线保证。
 - 使用次序是独立配置，node 与 dsh 同构适用。
 - **借执行器，不借配置**：复用宿主 dsh 只借其 bin.js/树，产品仍用自己的虚拟 home 与
-  默认连接 profile；npx 缓存形态非复用源（版本漂移）；自研 launcher 版本库不视为官方形态。
+  默认连接 profile；npx 缓存形态非复用源（版本漂移）；外部打包工具的私有版本库不视为官方形态。
 
 ## manifest v2（2026-08-21 定稿，resolution 策略）
 
@@ -146,7 +146,7 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 - `fallback`：可选的 bundle 副本（只读种子）；极简在线档不声明该字段。
 - `versionRange`：SEMVER 区间（装配时定，宽区间以让复用成立）。
 - v1（format=1）兼容：壳按 snapshot 三件套迁移为 bundle-only 解析 + fallback（壳 `MANIFEST_MIN_COMPAT=1`）。
-- 极简档语义：不写 `fallback`、resolution 缺省即 `system → download`（终端默认形态）；内置档由 launcher 装配产物显式声明 `bundle` 档 + `fallback`。
+- 极简档语义：不写 `fallback`、resolution 缺省即 `system → download`（终端默认形态）；内置档由装配方在产物中显式声明 `bundle` 档 + `fallback`。
 
 实时下载的网络与包管理顺序固定为：
 
@@ -160,3 +160,17 @@ Node 下载按目标平台选择官方包格式（macOS/Linux 为 `tar.gz`，Win
 pnpm 的全局目录或安装动作失败时回退 npm；因此 pnpm 是优先路径，不是桌面应用的硬依赖。
 对 npm 11 显式放行 dsh 所需的 native/helper install scripts；系统全局目录无写权限时，
 自动切换到应用数据目录下的私有 prefix，不要求管理员权限。
+
+## 下载运行时语义（2026-08-24 增补）
+
+- **Node 版本来源**：npm 映射包 `@dsh-dock/node-map`（registry 镜像链拉
+  packument → tarball），`map.json` 经壳内 ed25519 公钥验签、六平台 SHA-256
+  齐全才采纳；本地缓存上次验签通过的副本；任何失败回退壳内置基线
+  （fail-closed）。更新流程见 [node-map/README.md](../node-map/README.md)。
+- **下载体验**：进度经 `boot:progress` 事件（`{kind:"node", current, total}`，
+  Rust 侧节流 ≥100ms）推给前端；HTTP Range 断点续传，`.part` 落盘跨进程/
+  跨镜像可续，最终整包 SHA-256 仲裁（哈希不过即弃 `.part` 换镜像从零重下）。
+- **超时纪律**：元数据请求整体限时；大文件下载用「连接 + 单次读」双超时、
+  不设整体上限——慢网络下大包合法地超过一分钟，停滞连接由读超时兜底。
+- **单实例**：`tauri-plugin-single-instance`（OS 级原语），二次启动唤起主窗口，
+  杜绝双进程 / 双下载 / 并发写私有 prefix。

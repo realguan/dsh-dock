@@ -7,3 +7,8 @@ src-tauri/resources/dsh-snapshot/*
 !src-tauri/resources/dsh-snapshot/.gitkeep
 *.log
 /src-tauri/target
+# 桌面项目用不到的移动端图标产物（cargo tauri icon 会重新生成）
+src-tauri/icons/android
+src-tauri/icons/ios
+# node-map 签名私钥（只存在于本地与 CI secret，绝不入库；node-map/.gitignore 同防）
+node-map-private.key

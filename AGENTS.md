@@ -2,11 +2,12 @@
 
 ## 定位（必须理解再动手）
 
-本仓库是 ADR-0004 的**通用产品壳**，**不是启动器**的不完整副本。改动前先问：
+本仓库是**通用产品壳**（终端），不是打包装配工具。改动前先问：
 
-- 这个逻辑属于「**壳**」（spawn / URL 解析 / 优雅停止 / WebView 导航 / 契约读取）→ 进本仓库；
+- 这个逻辑属于「**壳**」（spawn / URL 解析 / 优雅停止 / WebView 导航 / 契约读取 /
+  下载与进度 / 签名映射验证）→ 进本仓库；
 - 还是属于「打包装配」（物化快照、版本 pin、插件集成、本地源扫描、任务台）→ 属于
-  **启动器 packaging 服务**（dsh-launcher），本仓库不承接；
+  **装配方**（外部打包工具，经 `product.manifest.json` 契约与壳对接），本仓库不承接；
 - 还是属于「产品数据」（某个具体工作台叫什么、装什么插件）→ 属于快照/构建期身份，不写死进壳。
 
 **壳是通用机制，产品是数据**：壳不得感知任何具体产品身份；运行时身份只经
@@ -17,16 +18,20 @@
 | 层级 | 选型 |
 |:---|:---|
 | 框架 | Tauri v2（Rust 后端 + 系统 WebView） |
+| 单实例 | `tauri-plugin-single-instance`（OS 级原语锁，Builder 链最先注册；二次启动 = 唤起主窗口） |
 | 壳自带前端 | 静态 HTML/CSS/JS（`ui/`），**禁止引入构建器/框架/依赖** |
+| 签名验证 | ed25519-dalek（node-map 验签，仅 verify 路径） |
 | 错误处理 | anyhow（壳无 IPC、无 services 分层，用不上 AppError 枚举） |
 | Rust 日志 | tracing（禁止 println!） |
 | 品牌 | dsh 官方标（来源：dsh-web-frontend `favicon.svg`；白标 = 官方深色模式渲染） |
 
 ## 品牌规则
 
-- 桌面图标 / 加载页 logo 一律用 dsh 官方标；**禁止手绘或自造占位 logo**。
+- 桌面图标 / 页内徽章一律用 dsh 官方标；**禁止手绘或自造占位 logo**。
 - 改图标 = 改 `assets/icon-master.svg`（官方 path 合成 + 深色圆角底）→
   跑 `scripts/regen-icons.sh` 整体重生成（rsvg-convert → cargo tauri icon）。
+- 页内徽章（index/selector/about 三页）统一为 `.emblem` 组件：`ui/assets/mark.svg`
+  （形状源）+ CSS mask 上白色——**不允许在页面里内联第二份鲸鱼 path 或第二种颜色**。
 - 官方原始 SVG 溯源于 `ui/assets/dsh-logo.svg`；未获官方新版本前不得偏离该几何。
 
 ## Rust 规则
@@ -58,8 +63,11 @@
   `check_updates`（手动后台检测）。前端经 `window.__TAURI__.core.invoke` 调用
   （tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
   消费——**注册例外**；新命令必须先在 AGENTS 登记。
-- 事件协议：`boot:step` / `boot:error`（启动遥测，index/selector 两页）+
-  `boot:update`（更新检测结果，版本行芯片）。
+- 事件协议：`boot:step` / `boot:error`（启动遥测）+ `boot:update`
+  （三维度版本状态 `{dsh: ComponentUpdate, client: ComponentUpdate, node: {version,
+  origin: system|managed}|null}`；dsh/client 含 current/latest/newer/error）+
+  `boot:progress`（下载进度 `{kind:"node", current, total|null}`；Rust 侧节流
+  ≥100ms，updates 模块经回调上抛、lib.rs 桥接为事件——updates 保持零 tauri 依赖）。
 - 更新常驻落点 = **macOS 应用菜单**（托盘已砍，2026-08-23 裁定）：
   根菜单 id `st`（状态行，禁用）/ `check`（检查更新…，⌘U）/ `upgrade`
   （升级到 X，新版才可用）/ `about`（关于，开 ui/about.html 小窗）；
@@ -69,8 +77,12 @@
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
-- 唯一网络面：`updates.rs`，三路镜像链——包元数据/dsh 安装（registry.npmmirror →
-  registry.npmjs）、Node 二进制（cdn.npmmirror.com/binaries/node → nodejs.org/dist）。
+- 唯一网络面：`updates.rs`，四路镜像链——包元数据/dsh 安装（registry.npmmirror →
+  registry.npmjs）、Node 二进制（cdn.npmmirror.com/binaries/node → nodejs.org/dist）、
+  Node 版本映射包 `@dsh-dock/node-map`（registry 镜像链拉 packument+tarball，
+  ed25519 验签后才采纳，失败回退内置基线；见 node-map/README.md）、
+  客户端自身更新源 `APP_RELEASE_FEED`（GitHub Releases latest API；常量为 None 时
+  不触网不出检查入口，开源仓库就位后填入）。
   其余模块不得触网（Windows 安装器的 WebView2 在线引导属打包配置，不属壳运行时网络面）。
   网络动作一律后台线程；元数据用整体超时，大文件下载用「连接 + 单次读」双超时、不设
   整体上限（慢网络下 40MB 合法地超过一分钟）；非 updates.rs 的网络需求先登记再写。

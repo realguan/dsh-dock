@@ -10,13 +10,14 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-FAV=$(find "${DSH_RUNTIME:-$HOME/.dsh/.dsh-launcher/runtimes}" \
-  -name favicon.svg -path "*dsh-web-frontend*" 2>/dev/null | head -1)
-[ -n "$FAV" ] || { echo "未找到官方 favicon.svg（可用 DSH_RUNTIME 指定运行时根）" >&2; exit 1; }
-echo "官方源：$FAV"
-
-cp -f "$FAV" "$ROOT/ui/assets/dsh-logo.svg"
-echo "→ ui/assets/dsh-logo.svg"
+# 默认用仓库内的官方溯源副本（自包含）；官方出新版时用 DSH_FAVICON 指向新 favicon.svg 刷新。
+if [ -n "${DSH_FAVICON:-}" ]; then
+  [ -f "$DSH_FAVICON" ] || { echo "DSH_FAVICON 指向的文件不存在：$DSH_FAVICON" >&2; exit 1; }
+  cp -f "$DSH_FAVICON" "$ROOT/ui/assets/dsh-logo.svg"
+  echo "已从官方源刷新：$DSH_FAVICON → ui/assets/dsh-logo.svg"
+else
+  echo "使用仓库内官方溯源副本 ui/assets/dsh-logo.svg（刷新自新版请设 DSH_FAVICON）"
+fi
 
 command -v rsvg-convert >/dev/null || { echo "需要 rsvg-convert（brew install librsvg）" >&2; exit 1; }
 rsvg-convert -w 1024 -h 1024 -o "$ROOT/src-tauri/app-icon.png" "$ROOT/assets/icon-master.svg"
