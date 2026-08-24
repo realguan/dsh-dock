@@ -266,10 +266,9 @@ mod tests {
         );
         let fb = m.fallback.unwrap();
         assert_eq!(fb.profile, "desktop-demo");
-        assert_eq!(
-            fb.resolve_path(Path::new("/res"), &fb.dsh_bin_js).display().to_string(),
-            "/res/dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js"
-        );
+        // 平台无关路径断言：期望值同样经 Path::join 构造（Windows 分隔符为 \）
+        let expected = Path::new("/res").join("dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js");
+        assert_eq!(fb.resolve_path(Path::new("/res"), &fb.dsh_bin_js), expected);
     }
 
     #[test]

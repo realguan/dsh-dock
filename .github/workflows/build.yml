@@ -26,10 +26,6 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    # secrets 存在性先求值为 job env（step 级 if 不能直接读 secrets context）
-    env:
-      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
-      HAS_APPLE_API_KEY: ${{ secrets.APPLE_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,24 +49,12 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      # macOS 签名证书导入（Developer ID Application .p12）。
-      # secrets 未配置时跳过 → ad-hoc 签名（本机可跑，分发会被 Gatekeeper 拦）。
-      - name: Import signing certificate
-        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/apple-cert.p12
-          security create-keychain -p github build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p github build.keychain
-          # 只授 codesign 信任；notarytool 走 xcrun（runner 上不在 /usr/bin）
-          security import /tmp/apple-cert.p12 -k build.keychain \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k github build.keychain
-          security find-identity -v build.keychain
-
+      # 【签名已暂停（2026-08-25）】macOS 签名/公证步骤整体移除——
+      # CI 先保证三平台构建稳定通过。tauri.conf signingIdentity 默认 "-"（ad-hoc），
+      # 本机可跑、分发会被 Gatekeeper 拦。恢复签名时重新启用：
+      #   1. Import signing certificate（APPLE_CERTIFICATE / PASSWORD base64 导入 keychain）
+      #   2. Write API key file（~/private_keys/AuthKey_<KEY_ID>.p8）
+      #   3. Build 时 --config 覆盖 signingIdentity + 注入 APPLE_API_KEY_* env（tauri 自动 notarize+staple）
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -83,42 +67,9 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # 公证用 API Key 落盘：tauri 会校验文件名匹配 AuthKey_<KEY_ID>.p8
-      # （默认搜索 ~/private_keys/ 下的该命名文件）；直接写同名文件最稳。
-      - name: Write API key file (macOS)
-        if: runner.os == 'macOS' && env.HAS_APPLE_API_KEY == 'true'
-        env:
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-        run: |
-          mkdir -p "$HOME/private_keys"
-          printf '%s\n' "$APPLE_API_KEY" > "$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
-          chmod 600 "$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
-          echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8" >> "$GITHUB_ENV"
-
-      # 构建 + 打包。macOS 签名身份：
-      #   无 APPLE_SIGNING_IDENTITY → tauri.conf 默认 "-"（ad-hoc，无证书也能出包）
-      #   有 → 用 --config 覆盖为真实 Developer ID 身份
-      # 公证 env 存在时 tauri 自动 notarize + staple：
-      #   APPLE_API_KEY/PATH/ISSUER/KEY_ID（App Store Connect API）或
-      #   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID（应用专用密码）
       - name: Build installers
         working-directory: src-tauri
-        shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
-            echo '{"bundle":{"macOS":{"signingIdentity":"'"$APPLE_SIGNING_IDENTITY"'"}}}' > /tmp/sign-config.json
-            cargo tauri build --config /tmp/sign-config.json
-          else
-            cargo tauri build
-          fi
+        run: cargo tauri build
 
       - name: Verify signature (macOS)
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
