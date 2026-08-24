@@ -1,6 +1,6 @@
 //! 运行 dsh 子进程：spawn（`--port 0`）→ 从日志轮询实际 URL → 优雅停止。
 //!
-//! 逻辑移植自 dsh-launcher 的 `process_guard`（那里已被实测打磨过）：
+//! 进程监护语义：
 //!   - `--port 0` 由 OS 分配端口，URL 从 dsh 打在 stdout 的地址行解析；
 //!   - 只认 `http://` / `https://` 开头的词，拒绝 `file://`（Node 栈帧）与 `data:`；
 //!   - 优雅停止 = SIGTERM → 等待 grace → SIGKILL 兜底（unix；Windows 用 kill）。

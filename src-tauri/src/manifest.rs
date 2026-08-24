@@ -1,10 +1,10 @@
 //! product.manifest.json —— 壳与「产品配置/宿主解析」之间的**唯一运行时契约**。
 //!
 //! v2（2026-08-21，grill 定稿，见 docs/contract.md「运行时策略」章）：
-//! 本产物是 **dsh 的桌面终端**（ADR-0005）。契约从「快照三件套」扩展为
+//! 本产物是 **dsh 的桌面终端**。契约从「快照三件套」扩展为
 //! **终端 + 宿主解析策略**：
 //!   - `terminal.resolution`：node / dsh 各自的解析档序（system → bundle → download）
-//!     与版本下限；极简档无 bundle tier（随包不内置），内置档 bundle 优先（launcher 装配产物）。
+//!     与版本下限；极简档无 bundle tier（随包不内置），内置档 bundle 优先（装配方产物）。
 //!   - `fallback`：离线兜底副本（内置档才有），相对 resources 根。
 //!   - v1（format=1）兼容读取：snapshot 三件套迁移为 bundle-only 解析 + fallback。
 //!
@@ -67,7 +67,7 @@ impl Default for TierSpec {
     }
 }
 
-/// terminal 区块：终端行为（ADR-0005 Q4：webUi profile 选择器）。
+/// terminal 区块：终端行为（webUi profile 选择器，见 docs/contract.md manifest v2）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSpec {
@@ -92,7 +92,7 @@ impl Default for TerminalSpec {
     }
 }
 
-/// 解析策略集合：与 dsh 成对判定（借执行器成对，见 ADR-0005）。
+/// 解析策略集合：与 dsh 成对判定（借执行器成对，见 docs/contract.md「运行时策略」）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolutionSpec {

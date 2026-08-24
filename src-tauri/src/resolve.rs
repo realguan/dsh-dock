@@ -1,4 +1,4 @@
-//! resolve.rs —— 终端宿主解析链（ADR-0005 / docs/contract.md「运行时策略」）。
+//! resolve.rs —— 终端宿主解析链（docs/contract.md「运行时策略」）。
 //!
 //! 职责：按 manifest 的 resolution 档序（system → bundle → download）解析出
 //! 本次启动要用的 `LaunchSpec`（node / dsh 入口 / DSH_HOME / profile）。
@@ -55,7 +55,7 @@ pub fn user_dsh_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".dsh"))
 }
 
-// ---------- 版本比较（移植自 dsh-launcher runtime.rs，含 rc 语义） ----------
+// ---------- 版本比较（含 rc 语义的排序） ----------
 
 type Seg = (bool, u64, String);
 
@@ -303,13 +303,21 @@ pub fn detect_system_dsh(path_env: &str) -> Option<SystemDsh> {
             .iter()
             .map(|name| dir.join(name))
             .find(|candidate| candidate.is_file() && is_executable(candidate))
-    })?;
+    });
+    let Some(bin) = bin else {
+        tracing::info!("system dsh 探测：PATH 中无可执行 dsh");
+        return None;
+    };
     // Unix shim 一般是指向 lib/bin.js 的符号链接。Windows 的 .cmd shim 不会被
-    // canonicalize 到包树，因此额外从 npm 全局前缀的 node_modules 查一次。
+    // canonicalize 到包树，因此额外从 npm/pnpm 全局 prefix 的 node_modules 查一次。
     let tree = fs::canonicalize(&bin)
         .ok()
         .and_then(|real| find_package_root(&real, "@deepseek-ai/dsh"))
-        .or_else(|| find_global_package_root_from_command(&bin, "@deepseek-ai/dsh"))?;
+        .or_else(|| find_global_package_root_from_command(&bin, "@deepseek-ai/dsh"));
+    let Some(tree) = tree else {
+        tracing::info!("system dsh 探测：找到 {} 但无法解析包树", bin.display());
+        return None;
+    };
     let manifest_path = tree.join("package.json");
     let text = fs::read_to_string(&manifest_path).ok()?;
     let pkg: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -489,12 +497,13 @@ enum SystemOutcome {
     },
 }
 
-/// 按档序解析本次启动的 LaunchSpec。
+/// 按档序解析本次启动的 LaunchSpec。download 档的下载进度经 `progress` 上抛。
 pub fn resolve_launch(
     manifest: &ProductManifest,
     resources_dir: &Path,
     path_env: &str,
     data_dir: &Path,
+    progress: crate::updates::DownloadProgress,
 ) -> Result<LaunchSpec> {
     let spec = &manifest.terminal.resolution.dsh;
 
@@ -514,7 +523,7 @@ pub fn resolve_launch(
                 }
                 SystemOutcome::TooOld { found, min } => {
                     anyhow::bail!(
-                        "您机器上的 dsh 版本过低（{found} < 终端要求 {min}）。\n\
+                        "您机器上的 DSH 版本过低（{found} < 终端要求 {min}）。\n\
                          终端不会自动覆盖您的全局安装；请确认后执行 \
                          `npm i -g @deepseek-ai/dsh` 升级，或安装内置档桌面版。"
                     );
@@ -532,7 +541,7 @@ pub fn resolve_launch(
                 // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
                 let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
                 spec.no_open = true;
-                // 快照 home 在 bundle 内只读（ADR-0005 开放问题 1 落定）：首启同步到
+                // 快照 home 在 bundle 内只读：首启同步到
                 // 可写数据目录，dsh 的会话/设置才落得下；仅覆盖不删除，运行数据保留。
                 match sync_fallback_home(&spec.dsh_home, data_dir) {
                     Ok(home) => spec.dsh_home = home,
@@ -544,7 +553,7 @@ pub fn resolve_launch(
             }
             TierKind::Download => {
                 // 实时下载：node 执行器（系统优先，无则缓存下载）→ pnpm 优先、npm 回退，全局装官方最新 dsh
-                let (node, tree) = crate::updates::install_latest_global(data_dir)
+                let (node, tree) = crate::updates::install_latest_global(data_dir, progress)
                     .map_err(|e| anyhow::anyhow!("实时下载档失败：{e}"))?;
                 return Ok(LaunchSpec {
                     node_bin: node,
@@ -960,7 +969,7 @@ mod tests {
         std::fs::create_dir_all(res.join("dsh-snapshot/home/profiles/desktop-demo")).unwrap();
         std::fs::write(res.join("dsh-snapshot/home/settings.yaml"), "k: v\n").unwrap();
         let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let spec = resolve_launch(&m, &res, "", &root).unwrap();
+        let spec = resolve_launch(&m, &res, "", &root, &mut |_, _| {}).unwrap();
         assert_eq!(spec.tier, TierKind::Bundle);
         assert_eq!(spec.profile, "desktop-demo");
         assert!(spec.node_bin.ends_with("dsh-snapshot/node/bin/dsh-node"));
@@ -999,7 +1008,14 @@ mod tests {
         let json = r#"{"format": 2, "productName": "T",
           "terminal": {"resolution": {"dsh": {"tiers": []}}}}"#;
         let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let err = resolve_launch(&m, Path::new("/res"), "", Path::new("/tmp/none")).unwrap_err();
+        let err = resolve_launch(
+            &m,
+            Path::new("/res"),
+            "",
+            Path::new("/tmp/none"),
+            &mut |_, _| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("档序为空"));
     }
 }
