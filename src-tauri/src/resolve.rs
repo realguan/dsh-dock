@@ -514,8 +514,10 @@ pub fn resolve_launch(
                 }
                 SystemOutcome::TooOld { found, min } => {
                     anyhow::bail!(
-                            "您机器上的 dsh 版本过低（{found} < 终端要求 {min}）。                             终端不会自动覆盖您的全局安装；请确认后执行 `npm i -g @deepseek-ai/dsh`                              升级，或安装内置档桌面版。"
-                        );
+                        "您机器上的 dsh 版本过低（{found} < 终端要求 {min}）。\n\
+                         终端不会自动覆盖您的全局安装；请确认后执行 \
+                         `npm i -g @deepseek-ai/dsh` 升级，或安装内置档桌面版。"
+                    );
                 }
                 SystemOutcome::Miss => {
                     tracing::info!("system 档未命中（用户环境无可用官方 dsh）");

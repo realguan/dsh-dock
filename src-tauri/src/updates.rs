@@ -23,8 +23,15 @@ use crate::resolve;
 
 /// 下载档使用的官方 node 版本（与兜底副本对齐；LTS）。
 const NODE_VERSION: &str = "v24.18.0";
-/// 下载超时（秒）：registry 拉包清单 / node 二进制。
+/// 元数据请求整体超时（秒）：registry 拉包清单等小响应，整体限时合理。
 const NET_TIMEOUT_SECS: u64 = 60;
+/// Node 大包下载的连接超时（秒）。
+const NODE_CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Node 大包下载的单次读超时（秒）。
+///
+/// 大文件不能套整体超时：40MB 在慢网络下合法地超过一分钟。改为「连接 + 单次读」
+/// 双超时——只要数据持续在推，下载可以慢慢跑完；彻底停滞的连接仍会在读超时被掐断。
+const NODE_READ_TIMEOUT_SECS: u64 = 60;
 /// pnpm v10 默认会阻止依赖的 install/postinstall；dsh 的 native/helper 依赖必须放行。
 const PNPM_BUILD_PACKAGES: [&str; 5] = [
     "@deepseek-ai/dsh-subprocess-local",
@@ -86,6 +93,23 @@ fn node_sha256(dist: &str) -> Option<&'static str> {
     }
 }
 
+/// packument 读取上限：防异常响应撑爆内存；正常清单远小于此。
+const PACKUMENT_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 读响应体为字符串，带显式字节上限。
+/// ureq 的 `into_string()` 自带内部上限且阈值随版本漂移，这里改为显式、可测的实现。
+fn read_body_capped(reader: impl Read, cap: u64) -> Result<String> {
+    let mut text = String::new();
+    reader
+        .take(cap + 1)
+        .read_to_string(&mut text)
+        .context("读取响应体失败")?;
+    if text.len() as u64 > cap {
+        anyhow::bail!("响应体超过 {cap} 字节上限");
+    }
+    Ok(text)
+}
+
 /// 拉取 packument（镜像链逐个尝试，首个成功即返回）。
 fn fetch_packument() -> Result<serde_json::Value> {
     let agent = ureq::AgentBuilder::new()
@@ -95,7 +119,7 @@ fn fetch_packument() -> Result<serde_json::Value> {
     for url in npm_registry_urls() {
         tracing::info!("读取 dsh 版本列表：{url}");
         match agent.get(&url).call() {
-            Ok(resp) => match resp.into_string() {
+            Ok(resp) => match read_body_capped(resp.into_reader(), PACKUMENT_MAX_BYTES) {
                 Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(v) => return Ok(v),
                     Err(e) => last_err = Some(e.into()),
@@ -353,7 +377,8 @@ pub fn download_node(data_dir: &Path) -> Result<PathBuf> {
     let target = cached_node_dir(data_dir);
     let urls = node_download_urls(dist);
     let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
+        .timeout_connect(std::time::Duration::from_secs(NODE_CONNECT_TIMEOUT_SECS))
+        .timeout_read(std::time::Duration::from_secs(NODE_READ_TIMEOUT_SECS))
         .build();
     let mut errors = Vec::new();
     for url in urls {
@@ -794,6 +819,15 @@ mod tests {
         assert!(windows_urls[0].starts_with("https://cdn.npmmirror.com/binaries/node/"));
         assert!(windows_urls[1].starts_with("https://nodejs.org/dist/"));
         assert!(windows_urls.iter().all(|url| url.ends_with(".zip")));
+    }
+
+    #[test]
+    fn body_reader_enforces_explicit_cap() {
+        assert_eq!(
+            read_body_capped(Cursor::new(b"hello".to_vec()), 8).unwrap(),
+            "hello"
+        );
+        assert!(read_body_capped(Cursor::new(vec![b'a'; 10]), 8).is_err());
     }
 
     #[test]

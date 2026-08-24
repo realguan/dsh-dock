@@ -69,8 +69,11 @@
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
-- 唯一网络面：`updates.rs`（npm registry 镜像链 / nodejs.org）。其余模块不得触网。
-  网络动作一律后台线程 + 超时；非 updates.rs 的网络需求先登记再写。
+- 唯一网络面：`updates.rs`，三路镜像链——包元数据/dsh 安装（registry.npmmirror →
+  registry.npmjs）、Node 二进制（cdn.npmmirror.com/binaries/node → nodejs.org/dist）。
+  其余模块不得触网（Windows 安装器的 WebView2 在线引导属打包配置，不属壳运行时网络面）。
+  网络动作一律后台线程；元数据用整体超时，大文件下载用「连接 + 单次读」双超时、不设
+  整体上限（慢网络下 40MB 合法地超过一分钟）；非 updates.rs 的网络需求先登记再写。
 
 ## 试验协议（AI 协作）
 
