@@ -813,8 +813,11 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn fnm_paths_include_latest_installation_bin() {
+        // Windows 下 fnm 布局是 AppData/Roaming/fnm，此测试只覆盖 Unix 布局
+        //（fnm_nvm_bin_dirs_in 的分支本身在 resolve 的 Windows 路径测试之外）。
         let root = tmp();
         let versions = root.join(".local/share/fnm/node-versions");
         std::fs::create_dir_all(versions.join("v20.0.0/installation/bin")).unwrap();
