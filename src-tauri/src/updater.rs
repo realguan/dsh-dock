@@ -142,7 +142,7 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
         #[cfg(target_os = "windows")]
         let result = {
             // 下载与安装分离：插件 install 会 exit(0)（跳过 RunEvent::Exit 清理），
-            // 所以 dsh 必须在 install 前显式停掉（壳与 dsh 同生命周期）。
+            // 所以 dsh 必须在 install 前显式停掉（壳与 dsh 同生命周期，会话式 teardown）。
             let bytes = match tauri::async_runtime::block_on(update.download(&mut progress, || {}))
             {
                 Ok(b) => b,
@@ -157,8 +157,8 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
                     return;
                 }
             };
-            if let Some(mut dsh) = state.dsh.lock().unwrap().take() {
-                let _ = crate::shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
+            if let Some(mut ex) = state.session.lock().unwrap().take() {
+                let _ = ex.teardown();
             }
             update.install(&bytes)
         };
@@ -181,12 +181,9 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
                         },
                     );
                     set_state(&state, &app, ClientUpdate::Relaunching);
-                    // 重启前先停掉 dsh（壳退 = dsh 停，同生命周期）。
-                    if let Some(mut dsh) = state.dsh.lock().unwrap().take() {
-                        let _ = crate::shell::stop_dsh(
-                            &mut dsh.child,
-                            std::time::Duration::from_secs(3),
-                        );
+                    // 重启前先停掉 dsh 会话（壳退 = dsh 停，同生命周期）。
+                    if let Some(mut ex) = state.session.lock().unwrap().take() {
+                        let _ = ex.teardown();
                     }
                     app.restart();
                 }

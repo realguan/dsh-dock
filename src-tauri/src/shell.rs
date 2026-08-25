@@ -11,7 +11,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -118,11 +117,12 @@ pub enum ReadyOutcome {
 ///   2. **dsh 进程中途退出 → 立即 `Exited`**（真失败秒报，不干等满上限）；
 ///   3. 进程活着但日志 `stall` 内无进展 → `Stalled`（防死等，提示卡死）。
 ///
-/// 进程始终留在 `dsh_slot`（壳状态里的 Option<DshProcess>）中：等待线程只在
-/// 每轮短暂锁住检查存活，不独占锁 90s，退出处理器随时能拿到它做停止。
+/// 执行环境无关（executor.rs）：会话进程是否退出经 `exited` 回调查询（壳侧
+/// 对 `Session` 槽做短锁轮询）。调用方只传回"已退出 → Some(exit_code)"，
+/// 等待线程不独占会话锁 90s，退出处理器随时能拿到会话做 teardown。
 pub fn wait_for_ready(
     log_path: &Path,
-    dsh_slot: &Mutex<Option<DshProcess>>,
+    exited: &mut dyn FnMut() -> Option<i32>,
     stall: Duration,
     limit: Duration,
 ) -> ReadyOutcome {
@@ -143,15 +143,9 @@ pub fn wait_for_ready(
                 last_grow = Instant::now();
             }
         }
-        // 进程先退出：不干等，立即判失败（短锁，全程不阻塞退出处理器）。
-        if let Some(status) = dsh_slot
-            .lock()
-            .unwrap()
-            .as_mut()
-            .and_then(|d| d.child.try_wait().ok())
-            .flatten()
-        {
-            return ReadyOutcome::Exited(status.code().unwrap_or(-1));
+        // 会话进程先退出：不干等，立即判失败（短锁回调，不阻塞退出处理器）。
+        if let Some(code) = exited() {
+            return ReadyOutcome::Exited(code);
         }
         if Instant::now() >= deadline {
             break;
@@ -209,6 +203,7 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::process::Command;
 
     #[test]
@@ -288,7 +283,7 @@ mod tests {
                 .args(["/C", "ping", "-n", "3", "127.0.0.1"])
                 .spawn()
         };
-        let mut child = child.expect("spawn 模拟进程");
+        let child = child.expect("spawn 模拟进程");
         let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
             child,
             log_path: path.clone(),
@@ -303,7 +298,19 @@ mod tests {
             writeln!(f, "DSH web listening on http://127.0.0.1:34567/").unwrap();
         });
 
-        match wait_for_ready(&path, &slot, Duration::from_secs(1), Duration::from_secs(5)) {
+        match wait_for_ready(
+            &path,
+            &mut (|| {
+                slot.lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|d| d.child.try_wait().ok())
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            }),
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+        ) {
             ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34567"),
             other => panic!("应判 Ready，得到 {other:?}"),
         }
@@ -332,7 +339,14 @@ mod tests {
         }));
         match wait_for_ready(
             &path,
-            &slot,
+            &mut (|| {
+                slot.lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|d| d.child.try_wait().ok())
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            }),
             Duration::from_secs(5),
             Duration::from_secs(3),
         ) {
@@ -355,12 +369,24 @@ mod tests {
         } else {
             Command::new("cmd.exe").args(["/C", "ping", "-n", "30", "127.0.0.1"]).spawn()
         };
-        let mut child = child.expect("spawn 模拟进程");
+        let child = child.expect("spawn 模拟进程");
         let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
             child,
             log_path: path.clone(),
         }));
-        match wait_for_ready(&path, &slot, Duration::from_millis(250), Duration::from_secs(5)) {
+        match wait_for_ready(
+            &path,
+            &mut (|| {
+                slot.lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|d| d.child.try_wait().ok())
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            }),
+            Duration::from_millis(250),
+            Duration::from_secs(5),
+        ) {
             ReadyOutcome::Stalled => {}
             other => panic!("存活但停滞应判 Stalled，得到 {other:?}"),
         }

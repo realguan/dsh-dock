@@ -114,8 +114,10 @@ fn major_of(v: &str) -> Option<u64> {
 
 // ---------- 环境感知（GUI 启动的 PATH 是系统最小集，必须先补全） ----------
 
-/// 带超时执行并取 stdout（login shell 拉 PATH 用）。
-fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
+/// 带超时执行并取原始 stdout 字节（login shell 拉 PATH / executor 的 wsl.exe
+/// 捕获共用——统一走 `quiet_cmd` 纪律与超时上限；返回原始字节以便按需解码，
+/// 如 wsl.exe 可能输出 UTF-16LE 而非 UTF-8）。
+pub fn run_with_timeout_raw(cmd: &mut Command, timeout: std::time::Duration) -> Option<Vec<u8>> {
     crate::quiet_cmd(cmd);
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
@@ -128,14 +130,13 @@ fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<S
             if !status.success() {
                 return None;
             }
-            let mut out = String::new();
             use std::io::Read;
-            child.stdout.take()?.read_to_string(&mut out).ok()?;
-            let t = out.trim();
-            return if t.is_empty() {
+            let mut out = Vec::new();
+            child.stdout.take()?.read_to_end(&mut out).ok()?;
+            return if out.is_empty() {
                 None
             } else {
-                Some(t.to_string())
+                Some(out)
             };
         }
         if std::time::Instant::now() >= deadline {
@@ -144,6 +145,17 @@ fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<S
             return None;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// 带超时执行并取 stdout（UTF-8 lossy；wsl 相关请用 `run_with_timeout_raw` 再解码）。
+pub fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
+    let raw = run_with_timeout_raw(cmd, timeout)?;
+    let t = String::from_utf8_lossy(&raw).trim().to_string();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
     }
 }
 

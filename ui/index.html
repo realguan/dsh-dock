@@ -12,6 +12,7 @@
       <span class="wordmark">DSH DOCK</span>
       <span class="top-actions">
         <span class="vchip" id="vchip"></span>
+        <button class="abtbtn" id="wslBtn" title="在 WSL2 发行版内运行 DSH（需 Windows + WSL2）">在 WSL 中打开</button>
         <button class="abtbtn" id="aboutBtn">关于</button>
       </span>
     </div>
@@ -48,7 +49,7 @@
       // boot:error / boot:update（三维度版本状态：dsh / client / node）。
       const STEPS = [
         ["01", "环境检测", "PATH · 版本闸 · 平台"],
-        ["02", "宿主解析", "system → bundle → download"],
+        ["02", "宿主解析", "local：system → bundle → download"],
         ["03", "启动 DSH", "--port 0"],
         ["04", "等待就绪", "解析访问地址（慢速冷启动可稍候）"],
         ["05", "进入工作台", "WebView 导航"],
@@ -191,6 +192,8 @@
       window.__TAURI__.event.listen("boot:error", (ev) => {
         headline.textContent = "启动遇到问题";
         renderError(ev.payload);
+        const w = document.getElementById("wslBtn");
+        if (w) w.disabled = false; // 切换失败后允许再次尝试
       });
 
       // ---- 顶栏版本芯片 ----
@@ -225,6 +228,22 @@
       document.getElementById("aboutBtn").addEventListener("click", () => {
         window.__TAURI__.core.invoke("open_about").catch(() => {});
       });
+
+      // ---- 顶栏「在 WSL 中打开」：执行环境切换（local → WSL2，零配置）----
+      // 触发后关掉当前会话并启动 WSL 会话；具体探测/启动进度经 boot:step 呈现，
+      // 失败经 boot:error → renderError。
+      const wslBtn = document.getElementById("wslBtn");
+      if (wslBtn) {
+        wslBtn.addEventListener("click", () => {
+          wslBtn.disabled = true;
+          window.__TAURI__.core
+            .invoke("boot_in_wsl")
+            .catch((e) => {
+              renderError({ title: "WSL 切换失败", detail: String((e && e.message) || e) });
+              wslBtn.disabled = false;
+            });
+        });
+      }
 
       headline.textContent = HEADLINES[0];
     </script>

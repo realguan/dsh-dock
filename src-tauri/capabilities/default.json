@@ -23,6 +23,7 @@
     "allow-open-about",
     "allow-open-external",
     "allow-open-workbench-in-browser",
-    "allow-get-workbench-url"
+    "allow-get-workbench-url",
+    "allow-boot-in-wsl"
   ]
 }

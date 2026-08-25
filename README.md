@@ -20,6 +20,9 @@ macOS / Windows / Linux 三平台安装包由 [CI](.github/workflows/build.yml) 
 - **单实例**：二次启动唤起已有窗口，不会出现双进程、双下载或并发安装。
 - **同生命周期**：壳退 = dsh 停（SIGTERM → SIGKILL 兜底）；dsh 崩溃就地错误卡，
   带可行动动作（重试 / 升级）。
+- **执行环境抽象（executor）**：local（本机）/ wsl（WSL2 发行版）可切换，
+  SSH 预留。壳的 boot / 就绪 / 监护与执行环境无关；WSL 迭代 v1 零配置
+  （探测即用默认发行版，须 WSL2 方具备 localhost 端口转发）。
 - **内嵌 WebView 呈现**：主窗口加载 `http://127.0.0.1:<port>/` 的 dsh Web UI
   （`--port 0` 由 OS 分配，从日志解析实际地址，无端口冲突）。
 
@@ -84,6 +87,7 @@ dsh-dock/
 │   ├── src/
 │   │   ├── main.rs        # 入口
 │   │   ├── lib.rs         # run()：契约读取 → 宿主解析 → spawn dsh → 导航 WebView
+│   │   ├── executor.rs    # 执行环境抽象：local / wsl（ssh 预留），壳只认识 Executor
 │   │   ├── manifest.rs    # product.manifest.json 契约（format=1/2）
 │   │   ├── resolve.rs     # 宿主解析链（system → bundle → download）
 │   │   ├── updates.rs     # 唯一网络面：版本检测 / Node 下载 / dsh 安装 / 签名映射

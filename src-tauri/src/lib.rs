@@ -12,12 +12,14 @@
 //! `window.__TAURI__.event.listen` 接收 `boot:step` / `boot:error` 事件流，
 //! 启动过程全链路可视化（见 ui/index.html）。
 
+mod executor;
 mod manifest;
 mod resolve;
 mod shell;
 mod updater;
 mod updates;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -111,12 +113,18 @@ mod proc_tests {
     }
 }
 
-/// 壳运行时状态：dsh 子进程 + 主窗口句柄 + 待选 profile 的启动规格。
+/// 壳运行时状态：当前执行环境会话（executor）+ 主窗口句柄 + 待选 profile 的会话。
 struct ShellState {
-    dsh: Mutex<Option<shell::DshProcess>>,
+    /// 当前会话的执行器（local / wsl；ssh 预留）。等待/监护线程对它做短锁轮询，
+    /// 不独占锁——退出处理器随时能拿到会话做 teardown（同生命周期纪律）。
+    session: crate::executor::Session,
+    /// 会话代际：每次 teardown/切换递增。等待/监护线程启动时记录自己的代际，
+    /// 会话被外部切换（如 boot_in_wsl 停掉旧会话）后旧线程立即静默退出，
+    /// 不会在 90s 后误报错误卡、也不会误监护新会话。
+    session_epoch: AtomicU64,
     window: tauri::WebviewWindow,
-    /// 选择器场景：解析完成但尚未 spawn 的 LaunchSpec（用户选择后落地）。
-    pending: Mutex<Option<crate::resolve::LaunchSpec>>,
+    /// 选择器场景：probe 完成但尚未 spawn 的会话（用户选定 profile 后落地）。
+    pending: Mutex<Option<Box<dyn crate::executor::Executor>>>,
     /// 最近一次更新检测结果（前端 chip / 托盘菜单共用）。
     update_status: Mutex<Option<crate::updates::UpdateStatus>>,
     /// 当前工作台地址（dsh 就绪导航时记录；「在浏览器中打开」入口用）。
@@ -125,93 +133,136 @@ struct ShellState {
     client_update: Mutex<Option<crate::updater::ClientUpdate>>,
 }
 
-/// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
-/// 进度经 `boot:step` 推给前端；失败经 `boot:error`（前端渲染错误卡）。
-fn boot(
+/// 启动当前会话（probe 已完成）：start → 就绪等待 → 导航 → 监护。
+/// 统一入口，与执行环境（local / wsl）无关——具体动作经 BootSink 上抛、
+/// 就绪经 executor::log_path + check_exited 轮询。
+fn run_executor_session(
     state: Arc<ShellState>,
     app: tauri::AppHandle,
-    launch: crate::resolve::LaunchSpec,
-    data_dir: PathBuf,
+    mut executor: Box<dyn crate::executor::Executor>,
 ) -> Result<(), String> {
-    emit_step(
-        &app,
-        2,
-        "running",
-        &format!("spawn DSH（{} · tier={:?}）", launch.profile, launch.tier),
-    );
-    let log_path = data_dir.join("dsh-shell.log");
-    let dsh = match shell::spawn_dsh(&launch, &data_dir) {
-        Ok(dsh) => dsh,
-        Err(e) => {
-            let detail = e.to_string();
-            report_boot_failure(&app, &detail);
-            return Err(detail);
+    tracing::info!("启动 {} 执行环境会话", executor.kind().as_str());
+    {
+        let mut sink = boot_sink(&app);
+        if let Err(e) = executor.start(&mut sink) {
+            emit_step(&app, 2, "error", &e);
+            emit_boot_error(&app, &e, "");
+            return Err(e);
         }
-    };
-    let child_log = dsh.log_path.clone();
-    *state.dsh.lock().unwrap() = Some(dsh);
+    } // sink 借 app 结束，之后 app 可安全 move 进监护线程
+    let log = executor.log_path();
+    // 记录本线程的会话代际：若等待期间会话被外部切换（teardown_session），
+    // 旧线程据此静默退出，不误报错误卡、不误导航/监护新会话。
+    let epoch = state.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+    *state.session.lock().unwrap() = Some(executor);
 
-    let _ = std::thread::spawn(move || {
-        match shell::wait_for_ready(&child_log, &state.dsh, BOOT_STALL, BOOT_TIMEOUT) {
+    std::thread::spawn(move || {
+        // 短锁轮询：每轮锁一次会话槽检查是否已退出（不独占锁 90s，
+        // 退出处理器随时能拿到会话做 teardown——壳与 dsh 同生命周期）。
+        let mut exited = || {
+            state
+                .session
+                .lock()
+                .unwrap()
+                .as_mut()
+                .and_then(|e| e.check_exited())
+        };
+        match crate::shell::wait_for_ready(&log, &mut exited, BOOT_STALL, BOOT_TIMEOUT) {
             shell::ReadyOutcome::Exited(code) => {
-                // dsh 先退出了：真失败，立即报错（不等满上限）。
-                let detail = read_error_detail(&child_log);
-                let tail = read_log_tail(&child_log);
+                if !session_is_current(&state, epoch) {
+                    return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
+                }
+                // 会话先退出了：真失败，立即报错（不等满上限）。
+                let detail = read_error_detail(&log);
+                let tail = read_log_tail(&log);
                 emit_step(&app, 3, "error", &format!("DSH 进程退出（code={code}）"));
-                let _ = state.dsh.lock().unwrap().take();
+                let _ = teardown_session(&state);
                 emit_boot_error(&app, &format!("DSH 进程已退出（code={code}）{detail}"), &tail);
             }
             shell::ReadyOutcome::Stalled => {
-                // 进程活着但长时间未就绪（冷启动慢/卡死）：停掉旧进程再报错，
-                // 重试不会残留前一次 spawn 的 dsh（壳与 dsh 严格同生命周期）。
-                let detail = read_error_detail(&child_log);
-                let tail = read_log_tail(&child_log);
-                emit_step(&app, 3, "error", "等待超时");
-                if let Some(mut dsh) = state.dsh.lock().unwrap().take() {
-                    let _ = shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
+                if !session_is_current(&state, epoch) {
+                    return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
                 }
+                // 进程活着但长时间未就绪：停掉旧会话再报错，重试不残留孤儿。
+                let detail = read_error_detail(&log);
+                let tail = read_log_tail(&log);
+                emit_step(&app, 3, "error", "等待超时");
+                let _ = teardown_session(&state);
                 emit_boot_error(&app, &format!("DSH 未在预期时间内就绪{detail}"), &tail);
             }
-            shell::ReadyOutcome::Ready(raw) => match tauri::Url::parse(&raw) {
-                Ok(url) => {
-                    tracing::info!("dsh 已就绪，进入 {url}");
-                    *state.workbench_url.lock().unwrap() = Some(url.clone());
-                    emit_step(&app, 3, "done", &format!("DSH 已就绪：{url}"));
-                    emit_step(&app, 4, "running", "导航到工作台界面");
-                    let _ = state.window.navigate(url);
-                    emit_step(&app, 4, "done", "已进入工作台");
-                    guard_dsh(&app, &state, &child_log);
+            shell::ReadyOutcome::Ready(raw) => {
+                if !session_is_current(&state, epoch) {
+                    return; // 就绪前被切走：不再导航/监护新会话
                 }
-                Err(e) => {
-                    emit_step(&app, 3, "error", "无效地址");
-                    emit_boot_error(&app, &format!("DSH 报告了无效地址（{raw}）：{e}"), "");
-                    let _ = state.dsh.lock().unwrap().take();
+                match tauri::Url::parse(&raw) {
+                    Ok(url) => {
+                        tracing::info!("DSH 已就绪，进入 {url}");
+                        *state.workbench_url.lock().unwrap() = Some(url.clone());
+                        emit_step(&app, 3, "done", &format!("DSH 已就绪：{url}"));
+                        emit_step(&app, 4, "running", "导航到工作台界面");
+                        let _ = state.window.navigate(url);
+                        emit_step(&app, 4, "done", "已进入工作台");
+                        guard_session(&app, &state, &log, epoch);
+                    }
+                    Err(e) => {
+                        emit_step(&app, 3, "error", "无效地址");
+                        emit_boot_error(
+                            &app,
+                            &format!("DSH 报告了无效地址（{raw}）：{e}"),
+                            "",
+                        );
+                        let _ = teardown_session(&state);
+                    }
                 }
-            },
+            }
         }
     });
-    // 保持 log_path 变量绑定（避免未读警告）：boot 日志路径即 dsh-shell.log
-    let _ = log_path;
     Ok(())
 }
 
-/// dsh 就绪后的监护：终端与 dsh 同生命周期——dsh 崩溃即错误卡。
-/// 在 boot 成功导航后的同一监护线程内持续运行（不新开线程，避免竞态）。
-fn guard_dsh(app: &tauri::AppHandle, state: &Arc<ShellState>, child_log: &std::path::Path) {
+/// 会话代际是否仍为当前：等待/监护线程每轮/关键节点调用；被外部切换则 false。
+fn session_is_current(state: &ShellState, epoch: u64) -> bool {
+    state.session_epoch.load(Ordering::SeqCst) == epoch
+}
+
+/// 取出并清理当前会话（幂等）：错误卡 / 模式切换共用。
+/// 同时推进代际——旧等待/监护线程据此静默退出（见 run_executor_session）。
+fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {
+    state.session_epoch.fetch_add(1, Ordering::SeqCst);
+    if let Some(mut ex) = state.session.lock().unwrap().take() {
+        ex.teardown()?;
+    }
+    Ok(())
+}
+
+/// dsh 就绪后的监护：会话与壳同生命周期——会话退出即错误卡。
+/// 在就绪导航成功后的同一监护线程内持续运行（不新开线程，避免竞态）。
+/// 只监护自己启动的代际：会话被外部切换后立即静默退出（不误监护新会话）。
+fn guard_session(
+    app: &tauri::AppHandle,
+    state: &Arc<ShellState>,
+    log: &std::path::Path,
+    epoch: u64,
+) {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
-        let exited = {
-            let mut guard = state.dsh.lock().unwrap();
-            guard
-                .as_mut()
-                .and_then(|p| p.child.try_wait().ok())
-                .flatten()
-        };
-        if let Some(status) = exited {
-            let code = status.code().unwrap_or(-1);
-            let detail = read_error_detail(child_log);
-            let tail = read_log_tail(child_log);
-            tracing::error!("dsh 异常退出 code={code}{detail}");
+        if !session_is_current(state, epoch) {
+            return;
+        }
+        let exited = state
+            .session
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|e| e.check_exited());
+        if let Some(code) = exited {
+            if !session_is_current(state, epoch) {
+                return;
+            }
+            let detail = read_error_detail(log);
+            let tail = read_log_tail(log);
+            tracing::error!("会话异常退出 code={code}{detail}");
+            let _ = teardown_session(state);
             emit_boot_error(
                 app,
                 &format!("DSH 进程已退出（code={code}）{detail}"),
@@ -236,24 +287,22 @@ fn read_log_tail(log_path: &std::path::Path) -> String {
         .join("\n")
 }
 
-/// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的 LaunchSpec 启动。
+/// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的会话启动。
 #[tauri::command]
 fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
-    let launch = state
+    let mut executor = state
         .pending
         .lock()
         .unwrap()
         .take()
         .ok_or_else(|| "无待启动任务（请重新打开终端）".to_string())?;
-    let mut launch = launch;
-    launch.profile = profile;
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    executor.select_profile(profile);
     let handle = app.clone();
     // 后台线程启动（npm/下载动作不阻塞）
     std::thread::spawn(move || {
-        if let Err(e) = boot(state, handle.clone(), launch, data_dir) {
-            tracing::error!("启动 dsh 失败: {e}");
+        if let Err(e) = run_executor_session(state, handle.clone(), executor) {
+            tracing::error!("启动 DSH 失败: {e}");
         }
     });
     Ok(())
@@ -441,7 +490,49 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
     Ok(())
 }
 
-/// retry/upgrade 共用：从 manifest 重新解析并启动。
+/// probe 完成后的统一分派：NeedsProfile → 出选择器（沿用 F-b）；Ready → 启动会话。
+/// setup 启动线程 / retry 重试 / boot_in_wsl 切换共用——执行环境不感知。
+fn launch_executor_after_probe(
+    state: Arc<ShellState>,
+    app: tauri::AppHandle,
+    mut executor: Box<dyn crate::executor::Executor>,
+) {
+    // probe 借 app 构造两个 sink（boot:step + 下载进度 bridge）；作用域结束即释放，
+    // 之后 app 才能 move 进后续动作/监护线程。
+    let probe_result = {
+        let mut sink = boot_sink(&app);
+        let mut progress = download_progress_bridge(&app);
+        executor.probe(&mut sink, &mut progress)
+    };
+    match probe_result {
+        Err(e) => {
+            tracing::error!("环境解析失败: {e}");
+            emit_boot_error(&app, &e, "");
+        }
+        Ok(crate::executor::ProbeOutcome::NeedsProfile(profiles)) => {
+            emit_step(&app, 2, "running", "选择器：多个 webUi 工作台");
+            let _ = state.window.eval(&format!(
+                "location.assign('selector.html?profiles={}')",
+                profiles.join(",")
+            ));
+            *state.pending.lock().unwrap() = Some(executor);
+        }
+        Ok(crate::executor::ProbeOutcome::Ready) => {
+            // 下载档刚补齐 dsh：立即刷新版本状态（否则关于页/菜单停留在
+            // 安装前的「未检出」，要等用户手动检查才正确）。
+            if executor.just_installed() {
+                let st = state.clone();
+                let hd = app.clone();
+                std::thread::spawn(move || refresh_update_ui(&hd, &st));
+            }
+            if let Err(e) = run_executor_session(state, app.clone(), executor) {
+                tracing::error!("启动 DSH 失败: {e}");
+            }
+        }
+    }
+}
+
+/// retry/upgrade 共用：重建本机执行器并重新走 probe → 分派。
 fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
     let resources_dir = resolve_resources_dir(&app);
     let manifest =
@@ -452,46 +543,40 @@ fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathB
                 return;
             }
         };
-    let path_env = crate::resolve::effective_path();
-    emit_step(&app, 0, "running", "重新扫描用户环境");
-    match crate::resolve::resolve_launch(
-        &manifest,
-        &resources_dir,
-        &path_env,
-        &data_dir,
-        &mut download_progress_bridge(&app),
-    ) {
-        Ok(launch) => {
-            emit_step(&app, 0, "done", "环境扫描完成");
-            emit_step(&app, 1, "done", &format!("命中档位：{:?}", launch.tier));
-            // 下载档刚补齐 dsh：立即刷新版本状态——否则关于页/菜单停留在
-            // 安装前的「未检出」，要等用户手动检查才正确。
-            if launch.tier == crate::manifest::TierKind::Download {
-                let st = state.clone();
-                let hd = app.clone();
-                std::thread::spawn(move || refresh_update_ui(&hd, &st));
-            }
-            if launch.tier == crate::manifest::TierKind::System {
-                let profiles =
-                    crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
-                if profiles.len() > 1 {
-                    *state.pending.lock().unwrap() = Some(launch);
-                    let _ = state.window.eval(&format!(
-                        "location.assign('selector.html?profiles={}')",
-                        profiles.join(",")
-                    ));
-                    return;
-                }
-            }
-            if let Err(e) = boot(state, app.clone(), launch, data_dir) {
-                tracing::error!("重启 dsh 失败: {e}");
-            }
+    let executor = Box::new(crate::executor::LocalExecutor::new(
+        manifest,
+        resources_dir,
+        data_dir,
+    ));
+    launch_executor_after_probe(state, app, executor);
+}
+
+/// 「在 WSL 中打开」（迭代 v1 入口）：停掉当前会话（若有），重建 WSL 会话并启动。
+/// 零配置：WslConfig{distro:None} → 使用 WSL 默认发行版（须 WSL2）；非 Windows
+/// 平台由本命令直接给可行动错误卡（WSL 执行器仅在 Windows 编译）。
+#[tauri::command]
+fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    // 切换前先收掉现有会话（幂等；正在运行的 local 会话也会被停掉）。
+    let _ = teardown_session(&state);
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        #[cfg(windows)]
+        {
+            let executor = Box::new(crate::executor::WslExecutor::new(
+                crate::executor::WslConfig { distro: None },
+                data_dir,
+            ));
+            launch_executor_after_probe(state, handle, executor);
         }
-        Err(e) => {
-            tracing::error!("重新解析失败: {e}");
-            emit_boot_error(&app, &format!("重新解析失败：{e}"), "");
+        #[cfg(not(windows))]
+        {
+            let _ = (data_dir, state);
+            emit_boot_error(&handle, "WSL 模式仅支持 Windows 平台。", "");
         }
-    }
+    });
+    Ok(())
 }
 
 /// 创建主窗口（含外链拦截）。原静态配置（tauri.conf.json windows）等价迁移：
@@ -743,7 +828,8 @@ pub fn run() {
             // 启动页的 IPC（版本状态、重试）也有可用状态，不能因 `state()` panic
             // 把原本可展示的错误卡变成整个应用退出。
             let state = Arc::new(ShellState {
-                dsh: Mutex::new(None),
+                session: Mutex::new(None),
+                session_epoch: AtomicU64::new(0),
                 window: window.clone(),
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
@@ -795,6 +881,8 @@ pub fn run() {
 
             // 宿主解析可能触发网络下载和 npm 安装，必须在后台执行：setup 运行在
             // 主线程，阻塞它会让 macOS 把窗口判定为无响应，也会让早期错误事件丢失。
+            // 默认路径 = 本机执行器（LocalExecutor 封装 system→bundle→download 解析链；
+            // probe/就绪/监护已泛化为执行环境无关，见 executor.rs）。
             let boot_state = state.clone();
             let boot_app = app_handle.clone();
             let boot_resources = resources_dir.clone();
@@ -810,62 +898,12 @@ pub fn run() {
                         return;
                     }
                 };
-
-                // 进度事件：环境检测 / 宿主解析
-                emit_step(&boot_app, 0, "running", "扫描用户环境（PATH · 版本闸）");
-                emit_step(&boot_app, 1, "running", "解析宿主档位");
-
-                // 宿主解析链（docs/contract.md）：system → bundle → download。
-                // GUI 启动 PATH 是系统最小集：用合并后的用户环境 PATH 探测（环境感知修复）。
-                let path_env = crate::resolve::effective_path();
-                let launch = match resolve::resolve_launch(
-                    &manifest,
-                    &boot_resources,
-                    &path_env,
-                    &boot_data,
-                    &mut download_progress_bridge(&boot_app),
-                ) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        tracing::error!("宿主解析失败: {e}");
-                        emit_step(&boot_app, 1, "error", &e.to_string());
-                        emit_boot_error(&boot_app, &e.to_string(), "");
-                        return;
-                    }
-                };
-                emit_step(&boot_app, 0, "done", "环境扫描完成");
-                emit_step(
-                    &boot_app,
-                    1,
-                    "done",
-                    &format!("命中档位：{:?}", launch.tier),
-                );
-                // 下载档刚补齐 dsh：立即刷新版本状态（同 lib_boot_again 处的说明）。
-                if launch.tier == crate::manifest::TierKind::Download {
-                    let st = boot_state.clone();
-                    let hd = boot_app.clone();
-                    std::thread::spawn(move || refresh_update_ui(&hd, &st));
-                }
-
-                // F-b：system 档且用户世界有多个 webUi profile → 先出选择器，选定再 spawn。
-                if launch.tier == crate::manifest::TierKind::System {
-                    let profiles =
-                        crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
-                    if profiles.len() > 1 {
-                        *boot_state.pending.lock().unwrap() = Some(launch);
-                        emit_step(&boot_app, 2, "running", "选择器：多个 webUi 工作台");
-                        let _ = boot_state.window.eval(&format!(
-                            "location.assign('selector.html?profiles={}')",
-                            profiles.join(",")
-                        ));
-                        return;
-                    }
-                }
-
-                // 默认路径：直接启动。
-                if let Err(e) = boot(boot_state, boot_app.clone(), launch, boot_data) {
-                    tracing::error!("启动 dsh 失败: {e}");
-                }
+                let executor = Box::new(crate::executor::LocalExecutor::new(
+                    manifest,
+                    boot_resources,
+                    boot_data,
+                ));
+                launch_executor_after_probe(boot_state, boot_app, executor);
             });
             Ok(())
         })
@@ -912,18 +950,17 @@ pub fn run() {
             open_about,
             open_external,
             open_workbench_in_browser,
-            get_workbench_url
+            get_workbench_url,
+            boot_in_wsl
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
         .run(|app_handle, event| {
-            // 应用退出 → 优雅停止 dsh（壳退 = dsh 停，同生命周期）。
+            // 应用退出 → 会话式 teardown（壳退 = 环境停：停子进程 / 断隧道，同生命周期）。
             if let RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<Arc<ShellState>>() {
-                    if let Some(mut dsh) = state.dsh.lock().unwrap().take() {
-                        let code =
-                            shell::stop_dsh(&mut dsh.child, std::time::Duration::from_secs(3));
-                        tracing::info!("dsh 已停止（exit {code}）");
+                    if let Some(mut ex) = state.session.lock().unwrap().take() {
+                        let _ = ex.teardown();
                     }
                     // 选择器场景可能尚未 spawn：清理 pending，不留状态。
                     state.pending.lock().unwrap().take();
@@ -943,6 +980,12 @@ fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
             "detail": detail,
         }),
     );
+}
+
+/// executor 进度回调（BootSink）→ boot:step 事件的适配（executor 保持零
+/// tauri 依赖，同 updates.rs 的 DownloadProgress 约定）。
+fn boot_sink(app: &tauri::AppHandle) -> impl FnMut(usize, &str, &str) + use<'_> {
+    move |step, state, detail| emit_step(app, step, state, detail)
 }
 
 /// 下载进度 → `boot:progress` 事件的桥接（updates 模块保持零 tauri 依赖）。
@@ -969,15 +1012,6 @@ fn download_progress_bridge(app: &tauri::AppHandle) -> impl FnMut(u64, Option<u6
             }),
         );
     }
-}
-
-/// 把 spawn/初始化阶段的错误统一回传给启动页。
-///
-/// 这些错误发生在监护线程建立之前；若只写日志，前端会永远停在“启动 dsh”。
-fn report_boot_failure(app: &tauri::AppHandle, detail: &str) {
-    tracing::error!("启动 dsh 失败: {detail}");
-    emit_step(app, 2, "error", detail);
-    emit_boot_error(app, detail, "");
 }
 
 /// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。

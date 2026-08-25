@@ -70,7 +70,8 @@
   `client_update_apply`（下载并安装客户端更新 → 重启）、`open_about`（开
   「关于与更新」小窗，前端顶栏按钮）、`open_external`（白名单外链 → 系统
   浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
-  `get_workbench_url`（读当前工作台地址）。前端经
+  `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
+  停掉现有会话、重建 WSL2 会话并启动；零配置，非 Windows 报错卡）。前端经
   `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）、
   事件经 `window.__TAURI__.event.listen` 消费——**注册例外**；新命令必须
   先在 AGENTS 登记。
@@ -116,9 +117,9 @@
 - **dsh 就绪等待 = 进程存活感知（2026-08-24 裁定）**：`shell::wait_for_ready`
   取代死等——①硬上限 90s（Windows 冷启动被 Defender/Node 冷加载吃掉，20s 常不够）；
   ②dsh 进程中途退出 → 立即判败报错（不等满上限，真失败秒报）；
-  ③进程活着但日志 20s 无进展 → 判卡死 `Stalled`。等待期间进程留在
-  `ShellState.dsh`（短锁轮询，不阻塞退出处理器）；超时/退出先优雅停旧进程再报错，
-  重试不残留孤儿 dsh（壳与 dsh 严格同生命周期）。
+  ③进程活着但日志 20s 无进展 → 判卡死 `Stalled`。等待期间会话留在
+  `ShellState.session`（executor 会话槽，短锁轮询，不阻塞退出处理器）；超时/退出
+  先 teardown 旧会话再报错，重试不残留孤儿 dsh（壳与 dsh 严格同生命周期）。
 - 唯一网络面：`updates.rs`，四路镜像链——包元数据/dsh 安装（registry.npmmirror →
   registry.npmjs）、Node 二进制（cdn.npmmirror.com/binaries/node → nodejs.org/dist）、
   Node 版本映射包 `@dsh-dock/node-map`（registry 镜像链拉 packument+tarball，

@@ -28,6 +28,7 @@ fn main() {
                 "open_external",
                 "open_workbench_in_browser",
                 "get_workbench_url",
+                "boot_in_wsl",
             ]),
         ),
     )
