@@ -14,7 +14,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -590,8 +590,8 @@ fn package_version(tree: &Path) -> Option<String> {
 }
 
 fn cached_dsh_usable(node: &Path, tree: &Path) -> bool {
-    Command::new(node)
-        .arg(tree.join("lib/bin.js"))
+    let mut cmd = crate::child_cmd(node);
+    cmd.arg(tree.join("lib/bin.js"))
         .arg("--version")
         .output()
         .map(|output| output.status.success())
@@ -605,7 +605,8 @@ pub fn cached_node_usable(data_dir: &Path, version: &str) -> Option<PathBuf> {
     if !bin.is_file() {
         return None;
     }
-    let out = Command::new(&bin).arg("--version").output().ok()?;
+    let mut cmd = crate::child_cmd(&bin);
+    let out = cmd.arg("--version").output().ok()?;
     if out.status.success() {
         Some(bin)
     } else {
@@ -917,7 +918,8 @@ fn download_from_mirror(
     extract_node_archive(part, target, dist).context("解压 node 包失败")?;
     let bin = node_bin_in(target, version)
         .ok_or_else(|| anyhow::anyhow!("解压后找不到 node 可执行文件"))?;
-    let out = Command::new(&bin)
+    let mut cmd = crate::child_cmd(&bin);
+    let out = cmd
         .arg("--version")
         .output()
         .context("验证缓存 node")?;
@@ -993,9 +995,17 @@ fn install_global_dsh_pnpm(
 ) -> Result<PathBuf> {
     let spec = package_spec(version);
     let mut errors = Vec::new();
+    // GUI 子进程不加载 shell rc：`PNPM_HOME` 环境变量对 pnpm 10 无效（实测
+    // 2026-08-25），global-bin-dir 只能是 undefined → `pnpm add -g` 报
+    // ERR_PNPM_NO_GLOBAL_BIN_DIR 失败回退 npm。这里显式注入
+    // `--config.global-bin-dir=<pnpm 目录>`（该目录天然在 PATH 里，满足 pnpm
+    // 的校验），让 pnpm 路径直接可用。
+    let bin_dir_args = pnpm_global_bin_dirs(pnpm_bin);
     for registry in package_registry_bases() {
         tracing::info!("pnpm add -g {spec}（registry={registry}）…");
-        let mut command = Command::new(pnpm_bin);
+        // pnpm 在 Windows 是 pnpm.cmd：child_cmd 负责 cmd /C 包装 + 无窗口启动。
+        let mut command = crate::child_cmd(pnpm_bin);
+        command.args(&bin_dir_args);
         command.args(pnpm_install_args(registry, &spec));
         let out = command
             .env("PATH", path_env)
@@ -1005,14 +1015,16 @@ fn install_global_dsh_pnpm(
             errors.push(format!("{registry}: {}", output_detail(&out)));
             continue;
         }
-        let root_out = Command::new(pnpm_bin)
-            .args(["root", "--global"])
+        let mut root_cmd = crate::child_cmd(pnpm_bin);
+        let root_out = root_cmd
+            .args(&bin_dir_args)
+            .args(["root", "-g"])
             .env("PATH", path_env)
             .output()
             .context("解析 pnpm 全局根")?;
         if !root_out.status.success() {
             errors.push(format!(
-                "pnpm root --global 失败：{}",
+                "pnpm root -g 失败：{}",
                 output_detail(&root_out)
             ));
             continue;
@@ -1028,6 +1040,17 @@ fn install_global_dsh_pnpm(
         ));
     }
     anyhow::bail!("pnpm 安装 dsh 失败：{}", errors.join("；"));
+}
+
+/// pnpm 的 global-bin-dir 注入参数。
+/// 返回 `["--config.global-bin-dir=<父目录>"]`；父目录不可得时为空（回退 pnpm 默认）。
+fn pnpm_global_bin_dirs(pnpm_bin: &Path) -> Vec<String> {
+    match pnpm_bin.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => {
+            vec![format!("--config.global-bin-dir={}", dir.display())]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// pnpm 10 只识别 `--allow-build=<package>` 形式，必须显式拼在同一个参数中。
@@ -1065,7 +1088,7 @@ fn install_global_dsh_npm(
     let mut errors = Vec::new();
     for registry in package_registry_bases() {
         tracing::info!("npm install -g {spec}（registry={registry}）…");
-        let mut command = Command::new(node_bin);
+        let mut command = crate::child_cmd(node_bin);
         command.arg(&npm_cli);
         if let Some(prefix) = npm_prefix {
             // CLI 参数优先级高于项目/用户 .npmrc，避免旧 prefix 覆盖私有目录。
@@ -1097,11 +1120,8 @@ fn install_global_dsh_npm(
 
 /// npm 11 引入 install script allowlist；旧 npm 没有该参数，不能盲目传入。
 fn npm_supports_allow_scripts(node_bin: &Path, npm_cli: &Path) -> bool {
-    let Ok(output) = Command::new(node_bin)
-        .arg(npm_cli)
-        .arg("--version")
-        .output()
-    else {
+    let mut cmd = crate::child_cmd(node_bin);
+    let Ok(output) = cmd.arg(npm_cli).arg("--version").output() else {
         return false;
     };
     if !output.status.success() {
@@ -1149,7 +1169,7 @@ fn global_dsh_tree_from_npm(
     path_env: &str,
     npm_prefix: Option<&Path>,
 ) -> Option<PathBuf> {
-    let mut command = Command::new(node_bin);
+    let mut command = crate::child_cmd(node_bin);
     command.arg(npm_cli);
     if let Some(prefix) = npm_prefix {
         command.arg("--prefix").arg(prefix);
@@ -1655,6 +1675,31 @@ mod tests {
     }
 
     #[test]
+    fn pnpm_global_bin_dirs_injects_directory_on_path() {
+        // 有父目录 → 注入 --config.global-bin-dir=<父目录>（unix 风格路径）
+        let args = pnpm_global_bin_dirs(Path::new("/usr/local/bin/pnpm"));
+        assert_eq!(
+            args,
+            vec!["--config.global-bin-dir=/usr/local/bin".to_string()]
+        );
+        // 裸文件名（无父目录）→ 不注入，回退 pnpm 默认
+        assert_eq!(pnpm_global_bin_dirs(Path::new("pnpm")), Vec::<String>::new());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pnpm_global_bin_dirs_injects_windows_dir() {
+        // Windows 反斜杠路径同样生效（pnpm.cmd 场景）
+        let win = pnpm_global_bin_dirs(Path::new(r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd"));
+        assert_eq!(
+            win,
+            vec![
+                "--config.global-bin-dir=C:\\Users\\me\\AppData\\Roaming\\npm".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn npm_install_args_allow_native_scripts_only_for_new_npm() {
         let enabled = npm_install_args(
             "https://registry.npmmirror.com",
@@ -1682,9 +1727,14 @@ mod tests {
 
         let dir = tmp("pnpm-install");
         let pnpm = dir.join("pnpm");
+        // 脚本需跳过注入的 --config.global-bin-dir=... 前置参数（首个参数是它）。
         let script = r#"#!/bin/sh
 set -eu
 root="$(dirname "$0")/global/node_modules"
+# 前置参数列表：--config.global-bin-dir=<dir> 后才是子命令（root / add）
+if [ "${1#--config.global-bin-dir=*}" != "$1" ]; then
+  shift  # 吃掉注入的 global-bin-dir
+fi
 if [ "$1" = "root" ]; then
   printf '%s\n' "$root"
   exit 0

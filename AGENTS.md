@@ -38,6 +38,11 @@
 
 ### ✅ 必须
 - 跨平台语义显式：优雅停止按平台分叉（unix SIGTERM→SIGKILL，Windows kill），用 `#[cfg]` 不用运行时猜。
+- **Windows 子进程一律经 `crate::child_cmd` 构造**（2026-08-24 裁定）：
+  内部 = `CREATE_NO_WINDOW`（黑色终端窗口弹窗，含 dsh 本体常驻窗口）
+  + `.cmd`/`.bat` 自动 `cmd /C` 包装（CreateProcess 不认批处理，pnpm.cmd
+  直接 spawn 必失败）。新增 spawn 点禁止裸 `Command::new`；壳自身
+  `windows_subsystem = "windows"` 无条件生效（debug/release 均无控制台）。
 - 子进程 stdout/stderr 进数据目录日志文件（`Read + try_wait` 轮询），不阻塞 UI 线程。
 - 快照零部件缺失 → **就地错误页 + 可行动文案**（ADR-0004 A6），绝不静默降级。
 - `product.manifest.json` 契约改动：先改 `docs/contract.md` → 升 `MANIFEST_FORMAT` → 打包侧同步（缺一不可）。
@@ -60,9 +65,30 @@
 
 - IPC 命令（已登记）：`choose_profile`（选择器）、`terminal_action`（错误卡
   动作 retry/upgrade/upgrade_only）、`get_update_status`（版本状态即读）、
-  `check_updates`（手动后台检测）。前端经 `window.__TAURI__.core.invoke` 调用
-  （tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
+  `check_updates`（手动后台检测）、`open_about`（开「关于与更新」小窗，前端
+  顶栏按钮）、`open_external`（白名单外链 → 系统浏览器）、
+  `open_workbench_in_browser`（当前工作台 → 系统浏览器）、
+  `get_workbench_url`（读当前工作台地址）。前端经 `window.__TAURI__.core.invoke`
+  调用（tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
   消费——**注册例外**；新命令必须先在 AGENTS 登记。
+- **外链策略（2026-08-25 裁定）**：主窗口由 setup 内 `create_main_window` 创建
+  （tauri.conf.json 不再静态定义 windows——只有代码创建才能挂处理器）。
+  dsh Web UI 的超链接/新窗口在 WebView 里默认点不动，统一转系统默认浏览器
+  （`open` crate：mac=/usr/bin/open、linux=xdg-open、win=ShellExecuteW）：
+  ①`on_navigation`：壳页（tauri/about/data/blob）与回环 dsh（127.0.0.1/
+  localhost/[::1]）放行；其余 http(s) 过白名单（`EXTERNAL_URL_HOSTS`）后转
+  浏览器并拦截导航，非白名单直接拦（壳不成为任意跳板）；②`on_new_window`：
+  一律 Deny，白名单内转浏览器；③initialization_script 兜底捕获跨源 `<a>` 点击
+  走 `open_external`。新外链域 = 在 `EXTERNAL_URL_HOSTS` 登记。
+- **remote 页面调用自定义命令必须显式授权（2026-08-25 外链修复裁定）**：
+  Tauri 2.11 规定 remote origin（dsh 页面 http://127.0.0.1）调用应用自定义命令
+  会被 ACL 拒绝，除非 capability 显式引用 `allow-<command>` 权限。链路 =
+  `build.rs` 的 `AppManifest::new().commands([...])`（构建期自动生成
+  `allow-*`/`deny-*` 权限）+ `capabilities/default.json` permissions 里逐个
+  引用。**新增 IPC 命令三处同步**：lib.rs 命令 + build.rs commands 列表 +
+  capabilities permissions（漏任何一处，remote 页面调用即静默失败）。
+  前端 hook 的 `invoke` 返回 Promise：`try/catch` 捕不到 rejection，必须
+  `.catch`；`preventDefault` 必须在确认 `__TAURI__` 可用之后（否则点了没反应）。
 - 事件协议：`boot:step` / `boot:error`（启动遥测）+ `boot:update`
   （三维度版本状态 `{dsh: ComponentUpdate, client: ComponentUpdate, node: {version,
   origin: system|managed}|null}`；dsh/client 含 current/latest/newer/error）+
@@ -74,9 +100,22 @@
   on_menu_event 对应 check→后台检测 / upgrade→upgrade_only→检测 / about→开窗。
   `upgrade_only` 不打断会话（升级下次启动生效）；about 窗口 label 须在
   capabilities windows 列表。
+- **非 macOS 常驻更新入口 = 系统托盘**（2026-08-24 裁定，修订 08-23「托盘已砍」）：
+  muda 菜单在 Windows/Linux 若挂在窗口上会渲染成窗口内菜单条（标题栏下多出
+  「dsh-dock · 编辑」一排，丑），故窗口菜单一律 `#[cfg(target_os = "macos")]`
+  门控；非 macOS 改走 `TrayIconBuilder::with_id("main")`（左键唤主窗、右键菜单
+  id st/check/upgrade/about/quit，事件经 builder 级 on_menu_event 同一处理）。
+  「编辑」子菜单仅 macOS（供 WebView 复制粘贴快捷键），Windows/Linux 无。
+  另有前端顶栏「关于」按钮（`open_about` → about 小窗，含检查/升级芯片）。
 - 启动可视化协议：`boot:step {step, state, detail}`（0-4：环境检测/宿主解析/
   启动 dsh/等待就绪/进入工作台）、`boot:error {title, detail, suggestion, actions, log}`。
   前端状态推演：收到 N 步 running 时 N 之前未定步骤自动 done（防事件竞态）。
+- **dsh 就绪等待 = 进程存活感知（2026-08-24 裁定）**：`shell::wait_for_ready`
+  取代死等——①硬上限 90s（Windows 冷启动被 Defender/Node 冷加载吃掉，20s 常不够）；
+  ②dsh 进程中途退出 → 立即判败报错（不等满上限，真失败秒报）；
+  ③进程活着但日志 20s 无进展 → 判卡死 `Stalled`。等待期间进程留在
+  `ShellState.dsh`（短锁轮询，不阻塞退出处理器）；超时/退出先优雅停旧进程再报错，
+  重试不残留孤儿 dsh（壳与 dsh 严格同生命周期）。
 - 唯一网络面：`updates.rs`，四路镜像链——包元数据/dsh 安装（registry.npmmirror →
   registry.npmjs）、Node 二进制（cdn.npmmirror.com/binaries/node → nodejs.org/dist）、
   Node 版本映射包 `@dsh-dock/node-map`（registry 镜像链拉 packument+tarball，
@@ -86,6 +125,11 @@
   其余模块不得触网（Windows 安装器的 WebView2 在线引导属打包配置，不属壳运行时网络面）。
   网络动作一律后台线程；元数据用整体超时，大文件下载用「连接 + 单次读」双超时、不设
   整体上限（慢网络下 40MB 合法地超过一分钟）；非 updates.rs 的网络需求先登记再写。
+- **pnpm 全局安装需显式注入 global-bin-dir**（2026-08-25 裁定）：GUI 子进程不加载
+  shell rc，`PNPM_HOME` 环境变量对 pnpm 10 无效，缺配置时 `pnpm add -g` 报
+  `ERR_PNPM_NO_GLOBAL_BIN_DIR` 失败→回退 npm（慢）。`install_global_dsh_pnpm`
+  一律经 `pnpm_global_bin_dirs` 注入 `--config.global-bin-dir=<pnpm 所在目录>`
+  （该目录天然在 PATH 里，满足 pnpm 校验）；`root -g` 同步注入。
 
 ## 试验协议（AI 协作）
 

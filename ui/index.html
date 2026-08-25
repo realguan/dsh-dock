@@ -10,7 +10,10 @@
   <body>
     <div class="topbar">
       <span class="wordmark">DSH DOCK</span>
-      <span class="vchip" id="vchip"></span>
+      <span class="top-actions">
+        <span class="vchip" id="vchip"></span>
+        <button class="abtbtn" id="aboutBtn">关于</button>
+      </span>
     </div>
 
     <main class="stage">
@@ -47,7 +50,7 @@
         ["01", "环境检测", "PATH · 版本闸 · 平台"],
         ["02", "宿主解析", "system → bundle → download"],
         ["03", "启动 DSH", "--port 0"],
-        ["04", "等待就绪", "解析访问地址（≤20s）"],
+        ["04", "等待就绪", "解析访问地址（慢速冷启动可稍候）"],
         ["05", "进入工作台", "WebView 导航"],
       ];
       const HEADLINES = ["检查运行环境", "确定启动方式", "启动 DSH", "等待工作台就绪", "即将进入工作台"];
@@ -204,6 +207,11 @@
       }
       window.__TAURI__.core.invoke("get_update_status").then(renderChip);
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
+
+      // ---- 顶栏「关于」：非 macOS 无应用菜单，关于/检查更新入口在此 ----
+      document.getElementById("aboutBtn").addEventListener("click", () => {
+        window.__TAURI__.core.invoke("open_about").catch(() => {});
+      });
 
       headline.textContent = HEADLINES[0];
     </script>

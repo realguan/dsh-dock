@@ -36,6 +36,11 @@
         </div>
       </div>
 
+      <div class="wb-open">
+        <button class="chip" id="wbOpen" disabled>在浏览器中打开</button>
+        <span class="note" id="wbUrl"></span>
+      </div>
+
       <p class="foot">升级只动 pnpm/npm 全局包，不触碰你的数据与配置。<br/>DSH Dock 只做一件事：把 DSH 停进 Dock。</p>
     </main>
 
@@ -54,40 +59,42 @@
       const nNote = document.getElementById("nNote");
 
       function render(s) {
+        // .v 列在空间不足时省略号截断（CSS），这里同步 title 便于悬停看全。
+        const setV = (el, text, note, noteCls) => {
+          el.textContent = text;
+          const noteEl = el.querySelector(".note");
+          if (noteEl) {
+            noteEl.textContent = note || "";
+            noteEl.className = noteCls || "note";
+          }
+          el.title = el.textContent;
+        };
         // ---- 桌面客户端 ----
         const c = s.client || {};
-        cVer.textContent = c.current ? "DSH Dock " + c.current : "—";
         if (c.newer) {
-          cNote.textContent = "有新版 " + c.latest;
-          cNote.className = "note up";
+          setV(cVer, c.current ? "DSH Dock " + c.current : "—", "有新版 " + c.latest, "note up");
         } else if (c.latest) {
-          cNote.textContent = "已是最新";
+          setV(cVer, c.current ? "DSH Dock " + c.current : "—", "已是最新", "note");
         } else if (c.error) {
-          cNote.textContent = "更新源不可达";
-          cNote.className = "note up";
+          setV(cVer, c.current ? "DSH Dock " + c.current : "—", "更新源不可达", "note up");
         } else {
-          cNote.textContent = "发布通道待接入";
+          setV(cVer, c.current ? "DSH Dock " + c.current : "—", "发布通道待接入", "note");
         }
         cActs.innerHTML = "";
 
         // ---- dsh 本体 ----
         const d = s.dsh || {};
-        hVer.textContent = d.current ? d.current : "未检出";
         if (d.error) {
-          hNote.textContent = "DSH 检测失败（网络不可达）";
-          hNote.className = "note up";
+          setV(hVer, d.current ? d.current : "未检出", "DSH 检测失败（网络不可达）", "note up");
         } else if (d.newer) {
-          hNote.textContent = "有新版 " + d.latest;
-          hNote.className = "note up";
+          setV(hVer, d.current ? d.current : "未检出", "有新版 " + d.latest, "note up");
         } else if (d.current && d.latest) {
-          hNote.textContent = "已是最新（" + d.latest + "）";
-          hNote.className = "note";
+          setV(hVer, d.current, "已是最新（" + d.latest + "）", "note");
         } else if (!d.current && d.latest) {
           // 未检出本地 dsh：多半是下载档正在补装，装完会自动刷新——不能误称「已是最新」。
-          hNote.textContent = "官方最新 " + d.latest + " · 本地尚未检出";
-          hNote.className = "note";
+          setV(hVer, "未检出", "官方最新 " + d.latest + " · 本地尚未检出", "note");
         } else {
-          hNote.textContent = "检测中…";
+          setV(hVer, d.current ? d.current : "未检出", "检测中…", "note");
         }
         let html = "";
         if (d.newer) {
@@ -110,15 +117,35 @@
 
         // ---- Node 运行时 ----
         if (s.node) {
-          nVer.textContent = s.node.version;
-          nNote.textContent = s.node.origin === "system" ? "来自你的系统" : "应用托管 · 随启动自动准备";
+          setV(nVer, s.node.version, s.node.origin === "system" ? "来自你的系统" : "应用托管 · 随启动自动准备", "note");
         } else {
-          nVer.textContent = "—";
-          nNote.textContent = "尚未确定";
+          setV(nVer, "—", "尚未确定", "note");
         }
       }
       window.__TAURI__.core.invoke("get_update_status").then(render);
       window.__TAURI__.event.listen("boot:update", (ev) => render(ev.payload));
+
+      // ---- 在浏览器中打开工作台（dsh 就绪后可用） ----
+      const wbOpen = document.getElementById("wbOpen");
+      const wbUrl = document.getElementById("wbUrl");
+      function renderWb(url) {
+        if (url) {
+          wbOpen.disabled = false;
+          wbUrl.textContent = url;
+        } else {
+          wbOpen.disabled = true;
+          wbUrl.textContent = "工作台尚未就绪";
+        }
+      }
+      window.__TAURI__.core.invoke("get_workbench_url").then(renderWb);
+      wbOpen.addEventListener("click", () => {
+        wbOpen.disabled = true;
+        window.__TAURI__.core.invoke("open_workbench_in_browser")
+          .catch((e) => { wbUrl.textContent = String(e && (e.message || e)); })
+          .finally(() => {
+            window.__TAURI__.core.invoke("get_workbench_url").then(renderWb);
+          });
+      });
     </script>
   </body>
 </html>

@@ -10,7 +10,8 @@
 //! 截断重建，URL 探测从文件头开始即可，省掉跨启动偏移逻辑。
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -65,8 +66,8 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         .open(&log_path)
         .with_context(|| format!("打开日志 {}", log_path.display()))?;
 
-    let mut cmd = Command::new(&node_bin);
-    cmd.arg(&dsh_bin)
+    let mut cmd = crate::child_cmd(node_bin);
+    cmd.arg(dsh_bin)
         .arg("--profile")
         .arg(&launch.profile)
         .arg("--port")
@@ -99,11 +100,35 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     Ok(DshProcess { child, log_path })
 }
 
-/// 从日志文件轮询 dsh 报告的访问地址（最长 `timeout`）。
-/// 增量扫描：scanned 只前进，写入中途的截断/非法 UTF-8 下轮再读（追加写）。
-pub fn detect_url(log_path: &Path, timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
+/// 启动等待的三种结局：
+/// - `Ready(url)`：日志出现访问地址，dsh 已就绪；
+/// - `Exited(code)`：**dsh 进程先退出了**——不再干等，直接判失败；
+/// - `Stalled`：进程还活着但日志长时间无进展（疑似卡死）或到硬上限。
+#[derive(Debug)]
+pub enum ReadyOutcome {
+    Ready(String),
+    Exited(i32),
+    Stalled,
+}
+
+/// 进程存活感知的就绪等待（2026-08-24 裁定，Windows 冷启动慢场景）：
+/// 旧 `detect_url` 的死等上限在 Windows 上会被 Defender 首扫/Node 冷加载吃掉，
+/// 20s 常不够（实测点 2 次重试才起）。这里改成：
+///   1. 硬上限 `limit`（宽松，默认 90s）——到点仍未就绪判 `Stalled`；
+///   2. **dsh 进程中途退出 → 立即 `Exited`**（真失败秒报，不干等满上限）；
+///   3. 进程活着但日志 `stall` 内无进展 → `Stalled`（防死等，提示卡死）。
+///
+/// 进程始终留在 `dsh_slot`（壳状态里的 Option<DshProcess>）中：等待线程只在
+/// 每轮短暂锁住检查存活，不独占锁 90s，退出处理器随时能拿到它做停止。
+pub fn wait_for_ready(
+    log_path: &Path,
+    dsh_slot: &Mutex<Option<DshProcess>>,
+    stall: Duration,
+    limit: Duration,
+) -> ReadyOutcome {
+    let deadline = Instant::now() + limit;
     let mut scanned = 0usize;
+    let mut last_grow = Instant::now();
     loop {
         if let Ok(text) = std::fs::read_to_string(log_path) {
             let start = text.floor_char_boundary(scanned);
@@ -112,16 +137,32 @@ pub fn detect_url(log_path: &Path, timeout: Duration) -> Option<String> {
             }
             if text.len() > scanned && text.is_char_boundary(scanned) {
                 if let Some(url) = parse_detected_url(&text[scanned..]) {
-                    return Some(url);
+                    return ReadyOutcome::Ready(url);
                 }
                 scanned = text.len();
+                last_grow = Instant::now();
             }
         }
+        // 进程先退出：不干等，立即判失败（短锁，全程不阻塞退出处理器）。
+        if let Some(status) = dsh_slot
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|d| d.child.try_wait().ok())
+            .flatten()
+        {
+            return ReadyOutcome::Exited(status.code().unwrap_or(-1));
+        }
         if Instant::now() >= deadline {
-            return None;
+            break;
+        }
+        // 进程活着但长时间没有任何新日志：疑似卡死，提示用户而不是继续死等。
+        if last_grow.elapsed() >= stall {
+            return ReadyOutcome::Stalled;
         }
         thread::sleep(Duration::from_millis(50));
     }
+    ReadyOutcome::Stalled
 }
 
 /// 只接受 `http://` / `https://` 开头的词，去掉尾部 `/`/`,`/`;`。
@@ -135,6 +176,8 @@ fn parse_detected_url(text: &str) -> Option<String> {
 
 /// 优雅停止 dsh：unix 发 SIGTERM 等待 grace，超时 SIGKILL；Windows 直接 kill。
 /// dsh 对 SIGTERM 以 exit 0 收尾，正常路径秒退。
+/// （Windows 分支不使用 grace 参数，故按平台允许未用变量。）
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
     #[cfg(unix)]
     {
@@ -166,6 +209,7 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn creates_missing_dsh_home() {
@@ -205,45 +249,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn detects_url_from_log_file_without_waiting() {
-        let dir = std::env::temp_dir().join(format!("dsh-shell-ulog-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("inst.log");
-        std::fs::write(
-            &path,
-            "booting...\nDSH web listening on http://127.0.0.1:34567/\n",
-        )
-        .unwrap();
-        assert_eq!(
-            detect_url(&path, Duration::from_millis(500)).as_deref(),
-            Some("http://127.0.0.1:34567")
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn detect_url_waits_for_later_lines() {
-        let dir = std::env::temp_dir().join(format!("dsh-shell-ulog2-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("inst.log");
-        std::fs::write(&path, "booting...\n").unwrap();
-        let path2 = path.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
-            std::fs::write(
-                &path2,
-                "booting...\nDSH web listening on http://127.0.0.1:34567/\n",
-            )
-            .unwrap();
-        });
-        assert_eq!(
-            detect_url(&path, Duration::from_millis(2000)).as_deref(),
-            Some("http://127.0.0.1:34567")
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
     /// 优雅停止路径实测：SIGTERM 后子进程应在 grace 内退出（而非等满超时被强杀）。
     /// dsh 对 SIGTERM 以 exit 0 收尾，sleep 在 macOS 上以信号终止（code=None），
     /// 断言只要求「提前退出」与「已回收」，不抠具体退出码。
@@ -261,5 +266,108 @@ mod tests {
             matches!(child.try_wait().unwrap(), Some(_)),
             "子进程应已回收"
         );
+    }
+
+    /// 进程存活感知等待：
+    /// 1) 日志出 URL → Ready；
+    /// 2) 进程先退出（无 URL）→ Exited，且不等到硬上限；
+    /// 3) 进程活着但日志停滞 → Stalled。
+    #[test]
+    fn wait_for_ready_reads_url_when_process_alive() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-wfr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inst.log");
+        std::fs::write(&path, "booting...\n").unwrap();
+
+        // 用 sleep 进程模拟"活着但还没写完"：日志延迟补上 URL 应判 Ready。
+        let child = if cfg!(unix) {
+            Command::new("sleep").arg("5").spawn()
+        } else {
+            // Windows 测试：用真进程保底（cmd /c ping 慢返回），但不强依赖。
+            Command::new("cmd.exe")
+                .args(["/C", "ping", "-n", "3", "127.0.0.1"])
+                .spawn()
+        };
+        let mut child = child.expect("spawn 模拟进程");
+        let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
+            child,
+            log_path: path.clone(),
+        }));
+
+        // 延迟追写 URL
+        let path2 = path.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path2).unwrap();
+            use std::io::Write;
+            writeln!(f, "DSH web listening on http://127.0.0.1:34567/").unwrap();
+        });
+
+        match wait_for_ready(&path, &slot, Duration::from_secs(1), Duration::from_secs(5)) {
+            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34567"),
+            other => panic!("应判 Ready，得到 {other:?}"),
+        }
+        // 收尾：停掉模拟进程
+        if let Some(mut d) = slot.lock().unwrap().take() {
+            let _ = d.child.kill();
+            let _ = d.child.wait();
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wait_for_ready_returns_exited_immediately() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-wfr4-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inst.log");
+        std::fs::write(&path, "booting...\n").unwrap();
+
+        // 子进程立即退出（true 秒退）→ 应 Exited，不用等硬上限。
+        let child = if cfg!(unix) { Command::new("true") } else { Command::new("cmd.exe") }
+            .spawn()
+            .expect("spawn 模拟进程");
+        let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
+            child,
+            log_path: path.clone(),
+        }));
+        match wait_for_ready(
+            &path,
+            &slot,
+            Duration::from_secs(5),
+            Duration::from_secs(3),
+        ) {
+            ReadyOutcome::Exited(_) => {}
+            other => panic!("子进程秒退应判 Exited，得到 {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wait_for_ready_stalls_when_alive_but_silent() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-wfr5-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inst.log");
+        std::fs::write(&path, "booting...\n").unwrap();
+
+        // 进程活着（sleep 长）但日志不加内容 → 停滞阈值后判 Stalled。
+        let child = if cfg!(unix) {
+            Command::new("sleep").arg("30").spawn()
+        } else {
+            Command::new("cmd.exe").args(["/C", "ping", "-n", "30", "127.0.0.1"]).spawn()
+        };
+        let mut child = child.expect("spawn 模拟进程");
+        let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
+            child,
+            log_path: path.clone(),
+        }));
+        match wait_for_ready(&path, &slot, Duration::from_millis(250), Duration::from_secs(5)) {
+            ReadyOutcome::Stalled => {}
+            other => panic!("存活但停滞应判 Stalled，得到 {other:?}"),
+        }
+        if let Some(mut d) = slot.lock().unwrap().take() {
+            let _ = d.child.kill();
+            let _ = d.child.wait();
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

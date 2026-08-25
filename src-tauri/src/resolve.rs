@@ -116,6 +116,7 @@ fn major_of(v: &str) -> Option<u64> {
 
 /// 带超时执行并取 stdout（login shell 拉 PATH 用）。
 fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
+    crate::quiet_cmd(cmd);
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -454,7 +455,9 @@ pub fn detect_system_node(path_env: &str) -> Option<SystemNode> {
             .map(|name| dir.join(name))
             .find(|candidate| candidate.is_file() && is_executable(candidate))
     })?;
-    let version = Command::new(&bin).arg("--version").output().ok()?;
+    let mut version_cmd = crate::child_cmd(&bin);
+    version_cmd.arg("--version");
+    let version = version_cmd.output().ok()?;
     if !version.status.success() {
         return None;
     }
@@ -664,7 +667,8 @@ fn system_no_open_supported(hit: &SystemHit) -> bool {
 }
 
 fn probe_no_open(node: &Path, dsh_bin: &Path) -> bool {
-    let out = Command::new(node)
+    let mut cmd = crate::child_cmd(node);
+    let out = cmd
         .arg(dsh_bin)
         .args(["--profile", "web", "--help"])
         .output();

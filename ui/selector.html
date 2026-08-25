@@ -10,7 +10,10 @@
   <body>
     <div class="topbar">
       <span class="wordmark">DSH DOCK</span>
-      <span class="vchip" id="vchip"></span>
+      <span class="top-actions">
+        <span class="vchip" id="vchip"></span>
+        <button class="abtbtn" id="aboutBtn">关于</button>
+      </span>
     </div>
 
     <main class="stage">
@@ -198,6 +201,11 @@
       }
       window.__TAURI__.core.invoke("get_update_status").then(renderChip);
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
+
+      // ---- 顶栏「关于」：非 macOS 无应用菜单，关于/检查更新入口在此 ----
+      document.getElementById("aboutBtn").addEventListener("click", () => {
+        window.__TAURI__.core.invoke("open_about").catch(() => {});
+      });
     </script>
   </body>
 </html>
