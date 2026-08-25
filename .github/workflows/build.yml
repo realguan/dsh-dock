@@ -222,73 +222,82 @@ jobs:
         with:
           name: DSH Dock-macOS-updater
           path: updater/macos
-          # 平台构建若因路径/签名差异没产出 updater artifact，不阻塞 release
-          # （latest.json 只收录真实存在的签名产物；缺失平台 = 该平台暂不推送）。
-          fail-on-missing: false
 
       - name: Download Windows updater artifacts
         uses: actions/download-artifact@v4
         with:
           name: DSH Dock-Windows-updater
           path: updater/windows
-          fail-on-missing: false
 
       - name: Download Linux updater artifacts
         uses: actions/download-artifact@v4
         with:
           name: DSH Dock-Linux-updater
           path: updater/linux
-          fail-on-missing: false
 
       - name: List installers
         run: find installers -type f | sort; echo ---; find updater -type f | sort || true
 
       # 生成 latest.json（桌面客户端自更新清单）：
       # 从「签名过的 updater 产物」聚合 `platforms: {os-arch: {url, signature}}`。
-      # 按文件名 + 签名配对识别平台（不依赖目录布局，兼容 bundler 版本差异）：
-      #   *.app.tar.gz(.sig)           → darwin-aarch64（macOS arm64）
-      #   *setup.exe.zip(.sig)         → windows-x86_64-nsis（Windows x64）
-      #   *.msi.zip(.sig) / *.mszi     → windows-x86_64-msi（备选）
-      #   *.AppImage.tar.gz(.sig)      → linux-x86_64-appimage（Linux x64）
-      #   *.AppImage(.sig)             → linux-x86_64-appimage（旧形态兜底）
-      # 产物 URL 用 GitHub 的 releases/latest/download/<filename> 稳定端点。
+      # URL 必须指向 Release 里的**实际 asset 名**（softprops 上传时把空格规范成
+      # 点号：DSH Dock_... → DSH.Dock_...），所以用 GitHub API 列出该 tag 的
+      # assets 做精确映射，不猜文件名。
+      # 平台键识别（按签名对象扩展名 + 文件名特征）：
+      #   *.app.tar.gz(.sig)   → darwin-aarch64
+      #   *setup.exe(.sig)     → windows-x86_64-nsis
+      #   *.msi(.sig)          → windows-x86_64-msi
+      #   *.AppImage(.sig)     → linux-x86_64-appimage
       - name: Generate latest.json
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, urllib.request
           from urllib.parse import quote
+          repo = "realguan/dsh-dock"
+          tag = os.environ.get("VERSION", "").lstrip("v")
+          # ① 列该 tag 的 Release assets（真实名 + 下载 URL）
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases/tags/v{tag}",
+              headers={"Accept": "application/vnd.github+json"},
+          )
+          rel = json.load(urllib.request.urlopen(req))
+          assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+          print("Release assets:", list(assets.keys()))
+          # ② 读签名文件（updater 产物目录）
           root = "updater"
-          sigmap = {}  # basename(去掉.sig后) -> sig content
+          sigmap = {}  # 原始 basename(去.sig) -> sig content
           for dp, dn, fn in os.walk(root):
               for f in fn:
                   if f.endswith(".sig"):
                       sigmap[f[:-4]] = open(os.path.join(dp, f)).read().strip()
+          # ③ 平台键 → (签名内容, release asset 名)
+          #    用「签名对象的规范化名（空格→点号）」在 assets 里找真实名。
+          def norm(name):
+              return name.replace(" ", ".")
           platforms = {}
-          def add(f, key):
-              if f in sigmap:
-                  platforms[key] = {
-                      "url": "https://github.com/realguan/dsh-dock/releases/latest/download/" + quote(f),
-                      "signature": sigmap[f],
-                  }
-                  print(f"  {key} <- {f}")
-          for dp, dn, fn in os.walk(root):
-              for f in fn:
-                  if f.endswith(".sig"):
-                      continue
-                  low = f.lower()
-                  if low.endswith(".app.tar.gz"):
-                      add(f, "darwin-aarch64" if "universal" not in low else "darwin-universal")
-                  elif low.endswith(".appimage.tar.gz") or (low.endswith(".appimage") and f in sigmap):
-                      add(f, "linux-x86_64-appimage")
-                  elif low.endswith(".msi.zip") or low.endswith(".msi"):
-                      add(f, "windows-x86_64-msi")
-                  elif low.endswith(".zip") and ("setup" in low or "nsis" in low) and f in sigmap:
-                      add(f, "windows-x86_64-nsis")
+          for orig, sig in sigmap.items():
+              low = orig.lower()
+              if low.endswith(".app.tar.gz"):
+                  key = "darwin-aarch64" if "universal" not in low else "darwin-universal"
+              elif low.endswith(".appimage"):
+                  key = "linux-x86_64-appimage"
+              elif low.endswith(".msi"):
+                  key = "windows-x86_64-msi"
+              elif low.endswith(".setup.exe") or ("setup" in low and low.endswith(".exe")):
+                  key = "windows-x86_64-nsis"
+              else:
+                  continue
+              target = norm(orig)
+              url = assets.get(target)
+              if not url:
+                  print(f"  !! 找不到 release asset: {target}")
+                  continue
+              platforms[key] = {"url": url, "signature": sig}
+              print(f"  {key} <- {target}")
           if not platforms:
               print("NO UPDATER ASSETS FOUND — skipping latest.json")
               raise SystemExit(0)
-          # pub_date 必须是合法 RFC3339（插件解析失败会整个反序列化崩掉）：
-          # 用当前 UTC 时间（构建时间）——tag 事件没有 head_commit.timestamp。
+          # pub_date 必须是合法 RFC3339（插件解析失败会整个反序列化崩掉）。
           from datetime import datetime, timezone
           pub_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
           latest = {
@@ -303,6 +312,7 @@ jobs:
           print(open("latest.json").read())
           PY
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ github.ref_name }}
 
       - name: Create GitHub Release
@@ -310,8 +320,12 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: false
+          # updater 产物必须一并上传：latest.json 里每个平台的 url 都指向
+          # Release 里同名文件（签名对象本体：.app.tar.gz / .exe / .msi /
+          # .AppImage），漏传 = 更新下载 404（2026-08-25 实测踩坑）。
           files: |
             installers/**/*
+            updater/**/*
             latest.json
           generate_release_notes: true
         env:
