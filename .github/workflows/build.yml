@@ -60,6 +60,9 @@ jobs:
       # 无私钥（fork PR 场景）→ 构建会因缺私钥而失败，这是刻意行为：
       # pubkey 配置存在即要求签名，宁可不发布也不出未签名产物。
       - name: Set up updater signing key
+        # Windows runner 默认 shell 是 PowerShell：显式指定 bash（Git Bash 在
+        # GitHub Actions runner 上可用；macOS/Linux 默认 bash 一致）。
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
@@ -88,6 +91,8 @@ jobs:
       # 跳过签名（tauri-cli 在 pubkey 配置存在且无私钥时会直接报错——刻意保护，
       # 宁可不发布也不出未签名产物；`--no-sign` 只用于保持 fork PR 构建可跑）。
       - name: Build installers
+        # Windows runner 默认 shell 是 PowerShell：显式 bash（与 key 检查一致）。
+        shell: bash
         working-directory: src-tauri
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
