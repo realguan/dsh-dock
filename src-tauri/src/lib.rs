@@ -530,6 +530,68 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       }, true);
     })();"#;
 
+    // WebView 渲染内存策略（2026-08-25）：dsh web 前端把整个会话一次性渲染进
+    // DOM（无虚拟化）；WebKit（macOS WKWebView / Linux WebKitGTK）对「视口外
+    // 大量已渲染内容」的回收远不如 Chromium——长会话下渲染资源持续累积，
+    // WebContent 进程膨胀到数 GB（实测 4.3 GB / PID WebKit.WebContent）。
+    //
+    // 对策：`content-visibility: auto`（CSS 原生渲染级虚拟化）。视口外的行
+    // 仍在 DOM、仍占布局（contain-intrinsic-size 占位），但 WebKit 跳过其
+    // 布局/绘制并显式释放渲染资源；滚入视口时立即完整渲染。与 dsh 前端的
+    // scroll anchoring（elementsFromPoint hit-test，ChatView.pagingAnchor）
+    // 天然兼容——布局坐标不受影响。
+    //
+    // 豁免规则（只豁免「必须常驻渲染」的行，其余全部打上）：
+    // - 流式中的行（[data-streaming]）：内容在增长，必须实时渲染；
+    // - 空行：无内容可剪裁（同时也避免 pull 一个占位空盒）；
+    // - 滚动容器本行（[data-conversation-scroll]）：是容器不是行。
+    // 作用域：只在 dsh 会话流容器 [data-chat-flow] 内生效，壳页（index.html
+    // 等）不受影响。`initialization_script` 会随导航注入 dsh 工作台页。
+    let webview_memory_policy = r#"(function () {
+      if (window.__dshDockMemoryPolicyApplied) return;
+      window.__dshDockMemoryPolicyApplied = true;
+      var ROW = '[data-chat-anchor-key]';
+      var FLOW = '[data-chat-flow]';
+
+      function shouldSkip(row) {
+        if (row.querySelector('[data-streaming]')) return true; // 流式增长中
+        if (row.children.length === 0) return true;              // 空行
+        return false;
+      }
+
+      function applyTo(row) {
+        if (row.dataset.dshCvBound === '1') return;
+        if (shouldSkip(row)) return;
+        row.dataset.dshCvBound = '1';
+        row.style.setProperty('content-visibility', 'auto');
+        // 占位尺寸：避免视口外行被跳过后滚动条抖动（1 行 ~26px，最坏常数）。
+        row.style.setProperty('contain-intrinsic-size', 'auto 1px');
+      }
+
+      function scan(root) {
+        if (!root || !root.querySelectorAll) return;
+        var rows = root.querySelectorAll(ROW);
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i];
+          var flow = row.closest(FLOW);
+          if (flow !== null) applyTo(row); // 只在会话流内生效
+        }
+      }
+
+      // 初始 + 动态插入（会话长、节点持续进入）。
+      scan(document);
+      var mo = new MutationObserver(function (muts) {
+        for (var m = 0; m < muts.length; m++) {
+          var mut = muts[m];
+          if (mut.type !== 'childList') continue;
+          if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
+            scan(mut.target);
+          }
+        }
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+    })();"#;
+
     tauri::WebviewWindowBuilder::new(
         app,
         "main",
@@ -574,6 +636,7 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         tauri::webview::NewWindowResponse::Deny
     })
     .initialization_script(hook_script)
+    .initialization_script(webview_memory_policy)
     .build()
 }
 
