@@ -605,8 +605,17 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
     .background_color(tauri::utils::config::Color(249, 250, 251, 255))
     .on_navigation(move |url| {
         // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
-        let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob");
-        let loopback_dsh = matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]"));
+        //
+        // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
+        // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
+        // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
+        // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
+        // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
+        // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
+        let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
+            || matches!(url.host_str(), Some("tauri.localhost"));
+        let loopback_dsh =
+            matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]"));
         if shell_page || loopback_dsh {
             return true;
         }
