@@ -1,6 +1,6 @@
 [package]
 name = "dsh-dock"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "DSH Dock — Tauri product shell for standalone dsh desktop builds (ADR-0004)"
 rust-version = "1.77.2"
