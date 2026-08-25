@@ -12,9 +12,21 @@
     },
     "withGlobalTauri": true
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/realguan/dsh-dock/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1NDFERDZGN0M5RTQ5NUQKUldSZFNaNThiOTFCRlUxMEhMb3R6cW05bVZobkhTNTEyOUJKU05qSlFFYlN0M3JtYnNKYno2VGgK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

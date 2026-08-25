@@ -15,6 +15,7 @@
 mod manifest;
 mod resolve;
 mod shell;
+mod updater;
 mod updates;
 
 use std::path::{Path, PathBuf};
@@ -120,6 +121,8 @@ struct ShellState {
     update_status: Mutex<Option<crate::updates::UpdateStatus>>,
     /// 当前工作台地址（dsh 就绪导航时记录；「在浏览器中打开」入口用）。
     workbench_url: Mutex<Option<tauri::Url>>,
+    /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
+    client_update: Mutex<Option<crate::updater::ClientUpdate>>,
 }
 
 /// spawn dsh 并起监护线程（setup 默认路径与 choose_profile 共用）。
@@ -302,6 +305,29 @@ fn check_updates(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let handle = app.clone();
     std::thread::spawn(move || refresh_update_ui(&handle, &state));
+    Ok(())
+}
+
+/// 读取桌面客户端自更新状态（即读，不触网；前端初始渲染）。
+#[tauri::command]
+fn get_client_update(app: tauri::AppHandle) -> Result<crate::updater::ClientUpdate, String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    Ok(crate::updater::current(&state))
+}
+
+/// 「检查客户端更新」：后台查 GitHub Releases latest.json，结果经 app:update 回推。
+#[tauri::command]
+fn client_update_check(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    crate::updater::run_check(app, state);
+    Ok(())
+}
+
+/// 「确认安装客户端更新」：下载 → 安装 → 重启（Windows 由安装器接手后退出）。
+#[tauri::command]
+fn client_update_apply(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    crate::updater::run_download_and_install(app, state);
     Ok(())
 }
 
@@ -606,6 +632,9 @@ pub fn run() {
                 let _ = win.set_focus();
             }
         }))
+        // 桌面客户端自更新：check → download → install。只经壳内 IPC 调用
+        // （updater.rs 封装），插件命令不暴露给远程页面（最小面纪律）。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // 壳侧诊断日志落 `<数据目录>/shell.log`（GUI 下 stderr 不可见）。
             // 子进程输出在 dsh-shell.log（shell.rs）；两者分离。
@@ -647,6 +676,7 @@ pub fn run() {
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
                 workbench_url: Mutex::new(None),
+                client_update: Mutex::new(None),
             });
             app.manage(state.clone());
             // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
@@ -682,6 +712,14 @@ pub fn run() {
             let s2 = state.clone();
             let h2 = app.handle().clone();
             std::thread::spawn(move || refresh_update_ui(&h2, &s2));
+
+            // 客户端自更新：启动即后台查一次（顶栏芯片「客户端有新版」靠它点亮；
+            // 不打断启动流程，失败静默——状态机进 failed 由 about 页展示）。
+            {
+                let cstate = state.clone();
+                let chandle = app.handle().clone();
+                crate::updater::run_check(chandle, cstate);
+            }
 
             // 宿主解析可能触发网络下载和 npm 安装，必须在后台执行：setup 运行在
             // 主线程，阻塞它会让 macOS 把窗口判定为无响应，也会让早期错误事件丢失。
@@ -796,6 +834,9 @@ pub fn run() {
             terminal_action,
             get_update_status,
             check_updates,
+            get_client_update,
+            client_update_check,
+            client_update_apply,
             open_about,
             open_external,
             open_workbench_in_browser,
@@ -1235,10 +1276,11 @@ fn open_about_window(app: &tauri::AppHandle) {
     let builder =
         tauri::WebviewWindowBuilder::new(app, "about", tauri::WebviewUrl::App("about.html".into()))
             .title("关于")
-            // 460x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；
+            // 480x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；
+            // 更新中心接入后内容更高（客户端状态机卡片 + dimrows + 入口 + 脚注），
             // 加高并允许滚动兜底。
-            .inner_size(480.0, 520.0)
-            .min_inner_size(440.0, 420.0)
+            .inner_size(480.0, 560.0)
+            .min_inner_size(440.0, 460.0)
             .resizable(true)
             .center();
     let _ = builder.build();

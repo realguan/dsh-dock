@@ -53,12 +53,24 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      # 【签名已暂停（2026-08-25）】macOS 签名/公证步骤整体移除——
-      # CI 先保证三平台构建稳定通过。tauri.conf signingIdentity 默认 "-"（ad-hoc），
-      # 本机可跑、分发会被 Gatekeeper 拦。恢复签名时重新启用：
-      #   1. Import signing certificate（APPLE_CERTIFICATE / PASSWORD base64 导入 keychain）
-      #   2. Write API key file（~/private_keys/AuthKey_<KEY_ID>.p8）
-      #   3. Build 时 --config 覆盖 signingIdentity + 注入 APPLE_API_KEY_* env（tauri 自动 notarize+staple）
+      # 客户端自更新签名（2026-08-25 接入）：
+      # 私钥在 GitHub secrets（TAURI_SIGNING_PRIVATE_KEY，空密码 minisign 密钥）。
+      # tauri-cli 在 plugins.updater.pubkey 配置存在时要求私钥签名 updater 产物
+      # （.app.tar.gz / *.nsis.zip / *.msi.zip / .AppImage.tar.gz 的 .sig 文件）。
+      # 无私钥（fork PR 场景）→ 构建会因缺私钥而失败，这是刻意行为：
+      # pubkey 配置存在即要求签名，宁可不发布也不出未签名产物。
+      - name: Set up updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY —— updater 产物将无法签名"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY=$TAURI_SIGNING_PRIVATE_KEY" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
+          fi
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -71,9 +83,19 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # 注意：updater 签名需要 TAURI_SIGNING_PRIVATE_KEY（已在上一步设置到 env）。
+      # 有 key → 正常构建（含 .sig）；无 key（fork PR 无 secrets）→ `--no-sign`
+      # 跳过签名（tauri-cli 在 pubkey 配置存在且无私钥时会直接报错——刻意保护，
+      # 宁可不发布也不出未签名产物；`--no-sign` 只用于保持 fork PR 构建可跑）。
       - name: Build installers
         working-directory: src-tauri
-        run: cargo tauri build
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            cargo tauri build
+          else
+            echo "::warning::无签名 key，以 --no-sign 构建（fork PR / 无 secrets 场景）"
+            cargo tauri build --no-sign
+          fi
 
       # 只上传安装器「文件」(.dmg/.exe/.msi/.deb/.rpm/.AppImage)——
       # 不打包整个 bundle 目录（含 .app 应用目录，下载解压会一堆东西）。
@@ -113,6 +135,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # 客户端自更新产物（updater 包 + minisign .sig）：
+      # macOS: bundle/macos/*.app.tar.gz（+ .sig）
+      # Windows: bundle/nsis-updater/*.zip 或 bundle/nsis/nsis-updater/*.zip（+ .sig）
+      # Linux: bundle/appimage/*.AppImage.tar.gz（+ .sig）
+      # 路径随 bundler 版本有细微差异，用宽通配兜底（只收 updater 特征文件）。
+      # 无签名 key（--no-sign 构建）→ 无 .sig 产物 → 本步命中空 glob，warn 即可
+      # （fork PR 场景），不阻塞。*有 key 的 tag 构建必有产物*。
+      - name: Upload updater artifacts (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSH Dock-macOS-updater
+          path: |
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload updater artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSH Dock-Windows-updater
+          path: |
+            src-tauri/target/release/bundle/nsis-updater/*.zip
+            src-tauri/target/release/bundle/nsis-updater/*.zip.sig
+            src-tauri/target/release/bundle/msi-updater/*.zip
+            src-tauri/target/release/bundle/msi-updater/*.zip.sig
+            src-tauri/target/release/bundle/nsis/*.zip
+            src-tauri/target/release/bundle/nsis/*.zip.sig
+            src-tauri/target/release/bundle/msi/*.zip
+            src-tauri/target/release/bundle/msi/*.zip.sig
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload updater artifacts (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSH Dock-Linux-updater
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
+          if-no-files-found: warn
+          retention-days: 14
+
   # tag v* 时把三平台安装器聚合成一个 GitHub Release（发布态）。
   # 单 job（无矩阵）：下载三平台 artifact 合并后一次创建 Release——
   # 多 job 并发对同一 tag create 会冲突（403/422）。
@@ -142,15 +210,102 @@ jobs:
           name: DSH Dock-Linux
           path: installers/linux
 
+      - name: Download macOS updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: DSH Dock-macOS-updater
+          path: updater/macos
+          # 平台构建若因路径/签名差异没产出 updater artifact，不阻塞 release
+          # （latest.json 只收录真实存在的签名产物；缺失平台 = 该平台暂不推送）。
+          fail-on-missing: false
+
+      - name: Download Windows updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: DSH Dock-Windows-updater
+          path: updater/windows
+          fail-on-missing: false
+
+      - name: Download Linux updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: DSH Dock-Linux-updater
+          path: updater/linux
+          fail-on-missing: false
+
       - name: List installers
-        run: find installers -type f | sort
+        run: find installers -type f | sort; echo ---; find updater -type f | sort || true
+
+      # 生成 latest.json（桌面客户端自更新清单）：
+      # 从「签名过的 updater 产物」聚合 `platforms: {os-arch: {url, signature}}`。
+      # 按文件名识别平台（不依赖目录布局）：
+      #   *.app.tar.gz(.sig)                    → darwin-aarch64（macOS arm64）
+      #   *-setup.exe.zip(.sig) / *.nsis.zip    → windows-x86_64-nsis（Windows x64）
+      #   *.msi.zip(.sig)                       → windows-x86_64-msi（备选）
+      #   *.AppImage.tar.gz(.sig)               → linux-x86_64-appimage（Linux x64）
+      # 产物 URL 用 GitHub 的 releases/latest/download/<filename> 稳定端点。
+      - name: Generate latest.json
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          root = "updater"
+          platforms = {}
+          sigmap = {}  # basename -> sig content
+          for dp, dn, fn in os.walk(root):
+              for f in fn:
+                  if f.endswith(".sig"):
+                      sigmap[f[:-4]] = open(os.path.join(dp, f)).read().strip()
+          def add(f, key):
+              if f in sigmap:
+                  from urllib.parse import quote
+                  platforms[key] = {
+                      "url": "https://github.com/realguan/dsh-dock/releases/latest/download/" + quote(f),
+                      "signature": sigmap[f],
+                  }
+                  print(f"  {key} <- {f}")
+          for dp, dn, fn in os.walk(root):
+              for f in fn:
+                  if f.endswith(".sig"):
+                      continue
+                  low = f.lower()
+                  if low.endswith(".app.tar.gz"):
+                      key = "darwin-aarch64" if "universal" not in low else "darwin-universal"
+                      add(f, key)
+                  elif low.endswith(".appimage.tar.gz"):
+                      add(f, "linux-x86_64-appimage")
+                  elif low.endswith(".msi.zip"):
+                      add(f, "windows-x86_64-msi")
+                  elif low.endswith(".zip") and ("setup" in low or "nsis" in low):
+                      add(f, "windows-x86_64-nsis")
+          if not platforms:
+              print("NO UPDATER ASSETS FOUND — skipping latest.json")
+              raise SystemExit(0)
+          # pub_date 必须是合法 RFC3339（插件解析失败会整个反序列化崩掉）：
+          # 用当前 UTC 时间（构建时间）——tag 事件没有 head_commit.timestamp。
+          from datetime import datetime, timezone
+          pub_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+          latest = {
+              "version": os.environ.get("VERSION", "0.0.0"),
+              "notes": "DSH Dock " + os.environ.get("VERSION", ""),
+              "pub_date": pub_date,
+              "platforms": platforms,
+          }
+          with open("latest.json", "w") as fh:
+              json.dump(latest, fh, ensure_ascii=False, indent=2)
+          print("latest.json:")
+          print(open("latest.json").read())
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: false
-          files: installers/**/*
+          files: |
+            installers/**/*
+            latest.json
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

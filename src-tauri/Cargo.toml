@@ -27,6 +27,7 @@ sha2 = "0.10"
 tar = "0.4"
 tauri = { version = "2", features = ["tray-icon"] }  # 托盘（非 macOS 常驻更新入口，2026-08-24 裁定）；macOS 走系统菜单栏
 tauri-plugin-single-instance = "2" # 单实例：OS 级原语锁，二次启动=唤起已有窗口（无残留锁文件问题）
+tauri-plugin-updater = "2" # 桌面客户端自更新（2026-08-25）：检查→下载→安装，多平台
 ureq = "2" # 唯一网络面（updates 模块）：阻塞式小客户端，后台线程使用
 open = "5" # 系统默认程序打开 URL（外链跳浏览器 + 浏览器开工作台；mac=/usr/bin/open, linux=xdg-open, win=ShellExecuteW）
 tracing = "0.1"

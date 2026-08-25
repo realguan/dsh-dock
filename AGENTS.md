@@ -65,12 +65,15 @@
 
 - IPC 命令（已登记）：`choose_profile`（选择器）、`terminal_action`（错误卡
   动作 retry/upgrade/upgrade_only）、`get_update_status`（版本状态即读）、
-  `check_updates`（手动后台检测）、`open_about`（开「关于与更新」小窗，前端
-  顶栏按钮）、`open_external`（白名单外链 → 系统浏览器）、
-  `open_workbench_in_browser`（当前工作台 → 系统浏览器）、
-  `get_workbench_url`（读当前工作台地址）。前端经 `window.__TAURI__.core.invoke`
-  调用（tauri.conf 已开 withGlobalTauri）、事件经 `window.__TAURI__.event.listen`
-  消费——**注册例外**；新命令必须先在 AGENTS 登记。
+  `check_updates`（手动后台检测）、`get_client_update`（客户端自更新状态即读）、
+  `client_update_check`（检查客户端更新，结果经 `app:update` 回推）、
+  `client_update_apply`（下载并安装客户端更新 → 重启）、`open_about`（开
+  「关于与更新」小窗，前端顶栏按钮）、`open_external`（白名单外链 → 系统
+  浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
+  `get_workbench_url`（读当前工作台地址）。前端经
+  `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）、
+  事件经 `window.__TAURI__.event.listen` 消费——**注册例外**；新命令必须
+  先在 AGENTS 登记。
 - **外链策略（2026-08-25 裁定）**：主窗口由 setup 内 `create_main_window` 创建
   （tauri.conf.json 不再静态定义 windows——只有代码创建才能挂处理器）。
   dsh Web UI 的超链接/新窗口在 WebView 里默认点不动，统一转系统默认浏览器

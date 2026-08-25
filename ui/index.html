@@ -193,9 +193,20 @@
         renderError(ev.payload);
       });
 
-      // ---- 顶栏版本芯片（三维度中的 dsh；client/node 在「关于」面板） ----
+      // ---- 顶栏版本芯片 ----
       const vchip = document.getElementById("vchip");
-      function renderChip(s) {
+      function renderClient(u) {
+        const el = vchip.querySelector(".cli");
+        if (!el) return;
+        if (u.phase === "available" || u.phase === "downloading" || u.phase === "installing" || u.phase === "relaunching") {
+          el.hidden = false;
+          el.classList.add("new");
+          el.textContent = u.phase === "available" ? "客户端有新版 " + u.latest : u.phase === "downloading" ? "客户端更新 " + Math.floor(100 * (u.current || 0) / (u.total || 100)) + "%" : "客户端更新中…";
+        } else {
+          el.hidden = true;
+        }
+      }
+      const renderChip = (s) => {
         const dsh = s.dsh || {};
         let dot = "", text = "DSH " + (dsh.current || "…");
         if (dsh.error) { dot = ""; text = "DSH 检测失败"; }
@@ -203,10 +214,12 @@
         else if (dsh.latest && dsh.current) { dot = "ok"; text = `DSH ${dsh.current} · 已是最新`; }
         else if (dsh.latest) { text = "DSH 未检出 · 最新 " + dsh.latest; }
         else { text = "DSH " + (dsh.current || "…") + " · 检测中"; }
-        vchip.innerHTML = `<span class="dot ${dot}"></span><span>${text}</span>`;
-      }
+        vchip.innerHTML = `<span class="dot ${dot}"></span><span>${text}</span><span class="cli" hidden></span>`;
+        window.__TAURI__.core.invoke("get_client_update").then(renderClient).catch(() => {});
+      };
       window.__TAURI__.core.invoke("get_update_status").then(renderChip);
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
+      window.__TAURI__.event.listen("app:update", (ev) => renderClient(ev.payload));
 
       // ---- 顶栏「关于」：非 macOS 无应用菜单，关于/检查更新入口在此 ----
       document.getElementById("aboutBtn").addEventListener("click", () => {
