@@ -1,7 +1,10 @@
 # 执行环境抽象（executor）——local / wsl（ssh 预留）
 
-> 状态：本地（Local）重构完成；WSL 迭代 v1 已实现（Windows 实机验证清单见
-> [wsl-verification.md](wsl-verification.md)）；SSH 仅预留配置形状，未实现。
+## 状态
+
+版本：v1（local 重构完成 + wsl 迭代 v1）｜状态：演进中（ssh 预留，未实现）｜消费方：shell.rs / lib.rs 启动链、`boot:step` / `boot:error` 遥测
+
+> WSL 实机验证清单见 [wsl-verification.md](wsl-verification.md)；SSH 仅预留配置形状。
 
 ## 定位
 
