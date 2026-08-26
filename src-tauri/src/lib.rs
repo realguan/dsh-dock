@@ -700,72 +700,89 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       }, true);
     })();"#;
 
-    // WebView 渲染内存策略（2026-08-25）：dsh web 前端把整个会话一次性渲染进
-    // DOM（无虚拟化）；WebKit（macOS WKWebView / Linux WebKitGTK）对「视口外
-    // 大量已渲染内容」的回收远不如 Chromium——长会话下渲染资源持续累积，
-    // WebContent 进程膨胀到数 GB（实测 4.3 GB / PID WebKit.WebContent）。
+    // WebView 渲染内存策略（2026-08-25 提出，2026-08-26 修订为 CSS 注入版）：
+    // dsh web 前端把整个会话一次性渲染进 DOM（无虚拟化）；WebKit（macOS
+    // WKWebView / Linux WebKitGTK）对「视口外大量已渲染内容」的回收远不如
+    // Chromium——长会话下渲染资源持续累积，WebContent 进程膨胀到数 GB
+    // （实测 2.7~4.3 GB / PID WebKit.WebContent）。
     //
-    // 对策：`content-visibility: auto`（CSS 原生渲染级虚拟化）。视口外的行
-    // 仍在 DOM、仍占布局（contain-intrinsic-size 占位），但 WebKit 跳过其
-    // 布局/绘制并显式释放渲染资源；滚入视口时立即完整渲染。与 dsh 前端的
-    // scroll anchoring（elementsFromPoint hit-test，ChatView.pagingAnchor）
-    // 天然兼容——布局坐标不受影响。
+    // 对策：`content-visibility: auto`（CSS 原生渲染级虚拟化，Baseline
+    // 2025-09：Chromium 85+ / Safari 18+ / WebKitGTK 2.46+）。视口外的行仍在
+    // DOM、仍占布局（contain-intrinsic-size 占位），但引擎跳过其布局/绘制并
+    // 释放渲染资源；滚入视口立即完整渲染。与 dsh 前端 scroll anchoring
+    // （elementsFromPoint hit-test，ChatView.pagingAnchor）天然兼容——布局
+    // 坐标不受影响。
     //
-    // 豁免规则（只豁免「必须常驻渲染」的行，其余全部打上）：
-    // - 流式中的行（[data-streaming]）：内容在增长，必须实时渲染；
-    // - 空行：无内容可剪裁（同时也避免 pull 一个占位空盒）；
-    // - 滚动容器本行（[data-conversation-scroll]）：是容器不是行。
-    // 作用域：只在 dsh 会话流容器 [data-chat-flow] 内生效，壳页（index.html
-    // 等）不受影响。`initialization_script` 会随导航注入 dsh 工作台页。
+    // 实现（CSS 注入而非逐行 inline style）：一条规则覆盖全部行，千级行零
+    // style 写入；豁免走「活类」`dsh-cv-skip`——流式行（[data-streaming]）由
+    // MutationObserver 动态维护（流式结束后自动恢复优化，无需重新扫描）。
+    // 不加 `contain: paint`：会裁剪行内浮层（tooltip/popover/阴影）。
+    // 作用域：只在 dsh 会话流容器 [data-chat-flow] 内，壳页不受影响。
+    // 兼容：@supports 包裹——老 WebKitGTK（Ubuntu 22.04 = 2.38）整段失效，
+    // 页面行为与未注入一致（优雅降级，不破坏功能）。
     let webview_memory_policy = r#"(function () {
       if (window.__dshDockMemoryPolicyApplied) return;
       window.__dshDockMemoryPolicyApplied = true;
+      // 能力探测：不支持的引擎（老 WebKitGTK 等）直接退出，零副作用。
+      if (!(window.CSS && CSS.supports && CSS.supports('content-visibility', 'auto'))) return;
       var ROW = '[data-chat-anchor-key]';
       var FLOW = '[data-chat-flow]';
+      var STREAMING = '[data-streaming]';
+      var SKIP = 'dsh-cv-skip';
 
-      function shouldSkip(row) {
-        if (row.querySelector('[data-streaming]')) return true; // 流式增长中
-        if (row.children.length === 0) return true;              // 空行
-        return false;
-      }
+      // 注入 CSS：一条规则覆盖全部行（含未来插入的），豁免类后置覆盖。
+      var style = document.createElement('style');
+      style.id = 'dsh-dock-memory-policy';
+      style.textContent =
+        FLOW + ' ' + ROW + ' { content-visibility: auto; contain-intrinsic-size: auto 64px; }' +
+        FLOW + ' ' + ROW + '.' + SKIP + ' { content-visibility: visible; }';
+      (document.head || document.documentElement).appendChild(style);
 
-      function applyTo(row) {
-        if (row.dataset.dshCvBound === '1') return;
-        if (shouldSkip(row)) return;
-        row.dataset.dshCvBound = '1';
-        row.style.setProperty('content-visibility', 'auto');
-        // 占位估值：auto 关键字让浏览器记住该行真实尺寸（渲染过一次后按真实
-        // 高度占位），兜底 64px 只在从未渲染时生效——避免滚动高度失真。
-        row.style.setProperty('contain-intrinsic-size', 'auto 64px');
-      }
-
-      function scan(root) {
+      // 活豁免：流式行加 SKIP 类，流式结束移除——内容增长期保持完整渲染。
+      function syncStreaming(root) {
         if (!root || !root.querySelectorAll) return;
         var rows = root.querySelectorAll(ROW);
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
-          var flow = row.closest(FLOW);
-          if (flow !== null) applyTo(row); // 只在会话流内生效
+          var streaming = row.querySelector(STREAMING) !== null;
+          if (streaming && !row.classList.contains(SKIP)) row.classList.add(SKIP);
+          else if (!streaming && row.classList.contains(SKIP)) row.classList.remove(SKIP);
         }
       }
 
-      // document-start 注入时 body 尚不存在（WKUserScript 时序），先观察
-      // documentElement；body 就绪后再挂 childList 观察并补一次全量扫描。
+      function scan(root) {
+        if (!root || !root.querySelectorAll) return;
+        // 新插入子树：行可能整体进入，先补类再同步豁免。
+        if (root.closest && root.closest(FLOW) !== null) syncStreaming(root.closest(FLOW));
+        else if (root.nodeType === 1 && root.matches && root.matches(FLOW)) syncStreaming(root);
+      }
+
+      // document-start 时 body 尚不存在（WKUserScript 时序）：先观察
+      // documentElement；body 就绪后再补全量同步。
       var mo = new MutationObserver(function (muts) {
         for (var m = 0; m < muts.length; m++) {
           var mut = muts[m];
+          if (mut.type === 'attributes') {
+            // data-streaming 增删：同步该行所在 flow 的豁免类。
+            if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
+              syncStreaming(mut.target.closest(FLOW));
+            }
+            continue;
+          }
           if (mut.type !== 'childList') continue;
           if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
-            scan(mut.target);
+            syncStreaming(mut.target.closest(FLOW));
           }
         }
       });
-      mo.observe(document.documentElement, { childList: true, subtree: true });
-      if (document.body) {
-        scan(document);
-      } else {
-        document.addEventListener('DOMContentLoaded', function () { scan(document); });
-      }
+      mo.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-streaming'],
+      });
+      if (document.body) syncStreaming(document);
+      else document.addEventListener('DOMContentLoaded', function () { syncStreaming(document); });
     })();"#;
 
     tauri::WebviewWindowBuilder::new(

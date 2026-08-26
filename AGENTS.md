@@ -95,6 +95,21 @@
   浏览器并拦截导航，非白名单直接拦（壳不成为任意跳板）；②`on_new_window`：
   一律 Deny，白名单内转浏览器；③initialization_script 兜底捕获跨源 `<a>` 点击
   走 `open_external`。新外链域 = 在 `EXTERNAL_URL_HOSTS` 登记。
+- **WebView 渲染内存策略（2026-08-26 裁定）**：dsh web 前端全量渲染会话
+  （无虚拟化），WebKit 对视口外渲染资源回收弱于 Chromium，长会话 WebContent
+  实测膨胀 2.7~4.3 GB。壳经 `initialization_script`（`create_main_window` 内
+  `webview_memory_policy`，与外链 hook 并列）注入 CSS：
+  `[data-chat-flow] [data-chat-anchor-key]` 打 `content-visibility: auto` +
+  `contain-intrinsic-size: auto 64px`。要点：①CSS 注入而非逐行 inline style
+  （千级行零 style 写入）；②豁免走「活类」`dsh-cv-skip`——MutationObserver
+  监听 `data-streaming` 属性增删动态维护（流式结束自动恢复优化，一次性扫描
+  会漏）；③`CSS.supports` 能力探测，老 WebKitGTK 整段退出=优雅降级；
+  ④document-start 时 `document.body` 为 null（WKUserScript 时序）——观察
+  `documentElement` + DOMContentLoaded 兜底（首版在此静默崩溃，教训：
+  initialization_script 里禁止直接引用 body）；⑤不加 `contain: paint`（会
+  裁剪行内浮层）。禁止：`translateZ(0)`/`will-change` 全列表合成层（内存
+  爆炸）、`data_store_identifier`（签名是 `[u8;16]` 且会让现有用户本地状态
+  "丢失"）。
 - **remote 页面调用自定义命令必须显式授权（2026-08-25 外链修复裁定）**：
   Tauri 2.11 规定 remote origin（dsh 页面 http://127.0.0.1）调用应用自定义命令
   会被 ACL 拒绝，除非 capability 显式引用 `allow-<command>` 权限。链路 =

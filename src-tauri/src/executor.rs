@@ -864,12 +864,23 @@ mod guest_shell_tests {
     }
 
     /// 在 HOME=home 下以 bash（-lic 或 -lc）执行模板，取 stdout 文本。
-    /// 隔离要求：PATH 指向**受控空目录**——CI runner 的 /usr/bin 里预装 node
-    /// （GitHub Actions macOS 实测），`PATH=/usr/bin:/bin` 仍会命中系统 node，
-    /// 污染「无 node」场景断言。bash 用绝对路径调用（不依赖 PATH 里找 bash）。
+    /// 隔离要求（两层）：
+    ///   1. PATH 指向**受控空目录** + bash 绝对路径——CI runner 的 /usr/bin、
+    ///      /usr/local/bin 预装 node（GitHub Actions macOS 实测），收窄到
+    ///      /usr/bin:/bin 仍会命中系统 node，污染「无 node」场景断言。
+    ///   2. `$HOME/.profile` 统一重置 PATH 回受控目录——macOS 的 `/etc/profile`
+    ///      会经 path_helper 把宿主默认 PATH（含 /usr/local/bin/node）塞回来；
+    ///      模板 source 顺序是 /etc/profile → ~/.profile，后者正好盖掉前者。
+    ///      WSL 发行版（Ubuntu 等）的 /etc/profile 无 path_helper 行为，故此
+    ///      仅为测试环境隔离，不改变产品模板语义。
     fn run_guest(home: &Path, script: &str, interactive: bool) -> Option<String> {
         let empty_bin = home.join("empty-bin");
         std::fs::create_dir_all(&empty_bin).expect("mk empty bin");
+        std::fs::write(
+            home.join(".profile"),
+            format!("export PATH=\"{}\"\n", empty_bin.display()),
+        )
+        .expect("write profile");
         let mut cmd = std::process::Command::new("/bin/bash");
         cmd.arg(if interactive { "-lic" } else { "-lc" })
             .arg(script)
