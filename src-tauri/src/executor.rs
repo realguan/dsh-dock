@@ -864,13 +864,17 @@ mod guest_shell_tests {
     }
 
     /// 在 HOME=home 下以 bash（-lic 或 -lc）执行模板，取 stdout 文本。
-    /// PATH 收窄到最小集：探测结果必须来自 rc 或模板的版本管理器扫描，不靠宿主环境。
+    /// 隔离要求：PATH 指向**受控空目录**——CI runner 的 /usr/bin 里预装 node
+    /// （GitHub Actions macOS 实测），`PATH=/usr/bin:/bin` 仍会命中系统 node，
+    /// 污染「无 node」场景断言。bash 用绝对路径调用（不依赖 PATH 里找 bash）。
     fn run_guest(home: &Path, script: &str, interactive: bool) -> Option<String> {
-        let mut cmd = std::process::Command::new("bash");
+        let empty_bin = home.join("empty-bin");
+        std::fs::create_dir_all(&empty_bin).expect("mk empty bin");
+        let mut cmd = std::process::Command::new("/bin/bash");
         cmd.arg(if interactive { "-lic" } else { "-lc" })
             .arg(script)
             .env("HOME", home)
-            .env("PATH", "/usr/bin:/bin");
+            .env("PATH", &empty_bin);
         crate::resolve::run_with_timeout_raw(&mut cmd, std::time::Duration::from_secs(10))
             .map(|b| String::from_utf8_lossy(&b).to_string())
     }

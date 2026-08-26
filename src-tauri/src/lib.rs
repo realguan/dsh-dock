@@ -734,8 +734,9 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         if (shouldSkip(row)) return;
         row.dataset.dshCvBound = '1';
         row.style.setProperty('content-visibility', 'auto');
-        // 占位尺寸：避免视口外行被跳过后滚动条抖动（1 行 ~26px，最坏常数）。
-        row.style.setProperty('contain-intrinsic-size', 'auto 1px');
+        // 占位估值：auto 关键字让浏览器记住该行真实尺寸（渲染过一次后按真实
+        // 高度占位），兜底 64px 只在从未渲染时生效——避免滚动高度失真。
+        row.style.setProperty('contain-intrinsic-size', 'auto 64px');
       }
 
       function scan(root) {
@@ -748,8 +749,8 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         }
       }
 
-      // 初始 + 动态插入（会话长、节点持续进入）。
-      scan(document);
+      // document-start 注入时 body 尚不存在（WKUserScript 时序），先观察
+      // documentElement；body 就绪后再挂 childList 观察并补一次全量扫描。
       var mo = new MutationObserver(function (muts) {
         for (var m = 0; m < muts.length; m++) {
           var mut = muts[m];
@@ -759,7 +760,12 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
           }
         }
       });
-      mo.observe(document.body, { childList: true, subtree: true });
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+      if (document.body) {
+        scan(document);
+      } else {
+        document.addEventListener('DOMContentLoaded', function () { scan(document); });
+      }
     })();"#;
 
     tauri::WebviewWindowBuilder::new(
