@@ -1,7 +1,7 @@
 # ADR-0007：更新常驻入口——macOS 菜单 vs 非 macOS 托盘
 
 - **日期**：2026-08-26
-- **状态**：已接受（2026-08-24 裁定，修订 08-23「托盘已砍」；本 ADR 追溯补录）
+- **状态**：已接受（2026-08-24 裁定，修订 08-23「托盘已砍」；本 ADR 追溯补录。2026-08-26 修订：菜单/托盘移除更新项，统一收进「关于」更新中心，见 §7）
 - **提出人**：guan
 - **相关方**：lib.rs（菜单 / 托盘构建、`on_menu_event`）
 - **关联**：updater.rs（客户端自更新桥接）
@@ -10,7 +10,7 @@
 
 ## 1. 背景与问题
 
-壳需常驻的「检查更新 / 升级 / 关于」入口。初版（2026-08-23）一度裁定「托盘已砍」，但在 Windows / Linux 上 muda 菜单挂窗口上会渲染成窗口内菜单条（与 macOS 原生菜单条语义不同），导致非 macOS 平台没有统一的常驻入口。08-24 推翻 08-23 决定，恢复非 macOS 托盘。
+壳需常驻的「检查更新 / 升级 / 关于」入口。初版（2026-08-23）一度裁定「托盘已砍」，但在 Windows / Linux 上 muda 菜单挂窗口上会渲染成窗口内菜单条（与 macOS 原生菜单条语义不同），导致非 macOS 平台没有统一的常驻入口。08-24 推翻 08-23 决定，恢复非 macOS 托盘。08-26 进一步精简：检查/升级/状态行从菜单与托盘移除，统一进「关于」更新中心（菜单/托盘只留「在浏览器中打开」「关于」），入口形态（macOS 菜单 / 非 macOS 托盘）本身不变。
 
 ## 2. 约束与硬指标
 
@@ -41,7 +41,9 @@
 
 ## 4. 最终决策
 
-macOS = 系统应用菜单（根菜单 + check(⌘U)/upgrade/about，`on_menu_event` 分发）；非 macOS = 系统托盘（`TrayIconBuilder::with_id("main")`，事件经 builder 级 `on_menu_event` 同一处理）；窗口菜单一律 `#[cfg(target_os = "macos")]` 门控。另有前端顶栏「关于」按钮（`open_about`）。`upgrade_only` 不打断会话；about 窗口 label 须在 capabilities windows 列表。HOW 见 `lib.rs`。
+macOS = 系统应用菜单（根菜单 + 在浏览器中打开/关于 + 标准项，`on_menu_event` 分发）；非 macOS = 系统托盘（`TrayIconBuilder::with_id("main")`，事件经 builder 级 `on_menu_event` 同一处理，条目 = 在浏览器中打开 / 打开方式（仅 Windows）/ 关于 / 退出）；窗口菜单一律 `#[cfg(target_os = "macos")]` 门控。另有前端顶栏「关于」按钮（`open_about`）。`upgrade_only` 不打断会话；about 窗口 label 须在 capabilities windows 列表。HOW 见 `lib.rs`。
+
+> 2026-08-26 修订：菜单/托盘不再承载「检查更新 / 升级到 X / 状态行」三项——更新检测与升级统一收进「关于」面板（about.html 更新中心）。理由：三处入口（菜单、托盘、关于页）重复且状态行文案在托盘上可读性差；关于页已有完整的检查/下载/升级/进度/错误交互。菜单只留「在浏览器中打开」「关于」，macOS 另保留标准项（服务/隐藏/退出）。
 
 ## 5. 后果与后续行动项
 
@@ -55,6 +57,7 @@ macOS = 系统应用菜单（根菜单 + check(⌘U)/upgrade/about，`on_menu_ev
 ### 行动项
 - [x] macOS 菜单 + 非 macOS 托盘 + `on_menu_event` 分发实现（lib.rs）。
 - [x] about 窗口 label 进 capabilities windows 列表。
+- [x] 2026-08-26：菜单/托盘移除 st/check/upgrade 三项及 `status_line_for`，更新检测与升级统一进「关于」面板（issue #4）。
 
 ## 6. 复审条件
 

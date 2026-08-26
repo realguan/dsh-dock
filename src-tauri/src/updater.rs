@@ -21,6 +21,12 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::ShellState;
 
+/// GitHub Releases 下载加速镜像（中国大陆直连 github.com 受阻时回退）。
+/// 镜像仅做传输代理；更新产物仍经 minisign 验签，镜像无法篡改安装包。
+/// 检查清单的镜像端点在 tauri.conf.json `plugins.updater.endpoints`（直连优先、镜像兜底）；
+/// 二进制下载 URL 由 latest.json 内联给出（绝对 github.com URL），需在下载失败时改写。
+const GITHUB_MIRROR_PREFIX: &str = "https://gh-proxy.com/";
+
 /// 自动更新状态机（前端只读；Rust 侧唯一写者）。
 /// 状态推进：idle → checking → available(latest/) | upToDate(latest/) | failed(msg)
 ///          → downloading(progress) → installing → relaunching → done(version)
@@ -70,6 +76,35 @@ pub fn current(state: &Arc<ShellState>) -> ClientUpdate {
         .unwrap_or_default()
 }
 
+/// 把 github.com 的 Release 下载 URL 改写为经加速镜像的 URL（直连失败时回退）。
+/// 仅改写本仓库 Release 资产 URL；其他 URL 返回 None（不动）。
+fn mirror_download_url(url: &tauri::Url) -> Option<tauri::Url> {
+    if url.host_str()? != "github.com" {
+        return None;
+    }
+    if !url
+        .path()
+        .starts_with("/realguan/dsh-dock/releases/")
+    {
+        return None;
+    }
+    tauri::Url::parse(&format!("{GITHUB_MIRROR_PREFIX}{}", url.as_str())).ok()
+}
+
+/// 把 updater 错误映射为用户可读文案：裸 reqwest 错误（如 "error sending request
+/// for url"）对用户无可行动性；网络层失败统一提示检查网络/代理，HTTP 错误保留原文。
+fn friendly_error(e: &tauri_plugin_updater::Error) -> String {
+    if let tauri_plugin_updater::Error::Reqwest(re) = e {
+        // status() = None 表示非 HTTP 响应错误（连接被拒 / 超时 / TLS / DNS），
+        // 即 GitHub 直连受阻的典型形态。
+        if re.status().is_none() {
+            return "无法连接更新服务器（GitHub 直连失败），请检查网络或代理后重试。"
+                .to_string();
+        }
+    }
+    format!("更新失败：{e}")
+}
+
 /// 「检查更新」动作（IPC `client_update_check` 入口）。
 /// 后台执行：完成时经 `app:update` 回推 Available/UpToDate/Failed。
 pub fn run_check(app: tauri::AppHandle, state: Arc<ShellState>) {
@@ -82,13 +117,16 @@ pub fn run_check(app: tauri::AppHandle, state: Arc<ShellState>) {
                 set_state(&state, &app, ClientUpdate::Available { latest, notes });
             }
             Ok(None) => set_state(&state, &app, ClientUpdate::UpToDate { latest: None }),
-            Err(e) => set_state(
-                &state,
-                &app,
-                ClientUpdate::Failed {
-                    message: e.to_string(),
-                },
-            ),
+            Err(e) => {
+                tracing::warn!("客户端更新检查失败：{e}");
+                set_state(
+                    &state,
+                    &app,
+                    ClientUpdate::Failed {
+                        message: friendly_error(&e),
+                    },
+                )
+            }
         }
     });
 }
@@ -99,7 +137,7 @@ pub fn run_check(app: tauri::AppHandle, state: Arc<ShellState>) {
 /// - macOS/Linux：安装完成后经 `app.restart()` 进入新版本。
 pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
     std::thread::spawn(move || {
-        let update = match blocked_check(&app) {
+        let mut update = match blocked_check(&app) {
             Ok(Some(u)) => u,
             Ok(None) => {
                 set_state(&state, &app, ClientUpdate::UpToDate { latest: None });
@@ -110,7 +148,7 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
                     &state,
                     &app,
                     ClientUpdate::Failed {
-                        message: e.to_string(),
+                        message: friendly_error(&e),
                     },
                 );
                 return;
@@ -143,18 +181,26 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
         let result = {
             // 下载与安装分离：插件 install 会 exit(0)（跳过 RunEvent::Exit 清理），
             // 所以 dsh 必须在 install 前显式停掉（壳与 dsh 同生命周期，会话式 teardown）。
-            let bytes = match tauri::async_runtime::block_on(update.download(&mut progress, || {}))
-            {
+            let download_result =
+                tauri::async_runtime::block_on(update.download(&mut progress, || {}));
+            let bytes = match download_result {
                 Ok(b) => b,
-                Err(e) => {
-                    set_state(
-                        &state,
-                        &app,
-                        ClientUpdate::Failed {
-                            message: e.to_string(),
-                        },
-                    );
-                    return;
+                Err(first_err) => {
+                    let msg = friendly_error(&first_err);
+                    let Some(mirrored) = mirror_download_url(&update.download_url) else {
+                        set_state(&state, &app, ClientUpdate::Failed { message: msg });
+                        return;
+                    };
+                    tracing::warn!("客户端更新直连下载失败（{msg}），经镜像重试");
+                    update.download_url = mirrored;
+                    match tauri::async_runtime::block_on(update.download(&mut progress, || {})) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::error!("镜像下载也失败：{e}");
+                            set_state(&state, &app, ClientUpdate::Failed { message: msg });
+                            return;
+                        }
+                    }
                 }
             };
             if let Some(mut ex) = state.session.lock().unwrap().take() {
@@ -165,7 +211,25 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
 
         #[cfg(not(target_os = "windows"))]
         let result = {
-            tauri::async_runtime::block_on(update.download_and_install(&mut progress, || {}))
+            // 直连失败 → 改写 URL 经镜像重试一次（download_and_install 失败时尚未
+            // 安装，重试安全）。
+            match tauri::async_runtime::block_on(update.download_and_install(&mut progress, || {}))
+            {
+                Ok(()) => Ok(()),
+                Err(first_err) => {
+                    let msg = friendly_error(&first_err);
+                    match mirror_download_url(&update.download_url) {
+                        Some(mirrored) => {
+                            tracing::warn!("客户端更新直连下载失败（{msg}），经镜像重试");
+                            update.download_url = mirrored;
+                            tauri::async_runtime::block_on(
+                                update.download_and_install(&mut progress, || {}),
+                            )
+                        }
+                        None => Err(first_err),
+                    }
+                }
+            }
         };
 
         match result {
@@ -205,7 +269,7 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
                     &state,
                     &app,
                     ClientUpdate::Failed {
-                        message: e.to_string(),
+                        message: friendly_error(&e),
                     },
                 );
             }
@@ -215,10 +279,20 @@ pub fn run_download_and_install(app: tauri::AppHandle, state: Arc<ShellState>) {
 
 /// 同步执行一次版本检查（updater 的 check 是 async；本壳在后台线程跑，
 /// block_on 即可；不进入 Tauri 事件循环）。
+///
+/// connect_timeout（2026-08-26，issue #3）：端点数组首项为 GitHub 直连、次项为
+/// 镜像。受限网络下直连可能黑洞（TCP 握手无响应），10s 连接超时让插件快速跳过
+/// 直连、尝试镜像。该配置经 UpdaterBuilder 传入，对 check 与后续 download 均生效
+/// （仅连接阶段，不影响大包传输总时长）。
 fn blocked_check(
     app: &tauri::AppHandle,
 ) -> tauri_plugin_updater::Result<Option<tauri_plugin_updater::Update>> {
-    let updater = app.updater()?;
+    let updater = app
+        .updater_builder()
+        .configure_client(|builder| {
+            builder.connect_timeout(std::time::Duration::from_secs(10))
+        })
+        .build()?;
     tauri::async_runtime::block_on(updater.check())
 }
 
@@ -232,5 +306,36 @@ fn set_state(state: &Arc<ShellState>, app: &tauri::AppHandle, value: ClientUpdat
         if let Some(win) = app.get_webview_window(label) {
             let _ = win.emit("app:update", value.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mirror_download_url_rewrites_own_release_assets() {
+        let u = tauri::Url::parse(
+            "https://github.com/realguan/dsh-dock/releases/download/v0.4.6/DSH.Dock_0.4.6_x64-setup.exe",
+        )
+        .unwrap();
+        assert_eq!(
+            mirror_download_url(&u).unwrap().as_str(),
+            "https://gh-proxy.com/https://github.com/realguan/dsh-dock/releases/download/v0.4.6/DSH.Dock_0.4.6_x64-setup.exe"
+        );
+    }
+
+    #[test]
+    fn mirror_download_url_leaves_non_github_and_other_repos_untouched() {
+        // 非 github.com → None
+        let other_host = tauri::Url::parse("https://example.com/file.exe").unwrap();
+        assert!(mirror_download_url(&other_host).is_none());
+        // github.com 但非本仓库 release → None（不代理任意 GitHub 流量）
+        let other_repo =
+            tauri::Url::parse("https://github.com/someone/else/releases/download/v1/f").unwrap();
+        assert!(mirror_download_url(&other_repo).is_none());
+        // github.com 本仓库但非 release 路径 → None
+        let repo_root = tauri::Url::parse("https://github.com/realguan/dsh-dock").unwrap();
+        assert!(mirror_download_url(&repo_root).is_none());
     }
 }

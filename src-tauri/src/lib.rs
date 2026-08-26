@@ -929,6 +929,8 @@ pub fn run() {
         }))
         // 桌面客户端自更新：check → download → install。只经壳内 IPC 调用
         // （updater.rs 封装），插件命令不暴露给远程页面（最小面纪律）。
+        // 连接超时 / 镜像回退在 updater.rs 的 UpdaterBuilder 上配置（该 builder
+        // 同时作用于 check 与 download，见 updater.rs blocked_check）。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // 壳侧诊断日志落 `<数据目录>/shell.log`（GUI 下 stderr 不可见）。
@@ -1001,7 +1003,7 @@ pub fn run() {
                 // 非 macOS：托盘在 setup 早期创建（含初始菜单），之后统一走
                 // refresh_app_menu 刷新；macOS 则在此时设置应用菜单。
                 #[cfg(not(target_os = "macos"))]
-                setup_update_tray(&app_handle, &status)?;
+                setup_update_tray(&app_handle)?;
                 refresh_app_menu(&app_handle, &state);
                 emit_update(&app_handle, &status);
             }
@@ -1051,20 +1053,6 @@ pub fn run() {
             let state = app.state::<Arc<ShellState>>().inner().clone();
             let handle = app.clone();
             match event.id().as_ref() {
-                "check" => {
-                    std::thread::spawn(move || refresh_update_ui(&handle, &state));
-                }
-                "upgrade" => {
-                    std::thread::spawn(move || {
-                        if let Ok(data_dir) = handle.path().app_data_dir() {
-                            let _ = crate::updates::install_latest_global(
-                                &data_dir,
-                                &mut download_progress_bridge(&handle),
-                            );
-                            refresh_update_ui(&handle, &state);
-                        }
-                    });
-                }
                 "about" => open_about_window(&handle),
                 "open_in_browser" => {
                     let state = handle.state::<Arc<ShellState>>().inner().clone();
@@ -1296,35 +1284,6 @@ mod tests {
 // 非 macOS 的更新/关于入口 = 系统托盘（2026-08-24 裁定）+
 // 前端顶栏「关于」按钮（open_about IPC）。
 
-/// dsh 状态行文案（macOS 菜单与托盘菜单共用）。
-fn status_line_for(dsh: &crate::updates::ComponentUpdate) -> String {
-    if dsh.error.is_some() {
-        "检测失败（网络不可达）".to_string()
-    } else if dsh.newer {
-        format!(
-            "DSH {} · 发现新版 {}",
-            dsh.current.clone().unwrap_or_else(|| "?".into()),
-            dsh.latest.clone().unwrap_or_default()
-        )
-    } else if dsh.current.is_some() && dsh.latest.is_some() {
-        format!(
-            "DSH {} · 已是最新",
-            dsh.current.clone().unwrap_or_else(|| "?".into())
-        )
-    } else if dsh.latest.is_some() {
-        // 未检出本地 dsh（多半是下载档正在补装）：不能误称「已是最新」。
-        format!(
-            "DSH 未检出 · 官方最新 {}",
-            dsh.latest.clone().unwrap_or_default()
-        )
-    } else {
-        format!(
-            "DSH {} · 检测中…",
-            dsh.current.clone().unwrap_or_else(|| "?".into())
-        )
-    }
-}
-
 /// 当前生效运行模式（托盘菜单 ✓ 用；仅非 macOS——macOS 菜单无「打开方式」）。
 /// 优先会话内 active_mode；回落已存默认；再回落 local。
 #[cfg(not(target_os = "macos"))]
@@ -1345,24 +1304,12 @@ fn current_active_mode(app: &tauri::AppHandle) -> settings::Mode {
 /// 组装应用菜单：macOS 菜单栏结构 = 根菜单内放「App 子菜单」+「编辑」子菜单。
 /// 第一个子菜单被 macOS 自动视为 App 菜单（标题取 app 名、图标取 bundle 图标）——
 /// 平铺 MenuItem 会导致菜单栏出现齿轮占位图标（2026-08-23 实测）。
-/// App 菜单内容：状态行 → 检查更新…（⌘U）→ 升级到 X → 「打开方式」→ 关于 → 标准项。
+/// App 菜单内容（2026-08-26 裁定：更新项统一收进「关于」更新中心，菜单只留
+/// 「在浏览器中打开」「关于」+ 标准项）：在浏览器中打开 → 关于 → 标准项。
 #[cfg(target_os = "macos")]
-fn build_app_menu(
-    app: &tauri::AppHandle,
-    status: &crate::updates::UpdateStatus,
-) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 
-    let dsh = &status.dsh;
-    let st = MenuItem::with_id(app, "st", status_line_for(dsh), false, None::<&str>)?;
-    let check = MenuItem::with_id(app, "check", "检查更新…", true, Some("CmdOrCtrl+U"))?;
-    let upgrade = MenuItem::with_id(
-        app,
-        "upgrade",
-        format!("升级到 {}", dsh.latest.clone().unwrap_or_default()),
-        dsh.newer,
-        None::<&str>,
-    )?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let in_browser = MenuItem::with_id(
         app,
@@ -1378,11 +1325,8 @@ fn build_app_menu(
 
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
     let app_menu = SubmenuBuilder::new(app, "dsh-dock")
-        .item(&st)
-        .item(&check)
-        .item(&upgrade)
-        .item(&sep)
         .item(&in_browser)
+        .item(&sep)
         .item(&about)
         .item(&sep)
         .item(&PredefinedMenuItem::services(app, None)?)
@@ -1442,56 +1386,35 @@ fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
 
 /// 用最近状态重建并设置应用菜单（检测完成/升级后调用）。
 /// 仅 macOS 有系统菜单栏；其余平台不设原生菜单（窗口内菜单条丑，2026-08-24 裁定）。
+/// 2026-08-26 起菜单不再含更新项（收进「关于」更新中心），菜单内容不随更新状态变化，
+/// 但仍保留重建入口以维持调用方一致（幂等：重复设置同构菜单无害）。
 #[cfg(target_os = "macos")]
-fn refresh_app_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
-    let status = state
-        .update_status
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(empty_update_status);
-    if let Ok(menu) = build_app_menu(app, &status) {
+fn refresh_app_menu(app: &tauri::AppHandle, _state: &Arc<ShellState>) {
+    if let Ok(menu) = build_app_menu(app) {
         let _ = app.set_menu(menu);
     }
 }
 
-/// 非 macOS：常驻更新入口 = 系统托盘（2026-08-24 裁定：Windows/Linux 原生菜单
-/// 会渲染成窗口内菜单条，丑；托盘菜单承载 状态行/检查更新/升级/关于/退出）。
+/// 非 macOS：常驻入口 = 系统托盘（2026-08-24 裁定：Windows/Linux 原生菜单
+/// 会渲染成窗口内菜单条，丑；托盘菜单承载 在浏览器中打开/打开方式/关于/退出）。
+/// 2026-08-26 起更新项收进「关于」更新中心，托盘菜单不再随更新状态变化；
+/// 「打开方式」勾选态随当前模式变化，故切换模式后仍需重建。
 #[cfg(not(target_os = "macos"))]
-fn refresh_app_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
-    let status = state
-        .update_status
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(empty_update_status);
+fn refresh_app_menu(app: &tauri::AppHandle, _state: &Arc<ShellState>) {
     if let Some(tray) = app.tray_by_id("main") {
-        if let Ok(menu) = build_tray_menu(app, &status) {
+        if let Ok(menu) = build_tray_menu(app) {
             let _ = tray.set_menu(Some(menu));
         }
     }
 }
 
-/// 托盘菜单：状态行(禁用) / 检查更新… / 升级到 X / 打开方式（local·wsl）/ 关于 / 退出。
+/// 托盘菜单：在浏览器中打开 / 打开方式（local·wsl，仅 Windows）/ 关于 / 退出。
 /// 事件经 builder 级 on_menu_event（全局）送达，id 与 macOS 菜单一致：
-/// check / upgrade / mode_local / mode_wsl / about / quit。
+/// open_in_browser / mode_local / mode_wsl / about / quit。
 #[cfg(not(target_os = "macos"))]
-fn build_tray_menu(
-    app: &tauri::AppHandle,
-    status: &crate::updates::UpdateStatus,
-) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem};
 
-    let dsh = &status.dsh;
-    let st = MenuItem::with_id(app, "st", status_line_for(dsh), false, None::<&str>)?;
-    let check = MenuItem::with_id(app, "check", "检查更新…", true, None::<&str>)?;
-    let upgrade = MenuItem::with_id(
-        app,
-        "upgrade",
-        format!("升级到 {}", dsh.latest.clone().unwrap_or_default()),
-        dsh.newer,
-        None::<&str>,
-    )?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let in_browser = MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
@@ -1531,14 +1454,17 @@ fn build_tray_menu(
         .transpose()?;
 
     let mut entries: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
-    for it in [&st as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &check, &upgrade, &sep, &in_browser] {
-        entries.push(it);
-    }
+    entries.push(&in_browser);
     if let (Some(l), Some(w)) = (local_item.as_ref(), wsl_item.as_ref()) {
         entries.push(l);
         entries.push(w);
     }
-    for it in [&about as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &sep, &quit] {
+    for it in [
+        &sep as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
+        &about,
+        &sep,
+        &quit,
+    ] {
         entries.push(it);
     }
 
@@ -1549,13 +1475,10 @@ fn build_tray_menu(
 
 /// setup 阶段创建托盘（非 macOS）：左键唤起主窗口，右键出菜单。
 #[cfg(not(target_os = "macos"))]
-fn setup_update_tray(
-    app: &tauri::AppHandle,
-    status: &crate::updates::UpdateStatus,
-) -> tauri::Result<()> {
+fn setup_update_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-    let menu = build_tray_menu(app, status)?;
+    let menu = build_tray_menu(app)?;
     let icon = app
         .default_window_icon()
         .cloned()
@@ -1586,21 +1509,40 @@ fn setup_update_tray(
 }
 
 /// 关于面板：独立小窗（壳版本 + 宿主 dsh 版本 + 检查/升级），复用 ui/about.html。
+///
+/// 2026-08-26 修复（issue #2）：窗口创建必须在主线程执行。Tauri 的
+/// `#[tauri::command]` handler 跑在 IPC 线程（async runtime），Windows/WebView2
+/// 上在非主线程 `WebviewWindowBuilder::build()` 会导致 WebView2 环境初始化失败、
+/// 窗口白板（顶栏「关于」空白；托盘路径在主事件循环故正常）。统一经
+/// `run_on_main_thread` 序列化到主线程——从主线程调用时只是排队到下一帧，无害。
 fn open_about_window(app: &tauri::AppHandle) {
-    if let Some(win) = app.get_webview_window("about") {
-        let _ = win.show();
-        let _ = win.set_focus();
-        return;
+    // run_on_main_thread 的闭包要求 Send + 'static，需持有一个 owned AppHandle；
+    // 方法调用本身只借 app（参数引用），闭包 move 走 clone——二者不冲突。
+    let handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("about") {
+            let _ = win.show();
+            let _ = win.set_focus();
+            return;
+        }
+        let builder = tauri::WebviewWindowBuilder::new(
+            &handle,
+            "about",
+            tauri::WebviewUrl::App("about.html".into()),
+        )
+        .title("关于")
+        // 480x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；
+        // 更新中心接入后内容更高（客户端状态机卡片 + dimrows + 入口 + 脚注），
+        // 加高并允许滚动兜底。
+        .inner_size(480.0, 560.0)
+        .min_inner_size(440.0, 460.0)
+        .resizable(true)
+        .center();
+        match builder.build() {
+            Ok(_) => tracing::info!("关于窗口已创建"),
+            Err(e) => tracing::error!("创建关于窗口失败：{e}"),
+        }
+    }) {
+        tracing::error!("调度关于窗口创建到主线程失败：{e}");
     }
-    let builder =
-        tauri::WebviewWindowBuilder::new(app, "about", tauri::WebviewUrl::App("about.html".into()))
-            .title("关于")
-            // 480x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；
-            // 更新中心接入后内容更高（客户端状态机卡片 + dimrows + 入口 + 脚注），
-            // 加高并允许滚动兜底。
-            .inner_size(480.0, 560.0)
-            .min_inner_size(440.0, 460.0)
-            .resizable(true)
-            .center();
-    let _ = builder.build();
 }
