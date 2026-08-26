@@ -44,16 +44,16 @@
 
 | # | 动作 | 预期 | 对应代码假设 |
 |:-:|:--|:--|:--|
-| 1 | 首次启动（不点 WSL） | 走本机路径：时间线→进工作台（若 Windows 侧无 dsh 会先下载） | LocalExecutor 复用成立（回归） |
-| 2 | 回到启动页，点顶栏「在 WSL 中打开」 | 时间线回到步 0，出现"探测 WSL" | `boot_in_wsl` IPC → teardown 旧会话 → WSL probe |
-| 3 | 探测结果 | 步 0 显示"WSL2 环境就绪"、步 1 显示"`<发行版>` 内发现 dsh 与 node" | `wsl -l -v` 解析 + `select_wsl2_distro`（只认 WSL2） |
-| 4 | 自动启动 | 步 2 "在 WSL（Ubuntu..）中启动 DSH"→步 3 就绪→步 4 进入工作台（窗口加载 `127.0.0.1:<port>`——**端口是 WSL2 localhost 转发到 Windows 的**） | GUEST_BOOT 模板 + 日志 URL 解析 + localhostForwarding |
+| 0 | 首次启动（无 settings.json） | 进入**运行环境选择页**（mode.html：本机 / WSL2 + 设为默认勾选） | `settings::load` 无 defaultMode → 导航 mode.html |
+| 1 | 选「WSL2」并勾选「设为默认」→ 开始 | 出现"探测 WSL"时间线 → 步 0 就绪 → 步 1 发行版内发现 dsh → 自动进工作台 | `choose_mode` → `executor_for_mode(Wsl)` → WSL probe |
+| 2 | 托盘右键（Windows）→「打开方式：本机」 | 会话切回本机（时间线重走，随后进工作台）；托盘 ✓ 移到本机 | `switch_mode(Local)`（teardown→写默认→launch） |
+| 3 | 再切回 WSL（托盘 →「打开方式：WSL2」） | 同上反向切换；结束时仍无残留 | `switch_mode(Wsl)` + stop 标志 teardown |
+| 4 | 重启应用 | **不再弹选择页**，直接按上次默认（WSL）启动并进入工作台 | settings.json defaultMode 生效 |
 | 5 | 在工作台随便聊一句 | 能正常收发（证明 **127.0.0.1:端口 确实穿透到 WSL 内的 dsh**） | capabilities `http://127.0.0.1:*` 不变即够 |
 | 6 | 关掉应用 | 无残留：WSL 内 dsh 应停止 | teardown touch `GUEST_STOP_FILE` → wrapper kill dsh |
 | 7 | （可选守环境）WSL 内 `ps aux \| grep -i dsh` | 无 dsh 残留进程 | 同上（孤儿检查） |
-| 8 | 再次启动并切 WSL，切的过程中点「在 WSL 中打开」再切回 | 不出现"9 0 秒后误报错误卡" | `session_epoch` 代际静默退出 |
 
-**第 3 步若报"需 WSL2"**：这是**预期行为**（WSL1 不支持端口转发）。用 `wsl --set-version <发行版> 2` 升后再试。
+**探测若报"需 WSL2"**：这是**预期行为**（WSL1 不支持端口转发）。用 `wsl --set-version <发行版> 2` 升后再试。
 
 **友情机发行版内的 PATH**：若 dsh 是经 nvm/fnm 装的，probe/boot 模板已先 source `~/.bashrc`
 补 PATH——此项也顺带验证。
@@ -72,9 +72,9 @@
 - **teardown 的停止可靠性**：依赖客体内 wrapper 读 stop 标志。若关应用后 WSL 内仍有
   `dsh` 残留（第 6/7 步失败），把 `shell.log` 尾部回传（需要时再评估 `wsl --terminate` 兜底）。
 - **`wsl -l -v` 输出解析**：中文/其它区域 Windows 的表头与横幅不应影响解析（只认 `*` + 版本列）；
-  若第 3 步把发行版名解析乱（乱码），说明遭遇了 wsl.exe 非 UTF-8 输出，把现象回传。
+  若探测把发行版名解析乱（乱码），说明遭遇了 wsl.exe 非 UTF-8 输出，把现象回传。
 - **doc 内未覆盖**：WSL 模式下客体内「缺失 dsh」应出现"请在 WSL 内 `npm i -g ...` 后重试"
-  的可行动错误卡（第 4 步前置条件不满足时）。
+  的可行动错误卡（第 1 步前置条件不满足时）。
 
 ## 5. 回传模板（任一现象不符预期时）
 
@@ -88,4 +88,5 @@
 ---
 
 校验的代码假设集中处：`src-tauri/src/executor.rs`（WSL 执行器）/ `lib.rs`
-（会话切换 + 代际）/ `ui/index.html`（入口按钮）。对应设计说明见 `docs/`（待补 executor.md）。
+（会话切换 + 代际）/ `settings.rs`（默认运行环境）/ `ui/mode.html`（首次选择）。
+设计说明见 [executor.md](executor.md)。

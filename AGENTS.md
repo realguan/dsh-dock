@@ -59,6 +59,9 @@
 ## 存储与生命周期
 
 - 无状态库：本仓库**不持久化任何核心态**。运行期只写：数据目录的 `dsh-shell.log`（排查用）。
+- **最小持久化例外（2026-08-25 登记）**：`<app_data>/settings.json`、仅 `defaultMode`
+  一个字段（settings.rs：首次打开可选运行环境 + 设置默认打开方式；菜单/托盘
+  「打开方式」切换即写默认）。原子写（tmp+rename）、损坏回退默认。其余核心态一律不落盘。
 - **同生命周期**：壳与 dsh 严格 1:1；退出/崩溃都要把子进程收干净，不留孤儿。
 
 ## IPC 与网络面（最小面例外册）
@@ -71,7 +74,8 @@
   「关于与更新」小窗，前端顶栏按钮）、`open_external`（白名单外链 → 系统
   浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
   `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
-  停掉现有会话、重建 WSL2 会话并启动；零配置，非 Windows 报错卡）。前端经
+  切换并写默认；零配置，非 Windows 报错卡）、`choose_mode`（首次运行环境选择
+  落地：写默认（可选）→ 按所选模式启动；mode.html → index.html?mode=…）。前端经
   `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）、
   事件经 `window.__TAURI__.event.listen` 消费——**注册例外**；新命令必须
   先在 AGENTS 登记。

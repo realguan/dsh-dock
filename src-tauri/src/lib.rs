@@ -15,6 +15,7 @@
 mod executor;
 mod manifest;
 mod resolve;
+mod settings;
 mod shell;
 mod updater;
 mod updates;
@@ -122,6 +123,8 @@ struct ShellState {
     /// 会话被外部切换（如 boot_in_wsl 停掉旧会话）后旧线程立即静默退出，
     /// 不会在 90s 后误报错误卡、也不会误监护新会话。
     session_epoch: AtomicU64,
+    /// 当前会话的运行环境（菜单勾选 / retry 重建用；None=尚未启动会话）。
+    active_mode: Mutex<Option<settings::Mode>>,
     window: tauri::WebviewWindow,
     /// 选择器场景：probe 完成但尚未 spawn 的会话（用户选定 profile 后落地）。
     pending: Mutex<Option<Box<dyn crate::executor::Executor>>>,
@@ -532,49 +535,122 @@ fn launch_executor_after_probe(
     }
 }
 
-/// retry/upgrade 共用：重建本机执行器并重新走 probe → 分派。
-fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
-    let resources_dir = resolve_resources_dir(&app);
-    let manifest =
-        match manifest::ProductManifest::load(&resources_dir.join("product.manifest.json")) {
-            Ok(m) => m,
-            Err(e) => {
-                emit_boot_error(&app, &format!("产品清单读取失败：{e}"), "");
-                return;
+/// 按运行环境构建执行器（local/wsl 同等地位的统一入口：首启 / 重试 / 菜单切换共用）。
+fn executor_for_mode(
+    mode: settings::Mode,
+    app: &tauri::AppHandle,
+    data_dir: PathBuf,
+) -> Result<Box<dyn crate::executor::Executor>, String> {
+    match mode {
+        settings::Mode::Local => {
+            let resources_dir = resolve_resources_dir(app);
+            let manifest =
+                manifest::ProductManifest::load(&resources_dir.join("product.manifest.json"))
+                    .map_err(|e| format!("产品清单读取失败：{e}"))?;
+            Ok(Box::new(crate::executor::LocalExecutor::new(
+                manifest,
+                resources_dir,
+                data_dir,
+            )))
+        }
+        settings::Mode::Wsl => {
+            #[cfg(windows)]
+            {
+                Ok(Box::new(crate::executor::WslExecutor::new(
+                    crate::executor::WslConfig { distro: None },
+                    data_dir,
+                )))
             }
-        };
-    let executor = Box::new(crate::executor::LocalExecutor::new(
-        manifest,
-        resources_dir,
-        data_dir,
-    ));
-    launch_executor_after_probe(state, app, executor);
+            #[cfg(not(windows))]
+            {
+                Err("WSL 模式仅支持 Windows 平台。".to_string())
+            }
+        }
+    }
 }
 
-/// 「在 WSL 中打开」（迭代 v1 入口）：停掉当前会话（若有），重建 WSL 会话并启动。
-/// 零配置：WslConfig{distro:None} → 使用 WSL 默认发行版（须 WSL2）；非 Windows
-/// 平台由本命令直接给可行动错误卡（WSL 执行器仅在 Windows 编译）。
+/// retry/upgrade 共用：按**当前会话的运行环境**重建执行器并重新走 probe →
+/// 分派（不再是永远 local——WSL 会话挂掉后重试仍留在 WSL）。
+fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
+    let mode = state
+        .active_mode
+        .lock()
+        .unwrap()
+        .unwrap_or(settings::Mode::Local);
+    *state.active_mode.lock().unwrap() = Some(mode);
+    match executor_for_mode(mode, &app, data_dir) {
+        Ok(executor) => launch_executor_after_probe(state, app, executor),
+        Err(e) => emit_boot_error(&app, &e, ""),
+    }
+}
+
+/// 模式切换（菜单/托盘/顶栏共用）：停掉当前会话（幂等）→ 写默认 → 按新模式启动。
+/// 切换失败或 probe 失败会把主窗口拉回 index.html（壳错误卡在那里渲染）。
+fn switch_mode(
+    app: tauri::AppHandle,
+    state: Arc<ShellState>,
+    mode: settings::Mode,
+    data_dir: PathBuf,
+) {
+    tracing::info!("切换运行环境 → {}", mode.as_str());
+    let _ = teardown_session(&state);
+    if let Err(e) = crate::settings::save(
+        &data_dir,
+        &crate::settings::ShellSettings {
+            default_mode: Some(mode),
+        },
+    ) {
+        emit_boot_error(&app, &e, "");
+        let _ = state.window.eval("location.assign('index.html')");
+        return;
+    }
+    *state.active_mode.lock().unwrap() = Some(mode);
+    // 立即刷新菜单勾选（✓ 跟随当前模式）。
+    refresh_app_menu(&app, &state);
+    std::thread::spawn(move || {
+        // 菜单切换时页面可能已在工作台（remote，不渲染壳错误卡）：先回启动页，
+        // 新会话就绪后 run_executor_session 会把主窗口导航过去。
+        let _ = state.window.eval("location.assign('index.html')");
+        match executor_for_mode(mode, &app, data_dir) {
+            Ok(executor) => launch_executor_after_probe(state, app, executor),
+            Err(e) => emit_boot_error(&app, &e, ""),
+        }
+    });
+}
+
+/// 「在 WSL 中打开」（顶栏入口；现已记默认 = 与菜单切换同语义）。
 #[tauri::command]
 fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
-    // 切换前先收掉现有会话（幂等；正在运行的 local 会话也会被停掉）。
-    let _ = teardown_session(&state);
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
     std::thread::spawn(move || {
-        #[cfg(windows)]
-        {
-            let executor = Box::new(crate::executor::WslExecutor::new(
-                crate::executor::WslConfig { distro: None },
-                data_dir,
-            ));
-            launch_executor_after_probe(state, handle, executor);
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = (data_dir, state);
-            emit_boot_error(&handle, "WSL 模式仅支持 Windows 平台。", "");
-        }
+        switch_mode(handle, state, settings::Mode::Wsl, data_dir);
+    });
+    Ok(())
+}
+
+/// 首次运行选择落地（mode.html → index.html?mode=…&default=…）：
+/// 写默认（可选）→ 按所选模式启动。
+#[tauri::command]
+fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result<(), String> {
+    let m = settings::Mode::parse(&mode).ok_or_else(|| format!("未知运行环境：{mode}"))?;
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if set_default {
+        crate::settings::save(
+            &data_dir,
+            &crate::settings::ShellSettings {
+                default_mode: Some(m),
+            },
+        )
+        .map_err(|e| format!("保存默认运行环境失败：{e}"))?;
+    }
+    *state.active_mode.lock().unwrap() = Some(m);
+    let handle = app.clone();
+    std::thread::spawn(move || match executor_for_mode(m, &handle, data_dir) {
+        Ok(executor) => launch_executor_after_probe(state, handle, executor),
+        Err(e) => emit_boot_error(&handle, &e, ""),
     });
     Ok(())
 }
@@ -807,13 +883,12 @@ pub fn run() {
                         .try_init();
                 }
             }
-            // 资源根解析（dev/prod 差异）：
+            // 资源根解析（dev/prod 差异）已由 executor_for_mode（Local 档）内部处理：
             //   - 生产（bundle）：Tauri v2 保留相对 src-tauri 的路径前缀，
             //     `resources/**` 落在 `.app/Contents/Resources/resources/`；
             //   - dev（cargo run，macOS）：resource_dir() 指向不存在的 target/Resources，
             //     回退链：exe_dir/resources（tauri-build 的副本，Windows 语义）→
             //     CARGO_MANIFEST_DIR/resources（源码树，本仓库开发常态）。
-            let resources_dir = resolve_resources_dir(app);
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
@@ -830,6 +905,7 @@ pub fn run() {
             let state = Arc::new(ShellState {
                 session: Mutex::new(None),
                 session_epoch: AtomicU64::new(0),
+                active_mode: Mutex::new(None),
                 window: window.clone(),
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
@@ -881,29 +957,33 @@ pub fn run() {
 
             // 宿主解析可能触发网络下载和 npm 安装，必须在后台执行：setup 运行在
             // 主线程，阻塞它会让 macOS 把窗口判定为无响应，也会让早期错误事件丢失。
-            // 默认路径 = 本机执行器（LocalExecutor 封装 system→bundle→download 解析链；
-            // probe/就绪/监护已泛化为执行环境无关，见 executor.rs）。
+            // 启动路径（local/wsl 同等地位，见 settings.rs）：
+            //   已设默认 → 按默认模式构建执行器并启动；
+            //   未设默认（首次）→ 导航 mode.html 让用户先选运行环境，经 choose_mode 落地。
             let boot_state = state.clone();
             let boot_app = app_handle.clone();
-            let boot_resources = resources_dir.clone();
             let boot_data = data_dir.clone();
             std::thread::spawn(move || {
-                let manifest = match manifest::ProductManifest::load(
-                    &boot_resources.join("product.manifest.json"),
-                ) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::error!("product.manifest 读取失败: {e}");
-                        emit_boot_error(&boot_app, &e.to_string(), "");
-                        return;
+                let settings = crate::settings::load(&boot_data);
+                match settings.default_mode {
+                    Some(mode) => {
+                        *boot_state.active_mode.lock().unwrap() = Some(mode);
+                        match executor_for_mode(mode, &boot_app, boot_data) {
+                            Ok(executor) => {
+                                launch_executor_after_probe(boot_state, boot_app, executor)
+                            }
+                            Err(e) => {
+                                tracing::error!("启动失败（{e}）");
+                                emit_boot_error(&boot_app, &e, "");
+                            }
+                        }
                     }
-                };
-                let executor = Box::new(crate::executor::LocalExecutor::new(
-                    manifest,
-                    boot_resources,
-                    boot_data,
-                ));
-                launch_executor_after_probe(boot_state, boot_app, executor);
+                    None => {
+                        // 首次：先出运行环境选择（mode.html），选定后经 choose_mode 启动。
+                        tracing::info!("首次运行：进入运行环境选择");
+                        let _ = boot_state.window.eval("location.assign('mode.html')");
+                    }
+                }
             });
             Ok(())
         })
@@ -935,6 +1015,20 @@ pub fn run() {
                         }
                     }
                 }
+                "mode_local" | "mode_wsl" => {
+                    let mode = if event.id().as_ref() == "mode_local" {
+                        settings::Mode::Local
+                    } else {
+                        settings::Mode::Wsl
+                    };
+                    // 切换会 teardown 当前会话（可能等 grace），放后台线程。
+                    std::thread::spawn(move || {
+                        let Ok(data_dir) = handle.path().app_data_dir() else {
+                            return;
+                        };
+                        switch_mode(handle, state, mode, data_dir);
+                    });
+                }
                 "quit" => handle.exit(0),
                 _ => {}
             }
@@ -951,7 +1045,8 @@ pub fn run() {
             open_external,
             open_workbench_in_browser,
             get_workbench_url,
-            boot_in_wsl
+            boot_in_wsl,
+            choose_mode
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -1170,10 +1265,25 @@ fn status_line_for(dsh: &crate::updates::ComponentUpdate) -> String {
     }
 }
 
+/// 当前运行环境（菜单勾选用）：优先会话内 active_mode；回落已存默认；再回落 local。
+fn current_active_mode(app: &tauri::AppHandle) -> settings::Mode {
+    if let Some(state) = app.try_state::<Arc<ShellState>>() {
+        if let Some(m) = *state.active_mode.lock().unwrap() {
+            return m;
+        }
+    }
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        if let Some(m) = crate::settings::load(&data_dir).default_mode {
+            return m;
+        }
+    }
+    settings::Mode::Local
+}
+
 /// 组装应用菜单：macOS 菜单栏结构 = 根菜单内放「App 子菜单」+「编辑」子菜单。
 /// 第一个子菜单被 macOS 自动视为 App 菜单（标题取 app 名、图标取 bundle 图标）——
 /// 平铺 MenuItem 会导致菜单栏出现齿轮占位图标（2026-08-23 实测）。
-/// App 菜单内容：状态行 → 检查更新…（⌘U）→ 升级到 X → 关于 → 标准项。
+/// App 菜单内容：状态行 → 检查更新…（⌘U）→ 升级到 X → 「打开方式」→ 关于 → 标准项。
 #[cfg(target_os = "macos")]
 fn build_app_menu(
     app: &tauri::AppHandle,
@@ -1201,6 +1311,33 @@ fn build_app_menu(
     )?;
     let sep = PredefinedMenuItem::separator(app)?;
 
+    // 「打开方式」：local / wsl 同等地位，当前模式带 ✓；切换即写默认（switch_mode）。
+    let mode = current_active_mode(app);
+    let local_item = MenuItem::with_id(
+        app,
+        "mode_local",
+        format!(
+            "本地{}",
+            if mode == settings::Mode::Local { " ✓" } else { "" }
+        ),
+        true,
+        None::<&str>,
+    )?;
+    let wsl_item = MenuItem::with_id(
+        app,
+        "mode_wsl",
+        format!(
+            "WSL2{}",
+            if mode == settings::Mode::Wsl { " ✓" } else { "" }
+        ),
+        true,
+        None::<&str>,
+    )?;
+    let mode_menu = SubmenuBuilder::new(app, "打开方式")
+        .item(&local_item)
+        .item(&wsl_item)
+        .build()?;
+
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
     let app_menu = SubmenuBuilder::new(app, "dsh-dock")
         .item(&st)
@@ -1208,6 +1345,7 @@ fn build_app_menu(
         .item(&upgrade)
         .item(&sep)
         .item(&in_browser)
+        .item(&mode_menu)
         .item(&about)
         .item(&sep)
         .item(&PredefinedMenuItem::services(app, None)?)
@@ -1297,9 +1435,9 @@ fn refresh_app_menu(app: &tauri::AppHandle, state: &Arc<ShellState>) {
     }
 }
 
-/// 托盘菜单：状态行(禁用) / 检查更新… / 升级到 X / 关于 / 退出。
+/// 托盘菜单：状态行(禁用) / 检查更新… / 升级到 X / 打开方式（local·wsl）/ 关于 / 退出。
 /// 事件经 builder 级 on_menu_event（全局）送达，id 与 macOS 菜单一致：
-/// check / upgrade / about / quit。
+/// check / upgrade / mode_local / mode_wsl / about / quit。
 #[cfg(not(target_os = "macos"))]
 fn build_tray_menu(
     app: &tauri::AppHandle,
@@ -1322,12 +1460,37 @@ fn build_tray_menu(
     let in_browser = MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
+    // 打开方式（local/wsl 同等地位；当前模式带 ✓）。WSL 项仅 Windows 可用。
+    let mode = current_active_mode(app);
+    let local_item = MenuItem::with_id(
+        app,
+        "mode_local",
+        format!(
+            "打开方式：本地{}",
+            if mode == settings::Mode::Local { " ✓" } else { "" }
+        ),
+        true,
+        None::<&str>,
+    )?;
+    let wsl_item = MenuItem::with_id(
+        app,
+        "mode_wsl",
+        format!(
+            "打开方式：WSL2{}",
+            if mode == settings::Mode::Wsl { " ✓" } else { "" }
+        ),
+        cfg!(windows),
+        None::<&str>,
+    )?;
+
     MenuBuilder::new(app)
         .item(&st)
         .item(&check)
         .item(&upgrade)
         .item(&sep)
         .item(&in_browser)
+        .item(&local_item)
+        .item(&wsl_item)
         .item(&about)
         .item(&sep)
         .item(&quit)

@@ -85,6 +85,22 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
   自己启动时的代际，会话被外部切换（如 `boot_in_wsl` 停掉本地会话）后旧线程**静默**
   退出：不在 90s 后误报错误卡、不误导航/监护新会话。
 
+## 运行环境的用户主权（首次选择 / 默认 / 菜单切换）
+
+local 与 wsl **同等地位**（`settings.rs` + `executor_for_mode` 统一入口）：
+
+- **首次打开**：`settings.json` 无 `defaultMode` → 导航 `ui/mode.html` 选择页
+  （本机 / WSL2 + 「设为默认」勾选）→ `index.html?mode=…&default=…` →
+  `choose_mode` IPC 落地（写默认可选）并启动；设过默认则跳过直接按默认启动。
+- **默认持久化**：`<app_data>/settings.json` 仅 `defaultMode` 一个字段（AGENTS
+  「无状态库」登记的**最小例外**；原子写 tmp+rename，损坏回退默认）。
+- **菜单切换（即记默认）**：macOS 应用菜单「打开方式」子菜单 / 非 macOS 托盘
+  「打开方式」两项——当前模式带 ✓；选中 → `switch_mode`：teardown 旧会话 →
+  写默认 → 导航回启动页 → 按新模式启动（就绪后自动导航到工作台；probe 失败则
+  错误卡在启动页可见）。
+- **retry 修正**：错误卡重试按 `active_mode` 重建执行器——WSL 会话出错重试不回退 local。
+- 顶栏「在 WSL 中打开」（`boot_in_wsl`）保留，语义与菜单一致（切换+记默认）。
+
 ## 验证状态
 
 - macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（74 tests）。

@@ -245,6 +245,18 @@
         });
       }
 
+      // ---- 首次选择落地（mode.html → index.html?mode=…&default=…）----
+      // 必须在 boot 事件监听注册之后 invoke：启动线程 emit 的 boot:step 才能
+      // 被本页消费（无事件竞态）。
+      const qp = new URLSearchParams(location.search);
+      const qmode = qp.get("mode");
+      if (qmode === "local" || qmode === "wsl") {
+        const qdef = qp.get("default") === "1";
+        window.__TAURI__.core
+          .invoke("choose_mode", { mode: qmode, setDefault: qdef })
+          .catch(() => {});
+      }
+
       headline.textContent = HEADLINES[0];
     </script>
   </body>

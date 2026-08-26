@@ -3,6 +3,7 @@ fn main() {
     // 缺省会导致 cargo tauri build 复用旧前端（2026-08-23 实测踩坑）。
     for f in [
         "../ui/index.html",
+        "../ui/mode.html",
         "../ui/selector.html",
         "../ui/assets/app.css",
         "../ui/assets/dsh-logo.svg",
@@ -29,6 +30,7 @@ fn main() {
                 "open_workbench_in_browser",
                 "get_workbench_url",
                 "boot_in_wsl",
+                "choose_mode",
             ]),
         ),
     )
