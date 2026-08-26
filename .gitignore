@@ -14,3 +14,4 @@ src-tauri/icons/android
 src-tauri/icons/ios
 # node-map 签名私钥（只存在于本地与 CI secret，绝不入库；node-map/.gitignore 同防）
 node-map-private.key
+.zcode
