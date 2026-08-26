@@ -176,8 +176,8 @@
         syncBars();
         errorCount++;
         const actions = (e.actions || []).map((a) => {
-          const label = a === "upgrade" ? "升级 DSH 并重试" : "重试";
-          return `<button class="${a === "upgrade" ? "primary" : "ghost"}" data-action="${a}">${label}</button>`;
+          const label = a === "upgrade" ? "升级 DSH 并重试" : a === "upgrade_only" ? "升级 DSH" : "重试";
+          return `<button class="${a === "upgrade" || a === "upgrade_only" ? "primary" : "ghost"}" data-action="${a}">${label}</button>`;
         }).join("");
         const diag = e.title || "启动异常";
         // 故障区：单卡内部区块（不再是独立白卡）——与时间线同容器、同列宽、自然对齐
@@ -242,7 +242,7 @@
         vchip.innerHTML = `<span class="dot ${dot}"></span><span>${text}</span><span class="cli" hidden></span>`;
         window.__TAURI__.core.invoke("get_client_update").then(renderClient).catch(() => {});
       };
-      window.__TAURI__.core.invoke("get_update_status").then(renderChip);
+      window.__TAURI__.core.invoke("get_update_status").then(renderChip).catch(() => {});
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
       window.__TAURI__.event.listen("app:update", (ev) => renderClient(ev.payload));
 

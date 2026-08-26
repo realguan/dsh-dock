@@ -211,7 +211,7 @@
         vchip.innerHTML = `<span class="dot ${dot}"></span><span>${text}</span><span class="cli" hidden></span>`;
         window.__TAURI__.core.invoke("get_client_update").then(renderClient).catch(() => {});
       };
-      window.__TAURI__.core.invoke("get_update_status").then(renderChip);
+      window.__TAURI__.core.invoke("get_update_status").then(renderChip).catch(() => {});
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
       window.__TAURI__.event.listen("app:update", (ev) => renderClient(ev.payload));
 

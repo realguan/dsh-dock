@@ -143,7 +143,7 @@
             cLine.classList.add("ok");
             cState.classList.add("ok");
             cState.textContent = "完成";
-            setTimeout(() => { try { window.__TAURI__.core.invoke("client_update_check"); } catch (e) {} }, 1200);
+            setTimeout(() => { window.__TAURI__.core.invoke("client_update_check").catch(() => {}); }, 1200);
             break;
           }
           case "failed":
@@ -223,7 +223,7 @@
         if (s.node) setV(nVer, s.node.version, s.node.origin === "system" ? "来自你的系统" : "应用托管 · 随启动自动准备", "note");
         else setV(nVer, "—", "尚未确定", "note");
       }
-      window.__TAURI__.core.invoke("get_update_status").then(render);
+      window.__TAURI__.core.invoke("get_update_status").then(render).catch(() => {});
       window.__TAURI__.event.listen("boot:update", (ev) => render(ev.payload));
 
       // ---- 在浏览器中打开工作台 ----
@@ -232,12 +232,12 @@
         if (url) { wbOpen.disabled = false; wbUrl.textContent = url; }
         else { wbOpen.disabled = true; wbUrl.textContent = "工作台尚未就绪"; }
       }
-      window.__TAURI__.core.invoke("get_workbench_url").then(renderWb);
+      window.__TAURI__.core.invoke("get_workbench_url").then(renderWb).catch(() => {});
       wbOpen.addEventListener("click", () => {
         wbOpen.disabled = true;
         window.__TAURI__.core.invoke("open_workbench_in_browser")
           .catch((e) => { wbUrl.textContent = String(e && (e.message || e)); })
-          .finally(() => { window.__TAURI__.core.invoke("get_workbench_url").then(renderWb); });
+          .finally(() => { window.__TAURI__.core.invoke("get_workbench_url").then(renderWb).catch(() => {}); });
       });
     </script>
   </body>
