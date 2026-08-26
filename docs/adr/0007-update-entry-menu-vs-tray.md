@@ -1,0 +1,63 @@
+# ADR-0007：更新常驻入口——macOS 菜单 vs 非 macOS 托盘
+
+- **日期**：2026-08-26
+- **状态**：已接受（2026-08-24 裁定，修订 08-23「托盘已砍」；本 ADR 追溯补录）
+- **提出人**：guan
+- **相关方**：lib.rs（菜单 / 托盘构建、`on_menu_event`）
+- **关联**：updater.rs（客户端自更新桥接）
+
+---
+
+## 1. 背景与问题
+
+壳需常驻的「检查更新 / 升级 / 关于」入口。初版（2026-08-23）一度裁定「托盘已砍」，但在 Windows / Linux 上 muda 菜单挂窗口上会渲染成窗口内菜单条（与 macOS 原生菜单条语义不同），导致非 macOS 平台没有统一的常驻入口。08-24 推翻 08-23 决定，恢复非 macOS 托盘。
+
+## 2. 约束与硬指标
+
+- macOS 用系统应用菜单条（原生体验）。
+- 非 macOS 不能用窗口内菜单条冒充系统入口（muda 在 Win/Linux 渲染成窗口内菜单条，语义不符）。
+- 同一套菜单事件分发逻辑（`on_menu_event`），平台差异用 `#[cfg]` 门控。
+- `upgrade_only` 不打断会话（下次启动生效）。
+- about 窗口 label 须在 capabilities windows 列表（remote 授权）。
+
+## 3. 备选方案及评估
+
+### 方案 A：macOS 菜单 + 非 macOS 托盘（平台门控） —— ✅ 最终采纳
+
+- 思路：窗口菜单一律 `#[cfg(target_os = "macos")]` 门控；非 macOS 走 `TrayIconBuilder::with_id("main")`；同一 `on_menu_event` 分发。
+- 优点：各平台拿到的都是平台原生的常驻入口；事件分发逻辑统一。
+- 代价/风险：两套构建路径需同步菜单项；托盘在无桌面环境的 Linux 可能不显示（边界场景）。
+- 对照约束：逐条满足。
+
+### 方案 B：全平台窗口内菜单条 —— ❌ 否决（即 08-23「托盘已砍」方案）
+
+- 思路：砍掉托盘，全平台用 muda 窗口菜单。
+- 否决理由：muda 在 Win/Linux 渲染成窗口内菜单条，不是系统级常驻入口，语义不符；窗口隐藏后无处触达更新入口。
+
+### 方案 C：全平台托盘 —— ❌ 否决
+
+- 思路：macOS 也用托盘。
+- 否决理由：macOS 原生菜单条是标准入口，弃用原生菜单而用托盘不符合平台习惯。
+
+## 4. 最终决策
+
+macOS = 系统应用菜单（根菜单 + check(⌘U)/upgrade/about，`on_menu_event` 分发）；非 macOS = 系统托盘（`TrayIconBuilder::with_id("main")`，事件经 builder 级 `on_menu_event` 同一处理）；窗口菜单一律 `#[cfg(target_os = "macos")]` 门控。另有前端顶栏「关于」按钮（`open_about`）。`upgrade_only` 不打断会话；about 窗口 label 须在 capabilities windows 列表。HOW 见 `lib.rs`。
+
+## 5. 后果与后续行动项
+
+### 正面后果
+- 各平台常驻入口语义正确；事件分发逻辑统一。
+
+### 负面后果 / 新增债务
+- 两套构建路径（菜单 / 托盘）需同步菜单项。
+- 托盘在无桌面环境的 Linux 可能不显示（边界场景，不阻断主流程）。
+
+### 行动项
+- [x] macOS 菜单 + 非 macOS 托盘 + `on_menu_event` 分发实现（lib.rs）。
+- [x] about 窗口 label 进 capabilities windows 列表。
+
+## 6. 复审条件
+
+- muda / Tauri 使窗口菜单在 Win/Linux 也渲染为系统级入口（跨平台统一）→ 复评是否仍需托盘。
+- Tauri 托盘 API 变更 → 复评托盘构建路径。
+- 前端顶栏入口足够覆盖更新需求 → 复评常驻入口是否仍必要。

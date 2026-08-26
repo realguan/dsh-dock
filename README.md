@@ -75,15 +75,17 @@ cd src-tauri && cargo tauri build
 - 图标是**生成产物**，不手绘：改 `assets/icon-master.svg` 后跑
   `scripts/regen-icons.sh` 整体重生成（`rsvg-convert` → `cargo tauri icon`）。
 - 页内徽章统一走 `ui/assets/mark.svg`（形状源）+ CSS mask 上色，颜色由主题控制，
-  三页（启动序列 / 工作台选择 / 关于）完全一致；官方原始 SVG 溯源副本在
+  四页（启动序列 / 运行环境选择 / 工作台选择 / 关于）完全一致；官方原始 SVG 溯源副本在
   `ui/assets/dsh-logo.svg`。
 
 ## 结构
 
 ```
 dsh-dock/
+├── AGENTS.md              # AI 编码宪法（所有 AI 工具的共享上下文）
 ├── ui/                    # 壳自带页面（静态，无框架无构建器）
 │   ├── index.html         # 启动序列（时间线 + 下载进度 + 错误卡）
+│   ├── mode.html          # 首次运行环境选择
 │   ├── selector.html      # 工作台选择器（system 档多 webUi profile）
 │   ├── about.html         # 关于面板（版本 + 检查/升级）
 │   └── assets/            # 样式 + 官方标（mark.svg / dsh-logo.svg）
@@ -95,12 +97,18 @@ dsh-dock/
 │   │   ├── manifest.rs    # product.manifest.json 契约（format=1/2）
 │   │   ├── resolve.rs     # 宿主解析链（system → bundle → download）
 │   │   ├── updates.rs     # 唯一网络面：版本检测 / Node 下载 / dsh 安装 / 签名映射
-│   │   └── shell.rs       # spawn / URL 解析 / 优雅停止
+│   │   └── shell.rs       # spawn / URL 解析 / 优雅停止 / wait_for_ready
 │   ├── capabilities/      # remote: http://127.0.0.1:*（回环 Web UI）
 │   └── resources/         # product.manifest.json（可选 dsh-snapshot/ 离线产品档）
 ├── node-map/              # 签名的 Node 版本映射包（发布到 npm）
 ├── scripts/               # render-product.sh / regen-icons.sh
-└── docs/contract.md       # 壳 ↔ 装配方 接口契约
+└── docs/
+    ├── contract.md        # 壳 ↔ 装配方 接口契约
+    ├── CONTRIBUTING.md    # 协作指南（分支 / review / 占用声明 / 发布）
+    ├── prompts/           # 团队共享 Prompt 模板库
+    ├── contracts/         # 公共模块契约规范与台账
+    ├── adr/               # 架构决策记录（TEMPLATE.md 起家）
+    └── …                  # executor.md / wsl-verification.md / macos-signing.md
 ```
 
 ## License
