@@ -500,6 +500,11 @@ fn launch_executor_after_probe(
     app: tauri::AppHandle,
     mut executor: Box<dyn crate::executor::Executor>,
 ) {
+    // 记录 probe 开始时的会话代际：probe 期间（可能长达分钟级——WSL 自动安装
+    // dsh）用户若经菜单/托盘切换了环境，`switch_mode` 会 teardown + epoch++；
+    // 旧 probe 线程完成后必须静默丢弃，否则会覆盖新会话（自动安装让窗口变长，
+    // 0.4.2 修复前该竞态一直存在，只是窗口小）。
+    let probe_epoch = state.session_epoch.load(Ordering::SeqCst);
     // probe 借 app 构造两个 sink（boot:step + 下载进度 bridge）；作用域结束即释放，
     // 之后 app 才能 move 进后续动作/监护线程。
     let probe_result = {
@@ -507,6 +512,10 @@ fn launch_executor_after_probe(
         let mut progress = download_progress_bridge(&app);
         executor.probe(&mut sink, &mut progress)
     };
+    if probe_epoch != state.session_epoch.load(Ordering::SeqCst) {
+        tracing::info!("probe 期间会话被切换（epoch 变更），丢弃本次探测结果");
+        return;
+    }
     match probe_result {
         Err(e) => {
             tracing::error!("环境解析失败: {e}");

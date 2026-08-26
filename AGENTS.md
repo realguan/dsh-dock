@@ -79,6 +79,13 @@
   `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）、
   事件经 `window.__TAURI__.event.listen` 消费——**注册例外**；新命令必须
   先在 AGENTS 登记。
+- **WSL 客体内安装 = 网络面例外（2026-08-26 登记）**：WSL 执行器探测到
+  「有 node 缺 dsh」时，会在客体内执行 `npm i -g @deepseek-ai/dsh`（固定脚本模板
+  `GUEST_INSTALL_DSH`，经 wsl.exe 透传；npm 输出落 `/tmp/dsh-dock-npm.log`，
+  只回传尾部 2KB 诊断）。网络动作发生在 **WSL 发行版内**（Windows 侧壳不触网），
+  镜像配置由用户客体内 npm 决定（不注入镜像参数——尊重用户客体内配置）。
+  `just_installed` 置位 → 壳启动后刷新版本状态。缺 node（`NODE_MISSING`）不自动装
+   Node（发行版安装方式/版本策略属用户主权），只给可行动提示。
 - **外链策略（2026-08-25 裁定）**：主窗口由 setup 内 `create_main_window` 创建
   （tauri.conf.json 不再静态定义 windows——只有代码创建才能挂处理器）。
   dsh Web UI 的超链接/新窗口在 WebView 里默认点不动，统一转系统默认浏览器

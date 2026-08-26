@@ -49,6 +49,7 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
 验收线：行为零变化，`cargo test` 全绿。
 
 ### WSL 迭代 v1（已实现，待 Windows 实机验证）
+
 - **只认 WSL2**：localhostForwarding 是 Windows 侧 WebView 经 127.0.0.1 访问
   WSL 内 dsh 的前提；WSL1 无此能力 → 探测即拒绝并给 `wsl --set-version ... 2` 提示。
 - **零配置**：`WslConfig{distro: None}` = 默认发行版（须 WSL2，否则落回第一个 WSL2）；
@@ -56,7 +57,18 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
 - **客体内命令 = 固定脚本模板**，不拼接用户输入；模板先 source
   `/etc/profile` / `~/.profile` / `~/.bashrc`（登录 shell 不读 .bashrc，nvm/fnm 的
   PATH 补不上会 command not found）。
-- **就绪**：`wsl.exe -e bash -lc '<模板>'` 的 stdout 转发到本地日志（wsl.exe 透传
+- **PATH 兼容 nvm/fnm（2026-08-26 实机修复）**：探测/启动一律 **交互式登录壳
+  `bash -lic`**——Ubuntu 默认 `.bashrc` 开头有非交互守卫 `case $- in *i*) ;; *)
+  return;; esac`，旧方案 `-lc`（非交互）source 时直接 return，用户的 nvm/fnm 段
+  根本不执行，**装了 node/dsh 也探测不到**（朋友实机复现）。`-lic` 守卫放行；
+  另有兜底扫描 nvm/fnm（含 XDG）/n/volta 安装位前置 PATH，**不依赖任何 rc 被执行**。
+  探测三态：`READY`（node+dsh）/ `DSH_MISSING`（有 node 缺 dsh）/ `NODE_MISSING`。
+- **缺 dsh 自动安装（2026-08-26 登记网络面）**：`DSH_MISSING` → 客体内
+  `npm i -g @deepseek-ai/dsh`（`GUEST_INSTALL_DSH` 模板，输出落
+  `/tmp/dsh-dock-npm.log` 只回传尾部 2KB 诊断）→ 复查 → READY 才启动；
+  `just_installed` 置位刷新版本状态。缺 node（`NODE_MISSING`）不自动装 Node
+  （安装方式/版本策略属用户主权），给可行动提示。
+- **就绪**：`wsl.exe -e bash -lic '<模板>'` 的 stdout 转发到本地日志（wsl.exe 透传
   guest stdout），复用壳的通用日志轮询；日志里的 `127.0.0.1:<port>` 经 WSL2 转发从
   Windows 侧也通，capabilities `http://127.0.0.1:*` 零改动。
 - **生命周期**：客体内 wrapper（后台 dsh + watcher 轮询 stop 标志）→ teardown 只
@@ -65,8 +77,8 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
   `<node> <bin.js> --profile web...`，命令行无连续子串匹配。）
 - **兼容 wsl.exe 非 UTF-8 输出**：`run_wsl_capture` 取原始字节，探测 NUL 则按
   UTF-16LE 解码（vscode/tailscale 同款踩坑）。
-- **边界（迭代 v2）**：WSL 内缺失 node/dsh 时**不自动安装**，给
-  `npm i -g @deepseek-ai/dsh` 可行动提示（自动补齐会触网，按 AGENTS 网络面登记后再做）。
+- **边界（迭代 v2）**：WSL 内缺失 **node** 时不自动安装（只有 node 缺失时仍给可行动
+  提示）；客体内安装的镜像参数不注入（尊重用户客体内 npm 配置）。
 
 ### SSH（预留，未实现）
 - 配置形状已定型（`SshConfig`：host / user / port / local_port / remote_port）。
@@ -83,7 +95,9 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
   监护线程短锁轮询，退出处理器随时可取用做 teardown（**壳与 dsh 同生命周期**）。
 - `ShellState.session_epoch: AtomicU64`——每次 teardown/切换递增；等待/监护线程记录
   自己启动时的代际，会话被外部切换（如 `boot_in_wsl` 停掉本地会话）后旧线程**静默**
-  退出：不在 90s 后误报错误卡、不误导航/监护新会话。
+  退出：不在 90s 后误报错误卡、不误导航/监护新会话。**probe 阶段同样受代际保护**
+  （0.4.2）：probe 开始记录 epoch，完成后不一致 → 丢弃探测结果（probe 可长达分钟
+  级——WSL 自动安装 dsh——期间切换环境不得残留旧会话覆盖新会话）。
 
 ## 运行环境的用户主权（首次选择 / 默认 / 菜单切换）
 
