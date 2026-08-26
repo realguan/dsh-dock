@@ -170,7 +170,18 @@ fn run_executor_session(
                 .as_mut()
                 .and_then(|e| e.check_exited())
         };
-        match crate::shell::wait_for_ready(&log, &mut exited, BOOT_STALL, BOOT_TIMEOUT) {
+        // 就绪标记读取器（WSL 用，绕开 wsl.exe 输出缓冲——见 executor.rs
+        // GUEST_BOOT 注释）：本地执行器 read_ready_marker 默认返回 None，
+        // wait_for_ready 立即走 log 路径。
+        let mut marker = || {
+            state
+                .session
+                .lock()
+                .unwrap()
+                .as_mut()
+                .and_then(|e| e.read_ready_marker())
+        };
+        match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT) {
             shell::ReadyOutcome::Exited(code) => {
                 if !session_is_current(&state, epoch) {
                     return; // 已被外部切换（模式切换/退出）：静默，不出错误卡

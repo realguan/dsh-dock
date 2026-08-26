@@ -88,6 +88,15 @@ pub trait Executor: Send {
     /// 把用户态 stdout/stderr 转发到本地文件；SSH 无此来源，见 `endpoint`。
     fn log_path(&self) -> PathBuf;
 
+    /// 就绪标记读取器（**WSL 用**，绕开 wsl.exe 输出缓冲导致的就绪误判）：
+    /// 返回 Some(text) = 当前 marker 内容（可能为空字符串）；None = 不支持 /
+    /// 不可读。本地默认 None 走 log 路径；WSL 实现在 GUEST_BOOT 把 dsh 输出
+    /// tee 到客体内哨兵文件，shell 经 wsl.exe -e cat 直读（绕开 wsl.exe 转发
+    /// stdout 时的内部缓冲）。详见 docs/executor.md。
+    fn read_ready_marker(&mut self) -> Option<String> {
+        None
+    }
+
     /// 预留：无日志 URL 来源的环境直接给出已知地址（如 SSH 隧道的本地映射口）。
     /// SSH 未实现前无人消费，标记 dead_code（保留为 trait 契约面）。
     #[allow(dead_code)]
@@ -387,6 +396,12 @@ fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Op
 #[cfg(windows)]
 const GUEST_STOP_FILE: &str = "/tmp/dsh-dock-stop";
 
+/// 客体内就绪哨兵文件：GUEST_BOOT 用 `tee` 把 dsh 输出镜像到这里（WSL 内
+/// 行缓冲，**不**经 wsl.exe stdout 转发），壳经 `wsl.exe -e cat` 直读
+/// 绕开 wsl.exe 输出缓冲导致的就绪误判。详见 docs/executor.md。
+#[cfg(windows)]
+const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
+
 /// 客体内「准备好 PATH + 工具链」的公共前缀（固定脚本，不插值用户输入）。
 ///
 /// 为什么这样补 PATH（2026-08-26 实机 bug 修复，nvm 用户探测失败）：
@@ -416,16 +431,19 @@ macro_rules! guest_prep {
 }
 
 /// 客体内启动 dsh 的固定脚本模板（不插值用户输入；迭代 v1 固定 boot web profile）。
-/// 结构：guest_prep（PATH）→ 后台起 dsh → 起 watcher（轮询 stop 标志）→ wait dsh →
-/// 退出码回传。dsh 崩溃或收到 stop 都让本 wrapper 退出，wsl.exe 子进程随之退出
-/// （= 会话存活代理，check_exited 可用）。
+/// 结构：guest_prep（PATH）→ 后台起 dsh（tee 镜像到就绪哨兵）→ 起 watcher（轮询 stop
+/// 标志）→ wait dsh → 退出码回传。dsh 崩溃或收到 stop 都让本 wrapper 退出，wsl.exe
+/// 子进程随之退出（= 会话存活代理，check_exited 可用）。
+/// tee 行缓冲把 dsh 输出复制到 `GUEST_READY_FILE`（WSL 侧），独立于 wsl.exe 转发到
+/// `dsh-wsl.log` 的路径——后者有缓冲（实测：90 s 不 flush，URL 不出现直到 wsl.exe 退
+/// 出），tee 路径实时（行级），壳优先读这条。dsh 退出时 `rm -f` 清理哨兵。
 #[cfg(any(windows, test))]
 const GUEST_BOOT: &str = concat!(
-    "rm -f /tmp/dsh-dock-stop;",
+    "rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready;",
     guest_prep!(),
-    "cd \"$HOME\"; dsh --profile web --port 0 --no-open & PID=$!;",
+    "cd \"$HOME\"; ( dsh --profile web --port 0 --no-open 2>&1 | tee /tmp/dsh-dock-ready ) & PID=$!;",
     "(while [ ! -f /tmp/dsh-dock-stop ]; do sleep 1; done; kill -TERM \"$PID\" 2>/dev/null) & WATCH=$!;",
-    "wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f /tmp/dsh-dock-stop; exit $RC",
+    "wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready; exit $RC",
 );
 
 /// 客体内探测工具链的固定脚本模板（先 guest_prep 补 PATH）。
@@ -603,6 +621,19 @@ impl Executor for WslExecutor {
 
     fn just_installed(&self) -> bool {
         self.installed_dsh
+    }
+
+    /// 直读客体内哨兵文件（`tee` 写入 `/tmp/dsh-dock-ready`），绕开 wsl.exe
+    /// stdout 转发的内部缓冲。500 ms 超时——远小于 wait_for_ready 的 50 ms 轮询
+    /// 间隔；超时返回 None，主路径照旧走 log 轮询兜底。
+    fn read_ready_marker(&mut self) -> Option<String> {
+        let target = self.selected.as_deref()?;
+        let script = format!("cat {GUEST_READY_FILE} 2>/dev/null");
+        run_wsl_capture(
+            Some(target),
+            &["-e", "sh", "-lc", &script],
+            Duration::from_millis(500),
+        )
     }
 
     fn log_path(&self) -> PathBuf {
