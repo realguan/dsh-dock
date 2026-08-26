@@ -282,86 +282,122 @@ body::before {
 
 .dl-meta .dim { color: var(--faint); }
 
-/* ---------- 启动详情（折叠的技术面板） ---------- */
+/* ---------- 启动详情（index 单卡容器：卡头 + 时间线 + 故障区，同一列宽） ----------
+   selector.html 的独立错误卡仍用 .error-card（见后）；index.html 的详情与故障
+   合成一张 .console 任务卡——时间线与故障区共用容器、同一左缘，不再两张卡飘着。 */
 
-.tech {
-  margin-top: 34px;
-  width: min(520px, 100%);
-  text-align: left;
+.console {
+  margin-top: 32px;
+  width: min(560px, 100%);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--panel);
-  box-shadow: 0 14px 40px rgba(23, 28, 44, 0.06);
-  animation: rise 0.45s ease-out both;
+  box-shadow: 0 16px 44px rgba(23, 28, 44, 0.07);
+  animation: rise 0.4s ease-out both;
+  text-align: left;
 }
 
-.tech summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 13px 16px;
+/* 卡头：状态标签 + 当前状态（无折叠箭头——详情不再隐藏，错误时故障区接管） */
+.console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px 11px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.console-label {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.14em;
-  color: var(--faint);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  user-select: none;
+  color: var(--muted);
 }
+.console-state {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+  padding: 3px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+}
+.console-state.done { color: var(--ok); border-color: rgba(47, 158, 68, 0.3); }
+.console-state.running { color: var(--accent-deep); border-color: rgba(65, 118, 230, 0.3); background: var(--wash); }
+.console-state.error { color: var(--warn); border-color: rgba(217, 72, 15, 0.35); background: var(--warn-soft); }
 
-.tech summary::before { content: "▸"; transition: transform 0.15s; }
-.tech[open] summary::before { transform: rotate(90deg); }
-
-.tech summary:hover { color: var(--muted); }
-
-.tech .steps { padding: 2px 16px 14px; }
+.console .steps { padding: 4px 18px 16px; }
 
 .tstep {
   display: grid;
-  grid-template-columns: 30px 1fr;
-  gap: 10px;
+  grid-template-columns: 32px 1fr;
+  gap: 11px;
   padding: 8px 0;
   border-top: 1px solid var(--line-soft);
   font-family: var(--mono);
   font-size: 12px;
+  /* 步骤名近黑：详情面板是用户排查依赖的技术信息，不搞"装饰性浅灰" */
+  color: var(--ink);
+  align-items: baseline;
 }
 
-.tstep .no { color: var(--faint); letter-spacing: 0.08em; }
+.tstep .no { color: var(--muted); letter-spacing: 0.08em; }
 
-.tstep .what { display: flex; align-items: baseline; gap: 10px; color: var(--muted); min-width: 0; }
+.tstep .what { display: flex; align-items: baseline; gap: 10px; color: var(--ink); min-width: 0; }
 .tstep .name { flex: none; }
-.tstep .tinfo { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.tstep .tinfo { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
 
-.tstep.pending { opacity: 0.55; }
+.tstep.pending { opacity: 0.7; }
 .tstep.running .name { color: var(--accent-deep); font-weight: 700; }
-.tstep.done { color: var(--muted); }
+.tstep.done { color: var(--ink); }
 .tstep.done .no::after { content: " ✓"; color: var(--ok); }
 .tstep.error .name { color: var(--warn); font-weight: 700; }
 
-/* ---------- 错误卡（主角位替换） ---------- */
+/* ---------- 故障区（index 单卡内部：时间线下方同一容器，不独立成卡） ---------- */
 
-.error-card {
-  width: min(520px, 100%);
-  margin-top: 26px;
-  text-align: left;
-  padding: 20px 22px 18px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--warn);
-  border-radius: 12px;
-  background: var(--panel);
-  box-shadow: 0 18px 50px rgba(23, 28, 44, 0.1);
-  animation: rise 0.35s ease-out both;
+/* 故障区 = .console 底部区块：顶部发丝线分隔，与时间线同左缘/同列宽 */
+.console .e-fail {
+  border-top: 1px solid var(--line);
+  padding: 14px 18px 16px;
+  background:
+    radial-gradient(46% 40% at 100% -6%, rgba(217, 72, 15, 0.07), transparent 72%),
+    linear-gradient(180deg, #fffdfc, #ffffff);
+  border-radius: 0 0 14px 14px;
 }
 
-.error-card .e-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--warn);
-  letter-spacing: 0.02em;
+/* 诊断行（故障区头）：橙点 = 故障状态；等宽错误码与「启动详情」卡头同语言 */
+.e-diag {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.e-diag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 4px var(--warn-soft);
+  flex: none;
 }
 
-.error-card .e-detail {
+.e-fail .e-title {
   margin-top: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.45;
+  /* 故障标题比普通标题稍暖：橙点语义由标题颜色承接（不整卡染橙） */
+  color: #8a2f0d;
+}
+
+.e-fail .e-detail {
+  margin-top: 8px;
   font-size: 13.5px;
   line-height: 1.75;
   color: var(--ink);
@@ -369,11 +405,20 @@ body::before {
   word-break: break-word;
 }
 
-.error-card .e-suggest { margin-top: 9px; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+.e-fail .e-suggest {
+  margin-top: 12px;
+  padding: 10px 13px;
+  background: var(--wash);
+  border: 1px solid rgba(65, 118, 230, 0.16);
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.7;
+}
 
-.error-card .e-actions { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
+.e-fail .e-actions { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
 
-.error-card button {
+.e-fail button {
   font-family: var(--sans);
   font-size: 13px;
   font-weight: 600;
@@ -385,42 +430,171 @@ body::before {
   transition: transform 0.12s, box-shadow 0.15s, opacity 0.2s;
 }
 
-.error-card button.primary {
+.e-fail button.primary {
   background: var(--ink);
   color: #fff;
 }
-.error-card button.primary:hover { box-shadow: 0 8px 22px rgba(23, 28, 44, 0.3); }
+.e-fail button.primary:hover { box-shadow: 0 8px 22px rgba(23, 28, 44, 0.3); }
 
-.error-card button.ghost {
+.e-fail button.ghost {
   background: var(--panel);
   color: var(--ink);
   border-color: var(--line);
 }
-.error-card button.ghost:hover { border-color: var(--muted); }
+.e-fail button.ghost:hover { border-color: var(--muted); }
 
-.error-card button:hover { transform: translateY(-1px); }
-.error-card button:active { transform: translateY(0); }
-.error-card button:disabled { opacity: 0.45; cursor: wait; transform: none; }
+.e-fail button:hover { transform: translateY(-1px); }
+.e-fail button:active { transform: translateY(0); }
+.e-fail button:disabled { opacity: 0.45; cursor: wait; transform: none; }
 
-.error-card details { margin-top: 14px; font-size: 11px; color: var(--faint); }
-.error-card details summary { cursor: pointer; letter-spacing: 0.06em; }
-.error-card details pre {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--bg);
+/* 诊断日志（展开区）：等宽 + 图纸网格底（与启动页背景网格同语言），
+   行内滚动 + 折叠时只有可点击摘要，不挤占卡片主体。 */
+.e-fail details {
+  margin-top: 13px;
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: 10px;
+  background: #fbfcfe;
+  overflow: hidden;
   font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.6;
+}
+.e-fail details[open] { border-color: var(--line); }
+
+.e-fail details summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+  list-style: none;
+}
+.e-fail details summary::-webkit-details-marker { display: none; }
+.e-fail details summary::before { content: "▸"; transition: transform 0.15s; font-size: 9px; color: var(--muted); }
+.e-fail details[open] summary::before { transform: rotate(90deg); }
+.e-fail details summary:hover { color: var(--muted); }
+
+.e-fail details pre {
+  margin: 0;
+  padding: 11px 13px;
+  border-top: 1px solid var(--line-soft);
+  background:
+    linear-gradient(rgba(25, 29, 39, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 29, 39, 0.022) 1px, transparent 1px),
+    #fbfcfe;
+  background-size: 24px 24px, 24px 24px, auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 200px;
   overflow: auto;
-  color: var(--muted);
+  /* 诊断日志是给用户看的技术信息：深灰（近黑但非纯黑）而不是浅灰 */
+  color: #3f4552;
 }
 
-/* ---------- 工作台选择（selector.html） ---------- */
+/* ---------- selector.html 独立错误卡（选择器场景：无时间线容器，独立成卡） ---------- */
+
+.error-card {
+  width: min(560px, 100%);
+  margin-top: 24px;
+  text-align: left;
+  padding: 16px 20px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 16px 44px rgba(23, 28, 44, 0.08);
+  animation: rise 0.35s ease-out both;
+}
+.error-card .e-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.45;
+  color: #8a2f0d;
+}
+.error-card .e-detail {
+  margin-top: 8px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.error-card .e-suggest {
+  margin-top: 12px;
+  padding: 10px 13px;
+  background: var(--wash);
+  border: 1px solid rgba(65, 118, 230, 0.16);
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.error-card .e-actions { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
+.error-card button {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.15s, opacity 0.2s;
+}
+.error-card button.primary { background: var(--ink); color: #fff; }
+.error-card button.primary:hover { box-shadow: 0 8px 22px rgba(23, 28, 44, 0.3); }
+.error-card button.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); }
+.error-card button.ghost:hover { border-color: var(--muted); }
+.error-card button:hover { transform: translateY(-1px); }
+.error-card button:active { transform: translateY(0); }
+.error-card button:disabled { opacity: 0.45; cursor: wait; transform: none; }
+.error-card details {
+  margin-top: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #fbfcfe;
+  overflow: hidden;
+  font-family: var(--mono);
+}
+.error-card details summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+  list-style: none;
+}
+.error-card details summary::-webkit-details-marker { display: none; }
+.error-card details summary::before { content: "▸"; transition: transform 0.15s; font-size: 9px; color: var(--muted); }
+.error-card details[open] summary::before { transform: rotate(90deg); }
+.error-card details summary:hover { color: var(--muted); }
+.error-card details pre {
+  margin: 0;
+  padding: 11px 13px;
+  border-top: 1px solid var(--line-soft);
+  background:
+    linear-gradient(rgba(25, 29, 39, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 29, 39, 0.022) 1px, transparent 1px),
+    #fbfcfe;
+  background-size: 24px 24px, 24px 24px, auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+  color: #3f4552;
+}
 
 .pick-list { margin-top: 30px; width: min(520px, 100%); display: flex; flex-direction: column; gap: 12px; }
 

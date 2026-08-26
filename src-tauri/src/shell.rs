@@ -130,7 +130,11 @@ pub fn wait_for_ready(
     let mut scanned = 0usize;
     let mut last_grow = Instant::now();
     loop {
-        if let Ok(text) = std::fs::read_to_string(log_path) {
+        // wsl.exe 重定向日志可能是 UTF-16LE（NUL 间隔）——统一经 read_log_auto
+        // 解码（探测 NUL/BOM，2026-08-26 实机 bug：UTF-16LE 下 URL 词是
+        // `\x00h\x00t\x00t\x00p\x00` 间隔，starts_with("http://") 永远失败）。
+        let text = crate::resolve::read_log_auto(log_path);
+        if !text.is_empty() {
             let start = text.floor_char_boundary(scanned);
             if scanned < start {
                 scanned = start;
@@ -162,7 +166,7 @@ pub fn wait_for_ready(
 /// 只接受 `http://` / `https://` 开头的词，去掉尾部 `/`/`,`/`;`。
 /// 拒绝 `file://`（Node 加载 bundle 的栈帧）与 `data:` 等，防止把报错路径
 /// 当访问地址（移植自启动器 process_guard，含回归测试）。
-fn parse_detected_url(text: &str) -> Option<String> {
+pub fn parse_detected_url(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|w| w.starts_with("http://") || w.starts_with("https://"))
         .map(|url| url.trim_end_matches(['/', ',', ';']).to_string())
@@ -228,6 +232,35 @@ mod tests {
     fn detects_none_when_absent() {
         assert_eq!(parse_detected_url("no url here"), None);
         assert_eq!(parse_detected_url("booting...\n"), None);
+    }
+
+    #[test]
+    fn detects_url_in_utf16le_log() {
+        // wsl.exe 重定向日志 = UTF-16LE（NUL 间隔）——read_log_auto 解码后
+        // URL 词才是连续的 `http://`；旧实现 read_to_string 读成 `\x00h\x00t...`
+        // 导致永远判 Stalled（2026-08-26 实机 bug 回归）。
+        let text = "dsh web: http://127.0.0.1:33375\n84) ExperimentalWarning\n";
+        let mut bytes = vec![0xFF, 0xFE]; // BOM
+        for u in text.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let decoded = crate::resolve::decode_output_bytes(&bytes);
+        assert!(
+            parse_detected_url(&decoded)
+                .as_deref()
+                .is_some_and(|u| u == "http://127.0.0.1:33375"),
+            "UTF-16LE 解码后应匹配 URL，得到：{decoded:?}"
+        );
+        // 无 BOM 的 UTF-16LE（老 wsl.exe 形态）同样命中
+        let mut bytes2 = Vec::new();
+        for u in text.encode_utf16() {
+            bytes2.extend_from_slice(&u.to_le_bytes());
+        }
+        let decoded2 = crate::resolve::decode_output_bytes(&bytes2);
+        assert!(
+            parse_detected_url(&decoded2).as_deref() == Some("http://127.0.0.1:33375"),
+            "无 BOM UTF-16LE 也应命中，得到：{decoded2:?}"
+        );
     }
 
     #[test]

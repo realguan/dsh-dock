@@ -375,33 +375,12 @@ fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Op
     let mut cmd = wsl_command(distro);
     cmd.args(args);
     let raw = crate::resolve::run_with_timeout_raw(&mut cmd, timeout)?;
-    if raw.iter().any(|&b| b == 0) {
-        return decode_utf16le(&raw);
-    }
-    let t = String::from_utf8_lossy(&raw).trim().to_string();
+    let t = crate::resolve::decode_output_bytes(&raw).trim().to_string();
     if t.is_empty() {
         None
     } else {
         Some(t)
     }
-}
-
-/// 按 UTF-16LE（含小端 BOM 或不含）解码 wsl.exe 的 stdout 字节。
-#[cfg(any(windows, test))]
-fn decode_utf16le(bytes: &[u8]) -> Option<String> {
-    let mut bytes = bytes;
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        bytes = &bytes[2..];
-    }
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
-    let mut s = String::from_utf16(&units).ok()?;
-    while s.ends_with('\u{0}') {
-        s.pop();
-    }
-    Some(s)
 }
 
 /// 客体内停止标志文件：teardown touch 它 → wrapper 收到后 kill dsh 并退出。
@@ -804,7 +783,10 @@ mod tests {
         }
         bytes.push(0);
         bytes.push(0);
-        assert_eq!(decode_utf16le(&bytes).as_deref(), Some("Ubuntu-24.04\r\n"));
+        assert_eq!(
+            crate::resolve::decode_utf16le(&bytes).as_deref(),
+            Some("Ubuntu-24.04\r\n")
+        );
     }
 
     #[test]

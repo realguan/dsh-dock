@@ -278,8 +278,7 @@ fn guard_session(
 
 /// 日志尾部（错误卡「查看原始日志」区）。
 fn read_log_tail(log_path: &std::path::Path) -> String {
-    std::fs::read_to_string(log_path)
-        .unwrap_or_default()
+    crate::resolve::read_log_auto(log_path)
         .lines()
         .rev()
         .take(10)
@@ -1189,7 +1188,7 @@ fn classify_boot_error(detail: &str) -> (&'static str, &'static str, Vec<&'stati
 
 /// 从日志提取崩溃原因摘要（首条顶层 Error 行，截断 200 字符），带 `<br/>` 前缀。
 fn read_error_detail(log_path: &std::path::Path) -> String {
-    let text = std::fs::read_to_string(log_path).unwrap_or_default();
+    let text = crate::resolve::read_log_auto(log_path);
     let line = text
         .lines()
         .find(|l| l.starts_with("Error:") || l.starts_with("error:"))

@@ -114,6 +114,49 @@ fn major_of(v: &str) -> Option<u64> {
 
 // ---------- 环境感知（GUI 启动的 PATH 是系统最小集，必须先补全） ----------
 
+/// 解码 wsl.exe / 子进程的原始输出字节：探测 UTF-16LE（BOM 或 NUL 间隔）则按
+/// UTF-16LE 解码，否则按 UTF-8 lossy 解码。跨平台纯函数（任何平台可测）。
+/// wsl.exe 重定向输出非 UTF-8（老版本/非 tty 为 UTF-16LE）——executor 的
+/// run_wsl_capture 与 shell 的日志轮询共用（2026-08-26 实机 bug：UTF-16LE
+/// 日志里 URL 是 `\x00h\x00t\x00t\x00p\x00` 间隔，`starts_with("http://")`
+/// 永远失败 → 判「等待超时」）。
+pub fn decode_output_bytes(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.iter().any(|&b| b == 0) {
+        if let Some(s) = decode_utf16le(bytes) {
+            return s;
+        }
+    }
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+/// 按 UTF-16LE（含小端 BOM 或不含）解码字节。纯函数，全平台可测。
+pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
+    let mut bytes = bytes;
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        bytes = &bytes[2..];
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let mut s = String::from_utf16(&units).ok()?;
+    while s.ends_with('\u{0}') {
+        s.pop();
+    }
+    Some(s)
+}
+
+/// 读取可能为 UTF-16LE（wsl.exe 重定向）的日志文件为 UTF-8 文本。
+/// `read_to_string` 严格 UTF-8 会把 UTF-16LE 日志读成含 NUL 的"假有效"
+/// 文本（NUL 是合法 UTF-8 字节），导致 URL 匹配失败——统一先读原始字节
+/// 再自动解码。读不到（文件不存在/无权限）→ 空串。
+pub fn read_log_auto(path: &std::path::Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => decode_output_bytes(&bytes),
+        Err(_) => String::new(),
+    }
+}
+
 /// 带超时执行并取原始 stdout 字节（login shell 拉 PATH / executor 的 wsl.exe
 /// 捕获共用——统一走 `quiet_cmd` 纪律与超时上限；返回原始字节以便按需解码，
 /// 如 wsl.exe 可能输出 UTF-16LE 而非 UTF-8）。

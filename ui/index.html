@@ -35,12 +35,14 @@
         </div>
       </section>
 
-      <details class="tech" id="tech">
-        <summary>启动详情</summary>
+      <section class="console" id="console">
+        <div class="console-head" id="consoleHead">
+          <span class="console-label">启动详情</span>
+          <span class="console-state" id="consoleState"></span>
+        </div>
         <div class="steps" id="steps"></div>
-      </details>
-
-      <section id="errorBox"></section>
+        <section id="errorBox"></section>
+      </section>
     </main>
 
     <script>
@@ -65,7 +67,6 @@
         pulseBar.hidden = errored || !dl.hidden;
       }
       const stepsEl = document.getElementById("steps");
-      const tech = document.getElementById("tech");
       const dl = document.getElementById("dl");
       const dlPct = document.getElementById("dlPct");
       const dlFill = document.getElementById("dlFill");
@@ -100,6 +101,13 @@
         if (state === "running") errored = false;
         syncBars();
         if (state === "error" && detail) subline.textContent = detail;
+        // 卡头状态灯：跟随当前步骤（running=进行中 / error=异常 / 全 done=就绪）
+        const cs = document.getElementById("consoleState");
+        if (cs) {
+          if (state === "running") { cs.textContent = "进行中"; cs.className = "console-state running"; }
+          else if (state === "error") { cs.textContent = "异常"; cs.className = "console-state error"; }
+          else { cs.textContent = "就绪"; cs.className = "console-state done"; }
+        }
         // 下载发生在步骤 02；进入后续步骤即收起下载主角位。
         if (i >= 2 && (state === "running" || state === "done")) {
           dl.hidden = true;
@@ -151,24 +159,31 @@
         }
       }
 
-      // ---- 错误卡（替换主角位） ----
+      // ---- 错误卡（启动叙事的异常节点：诊断行 + 标题/详情/建议 + 动作 + 诊断日志） ----
+      const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      let errorCount = 0;
       function renderError(e) {
         hero.style.display = "none";
         dl.hidden = true;
         errored = true;
         syncBars();
-        tech.open = true;
+        errorCount++;
         const actions = (e.actions || []).map((a) => {
           const label = a === "upgrade" ? "升级 DSH 并重试" : "重试";
           return `<button class="${a === "upgrade" ? "primary" : "ghost"}" data-action="${a}">${label}</button>`;
         }).join("");
+        const diag = e.title || "启动异常";
+        // 故障区：单卡内部区块（不再是独立白卡）——与时间线同容器、同列宽、自然对齐
+        const diagHead =
+          `<div class="e-diag"><span>DIAG</span><span>${esc(diag)}</span><span style="margin-left:auto">#${String(errorCount).padStart(2, "0")}</span></div>`;
         errorBox.innerHTML =
-          `<div class="error-card">` +
-          `<div class="e-title">${e.title || "启动失败"}</div>` +
-          `<div class="e-detail">${(e.detail || "").replace(/</g, "&lt;")}</div>` +
-          (e.suggestion ? `<div class="e-suggest">${e.suggestion}</div>` : "") +
+          `<div class="e-fail">` +
+          diagHead +
+          `<div class="e-title">${esc(e.title || "启动失败")}</div>` +
+          `<div class="e-detail">${esc(e.detail || "")}</div>` +
+          (e.suggestion ? `<div class="e-suggest">${esc(e.suggestion)}</div>` : "") +
           `<div class="e-actions">${actions}</div>` +
-          (e.log ? `<details><summary>原始日志</summary><pre>${e.log.replace(/</g, "&lt;")}</pre></details>` : "") +
+          (e.log ? `<details open><summary>原始日志 · 尾部 ${esc(String(e.log.split("\n").length))} 行</summary><pre>${esc(e.log)}</pre></details>` : "") +
           `</div>`;
         errorBox.querySelectorAll("button").forEach((btn) => {
           btn.addEventListener("click", () => {
