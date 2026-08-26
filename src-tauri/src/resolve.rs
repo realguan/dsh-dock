@@ -209,7 +209,7 @@ fn login_shell_path() -> Option<String> {
         if !Path::new(shell).is_file() {
             continue;
         }
-        let mut cmd = Command::new(shell);
+        let mut cmd = crate::child_cmd(Path::new(shell));
         cmd.args(["-lc", "echo -n \"$PATH\""]);
         if let Some(home) = user_home_dir() {
             cmd.env("HOME", &home);
