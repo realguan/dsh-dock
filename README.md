@@ -21,11 +21,12 @@ macOS / Windows / Linux 三平台安装包由 [CI](.github/workflows/build.yml) 
 - **同生命周期**：壳退 = dsh 停（SIGTERM → SIGKILL 兜底）；dsh 崩溃就地错误卡，
   带可行动动作（重试 / 升级）。
 - **执行环境抽象（executor）**：local（本机）/ wsl（WSL2 发行版）同等地位，
-  SSH 预留。壳的 boot / 就绪 / 监护与执行环境无关；首次打开可选运行环境并设默认
-  （`settings.json` 仅 defaultMode 一个持久化字段），macOS 菜单 / 托盘可随时切换；
-  WSL 迭代 v1 零配置（探测即用默认发行版，须 WSL2 方具备 localhost 端口转发），
-  PATH 兼容 nvm/fnm（交互登录壳 `bash -lic` + 安装位兜底扫描，0.4.2 起），
-  缺 dsh 自动安装（`npm i -g`，需客体内有 node/npm）。
+  SSH 预留。壳的 boot / 就绪 / 监护与执行环境无关；**WSL 只存在于 Windows**——
+  Windows 首次打开可选运行环境并设默认（`settings.json` 仅 defaultMode 一个
+  持久化字段），托盘可随时切换；非 Windows 机器零 WSL 感知（首次直接本机启动、
+  无选择页、无 WSL 菜单/按钮）。WSL 迭代 v1 零配置（探测即用默认发行版，须 WSL2
+  方具备 localhost 端口转发），PATH 兼容 nvm/fnm（交互登录壳 `bash -lic` +
+  安装位兜底扫描，0.4.2 起），缺 dsh 自动安装（`npm i -g`，需客体内有 node/npm）。
 - **内嵌 WebView 呈现**：主窗口加载 `http://127.0.0.1:<port>/` 的 dsh Web UI
   （`--port 0` 由 OS 分配，从日志解析实际地址，无端口冲突）。
 

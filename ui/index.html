@@ -46,6 +46,13 @@
     </main>
 
     <script>
+      // WSL 仅存在于 Windows（2026-08-26 裁定）：平台能力经 Rust 编译期注入
+      // （window.__DSH_PLATFORM__）。非 Windows 顶栏不渲染「在 WSL 中打开」。
+      const WSL = !!(window.__DSH_PLATFORM__ && window.__DSH_PLATFORM__.wsl);
+      if (!WSL) {
+        const w = document.getElementById("wslBtn");
+        if (w) w.remove();
+      }
       // 启动页：一句人话讲状态，技术细节折叠进「启动详情」。
       // 事件协议：boot:step（0-4 步遥测）/ boot:progress（下载字节进度）/
       // boot:error / boot:update（三维度版本状态：dsh / client / node）。

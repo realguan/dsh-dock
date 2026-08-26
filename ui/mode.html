@@ -55,6 +55,15 @@
     </style>
   </head>
   <body>
+    <script>
+      // WSL 仅存在于 Windows（2026-08-26 裁定）：平台能力经 Rust 编译期注入
+      // （window.__DSH_PLATFORM__）。非 Windows 本页零感知——防御性跳回启动页
+      // （不带 mode 参数：避免与壳启动线程的 choose_mode 双启动竞争，壳自己按
+      // local 启动；本页只由旧壳的首次导航打开，现壳非 Windows 已不再进入本页）。
+      if (!(window.__DSH_PLATFORM__ && window.__DSH_PLATFORM__.wsl)) {
+        location.replace("index.html");
+      }
+    </script>
     <div class="topbar">
       <span class="wordmark">DSH DOCK</span>
       <span class="top-actions">

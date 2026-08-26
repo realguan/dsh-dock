@@ -74,8 +74,9 @@
   「关于与更新」小窗，前端顶栏按钮）、`open_external`（白名单外链 → 系统
   浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
   `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
-  切换并写默认；零配置，非 Windows 报错卡）、`choose_mode`（首次运行环境选择
-  落地：写默认（可选）→ 按所选模式启动；mode.html → index.html?mode=…）。前端经
+  切换并写默认；零配置，Windows-only 渲染/调用，非 Windows 防御性拒绝）、
+  `choose_mode`（首次运行环境选择落地：写默认（可选）→ 按所选模式启动；
+  mode.html → index.html?mode=…；WSL 分支仅 Windows 接受）。前端经
   `window.__TAURI__.core.invoke` 调用（tauri.conf 已开 withGlobalTauri）、
   事件经 `window.__TAURI__.event.listen` 消费——**注册例外**；新命令必须
   先在 AGENTS 登记。

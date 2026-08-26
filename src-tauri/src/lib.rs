@@ -627,8 +627,13 @@ fn switch_mode(
 }
 
 /// 「在 WSL 中打开」（顶栏入口；现已记默认 = 与菜单切换同语义）。
+/// 非 Windows：WSL 不存在——防御性拒绝（前端该按钮本就不渲染，这里兜底防
+/// 手工调用 / 旧页面缓存把会话 teardown 后写进脏默认）。
 #[tauri::command]
 fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("WSL 仅支持 Windows 平台。".to_string());
+    }
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
@@ -643,6 +648,10 @@ fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result<(), String> {
     let m = settings::Mode::parse(&mode).ok_or_else(|| format!("未知运行环境：{mode}"))?;
+    // 非 Windows：WSL 不存在（mode.html 本就不渲染 WSL 卡，这里兜底防旧页面缓存）。
+    if m == settings::Mode::Wsl && !cfg!(windows) {
+        return Err("WSL 仅支持 Windows 平台。".to_string());
+    }
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     if set_default {
@@ -784,6 +793,16 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       else document.addEventListener('DOMContentLoaded', function () { syncStreaming(document); });
     })();"#;
 
+    // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
+    // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
+    // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
+    // （AGENTS：跨平台语义显式，不用前端猜 UA），随窗口每次页面加载的
+    // document-start 生效（mode.html / index.html 共用主窗口）。
+    let platform_script = format!(
+        "window.__DSH_PLATFORM__ = {{ wsl: {} }};",
+        if cfg!(windows) { "true" } else { "false" }
+    );
+
     tauri::WebviewWindowBuilder::new(
         app,
         "main",
@@ -836,6 +855,7 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         }
         tauri::webview::NewWindowResponse::Deny
     })
+    .initialization_script(&platform_script)
     .initialization_script(hook_script)
     .initialization_script(webview_memory_policy)
     .build()
@@ -990,29 +1010,27 @@ pub fn run() {
             // 主线程，阻塞它会让 macOS 把窗口判定为无响应，也会让早期错误事件丢失。
             // 启动路径（local/wsl 同等地位，见 settings.rs）：
             //   已设默认 → 按默认模式构建执行器并启动；
-            //   未设默认（首次）→ 导航 mode.html 让用户先选运行环境，经 choose_mode 落地。
+            //   非 Windows（含首次）→ 一律本机启动（WSL 只存在于 Windows，
+            //   零 WSL 感知，2026-08-26 裁定）；Windows 首次未设默认 → 导航
+            //   mode.html 让用户先选运行环境，经 choose_mode 落地。
             let boot_state = state.clone();
             let boot_app = app_handle.clone();
             let boot_data = data_dir.clone();
             std::thread::spawn(move || {
                 let settings = crate::settings::load(&boot_data);
-                match settings.default_mode {
-                    Some(mode) => {
-                        *boot_state.active_mode.lock().unwrap() = Some(mode);
-                        match executor_for_mode(mode, &boot_app, boot_data) {
-                            Ok(executor) => {
-                                launch_executor_after_probe(boot_state, boot_app, executor)
-                            }
-                            Err(e) => {
-                                tracing::error!("启动失败（{e}）");
-                                emit_boot_error(&boot_app, &e, "");
-                            }
-                        }
+                let mode = settings.default_mode.unwrap_or(settings::Mode::Local);
+                // 非 Windows：WSL 不存在（执行器编译为报错）——settings 里残留的
+                // wsl（如从 Windows 拷来的数据目录）一律按 local 启动，绝不进
+                // 环境选择页 / 不出 WSL 痕迹（2026-08-26 裁定）。
+                let mode = if cfg!(windows) { mode } else { settings::Mode::Local };
+                *boot_state.active_mode.lock().unwrap() = Some(mode);
+                match executor_for_mode(mode, &boot_app, boot_data) {
+                    Ok(executor) => {
+                        launch_executor_after_probe(boot_state, boot_app, executor)
                     }
-                    None => {
-                        // 首次：先出运行环境选择（mode.html），选定后经 choose_mode 启动。
-                        tracing::info!("首次运行：进入运行环境选择");
-                        let _ = boot_state.window.eval("location.assign('mode.html')");
+                    Err(e) => {
+                        tracing::error!("启动失败（{e}）");
+                        emit_boot_error(&boot_app, &e, "");
                     }
                 }
             });
@@ -1296,7 +1314,9 @@ fn status_line_for(dsh: &crate::updates::ComponentUpdate) -> String {
     }
 }
 
-/// 当前运行环境（菜单勾选用）：优先会话内 active_mode；回落已存默认；再回落 local。
+/// 当前生效运行模式（托盘菜单 ✓ 用；仅非 macOS——macOS 菜单无「打开方式」）。
+/// 优先会话内 active_mode；回落已存默认；再回落 local。
+#[cfg(not(target_os = "macos"))]
 fn current_active_mode(app: &tauri::AppHandle) -> settings::Mode {
     if let Some(state) = app.try_state::<Arc<ShellState>>() {
         if let Some(m) = *state.active_mode.lock().unwrap() {
@@ -1342,32 +1362,8 @@ fn build_app_menu(
     )?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    // 「打开方式」：local / wsl 同等地位，当前模式带 ✓；切换即写默认（switch_mode）。
-    let mode = current_active_mode(app);
-    let local_item = MenuItem::with_id(
-        app,
-        "mode_local",
-        format!(
-            "本地{}",
-            if mode == settings::Mode::Local { " ✓" } else { "" }
-        ),
-        true,
-        None::<&str>,
-    )?;
-    let wsl_item = MenuItem::with_id(
-        app,
-        "mode_wsl",
-        format!(
-            "WSL2{}",
-            if mode == settings::Mode::Wsl { " ✓" } else { "" }
-        ),
-        true,
-        None::<&str>,
-    )?;
-    let mode_menu = SubmenuBuilder::new(app, "打开方式")
-        .item(&local_item)
-        .item(&wsl_item)
-        .build()?;
+    // 非 macOS 之外无「打开方式」子菜单（2026-08-26 裁定）：本函数仅 macOS
+    // 编译，WSL 只存在于 Windows——本地是唯一环境，无可切换，菜单不出现 WSL 字样。
 
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
     let app_menu = SubmenuBuilder::new(app, "dsh-dock")
@@ -1376,7 +1372,6 @@ fn build_app_menu(
         .item(&upgrade)
         .item(&sep)
         .item(&in_browser)
-        .item(&mode_menu)
         .item(&about)
         .item(&sep)
         .item(&PredefinedMenuItem::services(app, None)?)
@@ -1491,40 +1486,53 @@ fn build_tray_menu(
     let in_browser = MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    // 打开方式（local/wsl 同等地位；当前模式带 ✓）。WSL 项仅 Windows 可用。
+    // 「打开方式」仅 Windows（WSL 只存在于 Windows，2026-08-26 裁定）：
+    // Linux 上本地是唯一环境，无可切换——托盘菜单不出现 WSL 字样。
+    // 条目在函数级持有（MenuBuilder.items 只借引用，跨 if 块引用会悬垂）。
     let mode = current_active_mode(app);
-    let local_item = MenuItem::with_id(
-        app,
-        "mode_local",
-        format!(
-            "打开方式：本地{}",
-            if mode == settings::Mode::Local { " ✓" } else { "" }
-        ),
-        true,
-        None::<&str>,
-    )?;
-    let wsl_item = MenuItem::with_id(
-        app,
-        "mode_wsl",
-        format!(
-            "打开方式：WSL2{}",
-            if mode == settings::Mode::Wsl { " ✓" } else { "" }
-        ),
-        cfg!(windows),
-        None::<&str>,
-    )?;
+    let local_item = cfg!(windows)
+        .then(|| {
+            MenuItem::with_id(
+                app,
+                "mode_local",
+                format!(
+                    "打开方式：本地{}",
+                    if mode == settings::Mode::Local { " ✓" } else { "" }
+                ),
+                true,
+                None::<&str>,
+            )
+        })
+        .transpose()?;
+    let wsl_item = cfg!(windows)
+        .then(|| {
+            MenuItem::with_id(
+                app,
+                "mode_wsl",
+                format!(
+                    "打开方式：WSL2{}",
+                    if mode == settings::Mode::Wsl { " ✓" } else { "" }
+                ),
+                true,
+                None::<&str>,
+            )
+        })
+        .transpose()?;
+
+    let mut entries: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    for it in [&st as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &check, &upgrade, &sep, &in_browser] {
+        entries.push(it);
+    }
+    if let (Some(l), Some(w)) = (local_item.as_ref(), wsl_item.as_ref()) {
+        entries.push(l);
+        entries.push(w);
+    }
+    for it in [&about as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &sep, &quit] {
+        entries.push(it);
+    }
 
     MenuBuilder::new(app)
-        .item(&st)
-        .item(&check)
-        .item(&upgrade)
-        .item(&sep)
-        .item(&in_browser)
-        .item(&local_item)
-        .item(&wsl_item)
-        .item(&about)
-        .item(&sep)
-        .item(&quit)
+        .items(&entries)
         .build()
 }
 

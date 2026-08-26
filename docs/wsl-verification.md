@@ -44,7 +44,7 @@
 
 | # | 动作 | 预期 | 对应代码假设 |
 |:-:|:--|:--|:--|
-| 0 | 首次启动（无 settings.json） | 进入**运行环境选择页**（mode.html：本机 / WSL2 + 设为默认勾选） | `settings::load` 无 defaultMode → 导航 mode.html |
+| 0 | 首次启动（无 settings.json，Windows） | 进入**运行环境选择页**（mode.html：本机 / WSL2 + 设为默认勾选） | `settings::load` 无 defaultMode → 导航 mode.html（**仅 Windows**；非 Windows 直接本机启动，零 WSL 感知） |
 | 1 | 选「WSL2」并勾选「设为默认」→ 开始 | 出现"探测 WSL"时间线 → 步 0 就绪 → 步 1 发行版内发现 dsh → 自动进工作台 | `choose_mode` → `executor_for_mode(Wsl)` → WSL probe |
 | 2 | **（重点）nvm/fnm 装的 node+dsh** | **必须探测到**（wsl 内 `which dsh` 在 nvm/fnm 下也要命中）——0.4.2 修了 `bash -lc` 不执行有守卫的 .bashrc 的 bug，探测/启动改 `bash -lic` + 版本管理器兜底扫描 | probe/start 模板 `guest_prep` + `-lic` |
 | 3 | 托盘右键（Windows）→「打开方式：本机」 | 会话切回本机（时间线重走，随后进工作台）；托盘 ✓ 移到本机 | `switch_mode(Local)`（teardown→写默认→launch） |
