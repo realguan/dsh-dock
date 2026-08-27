@@ -32,6 +32,20 @@
 
 ## 三、记录
 
+### 2026-08-27 占用声明 · 前端迁移阶段 E 开工（宪法级变更预告） —— guan
+
+- 变更：占用 `AGENTS.md`（§1/§2/§3/§4.2/§4.3+新增§4.4/§5/§7）、
+  `docs/roadmap.md`（硬约束 2 与不做清单）、`.github/workflows/build.yml`
+  （node 质量闸门 + fmt/clippy 评估）、`ui/`（删除）、`frontend/`（Vitest 测试）。
+  依据：ADR-0008 行动项 + docs/frontend-migration.md §6/§7/§10 阶段 E 清单。
+- 影响：**宪法级预告**——AGENTS §4.2「禁止引入任何前端构建链」将修订为
+  「前端框架仅限 React 生态（Vite+React+TS+Tailwind+shadcn/ui）」，§4.3 全面
+  重写为 React 组件规范，新增 §4.4 三条红线（依赖白名单 / 前端禁止网络请求 /
+  跨窗口真相源）。`ui/` 目录删除、`dsh-logo.svg` 迁至仓库根 `assets/`。
+  执行顺序：测试 → 删 ui → 宪法/CI（单独 commit）→ 全量验证 → 完成通知。
+- 凭据：阶段 A-D 均已通过闸门与实机验证（见前四条约）；本预告为宪法修改
+  前置知会，修改范围与方案 §7 清单一一对应。
+
 ### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 D 落地（1008cd6） —— guan
 
 - 变更：`pages/BootIndex.tsx` 整页、`components/boot/{BootStep,BootTimeline}.tsx`
