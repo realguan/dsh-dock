@@ -32,6 +32,19 @@
 
 ## 三、记录
 
+### 2026-08-27 发版事项 · v0.5.1 三平台验收通过，冻结期解除 —— guan
+
+- 确认：tag run `33049383090` 三平台 job 与 release job 全部 success；Release
+  资产 14 个齐全（dmg/exe/msi/AppImage/deb/rpm + 签名 + latest.json）；
+  下载 macOS `.app.tar.gz` 实拆——`Info.plist` 版本 0.5.1，主二进制内嵌前端
+  bundle 五个事件名（app:update / boot:step / boot:progress / boot:update /
+  boot:error）grep 全中（本次缺陷的产物级判据）。上游 dsh 会话工作正常。
+- 影响：**v0.5.1 发布完成，冻结期自此解除**——master 恢复正常合流
+  （改动仍按 CONTRIBUTING 占用声明纪律）；下一步按路线图 Now 阶段推进。
+  已装 0.5.0 的环境因自更新面板同受缺陷影响，需手动换装 0.5.1。
+- 凭据：`gh api .../runs/33049383090/jobs` 全 success；本条即对上两条
+  「处置见下一条广播」预告的闭环。
+
 ### 2026-08-27 发版事项 · v0.5.0 缺陷确认 → 重切 v0.5.1 热修 —— guan
 
 - 变更：fix `f3cef30`（事件总线 import 锚点，见下条补记）+ updater 观测日志
