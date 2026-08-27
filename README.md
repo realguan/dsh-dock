@@ -108,7 +108,7 @@ dsh-dock/
     ├── prompts/           # 团队共享 Prompt 模板库
     ├── contracts/         # 公共模块契约规范与台账
     ├── adr/               # 架构决策记录（TEMPLATE.md 起家）
-    └── …                  # executor.md / wsl-verification.md / macos-signing.md
+    └── …                  # executor.md（WSL 行为明细）/ macos-signing.md
 ```
 
 ## License

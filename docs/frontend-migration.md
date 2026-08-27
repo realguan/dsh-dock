@@ -63,7 +63,7 @@ dsh-dock/
 │   ├── tailwind.config.ts                 # Tailwind v4 配置（如需要）
 │   ├── index.html                         # Vite SPA 入口
 │   ├── public/
-│   │   └── mark.svg                       # 官方徽章形状源（从 ui/assets/ 复制；dsh-logo.svg 迁至仓库根 assets/ 作品牌溯源，见 §7 §3 条目）
+│   │   └── mark.svg                       # 官方徽章形状源（自 ui/assets/ 迁移；dsh-logo.svg 已迁至仓库根 assets/ 作品牌溯源，见 §7 §3 条目）
 │   └── src/
 │       ├── main.tsx                       # React 入口 + 事件总线初始化
 │       ├── App.tsx                        # 窗口 label 判断 + 路由配置

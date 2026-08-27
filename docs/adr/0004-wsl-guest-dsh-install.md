@@ -4,7 +4,7 @@
 - **状态**：已接受（2026-08-26 登记，本 ADR 追溯补录）
 - **提出人**：guan
 - **相关方**：executor.rs（`GUEST_INSTALL_DSH` / `install_dsh_in_distro` / `NODE_MISSING` / `GuestProbeState`）
-- **关联**：docs/executor.md（WSL 执行器）、docs/wsl-verification.md
+- **关联**：docs/executor.md（WSL 执行器）
 
 ---
 

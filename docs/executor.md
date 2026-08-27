@@ -4,7 +4,7 @@
 
 版本：v1（local 重构完成 + wsl 迭代 v1）｜状态：演进中（ssh 预留，未实现）｜消费方：shell.rs / lib.rs 启动链、`boot:step` / `boot:error` 遥测
 
-> WSL 实机验证清单见 [wsl-verification.md](wsl-verification.md)；SSH 仅预留配置形状。
+> WSL 行为细节见 ADR-0004 与本文档；SSH 仅预留配置形状。
 
 ## 定位
 
@@ -108,7 +108,7 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 统一入口）；**WSL 只存在于 Windows**（2026-08-26 裁定），非 Windows 机器
 零 WSL 感知：
 
-- **Windows 首次打开**：`settings.json` 无 `defaultMode` → 导航 `ui/mode.html`
+- **Windows 首次打开**：`settings.json` 无 `defaultMode` → 导航壳 SPA `/mode`（frontend/src/pages/BootMode.tsx）
   选择页（本机 / WSL2 + 「设为默认」勾选）→ `index.html?mode=…&default=…` →
   `choose_mode` IPC 落地（写默认可选）并启动；设过默认则跳过直接按默认启动。
 - **非 Windows 首次打开**：不出选择页——本机是唯一环境，直接按 local 启动；
@@ -128,5 +128,5 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 
 - macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（74 tests）。
 - **Windows 实机未验**：WSL 运行时行为（`wsl -l -v` 实机输出、localhost 转发、
-  stop 标志 teardown、rc source）需按 [wsl-verification.md](wsl-verification.md) 验证。
+  stop 标志 teardown、rc source）需按 ADR-0004 的执行要求验证。
   shell.log / dsh-wsl.log 位于 `%APPDATA%\io.github.realguan.dsh-dock\`。

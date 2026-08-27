@@ -26,7 +26,20 @@ interface SpeedSample {
 /// 滑动窗口速度采样窗宽：6s 前的样本丢弃；不足 2 个样本不出速度。
 const SPEED_WINDOW_MS = 6000
 
-function computeSpeed(samples: SpeedSample[]): number | null {
+/** 追加采样并按 6s 窗裁剪（纯函数，供 bootProgress.test.ts 直接测）。 */
+export function pushSample(
+  samples: SpeedSample[],
+  nowMs: number,
+  bytes: number,
+  windowMs: number = SPEED_WINDOW_MS,
+): SpeedSample[] {
+  samples.push({ t: nowMs, bytes })
+  while (samples.length > 0 && nowMs - samples[0].t > windowMs) samples.shift()
+  return samples
+}
+
+/** 窗口内平均速度 bytes/s；样本不足或时间零增量返回 null。 */
+export function computeSpeed(samples: SpeedSample[]): number | null {
   if (samples.length < 2) return null
   const first = samples[0]
   const last = samples[samples.length - 1]
@@ -96,14 +109,7 @@ export const useBootStore = create<BootState>((set) => ({
     set(() => {
       // 进度可能针对不同 kind（目前只有 node）；窗口内直接覆盖，
       // 完成帧（current >= total）之后的新一轮下载靠 reset/重发自然续上。
-      const now = Date.now()
-      prevSamples.push({ t: now, bytes: p.current })
-      while (
-        prevSamples.length > 0 &&
-        now - prevSamples[0].t > SPEED_WINDOW_MS
-      ) {
-        prevSamples.shift()
-      }
+      pushSample(prevSamples, Date.now(), p.current)
       const speed = computeSpeed(prevSamples)
       const eta =
         p.total !== null && speed !== null && speed > 0

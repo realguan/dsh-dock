@@ -10,7 +10,7 @@
 //! IPC 面最小化（AGENTS 例外册）：`choose_profile`（选择器）与 `terminal_action`
 //! （错误卡动作：retry / upgrade）。前端经 `window.__TAURI__.core.invoke` +
 //! `window.__TAURI__.event.listen` 接收 `boot:step` / `boot:error` 事件流，
-//! 启动过程全链路可视化（见 ui/index.html）。
+//! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
 mod executor;
 mod manifest;
@@ -1500,7 +1500,8 @@ fn setup_update_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 关于面板：独立小窗（壳版本 + 宿主 dsh 版本 + 检查/升级），复用 ui/about.html。
+/// 关于面板：独立小窗（壳版本 + 宿主 dsh 版本 + 检查/升级），
+/// React 首页面按窗口 label 渲染 frontend/src/pages/About.tsx。
 ///
 /// 2026-08-26 修复（issue #2）：窗口创建必须在主线程执行。Tauri 的
 /// `#[tauri::command]` handler 跑在 IPC 线程（async runtime），Windows/WebView2
