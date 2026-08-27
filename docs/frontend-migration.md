@@ -6,6 +6,20 @@
 
 ---
 
+## 0. 定位：重构，不是复刻（2026-08-27 维护者裁定）
+
+本次前端工作**不带历史包袱**：视觉稿、布局、交互流、文案措辞均可推翻重来。本文档各处「从原 xx.html 迁移的功能点」表格一律读作**能力清单，而非布局规范**——能力不可缺，外观全放开。
+
+**设计基调（2026-08-27 二次裁定）**：整体沿用 **dsh web UI 风格的浅色主题**——明暗基调不在本次改动范围内；深色/主题切换只保留 data-theme 技术预留，不做实现。
+
+**自由区 / 契约区边界**：
+
+- ✅ **可动**：布局结构、排版、动画与交互细节、组件形态、页面组织（如重排启动引导、合并 selector 的呈现方式）、文案改写润色，以及**浅色基调内**的色彩微调。
+- ❌ **不动（契约区）**：Rust 侧行为与 12 个 IPC 命令、5 类事件协议及 payload 形状、`withGlobalTauri`、initialization_script、外链拦截、平台能力语义（WSL 仅 Windows、远端会话拒绝 upgrade 类）、AGENTS §3 品牌规则（徽章一律官方 mark.svg 几何 + CSS mask，禁止第二份 path 或自造 logo），以及上条的**浅色基调本身**。
+- ⚠️ **有条件可动**：① 窗口观感相关的任何改动必须核对/同步 lib.rs 里主窗/about 的原生 `background_color`，避免冷启动闪色；② 文案改写中涉技术事实的表述（如宿主解析链顺序、WSL 安装语义）须与源码/本文档核对后书写，不得凭印象写。
+
+---
+
 ## 1. 技术栈
 
 | 层面 | 选型 | 版本 | 用途 |
@@ -366,10 +380,11 @@ export function initEventBus(): () => void {
 @import "tailwindcss";
 
 @theme {
-  /* ↓↓↓ 逐变量照抄 ui/assets/app.css :root（2026-08-27 校对，浅色主题）。
-     审核裁定：原稿深色系草稿作废；Rust 主窗口原生背景亦是浅色（#f9fafb），
-     token 必须与现网一致，否则冷启动闪色 + 全面视觉回归。
-     未来暗色/主题切换 = 追加 data-theme 选择器覆盖变量，组件层零改动。 */
+  /* ↓↓↓ 设计基调 = dsh web UI 风格浅色主题（§0 二次裁定），以下即按此校对的
+     目标值（2026-08-27 逐变量对照 ui/assets/app.css）。与原生窗口背景
+     (#f9fafb) 一致，冷启动无闪色。基调内色彩微调随设计稿迭代；
+     整组换底色/切换明暗属基调变更，不在本次范围，若将来立项须同步
+     lib.rs 的 background_color。data-theme 为暗色远期技术预留。 */
   --color-bg: #f7f8fb;
   --color-panel: #ffffff;
   --color-line: #e5e9f1;
@@ -486,6 +501,8 @@ export const t = {
 ---
 
 ## 4. 四个页面迁移详细设计
+
+> 本节全部表格都是 §0 所指的能力清单：功能点对照实现不可缺失，但布局、交互与视觉**不作要求**，鼓励按新设计重排——包括页面级重组（如环境选择并入首屏引导流）。
 
 ### 4.1 BootIndex（启动序列，最复杂）
 
@@ -761,8 +778,9 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 - [ ] initialization_script 在 dsh web UI 中仍然生效（内存策略 + 外链兜底）
 - [ ] on_navigation/on_new_window 外链拦截仍然生效
 - [ ] withGlobalTauri 保持 true，dsh web UI 的 open_external 调用正常
-- [ ] 四页视觉对照旧版截图一致（@theme token 全量照抄校验；重点：浅色底、中文字体栈、accent/warn 色值不变）
-- [ ] 前端包内无外部网络资源（字体走系统栈，无 CDN/font 文件引入）
+- [ ] 新设计全页面走查通过：无错位/截断/不可读文本；若调整了配色或明暗基调，冷启动到首帧无闪色（原生 background_color 已同步，§0 条件①）
+- [ ] 品牌红线抽查：所有徽章实例均由 Emblem 组件渲染官方 mark.svg 几何（CSS mask 上白），无第二份 path、无自造图形
+- [ ] 无外部网络资源（任何字体/图库/CDN 一律本地打包或系统字体栈，壳运行时不发起新网络请求）
 
 ---
 
@@ -777,7 +795,7 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 3. 安装依赖：`npm install react-router-dom zustand framer-motion lucide-react @tauri-apps/api`
 4. 安装 dev 依赖：`npm install -D tailwindcss @tailwindcss/vite vitest @types/node eslint eslint-plugin-react-hooks typescript-eslint @eslint/js`
 5. 配置 Vite（server.port=1420 + **strictPort: true**，clearScreen=false, envPrefix）；写 package.json scripts：dev/build/typecheck/lint/test
-6. 配置 Tailwind v4（vite 插件 + index.css @import + @theme token，token 值逐变量照抄 app.css）
+6. 配置 Tailwind v4（vite 插件 + index.css @import + @theme token；token 即 §3.5 基调值，基调内微调随设计稿迭代）
 7. **验证 shadcn/ui 兼容性**：`npx shadcn@latest init`，如失败降级 Tailwind v3.4
 8. 按需添加 shadcn/ui 组件：button card dialog progress badge tooltip separator。**toast/tabs/scroll-area 明确缓加**（错误反馈归 ErrorCard、480px 小窗纵排优于 tab、原生滚动够用——裁定时点与理由见 §11）
 9. 配置 React Router（App.tsx，窗口 label 判断 + 路由）
