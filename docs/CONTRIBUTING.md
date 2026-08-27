@@ -113,7 +113,7 @@ AI-Assisted: <工具名>（会话起草 + 测试生成；人工复核 diff 与 W
 | 区域 | 文件 | 规则 |
 | :--- | :--- | :--- |
 | Rust 后端 | `src-tauri/src/*.rs` | 普通区：按模块声明占用，同模块先到先得 |
-| 前端壳页 | `ui/*.html` + `ui/assets/` | 普通区：同上 |
+| 前端壳页 | `frontend/src`（React）+ `frontend/index.html` | 普通区：同上 |
 | 共享区 | `lib.rs` 注入脚本、IPC 三件套（lib.rs 命令 + build.rs + capabilities）、CI workflow、`Cargo.lock` | 改动前必声明，尽快合完释放 |
 | 宪法级 | `AGENTS.md`、`docs/contract.md`、本文件、`node-map/` | 同一时间仅一人可改；知会全体 + 至少一名其他开发者看过 |
 

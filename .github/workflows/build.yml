@@ -98,6 +98,17 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # 前端质量闸门（typecheck/lint/vitest，frontend-migration §6）：
+      # fmt/clippy 基线评估结论（2026-08-27）：repo 存量 35 文件未归一 + clippy
+      # 9 警告，需专项 chore 落地，本轮不接入以免 CI 即红——roadmap §4.1 保持 [待补充]。
+      - name: Frontend gates
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run test
+
       # 注意：updater 签名需要 TAURI_SIGNING_PRIVATE_KEY（已在上一步设置到 env）。
       # 有 key → 正常构建（含 .sig）；无 key（fork PR 无 secrets）→ `--no-sign`
       # 跳过签名（tauri-cli 在 pubkey 配置存在且无私钥时会直接报错——刻意保护，

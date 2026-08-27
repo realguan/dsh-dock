@@ -38,13 +38,14 @@ system → bundle → download；Node 版本经签名映射包热升级，不发
 | 自更新 | tauri-plugin-updater（endpoint = GitHub Releases `latest.json`） | `2` |
 | 日志 | tracing + tracing-subscriber | `0.1` / `0.3` |
 | 错误处理 | anyhow（壳无 services 分层，不用 AppError 枚举） | `1` |
-| 前端 | **静态 HTML/CSS/JS（`ui/`），零构建器、零框架、零依赖** | — |
+| 前端 | **React 19 + TS strict + Tailwind v4 + shadcn/ui + React Router v7 + Zustand + Framer Motion（`frontend/`）**；构建 Vite；测试 Vitest | Vite 8（开发/CI 需 node ≥20） |
 | 数据库 | **无**（禁止引入） | — |
 | 构建/发布 | GitHub Actions 三平台矩阵 → tag `v*` 出 Release + updater 元数据 | `.github/workflows/build.yml` |
 
-- 开发环境只需 Rust toolchain + 平台 Tauri 前置（macOS Xcode CLT / Windows WebView2 /
-  Linux WebKitGTK）；**壳前端免构建，日常开发不需要 node/npm**。仅 node-map 发布流程
-  （`node-map/scripts/sign.mjs`）需要 node。
+- 开发环境：Rust toolchain + 平台 Tauri 前置（macOS Xcode CLT / Windows WebView2 /
+  Linux WebKitGTK）；前端开发需 node ≥20 + npm（`cd frontend && npm ci` 后
+  `npm run dev/build/typecheck/lint/test`），Rust 侧开发不变。
+  node-map 发布流程（`node-map/scripts/sign.mjs`）同样需要 node。
 - Lint/Format：当前**无** rustfmt.toml / clippy.toml / rust-toolchain 文件
   （`cargo fmt` 走默认配置）。`[待补充]` 建议提交一份锁定 edition 风格的
   `rustfmt.toml` + CI 加 `cargo fmt --check` / `cargo clippy -D warnings`，
@@ -63,14 +64,25 @@ dsh-dock/
 │   ├── contracts/          # 公共模块契约管理（哪些模块要契约、怎么改）
 │   ├── adr/                # 架构决策记录（本仓库；TEMPLATE.md + ADR-0001~0007，见 §9）
 │   ├── executor.md         # 执行环境抽象设计（local/wsl，ssh 预留）
-│   ├── wsl-verification.md # WSL Windows 实机验证清单
 │   └── macos-signing.md    # macOS 签名与公证手册
-├── ui/                     # 壳自带页面（静态，无框架无构建器）
-│   ├── index.html          # 启动序列（时间线 + 下载进度 + 错误卡）
-│   ├── mode.html           # 首次运行环境选择（local/wsl，Windows-only 分支）
-│   ├── selector.html       # 工作台选择器（system 档多 webUi profile）
-│   ├── about.html          # 关于面板（版本 + 检查/升级）
-│   └── assets/             # app.css + 官方标（mark.svg / dsh-logo.svg）
+├── frontend/               # 壳自带前端（Vite + React；依赖白名单见 §4.4）
+│   ├── package.json        # 前端清单（npm ci；锁文件 package-lock.json）
+│   ├── vite.config.ts      # 端口 1420 strictPort；alias @→src
+│   ├── index.html          # SPA 入口（所有窗口同载，React 按窗口 label 路由）
+│   ├── public/mark.svg     # 官方徽章形状源（Emblem 组件 CSS mask 引用）
+│   └── src/
+│       ├── main.tsx        # React 入口 + BrowserRouter
+│       ├── App.tsx         # 窗口 label 判断 + pathname 路由（about 单页直渲染）
+│       ├── index.css       # @theme token（dsh 浅色基调）+ 品牌/动效原语
+│       ├── pages/          # BootIndex / BootMode / BootSelector / About
+│       ├── components/     # ui（shadcn，只读）/ boot / about / layout
+│       ├── stores/         # bootStore / clientUpdateStore（Zustand）
+│       ├── lib/            # tauri.ts（invoke 唯一入口）/ events.ts（模块级总线）
+│       │                   # + host / resource / format / utils
+│       ├── hooks/          # usePlatform（能力矩阵）
+│       ├── types/          # ipc.ts / events.ts（payload 照实对齐 Rust 序列化）
+│       ├── content/        # zh-CN.ts（文案/i18n 预留）
+│       └── __tests__/      # Vitest 纯逻辑单测
 ├── src-tauri/
 │   ├── src/
 │   │   ├── main.rs         # 入口（6 行，勿动）
@@ -95,7 +107,7 @@ dsh-dock/
 └── .github/workflows/build.yml  # 三平台矩阵构建 + tag 发版
 ```
 
-职责红线：`ui/` 不出现任何 `package.json`/构建器痕迹；`src-tauri/resources/dsh-snapshot/`
+职责红线：前端禁入白名单外依赖/禁网络请求（§4.4 三条红线）；`src-tauri/resources/dsh-snapshot/`
 永不入库；`node-map-private.key` 永不入库（.gitignore 双防）。
 
 ## 3. 品牌规则
@@ -104,10 +116,11 @@ dsh-dock/
 - 改图标 = 改 `assets/icon-master.svg`（官方 path 合成 + 深色圆角底）→
   跑 `scripts/regen-icons.sh` 整体重生成（rsvg-convert → cargo tauri icon）；
   `src-tauri/icons/` 是生成产物，**禁止直接手改**。
-- 页内徽章（index/mode/selector/about 四页）统一为 `.emblem` 组件：
-  `ui/assets/mark.svg`（形状源）+ CSS mask 上白色——**不允许在页面里内联第二份
-  鲸鱼 path 或第二种颜色**。
-- 官方原始 SVG 溯源于 `ui/assets/dsh-logo.svg`；未获官方新版本前不得偏离该几何。
+- 页内徽章统一为 React 组件 `Emblem`（`frontend/src/components/layout/Emblem.tsx`）：
+  `frontend/public/mark.svg`（形状源）+ CSS mask 上白色、深色圆角底唯一形态
+  ——**不允许在页面里内联第二份鲸鱼 path 或第二种颜色**。
+- 官方原始 SVG 溯源于 `assets/dsh-logo.svg`（迁移前 `ui/assets/`）；
+  未获官方新版本前不得偏离该几何。
 
 ## 4. 代码规范
 
@@ -135,19 +148,48 @@ dsh-dock/
   用 `expect` 标注不变量即可，不视为违规。
 - 阻塞主线程的同步等待；dsh 就绪用后台线程轮询 + 超时上限。
 - 把具体产品（名称/图标/插件/凭据）硬编码进壳。
-- 引入任何前端构建链 / IPC 总线 / 数据库 / 领域服务——壳要保持薄。
+- 引入数据库 / IPC 总线 / 领域服务——壳要保持薄。前端框架仅限 React 生态
+  （§1 前端行 / §4.4 白名单），不引入 Vue/Angular/Svelte 等其他框架。
 - 直接依赖宿主 pnpm store 或触网取依赖——快照必须自包含（ADR-0004 硬指标）。
 - `println!` / `dbg!` 入库——日志一律 tracing。
 - 非 `updates.rs` 模块触网（网络面白名单见 §7）。
 
-### 4.3 UI（壳自带前端）
+### 4.3 前端（React 壳页面）
 
-- 纯静态 HTML/CSS/原生 JS；**禁止引入框架、构建器、外部 CDN 依赖、npm 包**。
-- 页面间共享样式走 `ui/assets/app.css`；徽章走 `.emblem`（§3），不复制粘贴 SVG path。
-- 调用壳命令：`window.__TAURI__.core.invoke(...)`（tauri.conf 已开 withGlobalTauri），
-  返回 Promise **必须 `.catch`**（try/catch 捕不到 rejection）；消费事件用
-  `window.__TAURI__.event.listen`。
+- **组件规范**：函数组件 + hooks；文件名 PascalCase（页面在 `pages/`、业务组件在
+  `components/boot|about/`、布局在 `components/layout/`、基础件 `components/ui/`）。
+- **样式规范**：一律 Tailwind 类；颜色走 `@theme` token（`bg-bg`/`text-ink`/
+  `text-dim`/`text-faint`/`border-line`/`bg-wash`/`text-brand-deep` 等），
+  禁止硬编码 hex；明暗基调属契约区（基调裁定见 docs/frontend-migration.md §0），
+  远期暗色经 data-theme 覆盖变量，组件零改动。
+- **状态规范**：一个领域一个 store（Zustand）；组件用**精细选择器**
+  （`useStore(s => s.field)`），禁止整体解构订阅高频字段（如进度）。
+- **调用 IPC**：统一走 `lib/tauri.ts` 的 `api` 对象（全类型化），组件内不直接
+  `invoke`；返回 Promise **必须 `.catch`**（try/catch 捕不到 rejection）。
+- **事件规范（2026-08-27 裁定）**：事件总线在 `lib/events.ts` **模块加载期**装配，
+  早于任何页面播种 invoke——React 子 effect 先于父组件执行，若在 App effect 里
+  挂监听会让首发射出的启动遥测（boot:step 等）被「先 invoke 后监听」吞掉；
+  组件只消费 store，页面副作用里不重复 listen。
+- **文案规范**：全部用户文案集中 `content/zh-CN.ts`（i18n 预留），
+  组件不硬编码中文字符串。
 - 新增 IPC 命令的前置授权链见 §7「三处同步」；漏任一处 remote 页面调用静默失败。
+
+### 4.4 前端开发规范（2026-08-27，ADR-0008 落地）
+
+- **三条红线**：
+  ① **依赖白名单**——允许 React / Radix（shadcn 底座）/ Zustand / Framer Motion /
+     Lucide / 未来数据层；禁止 AntD/MUI 类大全件库、CSS-in-JS 运行时、
+     白名单外的任何 npm 包（新增依赖须经广播登记）。
+  ② **前端运行时禁止发起新网络请求**（无 CDN/字体/统计）；壳网络面唯一指向
+     Rust `updates.rs`，前端网络需求一律经 IPC 到 Rust。
+  ③ **跨窗口真相源**：main / about 是各自独立 JS runtime，Zustand 不跨窗共享；
+     跨窗信息只经事件广播（如 `app:update` 回推）传递。
+- **类型**：TypeScript strict；禁止 `any`（特殊情况用 `unknown` + 类型守卫收敛）。
+- **平台语义**：经 `usePlatform().can.*` 能力矩阵，不散写 `os === 'windows'` 判断。
+- **测试**：Vitest 测纯逻辑（格式化 / 速度采样 / 步骤推演 / 状态机迁移），
+  **不引入** React Testing Library / jsdom；UI 走手动验证清单。
+- **AI 生成约定**：组件优先复用 shadcn/ui 与既有业务组件；样式 token 化；
+  状态进 store；文案进 content/。
 
 ## 5. 测试要求
 
@@ -160,10 +202,13 @@ dsh-dock/
 - **Mock 策略**：不引 mock 框架。测**纯函数**（URL 解析、契约字段校验、路径推导、
   镜像链排序、签名格式校验），输入用内联 fixture 字符串 / `tempdir` 式临时目录；
   真实网络与真实 WSL/实机行为不在单测覆盖，走对应验证清单
-  （WSL 见 `docs/wsl-verification.md`）。
+  （WSL 行为明细见 `docs/executor.md`与更新常驻入口实测记录）。
 - **必须带测试的场景**：① URL/导航解析类改动 → 回归测试（含恶意输入反例）；
   ② `manifest.rs` 契约字段 → 正反例各一（合法 v1/v2 + 缺字段/错 format 拒绝）；
   ③ bug 修复 → 复现该 bug 的测试先行；④ 跨平台分叉逻辑 → 至少覆盖编译目标语义。
+- **前端（Vitest）**：`cd frontend && npm run test`——覆盖格式化 / 速度采样 /
+  步骤推演 / 更新状态机迁移等纯逻辑（现状 4 文件 34 用例，随逻辑演进扩展）；
+  不测 UI 渲染与 Tauri 事件（环境不可用，手动验证走 frontend-migration.md §9）。
 - `[待补充]` 覆盖率目标与工具（建议 `cargo-llvm-cov` 接入 CI，先出基线再定阈值）。
 - `[待补充]` `updater.rs` 当前无测试（tauri-plugin-updater 桥接层，依赖运行时环境）；
   补测前至少保证改动经 `cargo tauri build` + 手动「检查更新」路径验证。
@@ -188,7 +233,8 @@ dsh-dock/
   `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
   切换并写默认；零配置，Windows-only 渲染/调用，非 Windows 防御性拒绝）、
   `choose_mode`（首次运行环境选择落地：写默认（可选）→ 按所选模式启动；
-  mode.html → index.html?mode=…；WSL 分支仅 Windows 接受）。前端经
+  前端链路：BootMode 携参回启动页 → BootIndex 落地 invoke——先监听后触发，
+  防启动遥测竞态；WSL 分支仅 Windows 接受）。前端经
   `window.__TAURI__.core.invoke` 调用、事件经 `window.__TAURI__.event.listen`
   消费——**注册例外**；新命令必须先在本节登记。
 - **新增 IPC 命令三处同步（2026-08-25 裁定）**：Tauri 2.11 规定 remote origin
