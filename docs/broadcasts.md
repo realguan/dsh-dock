@@ -32,6 +32,24 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 E 落地（d003905 / 1868411） —— guan
+
+- 变更：**宪法级（1868411）**——AGENTS §1/§2/§3/§4.2/§4.3/新增 §4.4/§5/§7、
+  docs/roadmap.md（硬约束 2 与不做清单）、docs/CONTRIBUTING.md（路径行）、
+  .github/workflows/build.yml（Frontend gates 步骤）；**非宪法（d003905）**——
+  Vitest 34 用例（format/bootProgress/bootStep/updatePhase）、`ui/` 目录删除
+  （dsh-logo.svg 迁至仓库根 `assets/`）、全仓悬空引用清理。
+- 影响：① **宪法已生效**——「禁止引入任何前端构建链」修订为「前端框架仅限
+  React 生态（§1/§4.2/§4.4 白名单）」；② 开发者须知——本地构建/调试请从
+  **仓库根**调用 `cargo tauri dev/build`（钩子 cwd 发现逻辑），前端开发需
+  node ≥20（`cd frontend && npm ci`）；③ **fmt/clippy 基线评估结论**：存量
+  35 文件未归一 + clippy 9 警告，需专项 chore 落地（遵守「不引入全仓格式化
+  diff」红线），本轮 CI 只接前端四道闸门，roadmap §4.1 [待补充] 保持；④ 迁移
+  完成发布契——master 自此无 `ui/`，release 产物壳页面全 React。
+- 凭据：frontend typecheck/lint/vitest 全绿（34/34）；`cargo test` 89 passed；
+  `cargo tauri build --no-sign` 出齐三产物；diff 逐行人肉复核（lib.rs 仅两处
+  注释；fmt 越界改动已回退——本次 session 自身纪律记录）。
+
 ### 2026-08-27 占用声明 · 前端迁移阶段 E 开工（宪法级变更预告） —— guan
 
 - 变更：占用 `AGENTS.md`（§1/§2/§3/§4.2/§4.3+新增§4.4/§5/§7）、
