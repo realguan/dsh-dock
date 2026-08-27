@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-08-27 发版事项 · v0.5.0 发布开始 —— guan
+
+- 变更：`chore: 版本 0.5.0（…整批提交）`——tauri.conf.json / Cargo.toml /
+  Cargo.lock / frontend package.json+(lock) 同步升版；roadmap 适用版本标 v0.5.0。
+  tag `v0.5.0` 由本档案登记当日推送，CI 三平台矩阵 + Release 聚合
+  （notes 由 GitHub 自动生成）。
+- 影响：**冻结期开始**（CONTRIBUTING §8）——Release notes 发出至三平台产物
+  验收通过期间，master 只收 fix 不收 feat。本版内容：前端自静态 HTML 全量迁移
+  Vite+React+TS+Tailwind v4+shadcn/ui（ADR-0008 全流程，span commit
+  aab68c1→本次），壳行为与 12 IPC 命令零变更；Move/关于/启动/选择器四页
+  组件化；宪法同步修订（AGENTS §1/§2/§4.2/§4.3/§4.4/§5/§7）。
+- 凭据：frontend gate 34/34；cargo test 89 passed；本机 release 构建三产物齐；
+  已知遗留——Windows/Mode 页实机走查未做（广播 2026-08-27 阶段 C 条目）；
+  fmt/clippy 基线待专项（阶段 E 条目）。
+
 ### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 E 落地（d003905 / 1868411） —— guan
 
 - 变更：**宪法级（1868411）**——AGENTS §1/§2/§3/§4.2/§4.3/新增 §4.4/§5/§7、
