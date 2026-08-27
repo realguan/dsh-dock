@@ -109,6 +109,7 @@ fn friendly_error(e: &tauri_plugin_updater::Error) -> String {
 /// 后台执行：完成时经 `app:update` 回推 Available/UpToDate/Failed。
 pub fn run_check(app: tauri::AppHandle, state: Arc<ShellState>) {
     std::thread::spawn(move || {
+        tracing::info!("客户端更新检查：IPC 触发");
         set_state(&state, &app, ClientUpdate::Checking);
         match blocked_check(&app) {
             Ok(Some(update)) => {
@@ -301,6 +302,7 @@ fn blocked_check(
 /// 本事件（最小面纪律：壳事件不流经第三方内容）。
 fn set_state(state: &Arc<ShellState>, app: &tauri::AppHandle, value: ClientUpdate) {
     use tauri::Emitter;
+    tracing::info!("客户端更新状态 → {:?}", value);
     *state.client_update.lock().unwrap() = Some(value.clone());
     for label in ["main", "about"] {
         if let Some(win) = app.get_webview_window(label) {
