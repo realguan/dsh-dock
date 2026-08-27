@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-08-27 占用声明 · 前端迁移阶段 A 开工（ADR-0008 实施开始） —— guan
+
+- 变更：占用 `frontend/`（新建）、`tauri.conf.json`（frontendDist 切换）、
+  `.github/workflows/build.yml`（node 步骤合批）、`.gitignore`；阶段 E 收口时改动
+  `AGENTS.md`（§1/§2/§3/§4/§5/§7）与 `docs/roadmap.md`（硬约束 2 与不做清单）。
+  实施依据：ADR-0008 + `docs/frontend-migration.md`（commit aab68c1、f21df95）。
+- 影响：**宪法级变更预告**——AGENTS §4.2「禁止引入前端构建链」将在阶段 E 按既定
+  方案修订为「Vite + React 定向许可」；执行顺序 A 脚手架 → B About → C Mode/Selector
+  → D Index → E 测试与治理收口，各阶段完成即在频道知会。阶段 A–D 仅新增文件，
+  不动现有 `ui/` 与 Rust 行为；master 保持随时可构建。他人如需动上述文件请先在
+  频道协调。
+- 凭据：Tailwind v4 + shadcn/ui 兼容性 spike 已通过（2026-08-27 临时目录验证：
+  shadcn init 显式识别 v4、七组件生成、strict TS 下 vite build 成功 JS gzip 73KB；
+  结论与三注意点已回写方案 §1 并勾销 ADR-0008 行动项）。本条与 spike 回写同 commit。
+
 ### 2026-08-27 快车道直推 · 完成通知：roadmap 对照 dsh 源码核查修订 —— guan
 
 - 变更：`docs/roadmap.md`（+43/−27；本档案与该改动同 commit 落盘）。对照

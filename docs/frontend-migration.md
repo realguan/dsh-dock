@@ -39,8 +39,14 @@
 
 ### 执行前验证项
 
-- [ ] 在临时目录验证 Tailwind v4 + shadcn/ui 兼容性（`npx shadcn@latest init` 在 Vite + Tailwind v4 项目中是否正常）
-- [ ] 如不兼容，降级 Tailwind v3.4（`tailwind.config.js` 配置，shadcn/ui 完全兼容），ADR-0008 §6 复审条件已覆盖
+- [x] 在临时目录验证 Tailwind v4 + shadcn/ui 兼容性——**2026-08-27 已通过，保留 Tailwind v4，不降级**。证据：`npx shadcn@latest init -y -b radix -p nova` 对 Vite + `tailwindcss@4.3.3` 显式报 `Validating Tailwind CSS. Found v4.`；button/card/dialog/progress/badge/tooltip/separator 七组件全部生成；strict TS 下 `vite build` 成功（JS gzip 73KB，落在 ADR-0008 预估 60–80KB 内）。
+- ~~如不兼容，降级 Tailwind v3.4（`tailwind.config.js` 配置，shadcn/ui 完全兼容），ADR-0008 §6 复审条件已覆盖~~（未触发）
+
+**Spike 带回的三个执行注意点**（Stage A 落地时遵守）：
+
+1. **别名不用 `baseUrl`**：新 TypeScript 已弃用该选项（TS5101 硬错误）；`paths` 以 tsconfig 所在目录为基准即可。
+2. **新版 shadcn CLI 非交互参数**：组件库经 `-b radix` 选定（统一 `radix-ui` 包），预设必须 `-p <name>` 指定否则交互挂起；init 会改写 `src/index.css`。
+3. **剥离预设字体**：preset 会把 Geist 字体 woff2 打进产物（约 30KB×4），与契约区的系统字体栈（PingFang SC 等）冲突——init 后须删除其 `@font-face` / `@theme` 中 `--font-*` 覆盖，恢复系统栈。
 
 ---
 
@@ -796,7 +802,7 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 4. 安装 dev 依赖：`npm install -D tailwindcss @tailwindcss/vite vitest @types/node eslint eslint-plugin-react-hooks typescript-eslint @eslint/js`
 5. 配置 Vite（server.port=1420 + **strictPort: true**，clearScreen=false, envPrefix）；写 package.json scripts：dev/build/typecheck/lint/test
 6. 配置 Tailwind v4（vite 插件 + index.css @import + @theme token；token 即 §3.5 基调值，基调内微调随设计稿迭代）
-7. **验证 shadcn/ui 兼容性**：`npx shadcn@latest init`，如失败降级 Tailwind v3.4
+7. **验证 shadcn/ui 兼容性**：`npx shadcn@latest init`，如失败降级 Tailwind v3.4 → **2026-08-27 已提前通过（见 §1 执行前验证项），保留 v4**；执行时按「别名裸 paths / `-b radix -p <name>` 非交互 / 剥离 Geist 字体」三注意点操作
 8. 按需添加 shadcn/ui 组件：button card dialog progress badge tooltip separator。**toast/tabs/scroll-area 明确缓加**（错误反馈归 ErrorCard、480px 小窗纵排优于 tab、原生滚动够用——裁定时点与理由见 §11）
 9. 配置 React Router（App.tsx，窗口 label 判断 + 路由）
 10. 创建 Zustand stores（bootStore, clientUpdateStore——后者带 TRANSITIONS 纯函数迁移表）
@@ -873,7 +879,7 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 
 | 风险 | 缓解 |
 |:---|:---|
-| Tailwind v4 + shadcn/ui 不兼容 | 阶段 A 第 6 步先验证；不兼容降级 v3.4，ADR-0008 §6 已覆盖 |
+| Tailwind v4 + shadcn/ui 不兼容 | ~~阶段 A 第 6 步先验证；不兼容降级 v3.4~~ **2026-08-27 临时目录 spike 验证通过，风险关闭**（ADR-0008 §6 复审条件保留） |
 | 启动页面状态管理出 bug | bootStore 集中管理，先写 store 和 Vitest 测试再写组件；每写完一个组件手动验证 |
 | React StrictMode 双调用导致重复监听 | 事件总线在 useEffect 中初始化并返回 cleanup |
 | 事件丢失（listen 前 Rust 已发射） | 页面 useEffect 中主动调用 getUpdateStatus/getClientUpdate 获取初始状态 |

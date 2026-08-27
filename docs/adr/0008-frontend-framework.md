@@ -104,7 +104,7 @@
 - AGENTS.md §4.2「禁止前端构建链」约束需要修订，宪法变更需所有协作者知晓。
 
 ### 行动项
-- [ ] 执行前验证 Tailwind v4 + shadcn/ui 兼容性；不兼容则降级 v3.4（负责人：guan）
+- [x] 执行前验证 Tailwind v4 + shadcn/ui 兼容性；不兼容则降级 v3.4（负责人：guan）——2026-08-27 临时目录 spike 通过，保留 v4（证据与执行注意点见 `docs/frontend-migration.md` §1 执行前验证项）
 - [ ] 按 `docs/frontend-migration.md` 执行迁移：脚手架 → About → Mode → Selector → Index → 清理
 - [ ] 修改 AGENTS.md §1（技术栈表）/ §2（目录结构）/ §4.2（禁止项）/ §4.3（UI 规范），新增 §4.4（前端开发规范）
 - [ ] CI 加 node 20+ 步骤（`.github/workflows/build.yml`）
