@@ -136,8 +136,10 @@ pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
         bytes = &bytes[2..];
     }
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
     let mut s = String::from_utf16(&units).ok()?;
     while s.ends_with('\u{0}') {

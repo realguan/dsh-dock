@@ -975,8 +975,7 @@ mod guest_shell_tests {
         // 非交互登录壳（-lc，旧方案）：守卫早退 → .bashrc 未执行
         let lc = run_guest(&home, ". \"$HOME/.bashrc\"", false);
         assert!(
-            lc.as_deref()
-                .map_or(true, |s| !s.contains("BASHRC_SOURCED")),
+            lc.as_deref().is_none_or(|s| !s.contains("BASHRC_SOURCED")),
             "-lc 应被守卫拦截（旧 bug 形态），得到：{lc:?}"
         );
     }

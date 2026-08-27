@@ -153,7 +153,7 @@ fn builtin_node_plan() -> NodePlan {
 /// hex → bytes（小写/大写均可；长度奇数或非法字符 → None）。
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
-    if s.is_empty() || s.len() % 2 != 0 {
+    if s.is_empty() || !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len() / 2)
