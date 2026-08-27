@@ -23,6 +23,7 @@ export const t = {
   // 组件层以 t.error.actions[id] ?? id 兜底。
   error: {
     fallbackTitle: "启动失败",
+    actionFailed: "动作失败",
     actions: {
       retry: "重试",
       upgrade: "升级 DSH 并重试",
@@ -32,14 +33,41 @@ export const t = {
   },
   mode: {
     title: "选择运行环境",
+    subline: "DSH 可以运行在本机，也可以运行在 WSL2 发行版内——随时可从菜单切换",
     local: "本机运行",
-    wsl: "WSL 中运行",
-    setDefault: "设为默认方式",
-    next: "下一步",
+    localDesc: "复用您安装的 Node 与官方 DSH；缺失时自动在线补齐（system → bundle → download）",
+    wsl: "WSL2 内运行",
+    wslDesc: "在 WSL2 发行版内启动 DSH（需 Windows + WSL2，发行版内已装 node 与 dsh）",
+    setDefault: "设为默认打开方式（下次自动使用）",
+    next: "开始",
+    starting: "正在切换…",
+    failed: "环境切换失败",
   },
   selector: {
     title: "选择工作台",
     subtitle: "多个 webUi 工作台并存，选择本次启动进入哪一个",
+    headline: "进入哪个工作台？",
+    subline: "来自你机器上的 DSH 环境 · 选择只影响本次会话",
+    pickHint: "官方 Web 工作台开箱即用；其余为你自定义装配的 webUi 工作台。",
+    launchingPrefix: "正在启动「",
+    launchingSuffix: "」",
+    preparingTitle: "正在准备运行环境",
+    preparingSub: "首次使用需要下载 Node 运行时 · 仅此一次",
+    problemHeadline: "启动遇到问题",
+    // profile 元数据映射：已知名给正式标题/描述，未知名回退 CUSTOM 形态
+    items: {
+      web: { title: "官方 Web 工作台", desc: "DSH 官方维护的 Web 界面", tag: "DEFAULT" },
+    } as Record<string, { title: string; desc: string; tag: string }>,
+    customDesc: "自定义装配的 webUi 工作台",
+    customTag: "CUSTOM",
+    // 顶栏版本芯片短文案
+    chipDshNew: "有新版",
+    chipDshOk: "已是最新",
+    chipDetecting: "检测中",
+    chipCheckFailed: "检测失败",
+    chipClientNew: "客户端有新版",
+    chipClientUpdating: "客户端更新",
+    chipClientUpdatingRun: "客户端更新中…",
   },
   about: {
     title: "关于与更新",
