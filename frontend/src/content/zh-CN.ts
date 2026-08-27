@@ -18,6 +18,13 @@ export const t = {
       "等待工作台就绪",
       "即将进入工作台",
     ],
+    consoleTitle: "启动详情",
+    stRunning: "进行中",
+    stError: "异常",
+    stReady: "就绪",
+    wslOpen: "在 WSL 中打开",
+    wslOpenTip: "在 WSL2 发行版内运行 DSH（需 Windows + WSL2）",
+    wslFailed: "WSL 切换失败",
   },
   // 错误动作文案表：boot:error payload 的 actions[] 只给 id，文案在此映射；
   // 组件层以 t.error.actions[id] ?? id 兜底。

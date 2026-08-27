@@ -364,7 +364,7 @@ export function initEventBus(): () => void {
 }
 ```
 
-**关键**：事件总线仅在 **App 顶层** useEffect 初始化并返回 cleanup——两个窗口各自 runtime 各初始化一份；各页面副作用里**不再重复 initEventBus**（原稿在 BootIndex 中再 init 的写法删除）。React StrictMode 开发环境双调用时靠 cleanup 正确清理，避免重复监听。事件名常量集中定义在 `types/events.ts`，消灭魔法字符串。
+**关键（2026-08-27 阶段 D 修正）**：事件总线**不在 App effect 里初始化**——React 子组件 effect 先于父组件执行，页面播种的 invoke（如 BootIndex 的 `choose_mode` 握手）可能抢在监听挂载之前，启动线程首发射出的事件即被吞掉（旧 `ui/index.html` 用同步 `<script>` 注册监听正是为规避该竞态）。实现：事件总线在 **lib/events.ts 模块加载期**自动装配（`export const eventBusStarted = initEventBus()`），在任何渲染/播种发生前即注册；两个窗口各自 runtime 各一份；应用生命周期内不拆卸，也无 StrictMode 双监听问题。`boot:step` 的真实 payload 为 `{step, state, detail}`（state=pending|running|done|error，非草案的 running 布尔）——store 按真实形状建模。事件名常量集中定义在 `types/events.ts`，消灭魔法字符串。
 
 ### 3.4 组件分层
 

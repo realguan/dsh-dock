@@ -6,7 +6,6 @@ import { useState } from "react"
 import { useNavigate, Navigate } from "react-router-dom"
 import { motion } from "framer-motion"
 import { Laptop, TerminalSquare } from "lucide-react"
-import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
 import { t } from "@/content/zh-CN"
 import { Emblem } from "@/components/layout/Emblem"
@@ -19,8 +18,6 @@ export function BootMode() {
   const navigate = useNavigate()
   const [picked, setPicked] = useState<Mode | null>(null)
   const [setDefault, setSetDefault] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [failed, setFailed] = useState<string | null>(null)
 
   // 非 Windows（含 dev 预览）零 WSL 感知：回启动页，壳按 local 自启
   if (!can.chooseMode) return <Navigate to="/" replace />
@@ -55,7 +52,6 @@ export function BootMode() {
               whileTap={{ scale: 0.985 }}
               onClick={() => {
                 setPicked(mode)
-                setFailed(null)
               }}
               aria-pressed={selected}
               className={`bg-panel rounded-xl border p-4 text-left transition-all ${
@@ -99,29 +95,22 @@ export function BootMode() {
         </label>
         <button
           type="button"
-          disabled={!picked || submitting}
+          disabled={!picked}
+          // 保真旧握手（ui/index.html 注释钉死的竞态规避）：本页不改会话，
+          // 仅携参跳回启动页，由 Bus 注册完毕的 BootIndex 落地 invoke choose_mode。
           onClick={() => {
             if (!picked) return
-            setSubmitting(true)
-            api
-              .chooseMode(picked, setDefault)
-              .then(() => navigate("/", { replace: true }))
-              .catch((e) => {
-                setSubmitting(false)
-                setFailed(String(e instanceof Error ? e.message : e))
-              })
+            navigate(
+              `/?mode=${picked}&default=${setDefault ? "1" : "0"}`,
+              { replace: true },
+            )
           }}
           className="bg-brand rounded-full px-8 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-40"
         >
-          {submitting ? t.mode.starting : t.mode.next}
+          {t.mode.next}
         </button>
       </div>
 
-      {failed && (
-        <p role="alert" className="text-warn mt-4 text-center text-sm">
-          {t.mode.failed}：{failed}
-        </p>
-      )}
     </PageShell>
   )
 }

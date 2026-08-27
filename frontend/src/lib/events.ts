@@ -117,3 +117,10 @@ export function initEventBus(): () => void {
   ]
   return () => unlisteners.forEach((u) => u.then((fn) => fn()))
 }
+
+// ---------- 模块级总线装配 ----------
+// 为什么不放在 React effect 里：React 子组件 effect 先于父组件执行，
+// 「页面播种 invoke」可能抢在「父级挂监听」之前发出首个事件（旧 ui/index.html
+// 用同步 <script> 注册监听正是为了规避该竞态）。模块 import 于任何渲染前求值，
+// 此处注册即最早期；应用生命周期内不需要拆卸，Tauri 窗口关闭即整体回收。
+export const eventBusStarted = initEventBus()

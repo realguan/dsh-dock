@@ -19,10 +19,16 @@ function actionLabel(id: string): string {
 export function ErrorCard({
   payload,
   onReselect,
+  diag = false,
+  index,
 }: {
   payload: BootErrorEvent
   /** 本页本地动作：返回重选（旧页 = location.reload()） */
   onReselect?: () => void
+  /** diag 形态（启动页内嵌）：DIAG 头行 + 日志默认展开；边框收进容器 */
+  diag?: boolean
+  /** diag 头行右侧的 #NN 序号（多次错误自增，由父级计数） */
+  index?: number
 }) {
   const [pending, setPending] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -49,15 +55,32 @@ export function ErrorCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: "easeOut" }}
-      className="border-warn-soft bg-panel mx-auto mt-6 w-full max-w-xl rounded-xl border p-5 shadow-sm"
+      className={
+        diag
+          ? "border-line bg-panel w-full rounded-xl border"
+          : "border-warn-soft bg-panel mx-auto mt-6 w-full max-w-xl rounded-xl border p-5 shadow-sm"
+      }
       role="alert"
     >
-      <div className="flex items-start gap-3">
-        <span className="bg-warn-soft text-warn mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg">
-          <AlertTriangle className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <div className="text-ink text-base font-semibold">{title}</div>
+      {diag && (
+        <div className="border-line text-faint flex items-center gap-2 border-b px-4 py-2 font-mono text-[10px] tracking-[0.14em]">
+          <span>DIAG</span>
+          <span className="text-dim normal-case tracking-normal">{title}</span>
+          <span className="ml-auto tabular-nums">
+            #{typeof index === "number" ? String(index).padStart(2, "0") : "01"}
+          </span>
+        </div>
+      )}
+      <div className="flex items-start gap-3 p-4">
+        {!diag && (
+          <span className="bg-warn-soft text-warn mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg">
+            <AlertTriangle className="size-4" />
+          </span>
+        )}
+        <div className="min-w-0 w-full">
+          {!diag && (
+            <div className="text-ink text-base font-semibold">{title}</div>
+          )}
           {payload.detail && (
             <div className="text-dim mt-1 text-sm break-words">{payload.detail}</div>
           )}
@@ -73,7 +96,7 @@ export function ErrorCard({
               <Button
                 key={a}
                 size="sm"
-                variant={a === "upgrade" ? "default" : "outline"}
+                variant={a === "upgrade" || a === "upgrade_only" ? "default" : "outline"}
                 disabled={pending !== null}
                 onClick={() => run(a)}
               >
@@ -88,9 +111,12 @@ export function ErrorCard({
           </div>
 
           {payload.log && (
-            <details className="group border-line mt-3 rounded-lg border">
+            <details
+              open={diag}
+              className="border-line group mt-3 rounded-lg border"
+            >
               <summary className="text-faint flex cursor-pointer select-none items-center gap-1 px-3 py-2 text-xs">
-                原始日志
+                {diag ? `原始日志 · 尾部 ${payload.log.split("\n").length} 行` : "原始日志"}
                 <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
               </summary>
               <pre className="border-line overflow-x-auto border-t px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">

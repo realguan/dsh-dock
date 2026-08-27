@@ -5,12 +5,11 @@
 // - 主窗口 pathname 路由：release 产物经 tauri get_asset 兜底链可达 /selector
 //   直达（2026-08-27 验证，docs/frontend-migration.md §3.1）。
 //
-// 事件总线仅在此初始化一次（每窗口 runtime 各一份），cleanup 保证
-// StrictMode 双调用不重复监听。label 未就绪时渲染轻量骨架。
+// 事件总线的初始化在 lib/events.ts 模块加载期完成（早于任何渲染与
+// 页面播种 invoke，见该处裁定注释）。label 未就绪时渲染轻量骨架。
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { useEffect, useState } from "react"
 import { Navigate, Route, Routes } from "react-router-dom"
-import { initEventBus } from "@/lib/events"
 import { Emblem } from "@/components/layout/Emblem"
 import { BootIndex } from "@/pages/BootIndex"
 import { BootMode } from "@/pages/BootMode"
@@ -19,11 +18,6 @@ import { About } from "@/pages/About"
 
 export default function App() {
   const [label, setLabel] = useState<string | null>(null)
-
-  useEffect(() => {
-    const dispose = initEventBus()
-    return () => dispose()
-  }, [])
 
   useEffect(() => {
     // label 是同步 getter（@tauri-apps/api v2）；缺失/异常（纯 vite dev 浏览器
