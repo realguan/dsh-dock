@@ -6,8 +6,14 @@
   "build": {
     "devUrl": "http://localhost:1420",
     "frontendDist": "../frontend/dist",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm ci --no-audit --no-fund && npm run build"
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../frontend"
+    },
+    "beforeBuildCommand": {
+      "script": "npm ci --no-audit --no-fund && npm run build",
+      "cwd": "../frontend"
+    }
   },
   "app": {
     "security": {

@@ -67,7 +67,7 @@ dsh-dock/
 │   └── macos-signing.md    # macOS 签名与公证手册
 ├── frontend/               # 壳自带前端（Vite + React；依赖白名单见 §4.4）
 │   ├── package.json        # 前端清单（npm ci；锁文件 package-lock.json）
-│   ├── vite.config.ts      # 端口 1420 strictPort；alias @→src
+│   ├── vite.config.ts      # 端口 1420 strictPort；alias @→src（tauri 钩子显式 cwd="../frontend" 指此目录）
 │   ├── index.html          # SPA 入口（所有窗口同载，React 按窗口 label 路由）
 │   ├── public/mark.svg     # 官方徽章形状源（Emblem 组件 CSS mask 引用）
 │   └── src/

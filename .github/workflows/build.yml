@@ -116,9 +116,10 @@ jobs:
       - name: Build installers
         # Windows runner 默认 shell 是 PowerShell：显式 bash（与 key 检查一致）。
         shell: bash
-        # 2026-08-27 前端迁移：从仓库根调用——beforeBuildCommand 的钩子 cwd 由
-        # tauri-cli 自动发现（含 package.json 的目录，= frontend/）；在 src-tauri
-        # 下调用会因搜不到 package.json 而回退仓库根再跑 npm ci 失败。
+        # 2026-08-27 前端迁移：tauri-cli 跑 hook 前会把进程 cwd 切到 src-tauri
+        # （build.rs set_current_dir），hook 的 script/cwd 均相对该目录——
+        # tauri.conf.json 已显式配置 cwd="../frontend"；自动发现 package.json
+        # 在 Linux 上可能先命中 node-map/（CI 实证失败），不再依赖。
         working-directory: .
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
