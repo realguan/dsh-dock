@@ -32,11 +32,14 @@
   --color-line: #e5e9f1;
   --color-line-soft: #eef1f6;
   --color-ink: #191d27;
-  --color-muted: #626a7a;
+  --color-dim: #626a7a;
   --color-faint: #a0a7b6;
-  --color-accent: #4176e6;
-  --color-accent-deep: #3163cf;
+  --color-brand: #4176e6;
+  --color-brand-deep: #3163cf;
   --color-wash: rgba(65, 118, 230, 0.07);
+  /* 命名裁定（2026-08-27）：shadcn 语义层的 --color-muted/--color-accent 已占用
+     「muted=浅色填充 / accent=hover 底」含义，域 token 改名避免工具类被
+     @theme inline 的后置映射覆盖——灰字用 dim，品牌蓝用 brand。 */
   --color-ok: #2f9e44;
   --color-ok-soft: rgba(47, 158, 68, 0.1);
   --color-warn: #d9480f;
@@ -167,7 +170,7 @@
   background: linear-gradient(
     90deg,
     transparent,
-    var(--color-accent),
+    var(--color-brand),
     #7d9cf2,
     transparent
   );

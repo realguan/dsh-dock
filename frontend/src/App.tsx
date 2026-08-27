@@ -26,13 +26,14 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    // label 是同步 getter（@tauri-apps/api v2）；缺失/异常按主窗口兜底，
-    // 让纯 vite dev 浏览器预览也能渲染。
+    // label 是同步 getter（@tauri-apps/api v2）；缺失/异常（纯 vite dev 浏览器
+    // 预览）按主窗口兜底，可用 ?_label=about 强制路由便于页面级设计走查。
     try {
       const l = getCurrentWindow().label
       setLabel(typeof l === "string" ? l : "main")
     } catch {
-      setLabel("main")
+      const forced = new URLSearchParams(window.location.search).get("_label")
+      setLabel(forced ?? "main")
     }
   }, [])
 

@@ -396,10 +396,10 @@ export function initEventBus(): () => void {
   --color-line: #e5e9f1;
   --color-line-soft: #eef1f6;
   --color-ink: #191d27;
-  --color-muted: #626a7a;
+  --color-dim: #626a7a;      /* 原 muted；shadcn 语义层占用该名后改名（2026-08-27） */
   --color-faint: #a0a7b6;
-  --color-accent: #4176e6;
-  --color-accent-deep: #3163cf;
+  --color-brand: #4176e6;   /* 原 accent；同上改名 */
+  --color-brand-deep: #3163cf;
   --color-wash: rgba(65, 118, 230, 0.07);
   --color-ok: #2f9e44;
   --color-ok-soft: rgba(47, 158, 68, 0.1);
