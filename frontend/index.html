@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DSH Dock</title>
+    <!-- 首帧保险：CSS 模块加载前的底色 = @theme --color-bg，与原生窗口
+         background_color (#f9fafb) 同调，避免冷启动闪色。 -->
+    <style>
+      html {
+        background: #f7f8fb;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

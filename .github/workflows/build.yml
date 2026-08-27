@@ -89,6 +89,15 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # 前端构建（2026-08-27 前端迁移，ADR-0008）：beforeBuildCommand 钩子会跑
+      # npm ci && npm run build；锁文件 = frontend/package-lock.json（node 22 LTS）。
+      - name: Setup node for frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       # 注意：updater 签名需要 TAURI_SIGNING_PRIVATE_KEY（已在上一步设置到 env）。
       # 有 key → 正常构建（含 .sig）；无 key（fork PR 无 secrets）→ `--no-sign`
       # 跳过签名（tauri-cli 在 pubkey 配置存在且无私钥时会直接报错——刻意保护，
@@ -96,7 +105,10 @@ jobs:
       - name: Build installers
         # Windows runner 默认 shell 是 PowerShell：显式 bash（与 key 检查一致）。
         shell: bash
-        working-directory: src-tauri
+        # 2026-08-27 前端迁移：从仓库根调用——beforeBuildCommand 的钩子 cwd 由
+        # tauri-cli 自动发现（含 package.json 的目录，= frontend/）；在 src-tauri
+        # 下调用会因搜不到 package.json 而回退仓库根再跑 npm ci 失败。
+        working-directory: .
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             cargo tauri build

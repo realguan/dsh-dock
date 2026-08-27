@@ -4,7 +4,10 @@
   "version": "0.4.7",
   "identifier": "io.github.realguan.dsh-dock",
   "build": {
-    "frontendDist": "../ui"
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../frontend/dist",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm ci --no-audit --no-fund && npm run build"
   },
   "app": {
     "security": {

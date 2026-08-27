@@ -525,8 +525,9 @@ fn launch_executor_after_probe(
         }
         Ok(crate::executor::ProbeOutcome::NeedsProfile(profiles)) => {
             emit_step(&app, 2, "running", "选择器：多个 webUi 工作台");
+            // 2026-08-27 前端迁移：selector 由 SPA pathname 路由承载（§3.1）
             let _ = state.window.eval(&format!(
-                "location.assign('selector.html?profiles={}')",
+                "location.assign('/selector?profiles={}')",
                 profiles.join(",")
             ));
             *state.pending.lock().unwrap() = Some(executor);
@@ -595,8 +596,8 @@ fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathB
     }
 }
 
-/// 模式切换（菜单/托盘/顶栏共用）：停掉当前会话（幂等）→ 写默认 → 按新模式启动。
-/// 切换失败或 probe 失败会把主窗口拉回 index.html（壳错误卡在那里渲染）。
+/// 模式切换（菜单/托盘共用）：停掉当前会话（幂等）→ 写默认 → 按新模式启动。
+/// 切换失败或 probe 失败会把主窗口拉回 SPA 根路径 /（壳错误卡在那里渲染）。
 fn switch_mode(
     app: tauri::AppHandle,
     state: Arc<ShellState>,
@@ -612,7 +613,7 @@ fn switch_mode(
         },
     ) {
         emit_boot_error(&app, &e, "");
-        let _ = state.window.eval("location.assign('index.html')");
+        let _ = state.window.eval("location.assign('/')");
         return;
     }
     *state.active_mode.lock().unwrap() = Some(mode);
@@ -621,7 +622,7 @@ fn switch_mode(
     std::thread::spawn(move || {
         // 菜单切换时页面可能已在工作台（remote，不渲染壳错误卡）：先回启动页，
         // 新会话就绪后 run_executor_session 会把主窗口导航过去。
-        let _ = state.window.eval("location.assign('index.html')");
+        let _ = state.window.eval("location.assign('/')");
         match executor_for_mode(mode, &app, data_dir) {
             Ok(executor) => launch_executor_after_probe(state, app, executor),
             Err(e) => emit_boot_error(&app, &e, ""),
@@ -646,8 +647,8 @@ fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 首次运行选择落地（mode.html → index.html?mode=…&default=…）：
-/// 写默认（可选）→ 按所选模式启动。
+/// 首次运行选择落地（壳运行环境页 → 写默认（可选）→ 按所选模式启动；
+/// 2026-08-27 前端迁移后页面为 SPA /mode 路由，回跳主窗口经 React Router）。
 #[tauri::command]
 fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result<(), String> {
     let m = settings::Mode::parse(&mode).ok_or_else(|| format!("未知运行环境：{mode}"))?;
@@ -800,17 +801,17 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
     // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
     // （AGENTS：跨平台语义显式，不用前端猜 UA），随窗口每次页面加载的
-    // document-start 生效（mode.html / index.html 共用主窗口）。
+    // document-start 生效（主窗口全部壳页共用）。2026-08-27 前端迁移：扩为
+    // { os, wsl } 对象（frontend-migration §5.2），os 取 std::env::consts::OS。
     let platform_script = format!(
-        "window.__DSH_PLATFORM__ = {{ wsl: {} }};",
+        "window.__DSH_PLATFORM__ = {{ os: '{}', wsl: {} }};",
+        std::env::consts::OS,
         if cfg!(windows) { "true" } else { "false" }
     );
 
-    tauri::WebviewWindowBuilder::new(
-        app,
-        "main",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
+    // 2026-08-27 前端迁移：所有窗口加载 SPA 根路径，React 按窗口 label 路由
+    // （frontend-migration §3.1）；子页面经 pathname 可达（get_asset 兜底链）。
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
     .title("DSH Dock")
     .inner_size(1280.0, 820.0)
     .min_inner_size(960.0, 640.0)
@@ -1519,7 +1520,8 @@ fn open_about_window(app: &tauri::AppHandle) {
         let builder = tauri::WebviewWindowBuilder::new(
             &handle,
             "about",
-            tauri::WebviewUrl::App("about.html".into()),
+            // 2026-08-27 前端迁移：与主窗口同载 SPA 根，React 按 label=about 渲染
+            tauri::WebviewUrl::App("/".into()),
         )
         .title("关于")
         // 480x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；

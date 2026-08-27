@@ -1,0 +1,183 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* ---------------- 变体登记 ---------------- */
+
+/* 暗色主题仅技术预留（§0 基调裁定：明暗不在本次改动范围）；
+   落地形态 = 追加 .dark 选择器覆盖下方 :root 语义变量，组件零改动。 */
+@custom-variant dark (&:is(.dark *));
+
+/* radix-nova 预设组件用到的 data-* 变体（dialog/tooltip 过渡态），从
+   shadcn/tailwind.css 仅内联此两条——避免为此拖入整个 shadcn CLI 包。 */
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+
+/* ---------------- dsh 设计基调（契约区，frontend-migration §3.5） ----------------
+   ↓↓↓ 目标值 2026-08-27 逐变量对照 ui/assets/app.css 校对；与原生窗口背景
+   (#f9fafb) 一致，冷启动无闪色。基调内色彩微调随设计稿迭代；整组换底色/
+   切换明暗属基调变更，若将来立项须同步 lib.rs 的 background_color。 */
+@theme {
+  --color-bg: #f7f8fb;
+  --color-panel: #ffffff;
+  --color-line: #e5e9f1;
+  --color-line-soft: #eef1f6;
+  --color-ink: #191d27;
+  --color-muted: #626a7a;
+  --color-faint: #a0a7b6;
+  --color-accent: #4176e6;
+  --color-accent-deep: #3163cf;
+  --color-wash: rgba(65, 118, 230, 0.07);
+  --color-ok: #2f9e44;
+  --color-ok-soft: rgba(47, 158, 68, 0.1);
+  --color-warn: #d9480f;
+  --color-warn-soft: rgba(217, 72, 15, 0.08);
+  --color-badge-a: #1d2637;
+  --color-badge-b: #0e1524;
+
+  /* 契约区：系统字体栈（无外部字体文件——壳运行时不发起新网络请求） */
+  --font-sans:
+    -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------------- shadcn/ui 语义层（映射到 dsh 基调值） ---------------- */
+:root {
+  --background: #f7f8fb;
+  --foreground: #191d27;
+  --card: #ffffff;
+  --card-foreground: #191d27;
+  --popover: #ffffff;
+  --popover-foreground: #191d27;
+  --primary: #4176e6;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f6;
+  --secondary-foreground: #191d27;
+  --muted: #eef1f6;
+  --muted-foreground: #626a7a;
+  --accent: rgba(65, 118, 230, 0.07);
+  --accent-foreground: #191d27;
+  --destructive: #d9480f;
+  --destructive-foreground: #ffffff;
+  --border: #e5e9f1;
+  --input: #e5e9f1;
+  --ring: #4176e6;
+  --radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* ---------------- 无法用 Tailwind 表达的品牌/动效原语 ---------------- */
+
+/* 官方徽章形状源：CSS mask 上白（AGENTS §3 品牌规则——页面不允许出现
+   第二份鲸鱼 path 或第二种颜色，一律经本 mask 引用 /mark.svg）。 */
+.emblem::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  -webkit-mask: url("/mark.svg") center / contain no-repeat;
+  mask: url("/mark.svg") center / contain no-repeat;
+  background: white;
+}
+
+/* 入场上行（自旧壳 @keyframes rise 迁移；曲线一致） */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-rise {
+  animation:
+    rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* 版本芯片「有新版」圆点呼吸（自 ui/index.html vchip .dot.new 迁移） */
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+.animate-blink {
+  animation: blink 1.4s steps(2, start) infinite;
+}
+
+/* 进行中动画条：步骤 running 时的生命感；下载条出现时让位
+   （自 ui/assets/app.css .pulse-bar 迁移）。 */
+.pulse-bar {
+  position: relative;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-line-soft);
+  border: 1px solid var(--color-line);
+  overflow: hidden;
+}
+.pulse-bar-fill {
+  height: 100%;
+  width: 38%;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-accent),
+    #7d9cf2,
+    transparent
+  );
+  animation: pulse-slide 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes pulse-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
