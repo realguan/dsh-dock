@@ -32,6 +32,20 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 D 落地（1008cd6） —— guan
+
+- 变更：`pages/BootIndex.tsx` 整页、`components/boot/{BootStep,BootTimeline}.tsx`
+  新增、ErrorCard diag 形态、`lib/events.ts` 总线装配时机、`pages/BootMode.tsx`
+  握手时序、方案文档 §3.3（总线裁定同步）。**四页至此全部迁入 React**。
+- 影响：一处时序裁定周知——事件总线要求在**页面任何播种 invoke 之前**注册；
+  实现为模块加载期装配（详情见方案 §3.3 与 lib/events.ts 注释）。stage B 中
+  BootMode「先 invoke 再导航」的写法本轮已更正为旧握手（携参回启动页由
+  BootIndex 落地）。
+- 凭据：typecheck/lint/build 全绿；release 冷启动事件链全通（日志钉板）；
+  BootIndex 静态帧经 dev 预览核对；下载条/错误卡的实机触发依赖特定失败路径，
+  逐行对照旧码迁移（已复核）。阶段 E 前 master 中间态照旧：壳页面功能已全，
+  待删 `ui/` 与宪法修订。
+
 ### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 C 落地（d780855） —— guan
 
 - 变更：`frontend/src/pages/{BootMode,BootSelector}.tsx` 整页、
