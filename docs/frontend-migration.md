@@ -788,6 +788,16 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 - [ ] 品牌红线抽查：所有徽章实例均由 Emblem 组件渲染官方 mark.svg 几何（CSS mask 上白），无第二份 path、无自造图形
 - [ ] 无外部网络资源（任何字体/图库/CDN 一律本地打包或系统字体栈，壳运行时不发起新网络请求）
 
+### 事件总线（2026-08-27 实机回归新增）
+- [ ] **构建产物含事件监听**：`grep -c "app:update" frontend/dist/assets/*.js` ≥ 1
+  （boot:step / boot:progress / boot:update / boot:error 同查）。经验教训：`lib/events.ts`
+  靠 `export const eventBusStarted = initEventBus()` 在模块加载期自装配，但若没有任何
+  运行时 import 锚点，Vite 树摇会把它整体排除出 bundle——v0.5.0 产物即踩此坑
+  （关于页「检查更新」点击无反应：invoke 成功、Rust 回推 app:update，但无人监听；
+  页面显示的「已是最新」全部来自进入时的播种 invoke，恰好掩盖了链路已断）。
+  现以 `main.tsx` 顶部副作用 import 为锚点。纯 store 单测测不出此类「装配丢失」，
+  产物级 grep 是最小可执行回归。
+
 ---
 
 ## 10. 执行步骤
