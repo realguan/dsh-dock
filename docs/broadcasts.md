@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-08-27 补记 · v0.5.0 发布中断修复（Ubuntu CI 失败 → 重发） —— guan
+
+- 变更：`915657f`（冻结期 fix）—— beforeBuildCommand 钩子 cwd 显式化
+  （tauri.conf.json ScriptWithOptions `cwd="../frontend"`），build.yml/AGENTS
+  注释同步；`v0.5.0` tag 已 force 迁移指向该修复（原 tag run 全失败、无任何
+  产物/Release，无污染可追溯亏损）。
+- 根因（CI 实证两连修）：① tauri-cli「自动发现含 package.json 目录」深度遍历
+  在 Linux ext4 目录序下可能先命中 `node-map/` → npm ci 找不到 lockfile（本地
+  APFS 碰巧命中 frontend/，阶段 A 的验证结论被事实击穿）；② 显式 cwd 相对基准
+  实为 **src-tauri**（build.rs `set_current_dir(dirs.tauri)`），首修用的
+  `frontend/` 本地复现 No such file 后改为 `../frontend` 复测通过。
+- 影响：仅发布链路，不触运行时行为——macOS/Windows 两 job 原 run 继续走完
+  但其构建内容同构（hook 修复对三平台同效），三平台产物仍以重发 run 为准。
+  经验已落档：**tauri 钩子 cwd 永远相对 src-tauri 且必须显式**，勿复信自动发现。
+
 ### 2026-08-27 发版事项 · v0.5.0 发布开始 —— guan
 
 - 变更：`chore: 版本 0.5.0（…整批提交）`——tauri.conf.json / Cargo.toml /
