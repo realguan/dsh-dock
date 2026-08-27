@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：Now 阶段收口（4.1 工程化基线 + 4.2 updater 测试）—— guan
+
+- 变更：六连提交——`bd94596` fix(clippy) 全部 17 处警告清零（关键：
+  shell.rs `floor_char_boundary` 击穿 rust-version=1.77.2 的 MSRV 承诺，
+  CI 全用最新 stable 故未暴露）；`dd521d1` style 全仓 fmt 归一
+  （9 文件 168+/147- 纯机械，与 clippy 修复分仓提交）+ 落地仅锁 edition 的
+  `rustfmt.toml`；`9029ebe` chore(rust)；`10e0957` ci 三平台
+  fmt --check / clippy -D warnings 闸门 + ubuntu coverage job
+  （cargo-llvm-cov 出 lcov，先出数不定阈值）；`5417987` test(updater)
+  六条纯函数测试；docs 提交（见下）。
+- **宪法级改动（本次知会）**：① AGENTS §1 Rust 行——移除 `rust-version`
+  基线，**Rust 工具链跟随最新 stable**（2026-08-27 维护者裁定：不设 MSRV；
+  上限纪律不变：CI @stable 自动跟新）；② AGENTS §1 Lint/Format 段改写为
+  已建基线状态；③ AGENTS §5 updater 待补条目改为已覆盖表述；
+  ④ AGENTS **新增 §8 第 7 条「驳回不合理的规则」**——AI 判定规范与现实
+  冲突/自相矛盾/失效时应停手提请驳回与修订（举证义务在提请方），
+  不得以变形实现绕行；顺从≠忠诚，变形合规比违规更危险。
+- 影响：CI 首跑新闸门有红的风险已用本地预演对冲（本机 1.98 三道全绿）；
+  Next 阶段（4.3 Profile 管理器）进入条件满足，开工前先做两个前置 spike。
+- 凭据：本地 rustc 1.98.0 下 fmt --check / clippy --all-targets -D warnings /
+  cargo test 95 绿；fmt 与 clippy 两类 diff 分仓提交均经人肉复核。
+
 ### 2026-08-27 发版事项 · v0.5.1 三平台验收通过，冻结期解除 —— guan
 
 - 确认：tag run `33049383090` 三平台 job 与 release job 全部 success；Release

@@ -1,7 +1,8 @@
 # DSH Dock 产品路线图
 
 > 状态：活文档，随阶段退出、关键数据更新、资源变化或风险暴露时重排。
-> 最后更新：2026-08-27（对照 dsh 源码 v0.1.1-rc.2 逐条核查，修订事实表与各行动项）
+> 最后更新：2026-08-27（对照 dsh 源码 v0.1.1-rc.2 逐条核查，修订事实表与各行动项；
+> 同日 Now 阶段收口：4.1 工程化基线 ✅ / 4.2 updater 测试 ✅，Next 进入条件满足）
 > 适用版本：v0.5.0 起
 
 ## 1. 背景与定位
@@ -92,11 +93,14 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的桌面终端——一个极小的 Tauri
 
 ## 4. Roadmap
 
-### Now — 夯实基础（当前阶段）
+### Now — 夯实基础（✅ 已完成，2026-08-27）
 
-> 阶段目标：建立工程化基线，补齐测试覆盖，为后续大规模管理功能开发铺路。WSL 实机验证已完成（见上方「已完成」）。
+> 阶段目标已达成：工程化基线建立（fmt/clippy 三平台闸门 + 覆盖率基线 job）、
+> updater 纯逻辑测试补齐。WSL 实机验证已完成（见上方「已完成」）。
+> **Next 阶段进入条件满足**——前置 spike（pnpm 转发链可用性 / profile 引用清点）
+> 为进入 4.3 前的首个动作。以下两节保留原计划文本供追溯。
 
-#### 4.1 工程化基线（rustfmt + clippy + 覆盖率）
+#### 4.1 工程化基线（rustfmt + clippy + 覆盖率）✅
 
 | 字段 | 内容 |
 |:---|:---|
@@ -106,9 +110,10 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的桌面终端——一个极小的 Tauri
 | **依赖** | 无 |
 | **结果信号** | CI 新增检查步骤全绿；覆盖率基线数据产出 |
 | **退出条件** | CI 三平台 fmt/clippy/test 全绿，覆盖率基线报告可查 |
+| **落地记录** | commit `bd94596`（clippy 归零）/ `dd521d1`（全仓 fmt 归一 + rustfmt.toml 锁 edition）/ `9029ebe`（Rust 基线改跟随最新 stable，移除 rust-version）/ `10e0957`（CI 闸门 + coverage job） |
 | **重排触发器** | 若 `cargo fmt` 产生不可控的全仓 diff，暂停并评估是否需要分阶段格式化 |
 
-#### 4.2 updater.rs 测试补充
+#### 4.2 updater.rs 测试补充 ✅
 
 | 字段 | 内容 |
 |:---|:---|
@@ -118,6 +123,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的桌面终端——一个极小的 Tauri
 | **依赖** | 无 |
 | **结果信号** | updater.rs 新增测试全绿 |
 | **退出条件** | 状态机和事件过滤逻辑有测试覆盖 |
+| **落地记录** | commit `5417987`——六条纯函数测试（serde 往返+phase 词形 / None 省略 / 前向兼容 / Default=Idle / 事件目标↔capability 双向 / 事件名跨语言对齐）；`set_state` 目标窗提为 `UPDATE_EVENT_TARGETS` 常量；真实 download/install 保持手动验证 |
 | **重排触发器** | 无 |
 
 ---

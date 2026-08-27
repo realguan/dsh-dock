@@ -26,7 +26,7 @@ system → bundle → download；Node 版本经签名映射包热升级，不发
 | 层 | 选型 | 版本锚点 |
 |:---|:---|:---|
 | 桌面框架 | Tauri v2（Rust 后端 + 系统 WebView） | tauri crate `2`；**tauri-cli 必须同代 2.11.x**（CI env `TAURI_CLI_VERSION=2.11.4`，bundler 与 crate 不同代会产物补丁失败） |
-| Rust | edition 2021 | `rust-version = "1.77.2"`（Cargo.toml）；CI 用 stable toolchain |
+| Rust | edition 2021 | **无 MSRV 下限**（2026-08-27 维护者裁定：`rust-version` 已移除，工具链跟随最新 stable——本机与 CI 均按最新 stable 为准，当前 1.98） |
 | 序列化 | serde / serde_json | `1` |
 | HTTP 客户端 | ureq（阻塞式，仅后台线程） | `2` |
 | 签名验证 | ed25519-dalek（仅 verify 路径） | `2` |
@@ -46,10 +46,11 @@ system → bundle → download；Node 版本经签名映射包热升级，不发
   Linux WebKitGTK）；前端开发需 node ≥20 + npm（`cd frontend && npm ci` 后
   `npm run dev/build/typecheck/lint/test`），Rust 侧开发不变。
   node-map 发布流程（`node-map/scripts/sign.mjs`）同样需要 node。
-- Lint/Format：当前**无** rustfmt.toml / clippy.toml / rust-toolchain 文件
-  （`cargo fmt` 走默认配置）。`[待补充]` 建议提交一份锁定 edition 风格的
-  `rustfmt.toml` + CI 加 `cargo fmt --check` / `cargo clippy -D warnings`，
-  落地前以「不引入全仓格式化 diff」为先。
+- Lint/Format：**已建基线（roadmap 4.1，2026-08-27 落地）**——`rustfmt.toml`
+  仅锁 `edition = "2021"`（其余走默认配置；改动它=全仓 diff，改前须公共频道
+  知会）；CI 三平台跑 `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`
+  闸门 + ubuntu 单独的 cargo-llvm-cov 覆盖率 job（先出数不定阈值）。
+  存量已在接线前归零（全仓 fmt 归一 + clippy 清零各一笔独立提交）。
 
 ## 2. 目录结构约定
 
@@ -209,9 +210,13 @@ dsh-dock/
 - **前端（Vitest）**：`cd frontend && npm run test`——覆盖格式化 / 速度采样 /
   步骤推演 / 更新状态机迁移等纯逻辑（现状 4 文件 34 用例，随逻辑演进扩展）；
   不测 UI 渲染与 Tauri 事件（环境不可用，手动验证走 frontend-migration.md §9）。
-- `[待补充]` 覆盖率目标与工具（建议 `cargo-llvm-cov` 接入 CI，先出基线再定阈值）。
-- `[待补充]` `updater.rs` 当前无测试（tauri-plugin-updater 桥接层，依赖运行时环境）；
-  补测前至少保证改动经 `cargo tauri build` + 手动「检查更新」路径验证。
+- `[待补充]` 覆盖率目标与阈值——基线工具已接入（CI coverage job 出 lcov artifact，
+  roadmap 4.1），攒够数据后另定阈值。
+- `updater.rs` 纯逻辑已有测试覆盖（roadmap 4.2，2026-08-27）：serde 全变体往返 /
+  phase 词形 / None 字段省略 / 默认态 / 事件目标窗口 ↔ capability 双向契约 /
+  事件名跨语言对齐六条；真实 download/install 路径仍走手动验证
+  （改动经 `cargo tauri build` + 实机「检查更新」链路确认），链路有
+  tracing 观测日志可事后定位。
 
 ## 6. 存储与生命周期
 
@@ -291,6 +296,11 @@ dsh-dock/
    `docs/broadcasts.md`（频道留不住，落盘才存在）。
 6. **不确定就问**：逻辑归属（壳 vs 打包侧）、契约影响面、是否踩本文件红线——
    问人，不猜。
+7. **驳回不合理的规则（2026-08-27 维护者授权）**：AI 判定某规范与现实冲突、
+   自相矛盾或已失效时——如「声明旧 MSRV 却全程用新版工具链编译」——应当
+   停手向维护者**提出驳回与修订建议**，经裁定后修规则；不得机械执行产出
+   变形实现绕行。提请方承担举证：写清冲突点、影响面与建议修订文本。
+   顺从 ≠ 忠诚，变形合规比违规更危险（它把矛盾埋进代码）。
 
 ## 9. 关键决策记录索引
 
