@@ -32,6 +32,20 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 B 落地（5ce1296） —— guan
+
+- 变更：`frontend/src/components/about/`（新建四组件）、`pages/About.tsx` 整页、
+  `content/zh-CN.ts` 文案扩展、`index.css` token 改名、`App.tsx` 预览钩子、
+  方案文档 §3.5 同步。关于窗口自旧 `ui/about.html` 完整迁入 React。
+- 影响：仅周知 + 一处 token 命名裁定——`--color-muted/--color-accent` 与
+  shadcn 语义层重名导致工具类被覆盖（实机截图发现文字近白），域 token 更名
+  **dim / brand**；后续页面（阶段 C/D）直接用新名。master 中间态照旧：壳骨架页
+  渐次回填，阶段 E 收口删 `ui/`。
+- 凭据：typecheck/lint/build 全绿（gzip 137KB，<500KB 复审线）；release 实机
+  截图验证整链路（自动首查→upToDate、三维度真实数据、工作台地址注入）；
+  配色修复以构建产物 CSS 钉板（`.text-dim{color:var(--color-dim)}` 解析唯一，
+  内联映射机制反向解释原 bug）；本地 release 产物已重建包含修复。
+
 ### 2026-08-27 补记 · 阶段 A 目视验证完成（步骤 20/21 清账） —— guan
 
 - 变更：`docs/frontend-migration.md` §3.1 一处标注（钉板句从「待复核」改为
