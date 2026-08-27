@@ -27,10 +27,16 @@ use crate::ShellState;
 /// 二进制下载 URL 由 latest.json 内联给出（绝对 github.com URL），需在下载失败时改写。
 const GITHUB_MIRROR_PREFIX: &str = "https://gh-proxy.com/";
 
+/// `app:update` 事件的合法目标窗口（roadmap 4.2 测试锚定此契约）：
+/// 壳自带窗口 only——dsh Web UI 是 remote origin，壳事件不流经第三方内容
+/// （宪法 §7 最小面纪律）。与 capabilities/default.json 的 windows 列表
+/// 交叉验证见 tests::update_event_targets_are_capability_windows。
+const UPDATE_EVENT_TARGETS: [&str; 2] = ["main", "about"];
+
 /// 自动更新状态机（前端只读；Rust 侧唯一写者）。
 /// 状态推进：idle → checking → available(latest/) | upToDate(latest/) | failed(msg)
 ///          → downloading(progress) → installing → relaunching → done(version)
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum ClientUpdate {
     #[default]
@@ -293,7 +299,7 @@ fn set_state(state: &Arc<ShellState>, app: &tauri::AppHandle, value: ClientUpdat
     use tauri::Emitter;
     tracing::info!("客户端更新状态 → {:?}", value);
     *state.client_update.lock().unwrap() = Some(value.clone());
-    for label in ["main", "about"] {
+    for label in UPDATE_EVENT_TARGETS {
         if let Some(win) = app.get_webview_window(label) {
             let _ = win.emit("app:update", value.clone());
         }
@@ -328,5 +334,142 @@ mod tests {
         // github.com 本仓库但非 release 路径 → None
         let repo_root = tauri::Url::parse("https://github.com/realguan/dsh-dock").unwrap();
         assert!(mirror_download_url(&repo_root).is_none());
+    }
+
+    // ---- roadmap 4.2：ClientUpdate 状态机与事件目标窗口 ----
+
+    /// 全变体 serde 往返 + `phase` 词形锚定（tag="phase" + camelCase 是
+    /// 前后端契约：frontend/src/lib/events.ts 的 KNOWN_PHASES 与 lib.rs 事件
+    /// 均以此匹配，词形漂移 = 静默断链，必须在此钉死）。
+    #[test]
+    fn client_update_serde_round_trip_all_variants() {
+        let cases: Vec<(ClientUpdate, &str)> = vec![
+            (ClientUpdate::Idle, "idle"),
+            (ClientUpdate::Checking, "checking"),
+            (
+                ClientUpdate::Available {
+                    latest: Some("0.6.0".into()),
+                    notes: Some("release notes".into()),
+                },
+                "available",
+            ),
+            (ClientUpdate::UpToDate { latest: None }, "upToDate"),
+            (
+                ClientUpdate::Downloading {
+                    current: Some(1024),
+                    total: None,
+                },
+                "downloading",
+            ),
+            (ClientUpdate::Installing, "installing"),
+            (ClientUpdate::Relaunching, "relaunching"),
+            (
+                ClientUpdate::Done {
+                    version: "0.6.0".into(),
+                },
+                "done",
+            ),
+            (
+                ClientUpdate::Failed {
+                    message: "x".into(),
+                },
+                "failed",
+            ),
+        ];
+        for (value, phase) in cases {
+            let json = serde_json::to_value(&value).unwrap();
+            assert_eq!(
+                json.get("phase").and_then(|p| p.as_str()),
+                Some(phase),
+                "phase 词形漂移：{json}"
+            );
+            assert_eq!(
+                serde_json::from_value::<ClientUpdate>(json).unwrap(),
+                value,
+                "{phase} 往返失真"
+            );
+        }
+    }
+
+    /// `skip_serializing_if` 契约：None 字段不出现——payload 保持最小形态，
+    /// 前端 normalize 的「缺字段补默认」依赖这一点。
+    #[test]
+    fn none_fields_are_omitted_from_payload() {
+        let json = serde_json::to_value(ClientUpdate::Available {
+            latest: None,
+            notes: None,
+        })
+        .unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(!obj.contains_key("latest"));
+        assert!(!obj.contains_key("notes"));
+        // 对照组：Downloading 未跳过字段带值时正常出现
+        let json = serde_json::to_value(ClientUpdate::Downloading {
+            current: Some(7),
+            total: Some(100),
+        })
+        .unwrap();
+        assert_eq!(json["current"], 7);
+        assert_eq!(json["total"], 100);
+    }
+
+    /// 前向兼容：未知字段忽略（壳先升级新增字段时旧前端侧不受影响，
+    /// 反向同理——serde 默认行为在此显式钉死，防止未来加 deny_unknown_fields）。
+    #[test]
+    fn deserialize_tolerates_unknown_fields() {
+        let v: ClientUpdate =
+            serde_json::from_str(r#"{"phase":"done","version":"1.2.3","futureField":true}"#)
+                .unwrap();
+        assert_eq!(
+            v,
+            ClientUpdate::Done {
+                version: "1.2.3".into()
+            }
+        );
+    }
+
+    /// Default 派生锚定第一变体 Idle：进程冷启动即「从未检查过」，前端据
+    /// 此决定是否自动首查（About 页语义），默认态改变会静默破坏该链路。
+    #[test]
+    fn default_is_idle() {
+        assert_eq!(ClientUpdate::default(), ClientUpdate::Idle);
+    }
+
+    /// 事件目标窗口 ↔ capability 双向契约：
+    /// 发送列表必须是常量 ["main", "about"]（remote dsh 页永不收壳事件），
+    /// 且两窗口都在 capabilities/default.json 的 windows 白名单里（漏登记 =
+    /// 该窗口收不到事件，宪法 §7「三处同步」的事件面版本）。
+    #[test]
+    fn update_event_targets_are_capability_windows() {
+        assert_eq!(UPDATE_EVENT_TARGETS, ["main", "about"]);
+        let caps: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let windows = caps["windows"].as_array().expect("windows 列表");
+        for label in UPDATE_EVENT_TARGETS {
+            assert!(
+                windows.iter().any(|w| w.as_str() == Some(label)),
+                "窗口 {label} 未在 capabilities windows 登记"
+            );
+        }
+    }
+
+    /// `app:update` 事件名与前端 EV 常量的跨语言契约：events.ts 里必须存在
+    /// 同名字符串（词形漂移 = 监听落空，v0.5.0 断链事故的防回归位）。
+    #[test]
+    fn app_update_event_name_matches_frontend_constant() {
+        // 字面量在 types/events.ts 的 EV 常量表（lib/events.ts 只 import 消费）
+        const FRONTEND_EVENTS_TS: &str = include_str!("../../frontend/src/types/events.ts");
+        for ev in [
+            "app:update",
+            "boot:step",
+            "boot:update",
+            "boot:error",
+            "boot:progress",
+        ] {
+            assert!(
+                FRONTEND_EVENTS_TS.contains(&format!("\"{ev}\"")),
+                "前端事件常量缺失：{ev}"
+            );
+        }
     }
 }
