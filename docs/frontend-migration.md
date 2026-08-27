@@ -184,7 +184,7 @@ export default function App() {
 
 mode 页面跳转：原 `location.assign('index.html?mode=...&default=...')` 改为 `navigate('/?mode=...&default=...')`（React Router，在 BootMode 组件内处理）。
 
-**生产可用性依据（2026-08-27 已验证）**：tauri 2.11.5 内嵌资产解析链为「精确路径 → `{path}.html` → `{path}/index.html` → 兜底 `index.html`」（tauri crate `src/manager/mod.rs` 的 `get_asset`），query/fragment 剥离后匹配——release 包内 pathname 路由可达；dev 下由 Vite historyApiFallback 兜底。此结论在阶段 A 以 release 产物实测复核一次（见 §10 步骤 20），作为 SPA fallback 实机证据钉板。
+**生产可用性依据（2026-08-27 已验证）**：tauri 2.11.5 内嵌资产解析链为「精确路径 → `{path}.html` → `{path}/index.html` → 兜底 `index.html`」（tauri crate `src/manager/mod.rs` 的 `get_asset`），query/fragment 剥离后匹配——release 包内 pathname 路由可达；dev 下由 Vite historyApiFallback 兜底。此结论已于 **2026-08-27 在 release 产物实机钉板复核通过**（临时第二 profile 触发 `location.assign('/selector…')`，主窗口渲染 BootSelector 页；about 窗口 label 路由同批验证），复检记录见 broadcasts.md 同日条目。
 
 **导航与状态生命周期（重要修正）**：Rust 侧跳转（`location.assign('/selector…')`）与 mode 页回跳都是**整页重载**，Zustand 内存态不会跨这些导航存活。「组件复用」指 DownloadProgress/ErrorCard/PulseBar 的代码级复用；每次进入页面 store 全新创建，靠 `get_update_status` / `get_client_update` 重新播种 + 事件流持续驱动。原稿「bootStore 在 BootIndex/BootSelector 间共享状态」的表述作废（§9 验收项同步改写）。
 

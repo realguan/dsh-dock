@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-08-27 补记 · 阶段 A 目视验证完成（步骤 20/21 清账） —— guan
+
+- 变更：`docs/frontend-migration.md` §3.1 一处标注（钉板句从「待复核」改为
+  「已复核通过」）。无代码改动。
+- 影响：仅周知——release 产物内以临时第二 webUi profile 触发
+  `/selector` 直达，**SPA fallback 实机命中**（主窗口渲染 BootSelector 页，
+  步骤 21 钉板完成）；about 窗口经菜单打开，label 路由渲染 About 页（步骤 20）。
+  临时 fixture（仅含 package.json 的 `~/.dsh/profiles/probe-dual-webui`）
+  已删除，真实环境零残留。
+- 凭据：实机截图两帧（主窗口 /selector 内容 + 关于窗口内容）；进程已退出。
+
 ### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 A 落地（a9c1656） —— guan
 
 - 变更：`frontend/`（新建 41 文件）、`src-tauri/tauri.conf.json`、
