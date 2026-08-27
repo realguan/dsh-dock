@@ -32,6 +32,19 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 C 落地（d780855） —— guan
+
+- 变更：`frontend/src/pages/{BootMode,BootSelector}.tsx` 整页、
+  `components/boot/`（DownloadProgress/ErrorCard/VersionChip/PulseBar 落地，
+  阶段 D 复用）、`hooks/usePlatform.ts`、文案层 mode/selector 扩展。
+- 影响：仅周知 + 一项待办迁移——**Mode 页（运行环境选择）是 Windows-only
+  表面**，React 版实机目视验证待 Windows 环境（非 Windows 访问按裁定防御性
+  回启动页，本机已验证该兜底路径编译正确）。其余同前：master 中间态渐次回填。
+- 凭据：typecheck/lint/build 全绿；release 实机 fixture 双工作台触发选择器
+  （双卡片 + DEFAULT/CUSTOM 徽标 + 版本芯片渲染正确，截图存档）；点击官方卡
+  打通 `choose_profile` IPC 全链路（shell.log 钉板：dsh 启动 profile=web →
+  1.3s 就绪 → 导航工作台）。测试进程与 fixture 均已清理。
+
 ### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 B 落地（5ce1296） —— guan
 
 - 变更：`frontend/src/components/about/`（新建四组件）、`pages/About.tsx` 整页、
