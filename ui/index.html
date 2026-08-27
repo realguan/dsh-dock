@@ -13,7 +13,6 @@
       <span class="top-actions">
         <span class="vchip" id="vchip"></span>
         <button class="abtbtn" id="wslBtn" title="在 WSL2 发行版内运行 DSH（需 Windows + WSL2）">在 WSL 中打开</button>
-        <button class="abtbtn" id="aboutBtn">关于</button>
       </span>
     </div>
 
@@ -245,11 +244,6 @@
       window.__TAURI__.core.invoke("get_update_status").then(renderChip).catch(() => {});
       window.__TAURI__.event.listen("boot:update", (ev) => renderChip(ev.payload));
       window.__TAURI__.event.listen("app:update", (ev) => renderClient(ev.payload));
-
-      // ---- 顶栏「关于」：非 macOS 无应用菜单，关于/检查更新入口在此 ----
-      document.getElementById("aboutBtn").addEventListener("click", () => {
-        window.__TAURI__.core.invoke("open_about").catch(() => {});
-      });
 
       // ---- 顶栏「在 WSL 中打开」：执行环境切换（local → WSL2，零配置）----
       // 触发后关掉当前会话并启动 WSL 会话；具体探测/启动进度经 boot:step 呈现，

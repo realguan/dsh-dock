@@ -393,14 +393,6 @@ fn client_update_apply(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 打开「关于与更新」面板（前端顶栏按钮；非 macOS 无应用菜单，这是唯一的
-/// 关于/检查更新入口，macOS 菜单里的「关于」也走同一实现）。
-#[tauri::command]
-fn open_about(app: tauri::AppHandle) -> Result<(), String> {
-    open_about_window(&app);
-    Ok(())
-}
-
 /// 外链白名单：只放行 http/https 且主机在白名单内的 URL（壳的 IPC 不应成为
 /// 任意 URL 的跳板）。dsh Web UI 的外链（文档/官网/控制台）都应落在这里；
 /// 未收录的域会被拒绝——需要新域时在此登记。
@@ -1089,7 +1081,6 @@ pub fn run() {
             get_client_update,
             client_update_check,
             client_update_apply,
-            open_about,
             open_external,
             open_workbench_in_browser,
             get_workbench_url,
@@ -1281,8 +1272,8 @@ mod tests {
 // 注意：muda 的原生菜单在 macOS 进系统菜单栏，但在 Windows/Linux 会渲染成
 // 窗口内菜单条（2026-08-24 Windows 实测：标题栏下多出「dsh-dock · 编辑」一排
 // 工具条，丑）。因此窗口菜单构建/设置一律 `#[cfg(target_os = "macos")]` 门控；
-// 非 macOS 的更新/关于入口 = 系统托盘（2026-08-24 裁定）+
-// 前端顶栏「关于」按钮（open_about IPC）。
+// 非 macOS 的更新/关于入口 = 系统托盘（2026-08-24 裁定）。前端顶栏「关于」
+// 按钮与原生常驻入口重复，连同 open_about IPC 一并删除（2026-08-27 裁定）。
 
 /// 当前生效运行模式（托盘菜单 ✓ 用；仅非 macOS——macOS 菜单无「打开方式」）。
 /// 优先会话内 active_mode；回落已存默认；再回落 local。

@@ -66,9 +66,6 @@
     </script>
     <div class="topbar">
       <span class="wordmark">DSH DOCK</span>
-      <span class="top-actions">
-        <button class="abtbtn" id="aboutBtn">关于</button>
-      </span>
     </div>
 
     <main class="stage">
@@ -120,10 +117,6 @@
         location.assign(
           "index.html?mode=" + picked + "&default=" + (setDefault.checked ? "1" : "0")
         );
-      });
-
-      document.getElementById("aboutBtn").addEventListener("click", () => {
-        window.__TAURI__.core.invoke("open_about").catch(() => {});
       });
     </script>
   </body>

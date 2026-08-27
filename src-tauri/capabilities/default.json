@@ -20,7 +20,6 @@
     "allow-get-client-update",
     "allow-client-update-check",
     "allow-client-update-apply",
-    "allow-open-about",
     "allow-open-external",
     "allow-open-workbench-in-browser",
     "allow-get-workbench-url",

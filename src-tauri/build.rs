@@ -25,7 +25,6 @@ fn main() {
                 "get_client_update",
                 "client_update_check",
                 "client_update_apply",
-                "open_about",
                 "open_external",
                 "open_workbench_in_browser",
                 "get_workbench_url",

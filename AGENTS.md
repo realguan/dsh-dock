@@ -182,8 +182,7 @@ dsh-dock/
   动作 retry/upgrade/upgrade_only）、`get_update_status`（版本状态即读）、
   `check_updates`（手动后台检测）、`get_client_update`（客户端自更新状态即读）、
   `client_update_check`（检查客户端更新，结果经 `app:update` 回推）、
-  `client_update_apply`（下载并安装客户端更新 → 重启）、`open_about`（开
-  「关于与更新」小窗，前端顶栏按钮）、`open_external`（白名单外链 → 系统
+  `client_update_apply`（下载并安装客户端更新 → 重启）、`open_external`（白名单外链 → 系统
   浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
   `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
   切换并写默认；零配置，Windows-only 渲染/调用，非 Windows 防御性拒绝）、
@@ -212,8 +211,9 @@ dsh-dock/
   `boot:progress`（下载进度 `{kind:"node", current, total|null}`；Rust 侧节流
   ≥100ms，updates 经回调上抛、lib.rs 桥接为事件——updates 保持零 tauri 依赖）。
 - 更新常驻入口：**macOS = 应用菜单**，**非 macOS = 系统托盘**（窗口菜单一律
-  `#[cfg(target_os = "macos")]` 门控，事件同一 `on_menu_event` 分发）。另有前端顶栏
-  「关于」按钮（`open_about`）。`upgrade_only` 不打断会话（下次启动生效）；about 窗口
+  `#[cfg(target_os = "macos")]` 门控，事件同一 `on_menu_event` 分发）。前端顶栏
+  「关于」按钮与原生常驻入口重复，已随 `open_about` IPC 一并删除（2026-08-27 裁定）；
+  关于面板只由菜单/托盘打开。`upgrade_only` 不打断会话（下次启动生效）；about 窗口
   label 须在 capabilities windows 列表。平台分叉与托盘修订史见 [ADR-0007](docs/adr/0007-update-entry-menu-vs-tray.md)。
 - **dsh 就绪等待**：`shell::wait_for_ready` 取代死等——进程存活感知（退出即败 /
   日志无进展判卡死 / 超时先 teardown 再报错，重试不残留孤儿）。阈值与实现见
