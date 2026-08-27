@@ -176,11 +176,7 @@ pub fn run_with_timeout_raw(cmd: &mut Command, timeout: std::time::Duration) -> 
             use std::io::Read;
             let mut out = Vec::new();
             child.stdout.take()?.read_to_end(&mut out).ok()?;
-            return if out.is_empty() {
-                None
-            } else {
-                Some(out)
-            };
+            return if out.is_empty() { None } else { Some(out) };
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();

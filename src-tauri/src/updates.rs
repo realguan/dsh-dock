@@ -923,10 +923,7 @@ fn download_from_mirror(
     let bin = node_bin_in(target, version)
         .ok_or_else(|| anyhow::anyhow!("解压后找不到 node 可执行文件"))?;
     let mut cmd = crate::child_cmd(&bin);
-    let out = cmd
-        .arg("--version")
-        .output()
-        .context("验证缓存 node")?;
+    let out = cmd.arg("--version").output().context("验证缓存 node")?;
     if !out.status.success() {
         anyhow::bail!("缓存 node 验证失败");
     }
@@ -1027,10 +1024,7 @@ fn install_global_dsh_pnpm(
             .output()
             .context("解析 pnpm 全局根")?;
         if !root_out.status.success() {
-            errors.push(format!(
-                "pnpm root -g 失败：{}",
-                output_detail(&root_out)
-            ));
+            errors.push(format!("pnpm root -g 失败：{}", output_detail(&root_out)));
             continue;
         }
         let root = String::from_utf8_lossy(&root_out.stdout).trim().to_string();
@@ -1684,7 +1678,10 @@ mod tests {
             vec!["--config.global-bin-dir=/usr/local/bin".to_string()]
         );
         // 裸文件名（无父目录）→ 不注入，回退 pnpm 默认
-        assert_eq!(pnpm_global_bin_dirs(Path::new("pnpm")), Vec::<String>::new());
+        assert_eq!(
+            pnpm_global_bin_dirs(Path::new("pnpm")),
+            Vec::<String>::new()
+        );
     }
 
     #[cfg(windows)]
@@ -1694,9 +1691,7 @@ mod tests {
         let win = pnpm_global_bin_dirs(Path::new(r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd"));
         assert_eq!(
             win,
-            vec![
-                "--config.global-bin-dir=C:\\Users\\me\\AppData\\Roaming\\npm".to_string()
-            ]
+            vec!["--config.global-bin-dir=C:\\Users\\me\\AppData\\Roaming\\npm".to_string()]
         );
     }
 

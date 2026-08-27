@@ -77,10 +77,7 @@ fn mirror_download_url(url: &tauri::Url) -> Option<tauri::Url> {
     if url.host_str()? != "github.com" {
         return None;
     }
-    if !url
-        .path()
-        .starts_with("/realguan/dsh-dock/releases/")
-    {
+    if !url.path().starts_with("/realguan/dsh-dock/releases/") {
         return None;
     }
     tauri::Url::parse(&format!("{GITHUB_MIRROR_PREFIX}{}", url.as_str())).ok()
@@ -93,8 +90,7 @@ fn friendly_error(e: &tauri_plugin_updater::Error) -> String {
         // status() = None 表示非 HTTP 响应错误（连接被拒 / 超时 / TLS / DNS），
         // 即 GitHub 直连受阻的典型形态。
         if re.status().is_none() {
-            return "无法连接更新服务器（GitHub 直连失败），请检查网络或代理后重试。"
-                .to_string();
+            return "无法连接更新服务器（GitHub 直连失败），请检查网络或代理后重试。".to_string();
         }
     }
     format!("更新失败：{e}")
@@ -285,9 +281,7 @@ fn blocked_check(
 ) -> tauri_plugin_updater::Result<Option<tauri_plugin_updater::Update>> {
     let updater = app
         .updater_builder()
-        .configure_client(|builder| {
-            builder.connect_timeout(std::time::Duration::from_secs(10))
-        })
+        .configure_client(|builder| builder.connect_timeout(std::time::Duration::from_secs(10)))
         .build()?;
     tauri::async_runtime::block_on(updater.check())
 }

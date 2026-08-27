@@ -235,8 +235,8 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::process::Command;
+    use std::sync::Mutex;
 
     #[test]
     fn floor_char_boundary_aligns_to_utf8_edges() {
@@ -332,10 +332,7 @@ mod tests {
             t0.elapsed() < Duration::from_secs(2),
             "SIGTERM 路径应在 grace 内提前退出"
         );
-        assert!(
-            child.try_wait().unwrap().is_some(),
-            "子进程应已回收"
-        );
+        assert!(child.try_wait().unwrap().is_some(), "子进程应已回收");
     }
 
     /// 进程存活感知等待：
@@ -368,7 +365,10 @@ mod tests {
         let path2 = path.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path2).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path2)
+                .unwrap();
             use std::io::Write;
             writeln!(f, "DSH web listening on http://127.0.0.1:34567/").unwrap();
         });
@@ -406,9 +406,13 @@ mod tests {
         std::fs::write(&path, "booting...\n").unwrap();
 
         // 子进程立即退出（true 秒退）→ 应 Exited，不用等硬上限。
-        let child = if cfg!(unix) { Command::new("true") } else { Command::new("cmd.exe") }
-            .spawn()
-            .expect("spawn 模拟进程");
+        let child = if cfg!(unix) {
+            Command::new("true")
+        } else {
+            Command::new("cmd.exe")
+        }
+        .spawn()
+        .expect("spawn 模拟进程");
         let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
             child,
             log_path: path.clone(),
@@ -444,7 +448,9 @@ mod tests {
         let child = if cfg!(unix) {
             Command::new("sleep").arg("30").spawn()
         } else {
-            Command::new("cmd.exe").args(["/C", "ping", "-n", "30", "127.0.0.1"]).spawn()
+            Command::new("cmd.exe")
+                .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .spawn()
         };
         let child = child.expect("spawn 模拟进程");
         let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {

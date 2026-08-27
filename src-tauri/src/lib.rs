@@ -20,9 +20,9 @@ mod shell;
 mod updater;
 mod updates;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent};
@@ -60,7 +60,10 @@ fn child_cmd(bin: &Path) -> Command {
 /// Windows 的 `.cmd`/`.bat` 批处理脚本（需 cmd.exe /C 包装）。
 fn is_batch_script(p: &Path) -> bool {
     matches!(
-        p.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref(),
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_lowercase)
+            .as_deref(),
         Some("cmd") | Some("bat")
     )
 }
@@ -90,10 +93,14 @@ mod proc_tests {
 
     #[test]
     fn batch_scripts_are_detected_case_insensitively() {
-        assert!(is_batch_script(Path::new(r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd")));
+        assert!(is_batch_script(Path::new(
+            r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd"
+        )));
         assert!(is_batch_script(Path::new(r"D:\tools\setup.bat")));
         assert!(is_batch_script(Path::new("pnpm.CMD")));
-        assert!(!is_batch_script(Path::new(r"C:\Program Files\nodejs\node.exe")));
+        assert!(!is_batch_script(Path::new(
+            r"C:\Program Files\nodejs\node.exe"
+        )));
         assert!(!is_batch_script(Path::new("/usr/local/bin/node")));
         assert!(!is_batch_script(Path::new("npm-cli.js")));
         assert!(!is_batch_script(Path::new("no_extension")));
@@ -181,7 +188,8 @@ fn run_executor_session(
                 .as_mut()
                 .and_then(|e| e.read_ready_marker())
         };
-        match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT) {
+        match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT)
+        {
             shell::ReadyOutcome::Exited(code) => {
                 if !session_is_current(&state, epoch) {
                     return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
@@ -191,7 +199,11 @@ fn run_executor_session(
                 let tail = read_log_tail(&log);
                 emit_step(&app, 3, "error", &format!("DSH 进程退出（code={code}）"));
                 let _ = teardown_session(&state);
-                emit_boot_error(&app, &format!("DSH 进程已退出（code={code}）{detail}"), &tail);
+                emit_boot_error(
+                    &app,
+                    &format!("DSH 进程已退出（code={code}）{detail}"),
+                    &tail,
+                );
             }
             shell::ReadyOutcome::Stalled => {
                 if !session_is_current(&state, epoch) {
@@ -220,11 +232,7 @@ fn run_executor_session(
                     }
                     Err(e) => {
                         emit_step(&app, 3, "error", "无效地址");
-                        emit_boot_error(
-                            &app,
-                            &format!("DSH 报告了无效地址（{raw}）：{e}"),
-                            "",
-                        );
+                        emit_boot_error(&app, &format!("DSH 报告了无效地址（{raw}）：{e}"), "");
                         let _ = teardown_session(&state);
                     }
                 }
@@ -812,57 +820,59 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
     // 2026-08-27 前端迁移：所有窗口加载 SPA 根路径，React 按窗口 label 路由
     // （frontend-migration §3.1）；子页面经 pathname 可达（get_asset 兜底链）。
     tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-    .title("DSH Dock")
-    .inner_size(1280.0, 820.0)
-    .min_inner_size(960.0, 640.0)
-    .resizable(true)
-    .center()
-    .background_color(tauri::utils::config::Color(249, 250, 251, 255))
-    .on_navigation(move |url| {
-        // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
-        //
-        // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
-        // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
-        // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
-        // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
-        // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
-        // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
-        let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
-            || matches!(url.host_str(), Some("tauri.localhost"));
-        let loopback_dsh =
-            matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]"));
-        if shell_page || loopback_dsh {
-            return true;
-        }
-        if matches!(url.scheme(), "http" | "https") {
+        .title("DSH Dock")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(960.0, 640.0)
+        .resizable(true)
+        .center()
+        .background_color(tauri::utils::config::Color(249, 250, 251, 255))
+        .on_navigation(move |url| {
+            // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
+            //
+            // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
+            // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
+            // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
+            // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
+            // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
+            // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
+            let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
+                || matches!(url.host_str(), Some("tauri.localhost"));
+            let loopback_dsh = matches!(
+                url.host_str(),
+                Some("127.0.0.1") | Some("localhost") | Some("[::1]")
+            );
+            if shell_page || loopback_dsh {
+                return true;
+            }
+            if matches!(url.scheme(), "http" | "https") {
+                let allowed = is_allowed_external_url(url.as_str());
+                tracing::info!("外链导航拦截：url={url} allowed={allowed}");
+                if allowed {
+                    if let Err(e) = open::that_detached(url.as_str()) {
+                        tracing::error!("外链打开失败：{e}");
+                    }
+                }
+                // 非白名单：既不导航也不打开（壳不成为任意跳板）。
+            } else {
+                tracing::info!("未知协议导航拦截：{url}");
+            }
+            false
+        })
+        .on_new_window(move |url, _features| {
+            // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
             let allowed = is_allowed_external_url(url.as_str());
-            tracing::info!("外链导航拦截：url={url} allowed={allowed}");
+            tracing::info!("新窗口请求：url={url} allowed={allowed}");
             if allowed {
                 if let Err(e) = open::that_detached(url.as_str()) {
-                    tracing::error!("外链打开失败：{e}");
+                    tracing::error!("外链打开失败（新窗口路径）：{e}");
                 }
             }
-            // 非白名单：既不导航也不打开（壳不成为任意跳板）。
-        } else {
-            tracing::info!("未知协议导航拦截：{url}");
-        }
-        false
-    })
-    .on_new_window(move |url, _features| {
-        // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
-        let allowed = is_allowed_external_url(url.as_str());
-        tracing::info!("新窗口请求：url={url} allowed={allowed}");
-        if allowed {
-            if let Err(e) = open::that_detached(url.as_str()) {
-                tracing::error!("外链打开失败（新窗口路径）：{e}");
-            }
-        }
-        tauri::webview::NewWindowResponse::Deny
-    })
-    .initialization_script(&platform_script)
-    .initialization_script(hook_script)
-    .initialization_script(webview_memory_policy)
-    .build()
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .initialization_script(&platform_script)
+        .initialization_script(hook_script)
+        .initialization_script(webview_memory_policy)
+        .build()
 }
 
 /// dsh 启动等待的硬上限（2026-08-24 放宽）：Windows 冷启动被 Defender 首扫 /
@@ -1028,12 +1038,14 @@ pub fn run() {
                 // 非 Windows：WSL 不存在（执行器编译为报错）——settings 里残留的
                 // wsl（如从 Windows 拷来的数据目录）一律按 local 启动，绝不进
                 // 环境选择页 / 不出 WSL 痕迹（2026-08-26 裁定）。
-                let mode = if cfg!(windows) { mode } else { settings::Mode::Local };
+                let mode = if cfg!(windows) {
+                    mode
+                } else {
+                    settings::Mode::Local
+                };
                 *boot_state.active_mode.lock().unwrap() = Some(mode);
                 match executor_for_mode(mode, &boot_app, boot_data) {
-                    Ok(executor) => {
-                        launch_executor_after_probe(boot_state, boot_app, executor)
-                    }
+                    Ok(executor) => launch_executor_after_probe(boot_state, boot_app, executor),
                     Err(e) => {
                         tracing::error!("启动失败（{e}）");
                         emit_boot_error(&boot_app, &e, "");
@@ -1303,13 +1315,8 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tau
     use tauri::menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
-    let in_browser = MenuItem::with_id(
-        app,
-        "open_in_browser",
-        "在浏览器中打开",
-        true,
-        None::<&str>,
-    )?;
+    let in_browser =
+        MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 非 macOS 之外无「打开方式」子菜单（2026-08-26 裁定）：本函数仅 macOS
@@ -1409,7 +1416,8 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
 
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let in_browser = MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
+    let in_browser =
+        MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 「打开方式」仅 Windows（WSL 只存在于 Windows，2026-08-26 裁定）：
@@ -1423,7 +1431,11 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
                 "mode_local",
                 format!(
                     "打开方式：本地{}",
-                    if mode == settings::Mode::Local { " ✓" } else { "" }
+                    if mode == settings::Mode::Local {
+                        " ✓"
+                    } else {
+                        ""
+                    }
                 ),
                 true,
                 None::<&str>,
@@ -1437,7 +1449,11 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
                 "mode_wsl",
                 format!(
                     "打开方式：WSL2{}",
-                    if mode == settings::Mode::Wsl { " ✓" } else { "" }
+                    if mode == settings::Mode::Wsl {
+                        " ✓"
+                    } else {
+                        ""
+                    }
                 ),
                 true,
                 None::<&str>,
@@ -1460,9 +1476,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
         entries.push(it);
     }
 
-    MenuBuilder::new(app)
-        .items(&entries)
-        .build()
+    MenuBuilder::new(app).items(&entries).build()
 }
 
 /// setup 阶段创建托盘（非 macOS）：左键唤起主窗口，右键出菜单。

@@ -208,8 +208,7 @@ impl Executor for LocalExecutor {
         // F-b：system 档且用户世界有多个 webUi profile → 由壳出选择器。
         let home = crate::resolve::user_dsh_home();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
-        let needs_selector =
-            launch.tier == crate::manifest::TierKind::System && profiles.len() > 1;
+        let needs_selector = launch.tier == crate::manifest::TierKind::System && profiles.len() > 1;
         self.launch = Some(launch);
         Ok(if needs_selector {
             ProbeOutcome::NeedsProfile(profiles)
@@ -619,7 +618,9 @@ impl Executor for WslExecutor {
                 log.try_clone().map_err(|e| e.to_string())?,
             ))
             .stderr(std::process::Stdio::from(log));
-        let child = cmd.spawn().map_err(|e| format!("spawn wsl.exe 失败：{e}"))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("spawn wsl.exe 失败：{e}"))?;
         self.child = Some(child);
         Ok(())
     }
@@ -659,7 +660,11 @@ impl Executor for WslExecutor {
         //    内其它进程。注意 /tmp/dsh-dock-stop 须与 GUEST_BOOT 内字面量一致。
         if let Some(target) = &self.selected {
             let script = format!("touch {GUEST_STOP_FILE}");
-            let _ = run_wsl_capture(Some(target), &["-e", "sh", "-lc", &script], Duration::from_secs(5));
+            let _ = run_wsl_capture(
+                Some(target),
+                &["-e", "sh", "-lc", &script],
+                Duration::from_secs(5),
+            );
         }
         // 2) 等 wsl.exe 退出（grace），兜底 kill。若客体内 wrapper 未退出
         //    （异常），kill 掉 wsl.exe 后客体内进程可能残留——见 GUEST_BOOT 注释，
@@ -713,8 +718,12 @@ fn classify_guest_probe(out: &str) -> Option<GuestProbeState> {
 /// Windows 专属。
 #[cfg(windows)]
 fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
-    let out = run_wsl_capture(Some(target), &["-e", "bash", "-lic", GUEST_PROBE], Duration::from_secs(10))
-        .ok_or_else(|| format!("{target} 内探测命令不可用（wsl.exe 调用失败）"))?;
+    let out = run_wsl_capture(
+        Some(target),
+        &["-e", "bash", "-lic", GUEST_PROBE],
+        Duration::from_secs(10),
+    )
+    .ok_or_else(|| format!("{target} 内探测命令不可用（wsl.exe 调用失败）"))?;
     classify_guest_probe(&out).ok_or_else(|| {
         // 输出无法识别（警报/横幅/翻译杂讯）→ 视为异常，给可行动信息。
         tracing::warn!("WSL 探测输出无法识别: {out}");
@@ -728,11 +737,17 @@ fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
 /// Windows 专属。
 #[cfg(windows)]
 fn install_dsh_in_distro(target: &str) -> Result<(), String> {
-    let out = run_wsl_capture(Some(target), &["-e", "bash", "-lic", GUEST_INSTALL_DSH], Duration::from_secs(120))
-        .ok_or_else(|| format!("{target} 内执行 npm 安装失败（wsl.exe 调用失败）"))?;
+    let out = run_wsl_capture(
+        Some(target),
+        &["-e", "bash", "-lic", GUEST_INSTALL_DSH],
+        Duration::from_secs(120),
+    )
+    .ok_or_else(|| format!("{target} 内执行 npm 安装失败（wsl.exe 调用失败）"))?;
     if out.contains("ERR_NPM_MISSING") {
-        return Err("发行版内没有 npm（装的是精简 Node 或未含 npm）。请安装 Node.js（含 npm）后重试。"
-            .to_string());
+        return Err(
+            "发行版内没有 npm（装的是精简 Node 或未含 npm）。请安装 Node.js（含 npm）后重试。"
+                .to_string(),
+        );
     }
     if !out.contains("RC=0") {
         let tail = out
@@ -746,7 +761,9 @@ fn install_dsh_in_distro(target: &str) -> Result<(), String> {
             .join("\n")
             .trim()
             .to_string();
-        return Err(format!("npm i -g @deepseek-ai/dsh 失败（尾部诊断）：\n{tail}"));
+        return Err(format!(
+            "npm i -g @deepseek-ai/dsh 失败（尾部诊断）：\n{tail}"
+        ));
     }
     Ok(())
 }
@@ -958,7 +975,8 @@ mod guest_shell_tests {
         // 非交互登录壳（-lc，旧方案）：守卫早退 → .bashrc 未执行
         let lc = run_guest(&home, ". \"$HOME/.bashrc\"", false);
         assert!(
-            lc.as_deref().map_or(true, |s| !s.contains("BASHRC_SOURCED")),
+            lc.as_deref()
+                .map_or(true, |s| !s.contains("BASHRC_SOURCED")),
             "-lc 应被守卫拦截（旧 bug 形态），得到：{lc:?}"
         );
     }
