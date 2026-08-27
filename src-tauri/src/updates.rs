@@ -386,7 +386,8 @@ fn fetch_packument() -> Result<serde_json::Value> {
                     Ok(v) => return Ok(v),
                     Err(e) => last_err = Some(e.into()),
                 },
-                Err(e) => last_err = Some(e.into()),
+                // read_body_capped 已返回 anyhow::Error，无需再转换
+                Err(e) => last_err = Some(e),
             },
             Err(e) => last_err = Some(anyhow::anyhow!("{url}: {e}")),
         }
@@ -855,6 +856,9 @@ pub fn download_node(data_dir: &Path, progress: DownloadProgress) -> Result<Path
 }
 
 /// 单镜像下载：Range 协商 → 追加/重写 .part → 整包 SHA-256 校验 → 解压 → 自检。
+// 2026-08-27 裁定：8 个参数全为镜像链沿路透传的显式上下文（agent/url/路径/校验/进度），
+// 聚合 struct 的收益低于引入新类型的噪声，允许超参（clippy::too_many_arguments）。
+#[allow(clippy::too_many_arguments)]
 fn download_from_mirror(
     agent: &ureq::Agent,
     url: &str,
@@ -1224,19 +1228,16 @@ fn output_detail(out: &Output) -> String {
 /// 从 node 发行目录定位 npm-cli.js：bin/npm 旁路 lib/node_modules/npm/bin/npm-cli.js。
 fn find_npm_cli(node_bin: &Path) -> Option<PathBuf> {
     let dir = node_bin.parent()?;
-    // 缓存形态：<node_dir>/bin/node → lib/node_modules/npm（父级结构差异）
-    for cand in [
+    // 缓存形态：<node_dir>/bin/node → lib/node_modules/npm（父级结构差异）。
+    // 系统 node（homebrew/fnm）不探测 `which npm` 兜底——执行器纪律：系统 npm
+    // 可能引向别的 node，这里直接失败，由安装命令提示手动安装。
+    [
         dir.join("../lib/node_modules/npm/bin/npm-cli.js"),
         dir.join("node_modules/npm/bin/npm-cli.js"),
         dir.join("npm-cli.js"),
-    ] {
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    // 系统 node（homebrew/fnm）：路径较深，走 `which npm` 兜底？——不用：执行器纪律，
-    // 系统 npm 可能引向别的 node。这里直接失败，由安装命令提示手动安装。
-    None
+    ]
+    .into_iter()
+    .find(|cand| cand.is_file())
 }
 
 /// 在 GUI 补全后的 PATH 中定位 pnpm；不调用 shell，避免 Finder 环境下丢失用户 PATH。

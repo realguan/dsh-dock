@@ -121,7 +121,7 @@ fn major_of(v: &str) -> Option<u64> {
 /// 日志里 URL 是 `\x00h\x00t\x00t\x00p\x00` 间隔，`starts_with("http://")`
 /// 永远失败 → 判「等待超时」）。
 pub fn decode_output_bytes(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.iter().any(|&b| b == 0) {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.contains(&0) {
         if let Some(s) = decode_utf16le(bytes) {
             return s;
         }
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn engines_gate_is_lenient() {
         assert!(engines_satisfied("v24.18.0", Some(">=22")));
-        assert!(engines_satisfied("v20.0.0", Some(">=22")) == false);
+        assert!(!engines_satisfied("v20.0.0", Some(">=22")));
         assert!(engines_satisfied("v24.18.0", None));
         assert!(engines_satisfied("v24.18.0", Some("garbage"))); // 解析失败放行
     }
@@ -961,18 +961,18 @@ mod tests {
         let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
         std::fs::create_dir_all(&bindir).unwrap();
         std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::create_dir_all(&pkg.join("lib")).unwrap();
+        std::fs::create_dir_all(pkg.join("lib")).unwrap();
         std::fs::write(
             pkg.join("package.json"),
             r#"{"name": "@deepseek-ai/dsh", "version": "0.1.0-rc.7",
                 "engines": {"node": ">=22"}}"#,
         )
         .unwrap();
-        std::fs::write(&pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
-        std::fs::set_permissions(&pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
+        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
+        std::fs::set_permissions(pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
             .unwrap();
         // npm 全局形态：bin 目录里的 dsh 是指向包内入口的符号链接
-        std::os::unix::fs::symlink(&pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
+        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
 
         let hit = detect_system_dsh(&bindir.display().to_string()).unwrap();
         assert_eq!(hit.version, "0.1.0-rc.7");

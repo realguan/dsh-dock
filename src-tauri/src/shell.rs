@@ -76,7 +76,7 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     if launch.no_open {
         cmd.arg("--no-open");
     }
-    cmd.env("DSH_HOME", &dsh_home)
+    cmd.env("DSH_HOME", dsh_home)
         // 用户环境感知：dsh 世界运行在用户 PATH 上；download 档还要把私有
         // Node 放在首位，确保 dsh 拉起 helper 时不会找错执行器。
         .env(
@@ -151,7 +151,7 @@ pub fn wait_for_ready(
         // 间隔，starts_with("http://") 永远失败）。
         let text = crate::resolve::read_log_auto(log_path);
         if !text.is_empty() {
-            let start = text.floor_char_boundary(scanned);
+            let start = floor_char_boundary(&text, scanned);
             if scanned < start {
                 scanned = start;
             }
@@ -182,6 +182,18 @@ pub fn wait_for_ready(
 /// 只接受 `http://` / `https://` 开头的词，去掉尾部 `/`/`,`/`;`。
 /// 拒绝 `file://`（Node 加载 bundle 的栈帧）与 `data:` 等，防止把报错路径
 /// 当访问地址（移植自启动器 process_guard，含回归测试）。
+/// 把字节下标回退到最近的 UTF-8 字符边界（str::floor_char_boundary 的
+/// MSRV 平替：该 API 1.91 才稳定，本壳 rust-version = 1.77.2，2026-08-27）。
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 pub fn parse_detected_url(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|w| w.starts_with("http://") || w.starts_with("https://"))
@@ -225,6 +237,20 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use std::process::Command;
+
+    #[test]
+    fn floor_char_boundary_aligns_to_utf8_edges() {
+        // "h日本語"：h=1 字节，日/本/語 各 3 字节
+        let s = "h日本語";
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 1), 1);
+        // 落在「日」中间（2、3 字节处）→ 回退到 1
+        assert_eq!(floor_char_boundary(s, 2), 1);
+        assert_eq!(floor_char_boundary(s, 3), 1);
+        assert_eq!(floor_char_boundary(s, 4), 4); // 「本」起点
+        assert_eq!(floor_char_boundary(s, s.len()), s.len());
+        assert_eq!(floor_char_boundary(s, s.len() + 9), s.len()); // 越界钳到 len
+    }
 
     #[test]
     fn creates_missing_dsh_home() {
@@ -307,7 +333,7 @@ mod tests {
             "SIGTERM 路径应在 grace 内提前退出"
         );
         assert!(
-            matches!(child.try_wait().unwrap(), Some(_)),
+            child.try_wait().unwrap().is_some(),
             "子进程应已回收"
         );
     }

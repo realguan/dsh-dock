@@ -526,7 +526,7 @@ fn launch_executor_after_probe(
         Ok(crate::executor::ProbeOutcome::NeedsProfile(profiles)) => {
             emit_step(&app, 2, "running", "选择器：多个 webUi 工作台");
             // 2026-08-27 前端迁移：selector 由 SPA pathname 路由承载（§3.1）
-            let _ = state.window.eval(&format!(
+            let _ = state.window.eval(format!(
                 "location.assign('/selector?profiles={}')",
                 profiles.join(",")
             ));

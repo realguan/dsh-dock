@@ -414,6 +414,7 @@ const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
 ///      nvm / fnm（含 XDG 变体）/ n / volta。命中 node 的 bin 目录即前置进 PATH。
 ///   3. 仍显式 source 三个标准 rc（非 Ubuntu 发行版 .profile 可能不 source
 ///      .bashrc；交互模式 shopt 差异也统一掉）。source 一律 2>/dev/null 静默。
+///
 /// 模板为纯字符串 → 跨平台可测（macOS/Linux 测试直接以 bash 实跑验证）。
 #[cfg(any(windows, test))]
 macro_rules! guest_prep {
@@ -438,6 +439,9 @@ macro_rules! guest_prep {
 /// `dsh-wsl.log` 的路径——后者有缓冲（实测：90 s 不 flush，URL 不出现直到 wsl.exe 退
 /// 出），tee 路径实时（行级），壳优先读这条。dsh 退出时 `rm -f` 清理哨兵。
 #[cfg(any(windows, test))]
+// 非 Windows 非 test 目标下编译但无引用（引用点在 Windows 运行时路径与跨平台
+// 测试里）——保留 cfg 以维持「模板可在 macOS/Linux 直接实跑测试」，豁免 dead。
+#[allow(dead_code)]
 const GUEST_BOOT: &str = concat!(
     "rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready;",
     guest_prep!(),
@@ -462,6 +466,7 @@ const GUEST_PROBE: &str = concat!(
 /// 规避 run_with_timeout_raw 的「非零退出=无输出」语义；npm 全量输出进
 /// /tmp/dsh-dock-npm.log（管道无死锁风险），只回传尾部 2KB 作诊断。
 #[cfg(any(windows, test))]
+#[allow(dead_code)] // 同 GUEST_BOOT：非 Windows 非 test 目标无引用，保跨平台可测性
 const GUEST_INSTALL_DSH: &str = concat!(
     "rm -f /tmp/dsh-dock-npm.log;",
     guest_prep!(),

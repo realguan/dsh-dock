@@ -93,22 +93,13 @@ impl Default for TerminalSpec {
 }
 
 /// 解析策略集合：与 dsh 成对判定（借执行器成对，见 docs/contract.md「运行时策略」）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolutionSpec {
     #[serde(default)]
     pub node: TierSpec,
     #[serde(default)]
     pub dsh: TierSpec,
-}
-
-impl Default for ResolutionSpec {
-    fn default() -> Self {
-        ResolutionSpec {
-            node: TierSpec::default(),
-            dsh: TierSpec::default(),
-        }
-    }
 }
 
 /// 离线兜底副本（内置档才有）：v1 快照三件套的归宿，只读种子。

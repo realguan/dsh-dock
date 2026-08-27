@@ -30,9 +30,10 @@ const GITHUB_MIRROR_PREFIX: &str = "https://gh-proxy.com/";
 /// 自动更新状态机（前端只读；Rust 侧唯一写者）。
 /// 状态推进：idle → checking → available(latest/) | upToDate(latest/) | failed(msg)
 ///          → downloading(progress) → installing → relaunching → done(version)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum ClientUpdate {
+    #[default]
     Idle,
     Checking,
     Available {
@@ -58,12 +59,6 @@ pub enum ClientUpdate {
     Failed {
         message: String,
     },
-}
-
-impl Default for ClientUpdate {
-    fn default() -> Self {
-        ClientUpdate::Idle
-    }
 }
 
 /// 读取当前状态（IPC `get_client_update` / 前端初始渲染）。
