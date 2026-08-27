@@ -85,6 +85,17 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
 
+      # Rust 质量闸门（roadmap 4.1，2026-08-27 落地）：三平台同跑——fmt 是
+      # 全局一致的格式契约；clippy 各平台各编译一遍，恰好覆盖 #[cfg] 平台分叉
+      # 代码路径（如 Windows spawn / unix 信号）的 lint。
+      - name: Rust fmt gate
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Rust clippy gate
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Unit tests
         working-directory: src-tauri
         run: cargo test
@@ -98,9 +109,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # 前端质量闸门（typecheck/lint/vitest，frontend-migration §6）：
-      # fmt/clippy 基线评估结论（2026-08-27）：repo 存量 35 文件未归一 + clippy
-      # 9 警告，需专项 chore 落地，本轮不接入以免 CI 即红——roadmap §4.1 保持 [待补充]。
+      # 前端质量闸门（typecheck/lint/vitest，frontend-migration §6）。
+      # Rust 侧 fmt/clippy 闸门已于上方接入（2026-08-27 存量归零后落地）。
       - name: Frontend gates
         working-directory: frontend
         run: |
@@ -209,6 +219,56 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
+          retention-days: 14
+
+  # 覆盖率基线（roadmap 4.1，2026-08-27）：先出数不定阈值（宪法 §5 [待补充] 收口）。
+  # 单 job ubuntu 即可——覆盖率反映测试对逻辑的覆盖，不随平台显著变化；
+  # 与 build 矩阵并行，不阻塞产物构建。
+  coverage:
+    name: coverage (baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # 与 build 矩阵相同的系统依赖（壳 lib 依赖 tauri，编译即需要 webkit2gtk）。
+      - name: Ubuntu system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate coverage
+        working-directory: src-tauri
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: src-tauri/lcov.info
           retention-days: 14
 
   # tag v* 时把三平台安装器聚合成一个 GitHub Release（发布态）。
