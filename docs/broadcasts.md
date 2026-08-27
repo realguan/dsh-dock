@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-08-27 快车道直推 · 完成通知：前端迁移阶段 A 落地（a9c1656） —— guan
+
+- 变更：`frontend/`（新建 41 文件）、`src-tauri/tauri.conf.json`、
+  `src-tauri/src/lib.rs`、`.github/workflows/build.yml`。Vite+React+TS+Tailwind v4
+  + shadcn/ui 七组件脚手架；窗口 label 路由；四页占位骨架；Rust 主/about 窗口
+  改载 SPA 根、selector/index 跳转改 pathname；platform_script 扩 `{os,wsl}`。
+- 影响：**master 中间态**——自本 commit 起 release 产物壳页面为 React 骨架
+  （功能回填顺序 B About → C Mode/Selector → D Index，阶段 E 收口删 `ui/`
+  并改宪法）。与占用声明的偏差仅一处：CI node 步骤自阶段 E 提前（frontendDist
+  切换后 `cargo tauri build` 硬依赖 npm 构建，不提前则打 tag 即挂）；
+  Build installers 工作目录随之移到仓库根。开发者注意：本地构建/调试请从
+  **仓库根**调用 `cargo tauri dev/build`（钩子 cwd 发现逻辑要求，见 build.yml 注释）。
+- 凭据：typecheck/lint/vite build 全绿（JS gzip 79.9KB）；`cargo test` 89 passed；
+  本机 `cargo tauri build --no-sign` 出 dmg/.app/updater tar 三产物；release 实机
+  启动 Rust 全链路通过入工作台。步骤 20/21 的目视项（骨架观感、release 内
+  /selector 直达 SPA fallback 实测）待人工复核。
+
 ### 2026-08-27 占用声明 · 前端迁移阶段 A 开工（ADR-0008 实施开始） —— guan
 
 - 变更：占用 `frontend/`（新建）、`tauri.conf.json`（frontendDist 切换）、
