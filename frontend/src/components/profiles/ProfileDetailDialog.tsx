@@ -92,8 +92,13 @@ export function ProfileDetailDialog({
                       key={pkg}
                       className="flex items-baseline justify-between gap-3 px-3 py-1.5 font-mono text-xs"
                     >
-                      <span className="text-ink truncate">{pkg}</span>
-                      <span className="text-faint shrink-0">{spec}</span>
+                      {/* 2026-08-28 修复：spec 可为超长不可断行值（file: 路径）——
+                          包名 shrink-0 恒可见，spec truncate + title 兜底。
+                          原写法 spec shrink-0 把包名挤压至零宽、路径溢出边框。 */}
+                      <span className="text-ink shrink-0">{pkg}</span>
+                      <span className="text-faint min-w-0 truncate" title={spec}>
+                        {spec}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -103,10 +108,13 @@ export function ProfileDetailDialog({
             {/* patch 原文 */}
             <section>
               <div className="text-faint mb-1.5 text-xs">{t.profiles.detailPatch}</div>
+              {/* 2026-08-28 修复：原文视图保真优先——whitespace-pre 不折行 +
+                  overflow-auto 横向滚动。原 pre-wrap 续行顶格无悬挂缩进，
+                  与真实行混淆，破坏「原文」语义。 */}
               {detail.patch_yaml === null ? (
                 <div className="text-faint text-xs">{t.profiles.detailPatchNone}</div>
               ) : (
-                <pre className="border-line bg-bg text-dim max-h-56 overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+                <pre className="border-line bg-bg text-dim max-h-56 overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre">
                   {detail.patch_yaml}
                 </pre>
               )}

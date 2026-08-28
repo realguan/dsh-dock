@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · Profile 详情对话框修复：file: 依赖行溢出 + patch 原文折行失真 —— guan（AI 协作）
+
+- 变更：本 commit——`frontend/src/components/profiles/ProfileDetailDialog.tsx`
+  两处：① 依赖行 `file:` 超长 spec 溢出卡片边框、包名被挤压至零宽不可见
+  （spec `shrink-0` + 包名 `truncate` 的 flex 收缩方向写反）——改为包名
+  `shrink-0` 恒可见、spec `truncate` + `title` 悬停全文兜底；② patch 原文
+  `whitespace-pre-wrap` 折行续行顶格、与真实行混淆破坏「原文」语义——改
+  `whitespace-pre` + 既有 `overflow-auto` 横向滚动，逐字保真。
+- 影响：仅详情对话框展示层，无 IPC / 契约 / 数据改动；超长 spec 悬停可见
+  全文。遗留（评审发现、未在本刀范围）：空插件组合复用「无额外依赖」文案
+  的措辞错位、依赖版本号 `text-faint` 对比度偏低、对话框无高度约束的矮窗口
+  健壮性——待后续小刀。
+- 凭据：前端 typecheck / lint / test 40 绿（纯样式改动，Vitest 纯逻辑测试
+  不涉及）；diff 已人肉复核。
+
 ### 2026-08-28 完成通知 · Profile 创建路径修订：add @deepseek-ai/dsh-base → install（原始版语义）—— guan（AI 协作）
 
 - 变更：本 commit——`src-tauri/src/profiles.rs`（`create_command_args` 改
