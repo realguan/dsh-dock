@@ -1235,7 +1235,9 @@ fn find_npm_cli(node_bin: &Path) -> Option<PathBuf> {
 }
 
 /// 在 GUI 补全后的 PATH 中定位 pnpm；不调用 shell，避免 Finder 环境下丢失用户 PATH。
-fn find_pnpm(path_env: &str) -> Option<PathBuf> {
+/// 在 PATH 上找 pnpm 可执行文件（profiles.rs 创建刀的防御检测共用，
+/// ADR-0009 口径 2：基准 = effective_path 注入后的 PATH）。
+pub(crate) fn find_pnpm(path_env: &str) -> Option<PathBuf> {
     let separator = if cfg!(windows) { ';' } else { ':' };
     let names: &[&str] = if cfg!(windows) {
         &["pnpm.cmd", "pnpm.exe", "pnpm"]

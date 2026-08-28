@@ -481,6 +481,27 @@ fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail,
     crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
 }
 
+/// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> add
+/// @deepseek-ai/dsh-base` 半官方转发链创建 profile（dsh 首用 initProfile 写
+/// 三件套 -> pnpm 安装 -> reconcile；壳对 profiles/ 零写入，ADR-0009 方案 A）。
+/// 阻塞动作（系统探测 + 转发链最长 10 分钟）全部在 spawn_blocking——
+/// 同步命令跑主线程会冻结 UI（setup 注释同源坑）。
+#[tauri::command]
+async fn create_profile(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<crate::profiles::CreateProfileOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::profiles::create_profile_blocking(&profile, &data_dir)
+    })
+    .await
+    .map_err(|e| format!("创建任务异常终止：{e}"))?
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
 #[tauri::command]
@@ -1119,7 +1140,8 @@ pub fn run() {
             boot_in_wsl,
             choose_mode,
             list_profiles,
-            get_profile_detail
+            get_profile_detail,
+            create_profile
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

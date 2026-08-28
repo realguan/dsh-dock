@@ -1,8 +1,11 @@
-//! profiles.rs —— Profile 管理器 · 只读能力（4.3 第二刀，2026-08-28）。
+//! profiles.rs —— Profile 管理器（4.3 第二刀只读 + 第三刀创建，2026-08-28）。
 //!
 //! 职责：扫描 `<dsh_home>/profiles/` 列出全部 profile（已物化 + 内置模板名两态
 //! 合并展示）、读取单个 profile 详情（package.json 关键字段 + cordis.patch.yml
-//! 原文）。纯读：零写入、零 dsh 子进程、零网络（AGENTS §7）。
+//! 原文）。只读零写入、零 dsh 子进程。
+//! 创建：spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` 半官方
+//! 转发链（ADR-0009 方案 A）——三件套由 dsh `initProfile` 写出，壳对 profiles/
+//! 零写入；spawn 前做 pnpm 防御检测（缺失给可行动错误，补齐归后续刀）。
 //!
 //! 行为复现锚定（dsh v0.1.1-rc.2，`dsh-app-boot/lib/index.js`，2026-08-28 核对；
 //! 已入 `docs/contracts/dsh-behavior-ledger.md` §一 复现点 6/8）：
@@ -209,6 +212,254 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
         dependencies,
         patch_yaml,
     })
+}
+
+// ---------- 创建（4.3 第三刀，2026-08-28；ADR-0009 方案 A） ----------
+
+/// 创建 profile 的 add 参数：非模板名 = dsh `DEFAULT_PROFILE_BUNDLES` @ 334
+/// （`@deepseek-ai/dsh-base`）；模板名 web/headless 的 init 由 dsh 侧
+/// `PROFILE_TEMPLATES` @ 323 命中，与本参数无关——reconcile 对模板内置
+/// bundle 零动作（plugin-9h8shc4d.js reconcilePlugins 注释：In-box bundles
+/// from the profile template are not dependencies and are never touched），
+/// 故两类名字统一传 dsh-base，安全且幂等。
+const CREATE_ADD_BUNDLE: &str = "@deepseek-ai/dsh-base";
+
+/// 转发链超时上限：pnpm 冷网络安装的余量。超时杀 dsh 进程；其 pnpm 孙进程
+/// 会自行退出（不做进程组追杀），已写盘的依赖对重试幂等无碍。
+const CREATE_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// spawn 参数序列：`plugin --profile <名> add @deepseek-ai/dsh-base`。
+/// profile 名作为单个 argv 元素传递（不经 shell 拼接，空格/Unicode 名安全；
+/// 合法性由 creation_blocker 先行把关）。
+pub fn create_command_args(profile: &str) -> Vec<String> {
+    vec![
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        "add".to_string(),
+        CREATE_ADD_BUNDLE.to_string(),
+    ]
+}
+
+/// 创建前置校验：Ok = 可发起（新名，或半初始化重试）；Err = 拒绝（原因可行动）。
+/// - 非法名 / 路径被普通文件占用（initProfile 的 mkdirSync 会失败）：拒绝；
+/// - 已存在且 dependencies 非空：完整 profile，重名拒绝；
+/// - 已存在但依赖为空（半初始化 / 清单缺失或损坏）：**放行 = 重跑同名 add**
+///   （init-if-needed 幂等；ADR-0009 §4：「已创建未装插件」中间态的
+///   重试 = 重跑同名 add）。
+pub fn creation_blocker(home: &Path, profile: &str) -> Result<(), String> {
+    validate_profile_name(profile)?;
+    let dir = home.join("profiles").join(profile);
+    if dir.exists() && !dir.is_dir() {
+        return Err(format!(
+            "路径 {} 被普通文件占用，无法创建 profile",
+            dir.display()
+        ));
+    }
+    if dir.is_dir() {
+        let (_, dependencies) = read_manifest_fields(&dir.join("package.json"));
+        if !dependencies.is_empty() {
+            return Err(format!(
+                "profile「{profile}」已存在——创建请换名（删除属后续版本能力）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// dsh plugin 转发链单次执行结果（run_dsh_plugin 产出，供纯函数分类）。
+#[derive(Debug, Clone)]
+pub struct ForwardRun {
+    /// dsh 进程退出码（超时/被信号杀死 = None）。
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    /// dsh 输出全文（stdout+stderr 合流，见 run_dsh_plugin 的文件中转）。
+    pub output: String,
+}
+
+/// 执行一次 dsh plugin 转发链（阻塞，调用方负责放后台线程）。
+/// stdout/stderr 合流落 log_path（双管道直读有死锁风险，文件中转与
+/// shell.rs spawn_dsh 同风格），200ms 轮询 try_wait，超时 kill。
+/// env 注入与 shell.rs spawn_dsh 同链：显式 DSH_HOME（与扫描器同一
+/// user_dsh_home()，创建的目录必落在列表可见位置）；PATH = node 首位 +
+/// effective_path（dsh 内部 spawnSync("pnpm") 靠它找到 pnpm，Spike A §3.4）。
+pub fn run_dsh_plugin(
+    node_bin: &Path,
+    dsh_bin_js: &Path,
+    args: &[String],
+    dsh_home: &Path,
+    log_path: &Path,
+) -> Result<ForwardRun, String> {
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(log_path)
+        .map_err(|e| format!("打开日志 {} 失败：{e}", log_path.display()))?;
+    let mut cmd = crate::child_cmd(node_bin);
+    cmd.arg(dsh_bin_js)
+        .args(args)
+        .env("DSH_HOME", dsh_home)
+        .env(
+            "PATH",
+            crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(
+            log.try_clone().map_err(|e| e.to_string())?,
+        ))
+        .stderr(std::process::Stdio::from(log));
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn dsh 失败（{}）：{e}", node_bin.display()))?;
+    let deadline = std::time::Instant::now() + CREATE_FORWARD_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Ok(ForwardRun {
+                    code: status.code(),
+                    timed_out: false,
+                    output: crate::resolve::read_log_auto(log_path),
+                });
+            }
+            Ok(None) => {}
+            Err(e) => return Err(format!("等待 dsh 退出失败：{e}")),
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(ForwardRun {
+                code: None,
+                timed_out: true,
+                output: crate::resolve::read_log_auto(log_path),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// 创建结果（前端展示态）。「已创建未装插件」是合法中间态而非失败：
+/// dsh 先 init 后 pnpm，pnpm 失败不回滚（Spike A §3.3，ADR-0009 §3 方案 A）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CreateProfileOutcome {
+    pub profile: String,
+    /// 三件套已由 dsh initProfile 写出（调用方以 package.json 存在性判定）。
+    pub materialized: bool,
+    /// dsh 退出码 0：基础插件已装（exit 0 = init + pnpm + reconcile 全过）。
+    pub installed: bool,
+    /// 人读状态 + 可行动建议（附 dsh 输出尾部，便于排障）。
+    pub detail: String,
+}
+
+/// 把转发链执行结果分类为前端可消费的创建结果（纯函数）。
+/// dsh 输出锚定（plugin-9h8shc4d.js runPlugin @ 101）：
+/// init 行 = `dsh: initialized profile <名> at <目录>`；
+/// pnpm 缺失 = `pnpm not found on PATH`（exit 127，dsh 自带文案）；
+/// pnpm 失败 = `pnpm failed in profile directory`（exit = pnpm 退出码）。
+pub fn classify_create_outcome(
+    profile: &str,
+    run: &ForwardRun,
+    materialized: bool,
+) -> CreateProfileOutcome {
+    let installed = !run.timed_out && run.code == Some(0);
+    let pnpm_missing = run.output.contains("pnpm not found on PATH");
+    let code_text = run
+        .code
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "未知".to_string());
+    let status_line = if installed && materialized {
+        format!("profile「{profile}」已创建，基础插件（{CREATE_ADD_BUNDLE}）安装完成。")
+    } else if installed {
+        "dsh 报告成功，但未检出 profile 目录（异常状态，请反馈）。".to_string()
+    } else if run.timed_out {
+        format!(
+            "创建超时（{} 分钟）已终止：profile 可能已初始化，可重试创建（重跑幂等）。",
+            CREATE_FORWARD_TIMEOUT.as_secs() / 60
+        )
+    } else if materialized && pnpm_missing {
+        format!(
+            "profile「{profile}」已创建，但插件未安装：pnpm 不在 PATH 上。\
+             可在终端运行 npm install -g pnpm 后重试创建（重跑幂等）。"
+        )
+    } else if materialized {
+        format!(
+            "profile「{profile}」已创建，但插件安装失败（退出码 {code_text}）。\
+             可重试创建（重跑幂等）；若持续失败请检查网络与 npm 镜像配置。"
+        )
+    } else {
+        format!("创建失败：dsh 初始化未完成（退出码 {code_text}）。")
+    };
+    let tail = output_tail(&run.output);
+    let detail = if tail.is_empty() {
+        status_line
+    } else {
+        format!("{status_line}\n—— dsh 输出尾部 ——\n{tail}")
+    };
+    CreateProfileOutcome {
+        profile: profile.to_string(),
+        materialized,
+        installed,
+        detail,
+    }
+}
+
+/// dsh 输出尾部（最后 15 行、至多 4000 字符，超限从头截断保住末尾）。
+fn output_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(15);
+    let joined = lines[start..].join("\n");
+    let chars: Vec<char> = joined.chars().collect();
+    if chars.len() > 4000 {
+        chars[chars.len() - 4000..].iter().collect()
+    } else {
+        joined
+    }
+}
+
+/// 创建 profile 的完整阻塞流程（调用方负责放后台线程，不冻结主线程）：
+/// 前置校验 -> 定位系统 node/dsh -> pnpm 防御检测 -> spawn 转发链 -> 分类。
+/// 定位仅走系统探测（detect_system_*，与扫描器面向的 system 档用户一致；
+/// 离线档/未装用户得到可行动错误，复用运行会话解析结果留待后续刀评估）。
+/// pnpm 防御检测（ADR-0009 §4：基准 = 注入后的 PATH）：缺失直接给可行动
+/// 错误而不 spawn——dsh 会先 init 再失败，留下半初始化目录（虽可重试，
+/// 失败前置更干净）；补齐（npm i -g pnpm，复用 boot 同一函数）属后续刀。
+pub fn create_profile_blocking(
+    profile: &str,
+    data_dir: &Path,
+) -> Result<CreateProfileOutcome, String> {
+    let home = crate::resolve::user_dsh_home();
+    creation_blocker(&home, profile)?;
+    let path_env = crate::resolve::effective_path();
+    let node = crate::resolve::detect_system_node(&path_env)
+        .ok_or("未检出系统 Node（PATH 上无 node）——创建 profile 需要系统 Node 与 dsh")?;
+    let dsh = crate::resolve::detect_system_dsh(&path_env).ok_or(
+        "未检出系统 dsh（PATH 上无官方安装）——profile 创建经 dsh CLI 完成，需要系统安装的 dsh",
+    )?;
+    let runtime_path = crate::resolve::path_with_bin(&node.bin, &path_env);
+    if crate::updates::find_pnpm(&runtime_path).is_none() {
+        return Err(
+            "pnpm 未在 PATH 上找到--dsh 的 plugin 子命令依赖 pnpm 管理插件。\
+             可在终端运行 npm install -g pnpm 后重试创建"
+                .to_string(),
+        );
+    }
+    let args = create_command_args(profile);
+    let run = run_dsh_plugin(
+        &node.bin,
+        &dsh.bin_js,
+        &args,
+        &home,
+        &data_dir.join("profile-create.log"),
+    )?;
+    let materialized = home
+        .join("profiles")
+        .join(profile)
+        .join("package.json")
+        .is_file();
+    Ok(classify_create_outcome(profile, &run, materialized))
 }
 
 #[cfg(test)]
@@ -434,5 +685,127 @@ mod profiles_tests {
         let err = read_profile_detail(&home, "corrupt").unwrap_err();
         assert!(err.contains("非法 JSON"), "损坏清单在详情页须可见：{err}");
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    // ---------- 创建（第三刀） ----------
+
+    #[test]
+    fn create_args_forward_profile_name_verbatim() {
+        // 名字作为单个 argv 元素（空格/Unicode 不经 shell 拼接）
+        assert_eq!(
+            create_command_args("my profile"),
+            vec![
+                "plugin",
+                "--profile",
+                "my profile",
+                "add",
+                "@deepseek-ai/dsh-base"
+            ]
+        );
+        // 模板名走同一命令：init 由 dsh PROFILE_TEMPLATES 命中，add 参数不变
+        // （ADR-0009 方案 D：dsh plugin add 对模板名也适用，无需单独路径）
+        assert_eq!(
+            create_command_args("web"),
+            vec!["plugin", "--profile", "web", "add", "@deepseek-ai/dsh-base"]
+        );
+    }
+
+    #[test]
+    fn creation_blocker_rejects_invalid_file_and_complete() {
+        let home = tmp();
+        assert!(creation_blocker(&home, "a/b").is_err(), "非法名先拒");
+        assert!(creation_blocker(&home, "fresh").is_ok(), "全新名字放行");
+
+        // 半初始化（目录在、无清单）：放行 = 重试语义（重跑 add 幂等）
+        std::fs::create_dir_all(home.join("profiles").join("half")).unwrap();
+        assert!(creation_blocker(&home, "half").is_ok());
+
+        // 清单在但依赖空（init 后 pnpm 失败的中间态）：放行 = ADR 重试路径
+        materialize(&home, "empty-deps", r#"{ "dependencies": {} }"#);
+        assert!(creation_blocker(&home, "empty-deps").is_ok());
+
+        // 完整 profile（依赖非空）：重名拒绝
+        materialize(&home, "full", PKG_ALPHA);
+        assert!(creation_blocker(&home, "full").is_err());
+
+        // 路径被普通文件占用：拒绝（initProfile 的 mkdirSync 会失败）
+        std::fs::write(home.join("profiles").join("afile"), "x").unwrap();
+        assert!(creation_blocker(&home, "afile").is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn classify_covers_dsh_forward_chain_outcomes() {
+        let run = |code: Option<i32>, timed_out: bool, output: &str| ForwardRun {
+            code,
+            timed_out,
+            output: output.to_string(),
+        };
+        // ① 成功（Spike A §3.2 实测输出形态）
+        let ok = classify_create_outcome(
+            "alpha",
+            &run(
+                Some(0),
+                false,
+                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\nProgress: resolved 1\n",
+            ),
+            true,
+        );
+        assert!(ok.installed && ok.materialized);
+        assert!(ok.detail.contains("安装完成"));
+
+        // ② pnpm 缺失（Spike A §3.3 实测输出，exit 127）：已创建未装 + 可行动建议
+        let no_pnpm = classify_create_outcome(
+            "alpha",
+            &run(
+                Some(127),
+                false,
+                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\n\
+                 dsh: pnpm not found on PATH - install pnpm to manage profile plugins\n",
+            ),
+            true,
+        );
+        assert!(no_pnpm.materialized && !no_pnpm.installed);
+        assert!(
+            no_pnpm.detail.contains("npm install -g pnpm"),
+            "须含可行动建议"
+        );
+
+        // ③ pnpm 失败：已创建未装 + 重试提示（中间态重试 = 重跑同名 add）
+        let failed = classify_create_outcome(
+            "alpha",
+            &run(
+                Some(1),
+                false,
+                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\n\
+                 dsh: pnpm failed in profile directory /tmp/x/profiles/alpha\n",
+            ),
+            true,
+        );
+        assert!(failed.materialized && !failed.installed);
+        assert!(failed.detail.contains("重试"));
+
+        // ④ dsh 自身失败（未物化）：创建失败，不是「已创建未装」
+        let dsh_fail =
+            classify_create_outcome("alpha", &run(Some(1), false, "node: bad option\n"), false);
+        assert!(!dsh_fail.materialized && !dsh_fail.installed);
+        assert!(dsh_fail.detail.contains("创建失败"));
+
+        // ⑤ 超时：可重试提示
+        let timeout = classify_create_outcome("alpha", &run(None, true, ""), false);
+        assert!(!timeout.installed);
+        assert!(timeout.detail.contains("超时"));
+    }
+
+    #[test]
+    fn output_tail_keeps_last_lines_capped() {
+        let text: String = (1..=30).map(|i| format!("line-{i}\n")).collect();
+        let tail = output_tail(&text);
+        assert!(!tail.contains("line-1\n"), "只留最后 15 行");
+        assert!(tail.contains("line-30"));
+        // 超长单行：从头截断保住末尾标记
+        let long = format!("{}END", "x".repeat(5000));
+        assert!(output_tail(&long).ends_with("END"));
+        assert!(output_tail("").is_empty());
     }
 }

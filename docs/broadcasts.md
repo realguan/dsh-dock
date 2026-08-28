@@ -32,6 +32,27 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 4.3 Profile 管理器第三刀（创建能力）—— guan（AI 协作）
+
+- 变更：本 commit——`src-tauri/src/profiles.rs`（创建段：转发链 spawn 封装 +
+  前置校验 + 结果分类 + 4 条纯函数测试）；`updates.rs`（`find_pnpm` 转
+  pub(crate) 共用）；`ipc.rs` / `lib.rs` / `capabilities/default.json`（IPC 三处
+  同步，`create_profile` 为**首个异步命令**：探测 + 转发链全在 spawn_blocking，
+  避免同步命令冻结主线程）；`AGENTS.md` §7；ADR-0009 §5；ledger 复现点 7。
+  能力：spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` 半官方路径
+  创建 profile（三件套由 dsh initProfile 写出，壳零写入）；重名拒绝 + 半初始化
+  放行重试（重跑 add 幂等，ADR §4）；pnpm 防御检测缺失即拒 spawn（可行动文案，
+  补齐归后续刀）。
+- 影响：**触宪法级**——AGENTS §7 IPC 命令登记表新增 `create_profile`，仅周知。
+  范围声明：定位仅系统探测（离线档/未装系统 dsh 用户暂不可创建，报可行动错误）；
+  复制/重命名/删除/默认持久化/WSL 客体内 profile/pnpm 补齐均归后续刀。
+  实机验证（macOS，DSH_HOME=临时目录零污染）：init 先行 / pnpm 经注入 PATH 可
+  定位 / 顺带实测 pnpm 网络失败模式（镜像 ECONNRESET -> 已创建未装中间态
+  exit 1，分类文案与单测 fixture 逐字吻合）；成功路径 reconcile 沿用 Spike A
+  §3.2 同机同版本结论；Windows 转发链（shell: win32 分支）仍为遗留。
+- 凭据：`cargo test` 112 绿（108 + 新增 4）；`gate_tests` 三处同步一致性绿；
+  `cargo fmt --check` / `clippy -D warnings` 全过；diff 已逐行人肉复核。
+
 ### 2026-08-28 完成通知 · 4.3 Profile 管理器第二刀（只读能力）—— guan（AI 协作）
 
 - 变更：本 commit——新增 `src-tauri/src/profiles.rs`；`ipc.rs` / `lib.rs` /

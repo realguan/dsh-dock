@@ -19,17 +19,18 @@
 | 4 | WSL PATH 兼容探测 | `executor.rs`（`bash -lic` + nvm/fnm/n/volta 兜底扫描） | nvm/fnm 非交互 rc 守卫行为 | 2026-08-26 |
 | 5 | WSL 客体内 dsh 自动安装 | `executor.rs`（ADR-0004：壳不触网，装进发行版） | dsh npm 包名与 `npm i -g` 语义 | 基线 |
 | 6 | profile 列举 / 详情（文件系统模拟） | `profiles.rs`（扫描 `profiles/*/package.json`；详情 = 清单关键字段 + `cordis.patch.yml` 原文不解析） | profile 目录布局与三件套格式（`initProfile` @ 353）、内置模板名与 bundle（`PROFILE_TEMPLATES` @ 323） | 2026-08-28 |
+| 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` + 结果分类；实机验证 2026-08-28 macOS：init 先行 / pnpm 经注入 PATH 可定位 / 失败不回滚） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353） | 2026-08-28 |
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
-| # | 复现点 | 依据 | 锚定的 dsh 行为 |
-|:--|:--|:--|:--|
-| 7 | 创建 profile 半官方引导 | ADR-0009 方案 A | `dsh plugin add` 首用初始化（initProfile 三件套） |
+（空——复现点 6/7/8 均已落地，见第一节；后续新增复现点在此登记后随实现转一。）
 
 ## 三、复核记录（append-only）
 
 - 2026-08-28 建册：基线 v0.1.1-rc.2，已落地 5 项、计划 3 项，全量登记。
 - 2026-08-28 4.3 只读刀：复现点 6/8 自「计划」转入「已落地」（壳侧 `profiles.rs`；
-  行号按当日勘误口径 318/323/353，早期文档的 11826/13418 系 bundle 行号混入作废）；
-  复现点 7（创建）仍待创建刀。
+  行号按当日勘误口径 318/323/353，早期文档的 11826/13418 系 bundle 行号混入作废）。
+- 2026-08-28 4.3 创建刀：复现点 7 转入「已落地」（spawn 转发链 + 结果分类）；
+  实机验证含 pnpm 网络失败模式（镜像 ECONNRESET -> 已创建未装中间态，exit 1），
+  成功路径 reconcile 沿用 Spike A §3.2 同机同版本结论。

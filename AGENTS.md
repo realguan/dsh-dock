@@ -116,7 +116,7 @@
 - **IPC 命令登记**（新命令先登记再实现）：`choose_profile` `terminal_action`
   `get_update_status` `check_updates` `get_client_update` `client_update_check`
   `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
-  `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail`。
+  `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。

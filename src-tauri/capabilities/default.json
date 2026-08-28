@@ -26,6 +26,7 @@
     "allow-boot-in-wsl",
     "allow-choose-mode",
     "allow-list-profiles",
-    "allow-get-profile-detail"
+    "allow-get-profile-detail",
+    "allow-create-profile"
   ]
 }
