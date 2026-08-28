@@ -5,6 +5,9 @@
 - **提出人**：guan
 - **相关方**：updates.rs（四路镜像链 / 下载循环 / `APP_RELEASE_FEED`）
 - **关联**：node-map/README.md（签名映射包）、AGENTS.md §7（网络边界）
+- **注（2026-08-27 边界重定义）**：本 ADR 的「唯一网络面 = updates.rs」约束的是**壳运行时
+  网络**（下载 Node/dsh/自更新）。管理功能（4.3+）若引入 pnpm 自动下载 / dsh CLI 调用
+  产生的网络，不属本 ADR 管辖——届时须单独评估网络面归属（见 AGENTS §0 边界 + §7 登记）。
 
 ---
 

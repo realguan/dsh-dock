@@ -1,7 +1,8 @@
 # DSH Dock
 
-[dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) 的桌面终端：一个极小的
-**Tauri v2 壳**，把 dsh 工作台以独立、可安装、跨平台的桌面应用呈现给最终用户。
+[dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) 的桌面管理面板：
+**Tauri v2 壳**，把 dsh 工作台以独立、可安装、跨平台的桌面应用呈现，并在不修改
+dsh 源码的前提下提供 profile / 插件 / 设置 / 会话 / 诊断的全局管理能力。
 macOS / Windows / Linux 三平台安装包由 [CI](.github/workflows/build.yml) 自动产出。
 
 ## 它做什么

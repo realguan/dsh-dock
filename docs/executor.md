@@ -114,7 +114,8 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 - **非 Windows 首次打开**：不出选择页——本机是唯一环境，直接按 local 启动；
   settings 残留 `wsl`（拷自 Windows 的数据目录）也强制 local。
 - **默认持久化**：`<app_data>/settings.json` 仅 `defaultMode` 一个字段（AGENTS
-  「无状态库」登记的**最小例外**；原子写 tmp+rename，损坏回退默认）。
+  §6「运行时无状态」登记的**最小例外**；原子写 tmp+rename，损坏回退默认；
+  2026-08-27 边界重定义后此例外仅约束运行时，管理功能持久化不在此限）。
 - **菜单切换（即记默认，仅 Windows）**：托盘「打开方式」两项——当前模式带 ✓；
   选中 → `switch_mode`：teardown 旧会话 → 写默认 → 导航回启动页 → 按新模式启动
   （就绪后自动导航到工作台；probe 失败则错误卡在启动页可见）。macOS / Linux

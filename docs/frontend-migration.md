@@ -701,7 +701,7 @@ format!("location.assign('/selector?profiles={}')", ...)  // 原 'selector.html?
 |:---|:---|
 | **§1 技术栈表** | 前端行改为：「Vite 6 + React 19 + TS strict + Tailwind v4 + shadcn/ui + React Router v7 + Zustand + Framer Motion（`frontend/`）」；新增「前端构建：Vite，CI/开发需 node 20+」；开发环境说明加「前端开发需 node 20+，Rust 开发不变」 |
 | **§2 目录结构** | 新增 `frontend/` 目录说明（含子目录结构）；`ui/` 标记为「已迁移至 frontend/，删除」 |
-| **§4.2 Rust ❌ 禁止** | 移除「引入任何前端构建链」禁令；改为「引入数据库 / IPC 总线 / 领域服务——壳要保持薄。前端框架仅限 React 生态（Vite + React + TS + Tailwind + shadcn/ui），不引入 Vue/Angular/Svelte 等其他框架」 |
+| **§4.2 Rust ❌ 禁止** | 移除「引入任何前端构建链」禁令；改为「引入数据库 / IPC 总线 / 领域服务——壳要保持薄。前端框架仅限 React 生态（Vite + React + TS + Tailwind + shadcn/ui），不引入 Vue/Angular/Svelte 等其他框架」 *注（2026-08-27 边界重定义）：本条「壳要保持薄」已修订为「仅约束壳运行时」，管理功能可引入数据库/持久化；详见 AGENTS §0/§6* |
 | **§4.3 UI 规范** | 全面重写：React 组件规范（函数组件 + hooks，PascalCase 文件名）、Tailwind 规范（样式全用 Tailwind 类，颜色走 @theme token 不硬编码 hex）、shadcn/ui 规范（按需添加，不修改 components/ui 源码）、Zustand 规范（一个领域一个 store，组件用精细选择器）、invoke 规范（统一走 lib/tauri.ts，组件内不直接 invoke）、事件规范（统一在 App 顶层初始化，组件只消费 store）、Framer Motion 规范（进入/退出用 AnimatePresence，列表用 layout）、文案规范（文本走 content/ 常量，不硬编码） |
 | **新增 §4.4 前端开发规范** | 前端开发约定：TypeScript strict 不允许 any（特殊情况用 `unknown` + 类型守卫）；组件目录组织（pages/components/ui/stores/lib/hooks/types/content）；测试策略（Vitest 测关键逻辑，不测 UI 渲染）；AI coding 约定（用 shadcn/ui 组件，样式用 Tailwind，状态用 Zustand）；品牌规则（Emblem 组件，mark.svg + CSS mask） |
 | **§5 测试要求** | 新增前端测试说明：Vitest 覆盖格式化函数、速度计算、步骤推演、更新状态机迁移等纯逻辑；UI 走手动验证；不引入 React Testing Library/jsdom |

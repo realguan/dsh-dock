@@ -3,280 +3,165 @@
 > 本文件是所有 AI 编码工具读取的核心上下文，与具体工具无关。
 > 多人协作流程（分支 / review / 占用声明 / 发布）见 `docs/CONTRIBUTING.md`；
 > 共享 Prompt 模板见 `docs/prompts/`；公共模块契约见 `docs/contracts/`。
+> 本文件是**最小必要集**，不是知识库——写入边界见 §11，事无巨细不准入。
 
 ## 0. 定位（必须理解再动手）
 
-本仓库是**通用产品壳**（终端），不是打包装配工具。改动前先问：
+本仓库是 **dsh 的桌面管理面板**（Tauri v2 壳）：把 dsh 工作台以独立、可安装、跨平台
+桌面应用呈现，并在不修改 dsh 源码的前提下提供 dsh 管理能力。**壳是通用机制，产品是
+数据**：壳不得感知具体产品身份——运行时身份只经 `product.manifest.json`（docs/contract.md）
+进入，构建期身份只经 `render-product.sh` 注入。改动前先判断归属：
 
-- 这个逻辑属于「**壳**」（spawn / URL 解析 / 优雅停止 / WebView 导航 / 契约读取 /
-  下载与进度 / 签名映射验证）→ 进本仓库；
-- 还是属于「打包装配」（物化快照、版本 pin、插件集成、本地源扫描、任务台）→ 属于
-  **装配方**（外部打包工具，经 `product.manifest.json` 契约与壳对接），本仓库不承接；
-- 还是属于「产品数据」（某个具体工作台叫什么、装什么插件）→ 属于快照/构建期身份，不写死进壳。
+- 壳运行时（spawn / 宿主解析 / 下载与进度 / 签名验证 / WebView 导航）→ 本仓库；
+- dsh 管理（profile 生命周期 / 插件 / 设置与凭据 / 会话 / 诊断）→ 本仓库（独特价值）；
+- 打包装配（物化快照 / 版本 pin / 本地源扫描 / 任务台）→ 装配方（经契约对接），不承接；
+- 产品数据（某工作台叫什么 / 装什么插件）→ 快照/构建期身份，不写死进壳。
 
-**壳是通用机制，产品是数据**：壳不得感知任何具体产品身份；运行时身份只经
-`product.manifest.json`（docs/contract.md）进入，构建期身份只经 `render-product.sh` 注入。
+**红线两条（2026-08-27 边界重定义）**：
 
-## 1. 项目概述与技术栈
+1. **不修改 dsh 源码**（不 fork / 不上游 patch）；允许读源码、调 CLI、文件系统层复现其行为
+   （须锚定源码位置 + 日期，登记复现台账 `docs/contracts/dsh-behavior-ledger.md`，升级逐条复核）。
+2. **安装包不内置依赖**（Node / dsh / pnpm）：优先检测宿主，缺失经解析链
+   system → bundle → download 实时补齐。
 
-dsh（@deepseek-ai/dsh）的桌面终端：极小 Tauri v2 壳，把 dsh 工作台以独立、可安装、
-跨平台桌面应用呈现。在线极简档安装包不内置 Node/dsh，首启自动补齐；宿主解析链
-system → bundle → download；Node 版本经签名映射包热升级，不发新壳。
+**工程准则（非红线，详见 ADR-0009）**：职责清晰、可测试、可维护、不破坏 dsh 文件系统不变量（§6）。
 
-| 层 | 选型 | 版本锚点 |
-|:---|:---|:---|
-| 桌面框架 | Tauri v2（Rust 后端 + 系统 WebView） | tauri crate `2`；**tauri-cli 必须同代 2.11.x**（CI env `TAURI_CLI_VERSION=2.11.4`，bundler 与 crate 不同代会产物补丁失败） |
-| Rust | edition 2021 | **无 MSRV 下限**（2026-08-27 维护者裁定：`rust-version` 已移除，工具链跟随最新 stable——本机与 CI 均按最新 stable 为准，当前 1.98） |
-| 序列化 | serde / serde_json | `1` |
-| HTTP 客户端 | ureq（阻塞式，仅后台线程） | `2` |
-| 签名验证 | ed25519-dalek（仅 verify 路径） | `2` |
-| 校验和 | sha2（Node 二进制 SHA-256） | `0.10` |
-| 压缩/归档 | flate2 / tar / zip | zip **pinned `=4.2.0`**（升级需专项验证） |
-| 信号 | nix（unix only：SIGTERM/SIGKILL） | `0.29` |
-| 外链打开 | open crate | `5` |
-| 单实例 | tauri-plugin-single-instance（Builder 链最先注册） | `2` |
-| 自更新 | tauri-plugin-updater（endpoint = GitHub Releases `latest.json`） | `2` |
-| 日志 | tracing + tracing-subscriber | `0.1` / `0.3` |
-| 错误处理 | anyhow（壳无 services 分层，不用 AppError 枚举） | `1` |
-| 前端 | **React 19 + TS strict + Tailwind v4 + shadcn/ui + React Router v7 + Zustand + Framer Motion（`frontend/`）**；构建 Vite；测试 Vitest | Vite 8（开发/CI 需 node ≥20） |
-| 数据库 | **无**（禁止引入） | — |
-| 构建/发布 | GitHub Actions 三平台矩阵 → tag `v*` 出 Release + updater 元数据 | `.github/workflows/build.yml` |
+## 1. 技术栈锚点（只记坑与裁定，版本明细见 Cargo.toml / package.json）
 
-- 开发环境：Rust toolchain + 平台 Tauri 前置（macOS Xcode CLT / Windows WebView2 /
-  Linux WebKitGTK）；前端开发需 node ≥20 + npm（`cd frontend && npm ci` 后
-  `npm run dev/build/typecheck/lint/test`），Rust 侧开发不变。
-  node-map 发布流程（`node-map/scripts/sign.mjs`）同样需要 node。
-- Lint/Format：**已建基线（roadmap 4.1，2026-08-27 落地）**——`rustfmt.toml`
-  仅锁 `edition = "2021"`（其余走默认配置；改动它=全仓 diff，改前须公共频道
-  知会）；CI 三平台跑 `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`
-  闸门 + ubuntu 单独的 cargo-llvm-cov 覆盖率 job（先出数不定阈值）。
-  存量已在接线前归零（全仓 fmt 归一 + clippy 清零各一笔独立提交）。
+| 锚点 | 裁定 |
+|:---|:---|
+| Tauri v2 | **tauri-cli 必须与 crate 同代 2.11.x**（CI `TAURI_CLI_VERSION=2.11.4`；不同代 bundler 产物补丁失败） |
+| Rust | edition 2021，**无 MSRV 下限**（2026-08-27 裁定：`rust-version` 已移除，工具链跟随最新 stable） |
+| 单实例 | tauri-plugin-single-instance **须在 Builder 链最先注册** |
+| zip | pinned `=4.2.0`，升级需专项验证 |
+| 自更新 | tauri-plugin-updater，endpoint = GitHub Releases `latest.json` |
+| 前端 | React 19 + TS strict + Tailwind v4 + shadcn/ui + React Router v7 + Zustand + Framer Motion + Vite 8（ADR-0008；node ≥20） |
+| 数据库 | 按需（管理功能可引入 SQLite 等；壳运行时启动/版本/宿主解析仍无状态） |
+| 网络 | ureq 阻塞式，仅限 `updates.rs` 后台线程（唯一网络面 §7） |
+| 构建/发布 | GitHub Actions 三平台矩阵 → tag `v*` 出 Release + updater 元数据（build.yml） |
 
-## 2. 目录结构约定
+- 常用命令：Rust `cd src-tauri && cargo test`（合入前必须全绿）；前端 `cd frontend &&
+  npm ci && npm run typecheck/lint/test`；CI 闸门 `cargo fmt --check` + `clippy -D warnings`。
+- `rustfmt.toml`（在 `src-tauri/`）仅锁 edition，改动 = 全仓 diff，改前须频道知会；
+  CI 另有 ubuntu coverage job（先出数，阈值另定，roadmap 4.1）。
 
-```
-dsh-dock/
-├── AGENTS.md               # 本文件：AI 编码宪法（改动规则见 §10）
-├── docs/
-│   ├── contract.md         # 壳 ↔ 装配方运行时契约（product.manifest.json，format=1/2）
-│   ├── CONTRIBUTING.md     # 协作规范：分支/review/占用声明/发布协议
-│   ├── broadcasts.md       # 📢 知会档案（宪法级改动/快车道/发版等广播落档，append-only）
-│   ├── prompts/            # 团队共享 Prompt 模板库
-│   ├── contracts/          # 公共模块契约管理（哪些模块要契约、怎么改）
-│   ├── adr/                # 架构决策记录（本仓库；TEMPLATE.md + ADR-0001~0007，见 §9）
-│   ├── executor.md         # 执行环境抽象设计（local/wsl，ssh 预留）
-│   └── macos-signing.md    # macOS 签名与公证手册
-├── frontend/               # 壳自带前端（Vite + React；依赖白名单见 §4.4）
-│   ├── package.json        # 前端清单（npm ci；锁文件 package-lock.json）
-│   ├── vite.config.ts      # 端口 1420 strictPort；alias @→src（tauri 钩子显式 cwd="../frontend" 指此目录）
-│   ├── index.html          # SPA 入口（所有窗口同载，React 按窗口 label 路由）
-│   ├── public/mark.svg     # 官方徽章形状源（Emblem 组件 CSS mask 引用）
-│   └── src/
-│       ├── main.tsx        # React 入口 + BrowserRouter
-│       ├── App.tsx         # 窗口 label 判断 + pathname 路由（about 单页直渲染）
-│       ├── index.css       # @theme token（dsh 浅色基调）+ 品牌/动效原语
-│       ├── pages/          # BootIndex / BootMode / BootSelector / About
-│       ├── components/     # ui（shadcn，只读）/ boot / about / layout
-│       ├── stores/         # bootStore / clientUpdateStore（Zustand）
-│       ├── lib/            # tauri.ts（invoke 唯一入口）/ events.ts（模块级总线）
-│       │                   # + host / resource / format / utils
-│       ├── hooks/          # usePlatform（能力矩阵）
-│       ├── types/          # ipc.ts / events.ts（payload 照实对齐 Rust 序列化）
-│       ├── content/        # zh-CN.ts（文案/i18n 预留）
-│       └── __tests__/      # Vitest 纯逻辑单测
-├── src-tauri/
-│   ├── src/
-│   │   ├── main.rs         # 入口（6 行，勿动）
-│   │   ├── lib.rs          # run()：装配 Builder；child_cmd()；IPC 命令；菜单/托盘；注入脚本
-│   │   ├── executor.rs     # 执行环境抽象：local / wsl（ssh 预留），壳只认识 Executor
-│   │   ├── manifest.rs     # product.manifest.json 契约解析（format=1/2）
-│   │   ├── resolve.rs      # 宿主解析链（system → bundle → download）
-│   │   ├── updates.rs      # 唯一网络面：版本检测 / Node 下载 / dsh 安装 / 签名映射
-│   │   ├── shell.rs        # spawn / URL 解析 / 优雅停止 / wait_for_ready
-│   │   ├── settings.rs     # settings.json（仅 defaultMode 一字段，原子写）
-│   │   └── updater.rs      # tauri-plugin-updater 桥接
-│   ├── build.rs            # AppManifest commands → 自动生成 allow-* 权限
-│   ├── capabilities/       # default.json：remote 页面调用命令的显式授权
-│   ├── resources/          # product.manifest.json（可选 dsh-snapshot/ 离线档，gitignore）
-│   └── icons/              # 生成产物（勿手改，见品牌规则）
-├── node-map/               # @dsh-dock/node-map：签名的 Node 版本映射包（npm 发布物）
-├── scripts/
-│   ├── regen-icons.sh      # 图标重生成（rsvg-convert → cargo tauri icon）
-│   └── render-product.sh   # 打包期身份注入（仅装配方/CI 使用，运行时不执行）
-├── assets/icon-master.svg  # 图标形状源
-├── sample/                 # 示例 product.manifest.json（装配方参考，非运行时）
-└── .github/workflows/build.yml  # 三平台矩阵构建 + tag 发版
-```
+## 2. 目录结构（`ls` 即得明细，此处只留职责与陷阱）
 
-职责红线：前端禁入白名单外依赖/禁网络请求（§4.4 三条红线）；`src-tauri/resources/dsh-snapshot/`
-永不入库；`node-map-private.key` 永不入库（.gitignore 双防）。
+- `docs/`：contract.md 契约 · CONTRIBUTING 协作 · broadcasts 知会档案（append-only）·
+  prompts 模板 · contracts 模块契约 · adr/ 决策记录（§9）· executor.md 执行环境 ·
+  macos-signing 签名手册 · roadmap 路线与陷阱清单 · frontend-migration 迁移记录 ·
+  spikes/ 专项验证
+- `src-tauri/src/`：lib（装配 + IPC + 菜单托盘）/ shell（spawn · URL · 优雅停止）/
+  resolve（宿主解析链）/ updates（唯一网络面）/ manifest（契约解析）/ executor（执行
+  环境抽象 local/wsl）/ settings（唯一持久化）/ updater（桥接）；**main.rs 6 行勿动**
+- `src-tauri/` 其余：build.rs 自动生成 allow-* 权限 · capabilities/ remote 页面授权
+  （§7 三处同步）· resources/ 运行时契约 + 可选离线档（`dsh-snapshot/` **永不入库**）·
+  icons/ **生成产物勿手改**
+- `frontend/`：React 19 SPA，单入口按窗口 label 路由；`lib/tauri.ts` invoke 唯一入口 ·
+  `lib/events.ts` 事件总线 · `content/zh-CN.ts` 全部文案 · `__tests__/` Vitest 单测
+- `node-map/` 签名 Node 版本映射包（`node-map-private.key` **永不入库**）· `scripts/`
+  regen-icons.sh 图标重生成 / render-product.sh 构建期身份注入（仅装配方 / CI，运行时不执行）
+
+职责红线：前端禁入白名单外依赖、禁网络请求（§4.4）。
 
 ## 3. 品牌规则
 
-- 桌面图标 / 页内徽章一律用 dsh 官方标；**禁止手绘或自造占位 logo**。
-- 改图标 = 改 `assets/icon-master.svg`（官方 path 合成 + 深色圆角底）→
-  跑 `scripts/regen-icons.sh` 整体重生成（rsvg-convert → cargo tauri icon）；
+- 桌面图标 / 页内徽章一律 dsh 官方标，**禁止手绘或自造占位 logo**。
+- 改图标 = 改 `assets/icon-master.svg` → 跑 `scripts/regen-icons.sh` 整体重生成；
   `src-tauri/icons/` 是生成产物，**禁止直接手改**。
-- 页内徽章统一为 React 组件 `Emblem`（`frontend/src/components/layout/Emblem.tsx`）：
-  `frontend/public/mark.svg`（形状源）+ CSS mask 上白色、深色圆角底唯一形态
-  ——**不允许在页面里内联第二份鲸鱼 path 或第二种颜色**。
-- 官方原始 SVG 溯源于 `assets/dsh-logo.svg`（迁移前 `ui/assets/`）；
-  未获官方新版本前不得偏离该几何。
+- 页内徽章统一 React 组件 `Emblem`（CSS mask + `frontend/public/mark.svg` 形状源），
+  **不允许内联第二份鲸鱼 path 或第二种颜色**；几何溯源于 `assets/dsh-logo.svg`，
+  未获官方新版不得偏离。
 
 ## 4. 代码规范
 
 ### 4.1 Rust ✅ 必须
 
-- 跨平台语义显式：优雅停止按平台分叉（unix SIGTERM→SIGKILL，Windows kill），
-  用 `#[cfg]` 不用运行时猜。
-- **Windows 子进程一律经 `crate::child_cmd` 构造**（lib.rs）：防黑色终端窗口弹窗
-  + 解决 `.cmd`/`.bat` 直接 spawn 必失败（CreateProcess 不认批处理）。新增 spawn
-  点禁止裸 `Command::new`；壳自身 `windows_subsystem = "windows"` 无条件生效
-  （debug/release 均无控制台）。
-- 子进程 stdout/stderr 进数据目录日志文件（`Read + try_wait` 轮询），不阻塞 UI 线程。
-- 快照零部件缺失 → **就地错误页 + 可行动文案**（ADR-0004 A6），绝不静默降级。
-- `product.manifest.json` 契约改动：先改 `docs/contract.md` → 升 `MANIFEST_FORMAT`
-  → 打包侧同步（缺一不可，详见 `docs/contracts/`）。
-- URL 解析只认 `http://` / `https://`（拒绝 `file://`、`data:`），带回归测试。
-- 新增函数优先给单元测试（`shell.rs` / `manifest.rs` / `resolve.rs` 已有先例）。
-- 命名与结构沿用现状：模块级中文 doc 注释说明「为什么」；裁定性注释带日期
-  （如 `// 2026-08-25 裁定：…`）；公开函数一行 `///` 说明用途与失败语义。
+- 跨平台语义显式：`#[cfg]` 分叉（unix SIGTERM→SIGKILL / Windows kill）；Windows 子进程
+  一律经 `crate::child_cmd`（防终端弹窗 + `.cmd/.bat` spawn 必败），**禁裸 `Command::new`**。
+- 子进程 stdout/stderr 进数据目录日志（`Read + try_wait` 轮询），不阻塞 UI 线程。
+- 快照零部件缺失 → 就地错误页 + 可行动文案（ADR-0004 A6），绝不静默降级。
+- 契约改动：先改 `docs/contract.md` → 升 `MANIFEST_FORMAT` → 打包侧同步，缺一不可。
+- URL 解析只认 `http(s)://`（拒绝 `file://` / `data:`），带回归测试；新函数优先单元测试。
+- 中文 doc 注释讲「为什么」，裁定性注释带日期。
 
 ### 4.2 Rust ❌ 禁止
 
-- `unwrap()` 于可能返回 `Err` 的逻辑结果（仅限 `expect` 于「构建期不可变不变量」，
-  如 main 窗口必存在）；`std::sync::Mutex::lock()` 中毒属 panic-on-poison 语义，
-  用 `expect` 标注不变量即可，不视为违规。
-- 阻塞主线程的同步等待；dsh 就绪用后台线程轮询 + 超时上限。
-- 把具体产品（名称/图标/插件/凭据）硬编码进壳。
-- 引入数据库 / IPC 总线 / 领域服务——壳要保持薄。前端框架仅限 React 生态
-  （§1 前端行 / §4.4 白名单），不引入 Vue/Angular/Svelte 等其他框架。
-- 直接依赖宿主 pnpm store 或触网取依赖——快照必须自包含（ADR-0004 硬指标）。
-- `println!` / `dbg!` 入库——日志一律 tracing。
-- 非 `updates.rs` 模块触网（网络面白名单见 §7）。
+- 禁 `unwrap()`（不变量用 `expect` / Mutex 中毒同此）、阻塞主线程、`println!`/`dbg!`、硬编码产品身份。
+- 引入数据库 / IPC 总线 / 领域服务 / React 生态外的前端框架——**需 ADR**；
+  数据库仅限管理功能侧，壳运行时保持无状态。
+- 依赖宿主 pnpm store 或触网取依赖（快照必须自包含，ADR-0004）；非 `updates.rs`
+  模块触网（§7 白名单）。
 
-### 4.3 前端（React 壳页面）
+### 4.3 前端（React 壳页面，ADR-0008）
 
-- **组件规范**：函数组件 + hooks；文件名 PascalCase（页面在 `pages/`、业务组件在
-  `components/boot|about/`、布局在 `components/layout/`、基础件 `components/ui/`）。
-- **样式规范**：一律 Tailwind 类；颜色走 `@theme` token（`bg-bg`/`text-ink`/
-  `text-dim`/`text-faint`/`border-line`/`bg-wash`/`text-brand-deep` 等），
-  禁止硬编码 hex；明暗基调属契约区（基调裁定见 docs/frontend-migration.md §0），
-  远期暗色经 data-theme 覆盖变量，组件零改动。
-- **状态规范**：一个领域一个 store（Zustand）；组件用**精细选择器**
-  （`useStore(s => s.field)`），禁止整体解构订阅高频字段（如进度）。
-- **调用 IPC**：统一走 `lib/tauri.ts` 的 `api` 对象（全类型化），组件内不直接
-  `invoke`；返回 Promise **必须 `.catch`**（try/catch 捕不到 rejection）。
-- **事件规范（2026-08-27 裁定）**：事件总线在 `lib/events.ts` **模块加载期**装配，
-  早于任何页面播种 invoke——React 子 effect 先于父组件执行，若在 App effect 里
-  挂监听会让首发射出的启动遥测（boot:step 等）被「先 invoke 后监听」吞掉；
-  组件只消费 store，页面副作用里不重复 listen。
-- **文案规范**：全部用户文案集中 `content/zh-CN.ts`（i18n 预留），
-  组件不硬编码中文字符串。
-- 新增 IPC 命令的前置授权链见 §7「三处同步」；漏任一处 remote 页面调用静默失败。
+- 函数组件 + hooks，文件名 PascalCase；页面 `pages/`、组件 `components/`、基础件 `components/ui/`（shadcn 只读）。
+- 样式一律 Tailwind + `@theme` token，禁硬编码 hex；明暗基调属契约区
+  （frontend-migration.md §0），暗色远期经 data-theme 覆盖变量、组件零改动。
+- 状态一个领域一个 store（Zustand），组件用精细选择器，禁整体解构订阅高频字段。
+- IPC 统一走 `lib/tauri.ts` 的 `api` 对象，组件内不直接 `invoke`；Promise **必须 `.catch`**。
+- 事件总线 `lib/events.ts` **模块加载期**装配（早于页面播种 invoke——React 子 effect
+  先于父执行，晚挂监听会吞掉首发遥测）；组件只消费 store。
+- 文案集中 `content/zh-CN.ts`，组件不硬编码中文；新 IPC 命令走 §7 三处同步。
 
-### 4.4 前端开发规范（2026-08-27，ADR-0008 落地）
+### 4.4 前端三条红线（2026-08-27）
 
-- **三条红线**：
-  ① **依赖白名单**——允许 React / Radix（shadcn 底座）/ Zustand / Framer Motion /
-     Lucide / 未来数据层；禁止 AntD/MUI 类大全件库、CSS-in-JS 运行时、
-     白名单外的任何 npm 包（新增依赖须经广播登记）。
-  ② **前端运行时禁止发起新网络请求**（无 CDN/字体/统计）；壳网络面唯一指向
-     Rust `updates.rs`，前端网络需求一律经 IPC 到 Rust。
-  ③ **跨窗口真相源**：main / about 是各自独立 JS runtime，Zustand 不跨窗共享；
-     跨窗信息只经事件广播（如 `app:update` 回推）传递。
-- **类型**：TypeScript strict；禁止 `any`（特殊情况用 `unknown` + 类型守卫收敛）。
-- **平台语义**：经 `usePlatform().can.*` 能力矩阵，不散写 `os === 'windows'` 判断。
-- **测试**：Vitest 测纯逻辑（格式化 / 速度采样 / 步骤推演 / 状态机迁移），
-  **不引入** React Testing Library / jsdom；UI 走手动验证清单。
-- **AI 生成约定**：组件优先复用 shadcn/ui 与既有业务组件；样式 token 化；
-  状态进 store；文案进 content/。
+1. **依赖白名单**：React / Radix / Zustand / Framer Motion / Lucide / 数据获取层（取数·缓存·同步）；
+   禁大全件库、CSS-in-JS 运行时、白名单外包。新增依赖 = 先回写本清单（唯一权威）再广播。
+2. **前端运行时禁止发起新网络请求**（无 CDN / 字体 / 统计）；网络需求一律经 IPC 到 Rust。
+3. **跨窗口真相源**：各窗口独立 JS runtime，Zustand 不跨窗共享；跨窗信息只经事件广播。
+
+其余：TS strict 禁 `any`；平台语义走 `usePlatform().can.*`；Vitest 只测纯逻辑、
+不引 RTL/jsdom（再评估触发：Profile 管理器 UI 落地时重评组件测试策略）。
 
 ## 5. 测试要求
 
-- **框架**：Rust 内置 `#[cfg(test)] mod tests` + `#[test]`（现状分布于
-  updates / resolve / executor / shell / lib / manifest / settings 七模块，
-  具体数见各模块 `#[test]`；不在此固定总数，以免漂移）。
-  **不引入额外测试依赖**（Cargo.toml 无 dev-dependencies，保持）。
-- **运行**：`cd src-tauri && cargo test`——任何 Rust 改动合入前必须全绿；
-  CI 三平台矩阵会再跑一遍。
-- **Mock 策略**：不引 mock 框架。测**纯函数**（URL 解析、契约字段校验、路径推导、
-  镜像链排序、签名格式校验），输入用内联 fixture 字符串 / `tempdir` 式临时目录；
-  真实网络与真实 WSL/实机行为不在单测覆盖，走对应验证清单
-  （WSL 行为明细见 `docs/executor.md`与更新常驻入口实测记录）。
-- **必须带测试的场景**：① URL/导航解析类改动 → 回归测试（含恶意输入反例）；
-  ② `manifest.rs` 契约字段 → 正反例各一（合法 v1/v2 + 缺字段/错 format 拒绝）；
-  ③ bug 修复 → 复现该 bug 的测试先行；④ 跨平台分叉逻辑 → 至少覆盖编译目标语义。
-- **前端（Vitest）**：`cd frontend && npm run test`——覆盖格式化 / 速度采样 /
-  步骤推演 / 更新状态机迁移等纯逻辑（现状 4 文件 34 用例，随逻辑演进扩展）；
-  不测 UI 渲染与 Tauri 事件（环境不可用，手动验证走 frontend-migration.md §9）。
-- `[待补充]` 覆盖率目标与阈值——基线工具已接入（CI coverage job 出 lcov artifact，
-  roadmap 4.1），攒够数据后另定阈值。
-- `updater.rs` 纯逻辑已有测试覆盖（roadmap 4.2，2026-08-27）：serde 全变体往返 /
-  phase 词形 / None 字段省略 / 默认态 / 事件目标窗口 ↔ capability 双向契约 /
-  事件名跨语言对齐六条；真实 download/install 路径仍走手动验证
-  （改动经 `cargo tauri build` + 实机「检查更新」链路确认），链路有
-  tracing 观测日志可事后定位。
+- 运行与闸门命令见 §1；合入前 Rust / 前端测试必须全绿（CI 三平台复跑）。
+  **不引入额外测试依赖**（Cargo.toml 无 dev-dependencies）；为写好测试确需专用依赖
+  （异步 / 时间控制等）时，先 ADR 再引入。
+- Mock 策略：不引 mock 框架，测纯函数（URL / 契约校验 / 路径推导 / 镜像链 / 签名格式），
+  fixture 内联 + 临时目录；真实网络与 WSL 行为走验证清单（`docs/executor.md`）。
+- **必须带测试**：① URL/导航解析 → 回归测试含恶意反例；② 契约字段 → 正反例各一
+  （合法 v1/v2 + 缺字段 / 错 format 拒绝）；③ bug 修复 → 复现测试先行；
+  ④ 跨平台分叉 → 至少覆盖编译目标语义。
+- 前端 Vitest 只测纯逻辑（格式化 / 采样 / 状态机迁移），不测 UI 渲染与 Tauri 事件
+  （手动验证见 frontend-migration.md §9）。
+- 覆盖率：CI coverage job 已出 lcov（roadmap 4.1），阈值攒数后另定；updater 真实
+  download / install 链路走实机「检查更新」验证（roadmap 4.2）。
 
 ## 6. 存储与生命周期
 
-- 无状态库：本仓库**不持久化任何核心态**。运行期只写：数据目录的 `dsh-shell.log`
-  （排查用）。
-- **最小持久化例外（2026-08-25 登记）**：`<app_data>/settings.json`、仅 `defaultMode`
-  一个字段（settings.rs：首次打开可选运行环境 + 设置默认打开方式；菜单/托盘
-  「打开方式」切换即写默认）。原子写（tmp+rename）、损坏回退默认。其余核心态一律不落盘。
-- **同生命周期**：壳与 dsh 严格 1:1；退出/崩溃都要把子进程收干净，不留孤儿。
+- 壳运行时无状态（2026-08-27 重定义）：数据目录只写 `dsh-shell.log`；**管理功能不在
+  此限**——管理数据可按需持久化到 `app_data` 自有数据库 / 文件。
+- 运行时持久化例外册（登记制，新增字段须先在此登记）：载体 `<app_data>/settings.json`，
+  原子写（tmp+rename）、损坏回退默认。已登记：`defaultMode`（2026-08-25）·
+  默认启动 profile（2026-08-27 批准，落地先在此登记字段名方可合入，roadmap 硬约束 4）。
+  其余运行时核心态一律不落盘。
+- **dsh 文件系统不变量**（管理功能必须维护）：profile 三件套只经 dsh CLI 写；
+  `.credentials.yaml` 保持 0600、顶层仅三键、原子写；会话目录只读不删；
+  `profiles/node_modules` 符号链接农场不得直接写入（陷阱清单见 docs/roadmap.md §1）。
+- 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都要收干净子进程，不留孤儿。
 
-## 7. IPC 与网络面（最小面例外册）
+## 7. IPC 与网络面（最小面例外册，登记制）
 
-- IPC 命令（已登记）：`choose_profile`（选择器）、`terminal_action`（错误卡
-  动作 retry/upgrade/upgrade_only）、`get_update_status`（版本状态即读）、
-  `check_updates`（手动后台检测）、`get_client_update`（客户端自更新状态即读）、
-  `client_update_check`（检查客户端更新，结果经 `app:update` 回推）、
-  `client_update_apply`（下载并安装客户端更新 → 重启）、`open_external`（白名单外链 → 系统
-  浏览器）、`open_workbench_in_browser`（当前工作台 → 系统浏览器）、
-  `get_workbench_url`（读当前工作台地址）、`boot_in_wsl`（「在 WSL 中打开」：
-  切换并写默认；零配置，Windows-only 渲染/调用，非 Windows 防御性拒绝）、
-  `choose_mode`（首次运行环境选择落地：写默认（可选）→ 按所选模式启动；
-  前端链路：BootMode 携参回启动页 → BootIndex 落地 invoke——先监听后触发，
-  防启动遥测竞态；WSL 分支仅 Windows 接受）。前端经
-  `window.__TAURI__.core.invoke` 调用、事件经 `window.__TAURI__.event.listen`
-  消费——**注册例外**；新命令必须先在本节登记。
-- **新增 IPC 命令三处同步（2026-08-25 裁定）**：Tauri 2.11 规定 remote origin
-  （dsh 页面 http://127.0.0.1）调用自定义命令会被 ACL 拒绝，除非 capability 显式引用
-  `allow-<command>` 权限。链路 = `build.rs` 的 `AppManifest::new().commands([...])`
-  （构建期自动生成 allow-\*/deny-\*）+ `capabilities/default.json` permissions 逐个
-  引用 + `lib.rs` 命令实现。**漏任何一处，remote 页面调用即静默失败。**
-- **WSL 客体内安装 = 网络面例外**：WSL 探测到「有 node 缺 dsh」时，在客体内安装 dsh。
-  网络动作发生在 **WSL 发行版内**（Windows 侧壳不触网）；镜像配置由用户客体内 npm
-  决定（不注入镜像参数）；缺 node（`NODE_MISSING`）不自动装 Node（用户主权），
-  只给可行动提示。脚本模板 / 日志回传细节见 [ADR-0004](docs/adr/0004-wsl-guest-dsh-install.md)。
-- **外链策略**：主窗口由 setup 内 `create_main_window` 创建（tauri.conf.json 不静态
-  定义 windows——只有代码创建才能挂处理器）。dsh 超链接 / 新窗口统一转系统默认浏览器；
-  非白名单 http(s) 拦截，壳不成为任意跳板；新外链域 = 在 `EXTERNAL_URL_HOSTS` 登记。
-  导航 / 新窗口 / 兜底实现见 [ADR-0003](docs/adr/0003-external-link-and-navigation.md)。
-- **WebView 长会话内存**：dsh web 前端无虚拟化，WebKit 视口外资源回收弱，长会话
-  WebContent 膨胀。壳经 initialization_script 注入 CSS 缓解（content-visibility + 动态豁免 +
-  能力探测降级），不动用户本地状态。技法与禁手清单见 [ADR-0002](docs/adr/0002-webview-memory-policy.md)。
-- 事件协议：`boot:step` / `boot:error`（启动遥测）+ `boot:update`
-  （三维度版本状态 `{dsh, client, node:{version, origin}|null}`）+
-  `boot:progress`（下载进度 `{kind:"node", current, total|null}`；Rust 侧节流
-  ≥100ms，updates 经回调上抛、lib.rs 桥接为事件——updates 保持零 tauri 依赖）。
-- 更新常驻入口：**macOS = 应用菜单**，**非 macOS = 系统托盘**（窗口菜单一律
-  `#[cfg(target_os = "macos")]` 门控，事件同一 `on_menu_event` 分发）。前端顶栏
-  「关于」按钮与原生常驻入口重复，已随 `open_about` IPC 一并删除（2026-08-27 裁定）；
-  关于面板只由菜单/托盘打开。`upgrade_only` 不打断会话（下次启动生效）；about 窗口
-  label 须在 capabilities windows 列表。平台分叉与托盘修订史见 [ADR-0007](docs/adr/0007-update-entry-menu-vs-tray.md)。
-- **dsh 就绪等待**：`shell::wait_for_ready` 取代死等——进程存活感知（退出即败 /
-  日志无进展判卡死 / 超时先 teardown 再报错，重试不残留孤儿）。阈值与实现见
-  [ADR-0001](docs/adr/0001-ready-wait-process-liveness.md)。
-- **唯一网络面 = `updates.rs`**：包元数据 / dsh 安装、Node 二进制、Node 版本映射包
-  `@dsh-dock/node-map`（ed25519 验签后才采纳，失败回退内置基线 fail-closed）、客户端
-  自更新源均在 updates.rs 内。其余模块不得触网（Windows 安装器 WebView2 在线引导属
-  打包配置，不属壳运行时网络面）；非 updates.rs 的网络需求先在本节登记再写。网络动作
-  一律后台线程。镜像链 / 下载双超时 / 自更新源细节见 [ADR-0006](docs/adr/0006-network-surface-and-mirror-chain.md)。
-- **pnpm 全局安装需显式注入 global-bin-dir**：GUI 子进程不加载 shell rc，pnpm 10 缺
-  `global-bin-dir` 会失败 → 回退 npm。注入与回退细节见 [ADR-0005](docs/adr/0005-pnpm-global-bin-dir.md)。
+- **IPC 命令登记**（新命令必须先在此登记再实现）：`choose_profile` `terminal_action`
+  `get_update_status` `check_updates` `get_client_update` `client_update_check`
+  `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
+  `boot_in_wsl` `choose_mode`。
+- **前端调用例外**：经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote
+  页面不享默认授权）；事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress`
+  （Rust 侧节流 ≥100ms；updates 零 tauri 依赖，经 lib.rs 桥接上抛）+ `app:update`
+  （updater 回推，仅 main/about 窗口，capability 显式授权）。
+- **新增 IPC 三处同步（2026-08-25 裁定；漏一处 remote 调用即静默失败）**：
+  `build.rs` AppManifest commands（自动生成 allow-*）+ `capabilities/default.json`
+  permissions 逐个引用 + `lib.rs` 命令实现。
+- **唯一网络面 = `updates.rs`**（元数据 / dsh 安装 / Node 下载 / node-map 验签 fail-closed /
+  客户端自更新）；其余模块不得触网，新网络需求先在此登记再写；网络动作一律后台线程。
+- 专项裁定（推理与细节一律见 §9 索引对应 ADR）：就绪等待 = 进程存活感知（0001）·
+  WebView 内存 = 注入 CSS 缓解（0002）· 外链白名单 `EXTERNAL_URL_HOSTS`（0003）·
+  WSL 客体内安装且 Windows 侧壳不触网（0004）· pnpm 需注入 global-bin-dir、失败回退
+  npm（0005）· 镜像链与下载双超时（0006）· 更新常驻入口 macOS=菜单 / 非 macOS=托盘、
+  顶栏「关于」已删、upgrade_only 下次启动生效（0007）。
 
 ## 8. AI 交互约束
 
@@ -284,50 +169,80 @@ dsh-dock/
 
 1. **增量生成**：一次会话只做一个明确意图（一个功能 / 一个修复 / 一次重构）；
    「顺便把 X 也改了」= 停下，拆成下一次。
-2. **禁止一次性大改**：不做跨模块批量改动、不做全仓格式化/批量重命名/
-   `clippy --fix` 扫荡（冲突协议见 docs/CONTRIBUTING.md §占用声明）。
-   AI 提出超范围改动时一律拒绝，记入计划另行开工。
-3. **必须附带测试**：行为改动必须有对应测试或明确验证记录
-   （单测 / 实机清单条目 / 手动验证说明写入 PR）。「没测过」的代码不合入。
-4. **先读后写**：动任何文件前，先读该文件现状与本文件相关章节；
-   AI 声称「我记得这里应该……」时，一律以仓库现状为准，不猜、不静默扩权。
-5. **收尾三件事**：`cargo test` 绿 → 人肉读 `git diff` 确认无越界 →
-   按 CONTRIBUTING 规范提交并在公共频道广播完成通知，同步落档
-   `docs/broadcasts.md`（频道留不住，落盘才存在）。
-6. **不确定就问**：逻辑归属（壳 vs 打包侧）、契约影响面、是否踩本文件红线——
-   问人，不猜。
-7. **驳回不合理的规则（2026-08-27 维护者授权）**：AI 判定某规范与现实冲突、
-   自相矛盾或已失效时——如「声明旧 MSRV 却全程用新版工具链编译」——应当
-   停手向维护者**提出驳回与修订建议**，经裁定后修规则；不得机械执行产出
-   变形实现绕行。提请方承担举证：写清冲突点、影响面与建议修订文本。
-   顺从 ≠ 忠诚，变形合规比违规更危险（它把矛盾埋进代码）。
+2. **禁止一次性大改**：不做跨模块批量改动、全仓格式化 / 批量重命名 / `clippy --fix`
+   扫荡（冲突协议见 CONTRIBUTING 占用声明）；AI 提出超范围改动时一律拒绝，记入计划另行开工。
+3. **必须附带测试**：行为改动必须有对应测试或明确验证记录（单测 / 实机清单 / PR 说明）；
+   「没测过」的代码不合入。
+4. **先读后写**：动文件前先读现状与本文件相关章节；AI 声称「我记得应该……」时一律以
+   仓库现状为准，不猜、不静默扩权。
+5. **收尾三件事**：`cargo test` 绿 → 人肉读 `git diff` 确认无越界 → 按 CONTRIBUTING
+   提交并频道广播完成通知，落档 `docs/broadcasts.md`（频道留不住，落盘才存在）。
+6. **不确定就问**：逻辑归属（壳 vs 打包侧）、契约影响面、是否踩红线——问人，不猜。
+7. **驳回不合理的规则（2026-08-27 维护者授权）**：判定规范冲突 / 失效时，停手向维护者
+   提出驳回与修订建议（举证冲突点、影响面、建议文本），经裁定后修规则；不得变形绕行——
+   顺从 ≠ 忠诚，变形合规比违规更危险。
 
 ## 9. 关键决策记录索引
 
-| 记录 | 位置 | 说明 |
-|:---|:---|:---|
-| ADR-0004 独立桌面打包 | 姊妹仓库 `dsh-launcher/docs/adr/0004-standalone-desktop-package.md` | 本仓库立项依据：内嵌 WebView + 冻结快照 + 壳/快照解耦 |
-| ADR-0005 桌面终端定位 | 姊妹仓库 `dsh-launcher/docs/adr/0005-desktop-terminal.md` | 产物语义修正：dsh 的桌面终端（宿主解析链），非纯离线分发 |
-| **本仓库 ADR**（`docs/adr/`，编号自 0001 起） | | |
-| ADR-0001 dsh 就绪等待语义 | `docs/adr/0001-ready-wait-process-liveness.md` | 进程存活感知取代死等（退出即败 / 卡死判定 / teardown） |
-| ADR-0002 WebView 内存策略 | `docs/adr/0002-webview-memory-policy.md` | content-visibility 注入缓解长会话膨胀 |
-| ADR-0003 外链与导航策略 | `docs/adr/0003-external-link-and-navigation.md` | 系统浏览器兜底 + 白名单拦截 + 三层覆盖 |
-| ADR-0004 WSL 客体内 dsh 安装 | `docs/adr/0004-wsl-guest-dsh-install.md` | 壳不触网，安装进 WSL 发行版 |
-| ADR-0005 pnpm global-bin-dir 注入 | `docs/adr/0005-pnpm-global-bin-dir.md` | GUI 子进程无 rc 的 pnpm 10 兼容 + npm 回退 |
-| ADR-0006 唯一网络面与镜像链 | `docs/adr/0006-network-surface-and-mirror-chain.md` | 四路镜像链 + 下载双超时 + 自更新源 |
-| ADR-0007 更新常驻入口 | `docs/adr/0007-update-entry-menu-vs-tray.md` | macOS 菜单 vs 非 macOS 托盘（含托盘修订史） |
-| 本仓库 ADR 规范 | `docs/adr/TEMPLATE.md` | 影响契约/架构/安全边界的决策必须立 ADR |
-| 内联裁定 | 本文件各节 | 例行裁定（日期 + 结论 + 一句理由）可留本文件；升格为 ADR 的时机 = 决策影响多个模块、需要否决过的备选方案可追溯。§7 原有带日期裁定已按此判据批量升格为 ADR-0001~0007 |
+立项依据（姊妹仓库）：`dsh-launcher/docs/adr/0004`（独立桌面打包）、`0005`（桌面终端
+定位）。本仓库 ADR 在 `docs/adr/`（模板 TEMPLATE.md）；**影响契约 / 架构 / 安全边界的
+决策必须先立 ADR 再动代码**（上游 ADR-0004 即先例）。
 
-ADR 流程：先立 ADR → 相关方确认 → 再动代码（上游 ADR-0004 即此先例）。
+| ADR | 一行结论 |
+|:---|:---|
+| [0001](docs/adr/0001-ready-wait-process-liveness.md) ready-wait | 进程存活感知取代死等（退出即败 / 卡死判定 / teardown） |
+| [0002](docs/adr/0002-webview-memory-policy.md) webview-memory | content-visibility 注入缓解长会话膨胀 |
+| [0003](docs/adr/0003-external-link-and-navigation.md) external-link | 系统浏览器兜底 + 白名单拦截 + 三层覆盖 |
+| [0004](docs/adr/0004-wsl-guest-dsh-install.md) wsl-guest-install | 壳不触网，安装进 WSL 发行版 |
+| [0005](docs/adr/0005-pnpm-global-bin-dir.md) pnpm-global-bin-dir | GUI 子进程无 rc 的 pnpm 10 兼容 + npm 回退 |
+| [0006](docs/adr/0006-network-surface-and-mirror-chain.md) network-surface | 唯一网络面 + 四路镜像链 + 下载双超时 + 自更新源 |
+| [0007](docs/adr/0007-update-entry-menu-vs-tray.md) update-entry | macOS 菜单 vs 非 macOS 托盘（含托盘修订史） |
+| [0008](docs/adr/0008-frontend-framework.md) frontend-framework | React 19 生态白名单与前端三条红线 |
+| [0009](docs/adr/0009-profile-manager.md) profile-manager | 管理功能定位与工程准则（3 红线） |
+
+内联裁定规则见 §11.3（例行裁定可留各节；升格后必须回收）。
 
 ## 10. 试验协议（AI 协作）
 
 - 修改运行时契约或快照布局前，先对照 `docs/contract.md` 确认两侧同步方案。
-- 不确定某逻辑归属（壳 vs 打包侧）时，先问清楚再动手，不猜、不静默扩权。
-- 多人协同（Git 工作流 / 文件占用声明 / 沟通与发布协议）见 `docs/CONTRIBUTING.md`——
-  本文件是共享宪法，同一时间仅一人可改，改前须在公共频道知会所有活跃协作者，
-  改后贴出 diff 摘要。
-- **知会落档（2026-08-27 裁定）**：凡需公共频道知会的事件（宪法级文件改动、
-  快车道直推、PR 合并、发版事项、占用声明），发送频道后须在 `docs/broadcasts.md`
-  追加条目——频道消息不作存证，检索与回溯以档案为准。
+- 逻辑归属不确定时先问再动手；多人协同（Git 工作流 / 占用声明 / 发布）见 CONTRIBUTING。
+- **本文件是共享宪法**：同一时间仅一人可改，改前频道知会所有活跃协作者，改后贴 diff 摘要。
+- **知会落档（2026-08-27）**：宪法级改动 / 快车道直推 / PR 合并 / 发版 / 占用声明，
+  频道发送后须在 `docs/broadcasts.md` 追加条目——频道消息不作存证，检索以档案为准。
+
+## 11. 本文件写入边界（元规则，2026-08-28 裁定）
+
+> 本文件每次 AI 会话全量读入，定位是**最小必要集**，不是知识库。
+> 准入一句话判据：**没有这条，AI 会做错吗？** 会——才写入；不会——落专项文档。
+
+### 11.1 准入判据（四条同时满足才写入）
+
+1. **高频**：几乎任何改动都会遇到（红线 / 测试 / 提交 / 发布闸门），非特定模块偶发；
+2. **违约即事故**：踩了导致构建失败、契约破坏、越界、安全隐患，而非「不够优雅」；
+3. **不可推导**：代码 / docs / ADR / 类型签名推不出的裁定——写「为什么」，不写「是什么」；
+4. **无家可归**：放不进任何既有文档（ADR / contract.md / CONTRIBUTING / roadmap / 模块注释）。
+
+### 11.2 排除清单（不写入，落对应归宿）
+
+| 内容 | 归宿 |
+|:---|:---|
+| 模块内部约定、实现技法 | 模块级注释 / `docs/contracts/` |
+| 单次决策完整推理（背景 / 备选 / 后果） | ADR——本文件只留一行结论 + 指针 |
+| 协作流程细则（分支 / review / 占用声明操作） | `docs/CONTRIBUTING.md` |
+| 契约字段与格式细节 | `docs/contract.md` |
+| 计划、进度、指标、陷阱明细 | `docs/roadmap.md` |
+| 操作手册（签名 / 验证清单 / 实测记录） | `docs/` 专项文件（macos-signing / executor 等） |
+| 事件通知与广播原文 | `docs/broadcasts.md` |
+
+### 11.3 形态规则
+
+- 单条 = **结论一句 + 日期 + 指针**；写「必须 / 禁止什么」，不展开「怎么实现」；
+- §7 例外册类登记只允许一行一条，细节一律外链 ADR / 专项文档；
+- 内联裁定升格 ADR 后，原条目**必须回收**（删或缩为一行指针），禁止双源并存；
+- 不合 11.1 判据的新增条目，review 可依据本节直接驳回。
+
+### 11.4 预算与回收
+
+- 预算：全文 ≤ 250 行、单节 ≤ 40 行；超支先想下沉，再想扩写。
+- 回收触发（任一）：① 已升格 ADR；② 行为已有测试 / CI 闸门兜底；③ 与后续裁定冲突失效。
+- 首轮回收（2026-08-28）：394 → ≤250 行，明细见当日广播。

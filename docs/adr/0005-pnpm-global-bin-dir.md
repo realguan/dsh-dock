@@ -5,6 +5,10 @@
 - **提出人**：guan
 - **相关方**：updates.rs（`install_global_dsh_pnpm` / `pnpm_global_bin_dirs` / `install_global_dsh_npm`）
 - **关联**：AGENTS.md §7（网络面 = updates.rs）
+- **注（2026-08-27 边界重定义）**：本 ADR 的「pnpm 全局安装」是运行时宿主链（dsh 安装
+  到全局）路径；4.3 管理功能的 `dsh plugin --profile` 转发链是 **profile 目录内安装**，
+  不涉及 global-bin-dir（见 Spike A）。二者同源环境风险但机制不同，本 ADR 不覆盖
+  4.3 转发链。
 
 ---
 
