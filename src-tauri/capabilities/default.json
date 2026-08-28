@@ -4,7 +4,8 @@
   "description": "默认能力：允许主窗口加载 127.0.0.1 回环地址的 dsh Web UI（ADR-0004 探针定论：/api 非鉴权、无 CSP、同源回环直达）。remote 上下文（dsh 页面）调用应用自定义命令需显式 allow-* 权限（build.rs AppManifest 自动生成，2026-08-25 外链修复）。",
   "windows": [
     "main",
-    "about"
+    "about",
+    "profiles"
   ],
   "remote": {
     "urls": [

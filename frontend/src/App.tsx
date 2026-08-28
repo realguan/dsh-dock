@@ -15,6 +15,7 @@ import { BootIndex } from "@/pages/BootIndex"
 import { BootMode } from "@/pages/BootMode"
 import { BootSelector } from "@/pages/BootSelector"
 import { About } from "@/pages/About"
+import { ProfileManager } from "@/pages/ProfileManager"
 
 export default function App() {
   const [label, setLabel] = useState<string | null>(null)
@@ -45,6 +46,9 @@ export default function App() {
 
   // about 窗口：单页，不经路由
   if (label === "about") return <About />
+
+  // profile 管理器窗口（4.3）：单页，不经路由（独立窗口理由见页面头注释）
+  if (label === "profiles") return <ProfileManager />
 
   // 主窗口：启动序列 + pathname 路由
   return (

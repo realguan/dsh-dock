@@ -1227,6 +1227,7 @@ pub fn run() {
             let handle = app.clone();
             match event.id().as_ref() {
                 "about" => open_about_window(&handle),
+                "profiles_manager" => open_profiles_window(&handle),
                 "open_in_browser" => {
                     let state = handle.state::<Arc<ShellState>>().inner().clone();
                     let url = state.workbench_url.lock().unwrap().clone();
@@ -1493,6 +1494,13 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tau
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let in_browser =
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
+    let profiles_manager = MenuItem::with_id(
+        app,
+        "profiles_manager",
+        "Profile 管理器",
+        true,
+        None::<&str>,
+    )?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 非 macOS 之外无「打开方式」子菜单（2026-08-26 裁定）：本函数仅 macOS
@@ -1501,6 +1509,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tau
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
     let app_menu = SubmenuBuilder::new(app, "dsh-dock")
         .item(&in_browser)
+        .item(&profiles_manager)
         .item(&sep)
         .item(&about)
         .item(&sep)
@@ -1594,6 +1603,13 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let in_browser =
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
+    let profiles_manager = MenuItem::with_id(
+        app,
+        "profiles_manager",
+        "Profile 管理器",
+        true,
+        None::<&str>,
+    )?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 「打开方式」仅 Windows（WSL 只存在于 Windows，2026-08-26 裁定）：
@@ -1639,6 +1655,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
 
     let mut entries: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
     entries.push(&in_browser);
+    entries.push(&profiles_manager);
     if let (Some(l), Some(w)) = (local_item.as_ref(), wsl_item.as_ref()) {
         entries.push(l);
         entries.push(w);
@@ -1728,5 +1745,37 @@ fn open_about_window(app: &tauri::AppHandle) {
         }
     }) {
         tracing::error!("调度关于窗口创建到主线程失败：{e}");
+    }
+}
+
+/// Profile 管理器窗口（4.3）：独立小窗（label=profiles，React 渲染
+/// pages/ProfileManager.tsx）。独立窗口与 about 同理——主窗口 boot 后会
+/// 导航进 dsh 工作台（remote），壳页不可达；管理器要随时可达。
+/// 主线程创建约束同 open_about_window（WebView2 白板坑）。
+fn open_profiles_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("profiles") {
+            let _ = win.show();
+            let _ = win.set_focus();
+            return;
+        }
+        let builder = tauri::WebviewWindowBuilder::new(
+            &handle,
+            "profiles",
+            tauri::WebviewUrl::App("/".into()),
+        )
+        .title("Profile 管理器")
+        // 列表宽度 620 + 容器边距；详情/创建等对话框在窗内弹出
+        .inner_size(680.0, 700.0)
+        .min_inner_size(560.0, 540.0)
+        .resizable(true)
+        .center();
+        match builder.build() {
+            Ok(_) => tracing::info!("Profile 管理器窗口已创建"),
+            Err(e) => tracing::error!("创建 Profile 管理器窗口失败：{e}"),
+        }
+    }) {
+        tracing::error!("调度 Profile 管理器窗口创建到主线程失败：{e}");
     }
 }

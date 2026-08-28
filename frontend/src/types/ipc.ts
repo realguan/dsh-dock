@@ -40,3 +40,49 @@ export type ClientUpdate =
 
 /// 错误卡动作 id（terminal_action 的合法入参子集）。
 export type TerminalAction = "retry" | "upgrade" | "upgrade_only"
+
+// ---------- Profile 管理器（4.3；形状锚定 src-tauri/src/profiles.rs 的 serde 序列化） ----------
+
+/// 列表条目：已物化 profile 或未物化的内置模板名（两态合并，ADR-0009 方案 E）。
+export interface ProfileSummary {
+  name: string
+  /** true = 已物化（目录存在）；false = 内置模板名可首启 */
+  materialized: boolean
+  /** dsh.profile.bundles；未物化模板名 = dsh 内置模板 bundle 列表 */
+  bundles: string[]
+  /** package.json dependencies 的包名（字典序） */
+  dependencies: string[]
+}
+
+/// 单个 profile 详情（package.json 关键字段 + cordis.patch.yml 原文）。
+export interface ProfileDetail {
+  /** package.json 的 name 字段（dsh 约定 dsh-profile-<目录名>）；缺失为 null */
+  package_name: string | null
+  bundles: string[]
+  /** dependencies 的 name → specifier */
+  dependencies: Record<string, string>
+  /** patch 原文（后端不解析 YAML）；文件不存在为 null */
+  patch_yaml: string | null
+}
+
+/// 创建结果：「已创建未装插件」是合法中间态而非失败（ADR-0009 方案 A）。
+export interface CreateProfileOutcome {
+  profile: string
+  materialized: boolean
+  installed: boolean
+  /** 人读状态 + 可行动建议（附 dsh 输出尾部） */
+  detail: string
+}
+
+/// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
+export interface LifecycleOutcome {
+  profile: string
+  warnings: string[]
+}
+
+/// 删除结果。
+export interface DeleteOutcome {
+  profile: string
+  /** 该 profile 是默认启动 profile，引用已清除（读取侧兜底 web） */
+  default_cleared: boolean
+}

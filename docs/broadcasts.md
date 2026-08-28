@@ -32,6 +32,30 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 4.3 Profile 管理器第五刀（前端管理页）+ AGENTS §4.4 重评 —— guan（AI 协作）
+
+- 变更：本 commit——前端 `pages/ProfileManager.tsx` + `components/profiles/*`
+  （列表行两态 / 详情 / 创建 / 复制 / 重命名 / 删除确认五组组件）+
+  `stores/profilesStore.ts` + `lib/profiles.ts`（校验镜像等纯逻辑，6 条 Vitest）
+  + `lib/tauri.ts`（8 个 profile api，共 20 命令全类型化）+ `types/ipc.ts`
+  （五个响应类型锚定 Rust serde 形状）+ `content/zh-CN.ts`（profiles 文案段）
+  + `App.tsx`（label=profiles 路由）；后端 `lib.rs`（`open_profiles_window`
+  镜像 about 主线程约束 + macOS 菜单 / 非 macOS 托盘入口
+  `profiles_manager`）+ `capabilities/default.json`（windows 数组加
+  `profiles`——ACL 按窗授权，漏加即整页 IPC 静默拒绝）。
+- 影响：**触宪法级**两处，仅周知——① AGENTS §4.4 Vitest 重评条件已触发并
+  落盘结论：维持纯逻辑测试，RTL/jsdom 不引入（再评触发 = 需 DOM 断言的
+  复杂交互）；② TanStack Query 未接入：管理页是「读一次 + 变更后手动刷新」
+  形态，frontend-migration §11 的触发条件裁定延后（rationale 见
+  profilesStore.ts 头注释，出现跨窗口订阅诉求再立 micro-ADR）。
+  范围声明：4.3 全部六项能力的 UI 至此可用（菜单/托盘 → Profile 管理器）；
+  defaultProfile 的 boot 消费接线、pnpm 补齐仍归后续刀。前端文案含
+  删除确认三要素（不级联全局数据 / 其他 dsh 实例 / 模板名重新物化，ADR
+  §2 要求）与创建 pending 中间态（ADR §3 方案 A 契约）。
+- 凭据：`npm run typecheck` / `lint` / `test`（40，+6）/ `build` 全绿；
+  `cargo test` 120 绿 / `fmt --check` / `clippy -D warnings` 全过；
+  diff 已逐行人肉复核。
+
 ### 2026-08-28 完成通知 · 4.3 Profile 管理器第四刀（生命周期 + 默认持久化）—— guan（AI 协作）
 
 - 变更：本 commit——`profiles.rs`（复制/重命名/删除文件层 + 前置校验 + 运行中
