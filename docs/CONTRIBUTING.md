@@ -37,7 +37,9 @@ cargo run
 
 说明：
 
-- **壳前端免构建**（`ui/` 是静态页），日常开发不需要 node/npm；仅 node-map 发布流程需要。
+- **前端是 React SPA**（`frontend/`，2026-08-27 迁移）：日常开发需要
+  `cd frontend && npm ci`（typecheck / lint / test 三闸门与 CI 同款）；
+  Rust 侧不依赖 node。
 - 出安装包用 `cargo tauri build`——tauri-cli 必须 **2.11.x**（与 tauri crate 同代，
   见 `.github/workflows/build.yml` 的 `TAURI_CLI_VERSION` 注释）。
 - `[待补充]` 一键环境脚本（`scripts/setup-env.sh`，检测缺失前置并提示安装命令）；

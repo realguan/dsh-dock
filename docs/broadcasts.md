@@ -32,6 +32,20 @@
 
 ## 三、记录
 
+### 2026-08-28 文档修正 · README/CONTRIBUTING 面向前端迁移与 Profile 管理器现状更新 —— guan（AI 协作）
+
+- 变更：本 commit——`README.md`（「它做什么」补 Profile 管理器与 pnpm 环境
+  保障两条、WSL 条目 settings.json 字段表述更正、开发命令全面修正：前端
+  React SPA 的 npm 闸门 + **`cargo run` 须先 `cd src-tauri`**、品牌资源路径
+  ui/assets → frontend/public 与 Emblem、结构树重画含 profiles.rs/ipc.rs 等
+  新模块）；`docs/CONTRIBUTING.md`（「壳前端免构建（ui/ 静态页）」过时表述
+  更正为 React SPA + npm 三闸门）。
+- 影响：仅周知。根因是 2026-08-27 前端迁移与 4.3 各刀落地后文档未跟上——
+  本机实测 `cargo run` 在仓库根直接失败（Cargo.toml 在 src-tauri/ 下），
+  README 旧命令会误导所有新上手者。
+- 凭据：文档改动；所有引用路径已 `ls` 核实存在（frontend/public/mark.svg、
+  assets/dsh-logo.svg、scripts/*、node-map/README.md 等）。
+
 ### 2026-08-28 完成通知 · pnpm 补齐落地（boot 硬依赖 + 创建时复用，ADR 红线 2 收口）—— guan（AI 协作）
 
 - 变更：本 commit——`updates.rs` 新增 `ensure_pnpm`（PATH 可见即返回；
