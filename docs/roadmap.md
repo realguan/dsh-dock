@@ -132,7 +132,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 
 > 阶段目标：交付壳的独特价值——全局、跨 profile、离线可用的 dsh 管理能力。Profile 管理是入口，插件管理是高频操作。
 >
-> **工程前置（4.3 开工前）**：IPC 三处同步一致性自检自动化 spike——当前三处同步（build.rs + capabilities + lib.rs，AGENTS §7）漏一处即静默失败，靠登记提醒防；4.3/4.4 将新增大量 IPC 命令，开工前把「人肉纪律」升级为机器闸门（如 build.rs 断言 capabilities ⊆ 已实现命令，或启动诊断自检）。
+> **工程前置（4.3 开工前）**：✅ 已完成（2026-08-28）——IPC 三处同步机器闸门：`src-tauri/src/ipc.rs` 为单一事实源，build.rs 经 `#[path]` 由常量生成 AppManifest（不再手写），「capabilities ↔ 常量 ↔ generate_handler」一致性由 cargo test 拦截（capability 引未知权限由 tauri-build 构建期免费拦截）；详见 `ipc.rs` 头注释与 AGENTS §7。
 
 #### 4.3 Profile 管理器（壳的独特定位，最高用户价值）
 
@@ -140,8 +140,8 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 |:---|:---|
 | **目标结果** | 用户可在壳内可视化管理所有 dsh profile：列出、创建、复制、重命名、删除、切换默认启动 profile、查看详情 |
 | **当前问题** | profile 是 dsh 的核心组织单元（每个 profile = 独立插件组合 + 配置 + 数据），但 dsh 没有任何列举/创建/复制/重命名/删除 profile 的官方命令——唯一的隐式物化路径是「内置模板名首启」与「首次 `plugin add`」，内部设置类 UI 也只服务于当前运行进程。壳做全局视角是独特价值，且属「越界补位」（在文件系统层模拟 dsh 未提供的语义，须立 ADR 说明） |
-| **关键行动** | ① 列出 profile：扫描 `$DSH_HOME/profiles/`，解析每个 profile 的 `package.json`（`dsh.profile.bundles` + dependencies）、`cordis.patch.yml`、`pnpm-workspace.yaml`、依赖完整性；注意出厂模板（web/headless）在首次启动前**没有目录**，选择器须区分「已物化 profile」与「内置模板名可直接首启」两种状态；「最后使用时间」dsh 无现成元数据，能否由目录时间戳可靠推断列为调研点。② 创建 profile：主路径 = 引导式半官方路径——spawn `dsh plugin --profile <新名> add <bundle>`（任意新名首用即以 `@deepseek-ai/dsh-base` 初始化并写入三件套）；备选 = 壳侧复刻 initProfile 写入（`package.json` + `cordis.patch.yml` + `pnpm-workspace.yaml`，`nodeLinker: hoisted`），须承担跟 dsh 版本漂移的风险并在代码注释锚定参考实现位置；两者都必须复用与 dsh 逐字一致的非法名校验（空名 / 含 `/` `\` / `.` / `..` / `node_modules`）。③ 复制/重命名/删除：安全文件操作（删除前确认，并明示删除 profile 不删除会话等全局数据；重命名的引用面不只 pnpm workspace——还有 `package.json` 内 `dsh-profile-<名>` 命名字段、`profiles/node_modules` 符号链接农场（靠 dsh 下次启动 heal 自愈），实现前先做一次引用清点 spike）。④ 切换默认启动 profile：现状修正——本地档并非硬编码（manifest `default_web_profile()` 默认 `"web"`，多 webUi 时已有选择器），真正缺口是 WSL `GUEST_BOOT` 写死 `--profile web`、以及用户选择不持久化；已获批准将所选默认 profile 持久化到 `settings.json`（第二最小面例外，落地时同步登记 AGENTS §6）；WSL 分支是否放开多 profile 与 executor 脚本改造合并评估。⑤ Profile 详情页：展示 `package.json`、`cordis.patch.yml`、`dsh --dump-config` 完整组合配置树（分层来源注释由 dsh 原生提供）、依赖完整性检查 |
-| **依赖** | Now 阶段的工程化基线（新增大量代码需要 fmt/clippy 闸门）；需要新增 `serde_yaml` 依赖（当前只有 serde_json）用于 YAML 读写；**前置 spike**：验证 GUI 环境（无 shell rc）下经 `dsh plugin` 转发链 pnpm 是否可用、失败时如何给可行动报错 |
+| **关键行动** | ① 列出 profile：扫描 `$DSH_HOME/profiles/`，解析每个 profile 的 `package.json`（`dsh.profile.bundles` + dependencies）、`cordis.patch.yml`、`pnpm-workspace.yaml`、依赖完整性；注意出厂模板（web/headless）在首次启动前**没有目录**，选择器须区分「已物化 profile」与「内置模板名可直接首启」两种状态；「最后使用时间」dsh 无现成元数据，能否由目录时间戳可靠推断列为调研点。② 创建 profile：主路径 = 引导式半官方路径——spawn `dsh plugin --profile <新名> add <bundle>`（任意新名首用即以 `@deepseek-ai/dsh-base` 初始化并写入三件套）；备选 = 壳侧复刻 initProfile 写入（`package.json` + `cordis.patch.yml` + `pnpm-workspace.yaml`，`nodeLinker: hoisted`）——**已否决（ADR-0009 方案 B/C，2026-08-28）**；创建必须复用与 dsh 逐字一致的非法名校验（空名 / 含 `/` `\` / `.` / `..` / `node_modules`，锚定 `resolveProfileDir` `@ 318`）。③ 复制/重命名/删除：安全文件操作（删除前确认，并明示删除 profile 不删除会话等全局数据；重命名的引用面不只 pnpm workspace——还有 `package.json` 内 `dsh-profile-<名>` 命名字段、`profiles/node_modules` 符号链接农场（靠 dsh 下次启动 heal 自愈），实现前先做一次引用清点 spike）。④ 切换默认启动 profile：现状修正——本地档并非硬编码（manifest `default_web_profile()` 默认 `"web"`，多 webUi 时已有选择器），真正缺口是 WSL `GUEST_BOOT` 写死 `--profile web`、以及用户选择不持久化；已获批准将所选默认 profile 持久化到 `settings.json`（第二最小面例外，落地时同步登记 AGENTS §6）；WSL 分支是否放开多 profile 与 executor 脚本改造合并评估。⑤ Profile 详情页：展示 `package.json`、`cordis.patch.yml`、`dsh --dump-config` 完整组合配置树（分层来源注释由 dsh 原生提供）、依赖完整性检查 |
+| **依赖** | Now 阶段的工程化基线（新增大量代码需要 fmt/clippy 闸门）；YAML 依赖选型（`serde_yaml` 上游已停止维护，评估后继）；**前置 spike 已完成**（Spike A/B 2026-08-27 → ADR-0009 已接受 2026-08-28）；pnpm 为环境检查 boot 硬依赖（ADR-0009 口径 2：缺失经 `npm i -g pnpm` 补齐，补齐失败阻断并给可行动文案） |
 | **结果信号** | 用户可在壳内完成 profile 的全生命周期管理，无需手动操作文件目录；默认启动 profile 可切换 |
 | **退出条件** | 列出/创建/复制/删除/切换默认/详情六个核心能力可用，文件操作有纯函数单测覆盖 |
 | **重排触发器** | 若 dsh 未来版本改变 profile 目录结构 / 初始化三件套 / pnpm workspace 布局，需适配；若 dsh 官方新增 profile 管理 CLI 或全局 profile 管理 UI，需重新评估壳的增量价值 |
@@ -196,9 +196,9 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 
 #### 4.9 WSL 迭代 v2
 
-- **目标**：WSL 多发行版选择 UI、profile 选择、teardown 兜底、缺 node 一键安装引导
+- **目标**：WSL 多发行版选择 UI、profile 选择、teardown 兜底、缺 node 自动安装（2026-08-28 已裁定，见 ADR-0004 §7 补录）
 - **依赖**：§3 的 WSL v1 实机验证已闭环（✅ v0.4.6），本项即为 v1 之上的迭代
-- **注意**：缺 node 不自动安装是刻意设计（用户主权），v2 最多做到「一键调起包管理器安装」，不替用户选版本；客体内 npm 镜像参数不注入（尊重用户客体内 npm 配置）
+- **注意**：缺 node 自动安装（2026-08-28 维护者修订，推翻本项原「用户主权只提示」设计，见 ADR-0004 §7）：与本地档同源（node-map 同版本）、tarball 解压至客体内壳管理目录 `~/.dsh-dock/node`、无 sudo、不经发行版包管理器；补齐链 node → pnpm → dsh 全自动；客体内 npm 镜像参数仍不注入（尊重用户客体内 npm 配置；壳下载自身二进制走 ADR-0006 镜像链，与之不冲突）
 
 #### 4.10 代理支持（企业网络环境）
 
@@ -244,7 +244,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 | ~~引入数据库 / IPC 总线 / 领域服务~~ | **已放宽（2026-08-27 边界重定义）**：管理功能可引入数据库 / 持久化，按优秀软件工程设计；壳运行时（启动/版本/宿主解析）仍保持薄、无状态 |
 | 引入 IPC 总线 / 领域服务分层 | 壳运行时无 services 分层，用 anyhow 错误处理（管理功能若引入则另行 ADR） |
 | 具体产品身份硬编码（名称/图标/插件/凭据） | 壳是通用机制，产品是数据 |
-| WSL 内自动安装 Node | 用户主权：安装方式/版本策略属用户决定，壳只给可行动提示 |
+| ~~WSL 内自动安装 Node~~ | **已放宽（2026-08-28 维护者修订，ADR-0004 §7）**：与本地对齐，缺 node 自动安装——同源版本、tarball 落壳管理目录；原「用户主权只提示」裁定正面翻案 |
 | WSL 客体内 npm 镜像参数注入 | 尊重用户客体内 npm 配置 |
 | 离线档快照内容生成 | `render-product.sh` 是打包期工具，壳运行时不执行 |
 | dsh 会话内容全文搜索 | `dsh-session-query-sqlite` 模块存在但默认休眠（`:memory:` + `openAt: never`，启用属产品层 opt-in 决策）；壳只做元数据管理，不解析会话内容 |

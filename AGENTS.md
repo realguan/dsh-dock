@@ -102,10 +102,14 @@
 - 壳运行时无状态；**管理功能不在此限**——管理数据可按需持久化到 `app_data` 自有库/文件。
 - 运行时持久化例外册（新增字段须先在此登记）：`settings.json` 原子写、损坏回退默认；
   已登记 `defaultMode`（2026-08-25）· 默认启动 profile（2026-08-27 批准，落地先登记）。
-- **dsh 文件系统不变量**：profile 三件套只经 dsh CLI 写；`.credentials.yaml` 保持
-  0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接农场
-  不得直写（陷阱清单见 roadmap §1）。
+- **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
+  整目录复制与 `name` 一致化改写属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
+  保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
+  农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
+- **pnpm 为环境检查硬依赖**（2026-08-28，ADR-0009 口径 2）：缺失经 `npm i -g pnpm`
+  补齐（updates.rs）；WSL 客体内同口径——node/pnpm/dsh 缺失均自动补齐（同日修订原
+  4.9 用户主权裁定；node 与本地档同源、tarball 落壳管理目录，ADR-0004 §7）。
 
 ## 7. IPC 与网络面（例外册，登记制）
 
@@ -116,10 +120,12 @@
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。
-- **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`build.rs` AppManifest
-  commands + `capabilities/default.json` permissions 引用 + `lib.rs` 实现。
+- **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`src/ipc.rs` COMMANDS 登记 →
+  `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
+  cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
 - **唯一网络面 = `updates.rs`**；其余模块禁触网，新网络需求先在此登记；外链域名在
-  `EXTERNAL_URL_HOSTS` 登记。专项裁定见 §9 索引对应 ADR。
+  `EXTERNAL_URL_HOSTS` 登记。已登记用途：boot 期 pnpm 补齐（`npm i -g pnpm`，
+  2026-08-28，ADR-0009 口径 2）。专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
 
@@ -151,7 +157,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0006](docs/adr/0006-network-surface-and-mirror-chain.md) | 唯一网络面 + 镜像链 + 下载双超时 |
 | [0007](docs/adr/0007-update-entry-menu-vs-tray.md) | 更新入口 macOS=菜单 / 非 macOS=托盘 |
 | [0008](docs/adr/0008-frontend-framework.md) | React 生态白名单与前端三红线 |
-| [0009](docs/adr/0009-profile-manager.md) | 管理功能定位与工程准则（3 红线） |
+| [0009](docs/adr/0009-profile-manager.md) | Profile 生命周期：创建走 dsh plugin 转发链，其余文件层；pnpm boot 硬依赖 |
 
 ## 10. 试验协议
 

@@ -9,6 +9,10 @@
   到全局）路径；4.3 管理功能的 `dsh plugin --profile` 转发链是 **profile 目录内安装**，
   不涉及 global-bin-dir（见 Spike A）。二者同源环境风险但机制不同，本 ADR 不覆盖
   4.3 转发链。
+- **补录（2026-08-28，ADR-0009 口径 2）**：npm 链角色变化——装 dsh 本体**不再回退
+  npm**（pnpm 升级为环境检查 boot 硬依赖，缺失先补）；`install_global_dsh_npm` 的
+  npm 能力**保留但改用途**：用于补装 pnpm 本身（`npm i -g pnpm`，node 自带 npm）。
+  顺序变为 node → pnpm（经 npm）→ dsh（经 pnpm）。global-bin-dir 注入语义不变。
 
 ---
 

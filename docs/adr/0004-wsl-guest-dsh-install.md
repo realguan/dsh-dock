@@ -1,10 +1,10 @@
 # ADR-0004：WSL 客体内 dsh 自动安装（壳不触网）
 
-- **日期**：2026-08-26
-- **状态**：已接受（2026-08-26 登记，本 ADR 追溯补录）
+- **日期**：2026-08-26（2026-08-28 修订补录：NODE_MISSING 翻案，见 §7）
+- **状态**：已接受（2026-08-26 登记，本 ADR 追溯补录；2026-08-28 修订缺 node 条款）
 - **提出人**：guan
 - **相关方**：executor.rs（`GUEST_INSTALL_DSH` / `install_dsh_in_distro` / `NODE_MISSING` / `GuestProbeState`）
-- **关联**：docs/executor.md（WSL 执行器）
+- **关联**：docs/executor.md（WSL 执行器）、ADR-0009（pnpm 口径 2 补齐链）、ADR-0006（镜像链）
 
 ---
 
@@ -16,7 +16,7 @@ WSL 执行器探测到「客体内有 node 缺 dsh」时，需要补齐 dsh。�
 
 - 壳运行时网络面只在 `updates.rs`——Windows 侧壳不得因 WSL 安装触网。
 - 镜像配置由用户客体内 npm 决定，壳不注入镜像参数（用户主权）。
-- 缺 node（`NODE_MISSING`）不自动装 Node——发行版安装方式属用户主权，只给可行动提示。
+- 缺 node（`NODE_MISSING`）不自动装 Node——发行版安装方式属用户主权，只给可行动提示。〔2026-08-28 修订：本条翻案，见 §7〕
 - 固定脚本模板透传，不注入用户输入（防注入）。
 - 安装可能慢，需超时 + 诊断回传，但全量 npm 输出不回传（噪声大）。
 
@@ -34,14 +34,15 @@ WSL 执行器探测到「客体内有 node 缺 dsh」时，需要补齐 dsh。�
 - 思路：壳在 Windows 侧联网装 dsh 到 WSL 文件系统。
 - 否决理由：违反「网络只在 updates.rs」与「镜像配置属用户主权」两条硬指标。
 
-### 方案 C：缺 node 也自动装 Node —— ❌ 否决
+### 方案 C：缺 node 也自动装 Node —— ❌ 否决 → ♻️ 2026-08-28 翻案
 
 - 思路：探测到 `NODE_MISSING` 时自动在客体内装 Node。
 - 否决理由：发行版 Node 安装方式（nvm / apt / 源码）属用户主权，壳替用户决定会踩各发行版的坑；只给可行动提示让用户自选。
+- **翻案（2026-08-28 维护者裁定，与本地对齐）**：以「官方 tarball 解压至壳管理目录」规避原否决理由（不经发行版包管理器、不与用户既有 nvm/apt 冲突），版本与本地档同源——详见 §7。否决记录保留（TEMPLATE 要求），本条不再排队。
 
 ## 4. 最终决策
 
-WSL 探测到「有 node 缺 dsh」→ 在客体内执行固定脚本模板 `GUEST_INSTALL_DSH`（经 `wsl.exe` 透传），`npm i -g @deepseek-ai/dsh` 输出落 `/tmp/dsh-dock-npm.log`，只回传尾部 2KB 诊断。网络动作发生在 WSL 发行版内，镜像配置由客体内 npm 决定。缺 node（`NODE_MISSING`）不自动装 Node，只给可行动提示。HOW 见 `executor.rs`。
+WSL 探测到「有 node 缺 dsh」→ 在客体内执行固定脚本模板 `GUEST_INSTALL_DSH`（经 `wsl.exe` 透传），`npm i -g @deepseek-ai/dsh` 输出落 `/tmp/dsh-dock-npm.log`，只回传尾部 2KB 诊断。网络动作发生在 WSL 发行版内，镜像配置由客体内 npm 决定。缺 node（`NODE_MISSING`）不自动装 Node，只给可行动提示。〔2026-08-28 修订：NODE_MISSING 改为自动装，见 §7〕HOW 见 `executor.rs`。
 
 ## 5. 后果与后续行动项
 
@@ -49,7 +50,7 @@ WSL 探测到「有 node 缺 dsh」→ 在客体内执行固定脚本模板 `GUE
 - 壳网络边界不被打破；镜像配置权留在用户客体；零配置体验（有 node 即用）。
 
 ### 负面后果 / 新增债务
-- 依赖客体有 node/npm——缺 node 场景只能给提示，不能一键补齐。
+- 依赖客体有 node/npm——缺 node 场景只能给提示，不能一键补齐。〔2026-08-28 修订：已可自动补齐，见 §7〕
 - `/tmp/dsh-dock-npm.log` 路径写死，不同发行版 `/tmp` 行为差异（极少）。
 
 ### 行动项
@@ -60,4 +61,14 @@ WSL 探测到「有 node 缺 dsh」→ 在客体内执行固定脚本模板 `GUE
 
 - WSL 探测方式变化（如改用 `wsl --status` / 发行版 API）→ 复评脚本透传路径。
 - 客体内镜像注入策略调整（如壳需兜底默认镜像）→ 本决策重开。
-- Node 安装可经 corepack / 官方脚本一键化且跨发行版稳定 → 复评 `NODE_MISSING` 是否仍「只提示」。
+- Node 安装可经 corepack / 官方脚本一键化且跨发行版稳定 → 复评 `NODE_MISSING` 是否仍「只提示」。〔2026-08-28 触发并裁定：翻案，见 §7〕
+
+## 7. 修订补录（2026-08-28：NODE_MISSING 翻案，与本地对齐）
+
+维护者裁定（ADR-0009 评审延伸）：WSL 客体内与本地同口径，缺 node **自动安装**，不再只提示。
+
+- **版本**：与本地 download 档同源（node-map 同一版本）——一次实机验证覆盖两端，版本行为完全一致。
+- **方式/落点**：官方 tarball 解压至客体内壳管理目录（`~/.dsh-dock/node`），`guest_prep` 纳入 PATH；不经发行版包管理器、无 sudo、卸载 = 删目录、不与用户既有 nvm/apt 冲突——原方案 C 否决理由（「各发行版的坑」）由此规避。
+- **下载**：网络动作在客体内（本 ADR 原模式不变）；二进制源走 ADR-0006 镜像链，与「npm 镜像参数不注入」不冲突（后者管 npm 运行配置，这是壳下载自身资产）。
+- **补齐链**：客体内全自动 node → pnpm（`npm i -g pnpm`）→ dsh；任一环失败给可行动文案。
+- **实现**：executor.rs 的 `NODE_MISSING` 分支改为自动补齐（三态探测语义保留：`NODE_MISSING` 变为「补齐中/补齐失败」入口，不再是终点提示）；归 4.9 落地。

@@ -13,6 +13,7 @@
 //! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
 mod executor;
+pub mod ipc;
 mod manifest;
 mod resolve;
 mod settings;
