@@ -95,7 +95,33 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 
 **采用方案 A（创建走 `dsh plugin --profile <新名> add <bundle>` 主路径）+ 方案 E（生命周期操作走纯文件系统），壳侧复刻三件套（方案 B）本版不做**。
 
-- 创建：spawn `dsh plugin --profile <新名> add <bundle>`，任一新名首用即 dsh 自动 initProfile + pnpm 安装 + reconcile。bundle 参数：非模板名 = `@deepseek-ai/dsh-base`（`DEFAULT_PROFILE_BUNDLES`，app-boot `@ 334`）；`web`/`headless` 由 dsh 模板命中（`PROFILE_TEMPLATES` `@ 323`，Spike A 遗留事项第 3 条在此收编）。「已创建未装插件」中间态的**重试 = 重跑同名 add**（init-if-needed 幂等，`runPlugin` `@ 101`），UI 状态机据此简化。
+> **2026-08-28 执行细则修订（方案 A 内部，非换方案）**：创建命令由
+> `add @deepseek-ai/dsh-base` 改为 **`install`（不带 bundle 名）**。原因：
+> ① 创建语义应为「原始版 profile」——initProfile 以 `PROFILE_TEMPLATES[名] ??
+> DEFAULT_PROFILE_BUNDLES` 写三件套（bundles 列表即含 dsh-base），`pnpm install`
+> 只装依赖里声明的外挂插件（初始为空 → `Already up to date`，零网络毫秒级）；
+> 内置 bundle 本体随 dsh 安装，boot 时 `resolveBundleDir` 双锚点即可解析，
+> 无需下载进 profile（Spike B：闭包内插件农场已覆盖）。② `add` 裸包名有
+> **dist-tag 版本语义坑**：pnpm 按 `latest` 解析——dsh-base 的 `latest` 停在
+> 已弃用 0.0.1-rc.1（依赖 37+ 个已从 registry 删除的旧包名），当前版本走
+> `next` tag（0.1.1-rc.2），裸名必装旧版 → 404 + pnpm 递增重试 → 数分钟失败/
+> 超时（2026-08-28 本机实测 `test` profile 日志逐字复现）。`install` 不解析
+> 任何 dist-tag，版本语义免疫。③ `reconcilePlugins`（plugin-9h8shc4d.js：
+> In-box bundles are not dependencies and are never touched）对模板内置
+> bundle 零动作，install 后 bundles 保持初始化原始列表，后续用户加外挂插件
+> 走同一条 `dsh plugin add` 链（4.4 插件管理）。影响面：仅 `dsh plugin` 的
+> 命令参数；pnpm 缺失 → 补齐 → 失败降级（ADR §4 口径 2）与「已创建未装插件」
+> 中间态重试语义不变（`install` 对空依赖同幂等）。
+
+- 创建：spawn `dsh plugin --profile <新名> install`（2026-08-28 执行细则修订：原
+  `add <bundle>` 改 `install`，见本页 §4 修订注——原始版语义，零网络毫秒级），
+  任一新名首用即 dsh 自动 initProfile + `pnpm install` + reconcile。bundle 声明
+  由 initProfile 以 `PROFILE_TEMPLATES[名] ?? DEFAULT_PROFILE_BUNDLES`
+  （`@deepseek-ai/dsh-base`，app-boot `@ 334`）写入三件套的 `dsh.profile.bundles`，
+  不参与下载；`web`/`headless` 由 dsh 模板命中（`PROFILE_TEMPLATES` `@ 323`，
+  Spike A 遗留事项第 3 条在此收编）；后续加外挂插件 = `dsh plugin add <包>`。
+  「已创建未装插件」中间态的**重试 = 重跑同名命令**（init-if-needed 幂等，
+  `runPlugin` `@ 101`），UI 状态机据此简化。
 - 列出/详情/删除/复制/重命名：纯文件系统 + dsh CLI 无相应命令的部分用文件读；删除/重命名前执行运行中防护（比对 `launch.profile`，见 §2 工程准则）。
 - 复制/重命名的引用面按 Spike B 的结论执行（尤其：rename 需改写 `name: dsh-profile-<新名>`；`profiles/node_modules` 农场不动的修正；node_modules 处理以「删 + dsh 下次启动自愈」为第一方案）。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
@@ -110,6 +136,9 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - 创建路径半官方、低漂移、与 4.4 插件管理同链。
 - 不需要引「复刻 dsh 内部格式」的维护债务。
 - 失败文案由 dsh 提供，壳侧只需平台化补充。
+- （2026-08-28 执行细则修订）创建走 `install` 后**零网络零下载**：创建 profile
+  从「视网络数十秒到数分钟 + 版本解析漂移风险」收敛为「本地秒级且版本语义
+  免疫」；外挂插件（4.4）才是 pnpm 网络操作发生的地方——职责更清晰。
 
 ### 负面后果 / 新增债务
 
@@ -131,7 +160,7 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - [x] WSL GUEST_BOOT 放开多 profile 评估（与 4.3④ 默认 profile 合并评估，见 Spike B §2.5；客体内 profile 不存在时的行为须一并定义）——**评估结论（2026-08-28）：本版不放开，GUEST_BOOT 维持 `--profile web`，归 4.9 WSL v2**。理由：① WSL 客体 boot 的是客体自身 dsh home 的 profile，管理器只管壳侧 home——壳侧存储的 defaultProfile 在客体内（自定义名）大概率不存在，dsh 报「profile does not exist」；② 非 webUi profile 无 URL 可导航，WSL 的就绪模型（哨兵文件解析 URL）与本地同样不成立；③ 客体内 profile 物化/管理本身是 4.9 的范围。本地消费已落地：`resolve::consume_default_profile` + LocalExecutor::probe 接线——存储默认值命中 webUi 候选即直接启动并跳过选择器（仅 system/download 档，bundle 快照世界不适用；非 webUi/失效值回退常规流程并记日志）
 - [ ] executor：客体内 node 自动安装落地（node-map 同源 tarball → `~/.dsh-dock/node`，`guest_prep` 纳入 PATH，`NODE_MISSING` 分支改为自动补齐；归 4.9，见 ADR-0004 §7）
 - [x] profile 命名校验复用 dsh 规则（空名 / `/` `\` / `.` / `..` / `node_modules`；锚定 `resolveProfileDir` `@ 318`）——`profiles::validate_profile_name`（2026-08-28，逐字一致含正反例测试，ledger 复现点 8）
-- [ ] 验证：`cargo test` 全绿 + `dsh plugin --profile <新名> add` 转发链实机验证（**macOS 已验 2026-08-28**：init 先行 / pnpm 经注入 PATH 可定位 / 网络失败 -> 已创建未装中间态 exit 1；成功路径 reconcile 沿用 Spike A §3.2）+ 复制/重命名后 `dsh --profile <新名> --dump-config` 可正常输出 + Windows 转发链（`shell: true` 分支，Spike A 遗留）+ WSL 客体内 node → pnpm → dsh 全补齐链实机（含 node 自动安装）
+- [ ] 验证：`cargo test` 全绿 + `dsh plugin --profile <新名> install` 转发链实机验证（**macOS 已验 2026-08-28**：init 先行 / pnpm 经注入 PATH 可定位 / 空依赖 `Already up to date` 199ms 零网络；2026-08-28 修订后成功路径 = `install`，`--dump-config` 组合启动正常）+ 复制/重命名后 `dsh --profile <新名> --dump-config` 可正常输出 + Windows 转发链（`shell: true` 分支，Spike A 遗留）+ WSL 客体内 node → pnpm → dsh 全补齐链实机（含 node 自动安装）
 
 ## 6. 复审条件
 

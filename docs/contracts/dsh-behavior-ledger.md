@@ -19,7 +19,7 @@
 | 4 | WSL PATH 兼容探测 | `executor.rs`（`bash -lic` + nvm/fnm/n/volta 兜底扫描） | nvm/fnm 非交互 rc 守卫行为 | 2026-08-26 |
 | 5 | WSL 客体内 dsh 自动安装 | `executor.rs`（ADR-0004：壳不触网，装进发行版） | dsh npm 包名与 `npm i -g` 语义 | 基线 |
 | 6 | profile 列举 / 详情（文件系统模拟） | `profiles.rs`（扫描 `profiles/*/package.json`；详情 = 清单关键字段 + `cordis.patch.yml` 原文不解析） | profile 目录布局与三件套格式（`initProfile` @ 353）、内置模板名与 bundle（`PROFILE_TEMPLATES` @ 323） | 2026-08-28 |
-| 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` + 结果分类；实机验证 2026-08-28 macOS：init 先行 / pnpm 经注入 PATH 可定位 / 失败不回滚） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353） | 2026-08-28 |
+| 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> install` + 结果分类；**2026-08-28 修订：add @deepseek-ai/dsh-base → install**——原始版语义：initProfile 写三件套（bundles 含内置插件，随 dsh 安装目录解析）+ 空依赖 `pnpm install` 零网络毫秒级；实测 macOS：`Already up to date` 199ms，后 `--dump-config` 可正常组合启动） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353）——注意：**add 裸包名会按 dist-tag `latest` 解析**（dsh-base 的 latest 停在已弃用 0.0.1-rc.1，当前版走 `next` tag 0.1.1-rc.2；0.0.1-rc.1 依赖 37+ 个已从 registry 删除的旧包名 → 404 + pnpm 递增重试 → 数分钟失败/超时），`install` 不解析任何 dist-tag，版本语义免疫 | 2026-08-28 |
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 | 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
 
@@ -37,3 +37,12 @@
   成功路径 reconcile 沿用 Spike A §3.2 同机同版本结论。
 - 2026-08-28 4.3 生命周期刀：复现点 9 入册（复制排除 node_modules / 重命名删
   node_modules 让 dsh 自愈 / sessions 不级联，引用面全按 Spike B §3 执行）。
+- 2026-08-28 创建路径修订：复现点 7 改 `add @deepseek-ai/dsh-base` → `install`。
+  触发：2026-08-28 本机实测创建 `test` profile 慢至 2 分钟失败/超时，
+  查因 = `add` 裸包名按 dist-tag `latest` 解析到 dsh-base 0.0.1-rc.1（已弃用），
+  其依赖 37+ 个旧包名（dsh-bash-env / dsh-tasks-local / dsh-skill-local…）已从
+  registry 删除（npmmirror/npmjs 均 404）→ pnpm 递增重试（10s/60s × 37 包）
+  → 「2 分钟失败或拖满 600s 超时」；同时 npmmirror 对缺失 scoped 包回退到死
+  域名 r.cnpmjs.org（本机解析到保留段 198.18.0.192）放大了表象。Spike A §3.2
+  当时「零网络全命中 store」结论掩盖了裸名版本语义的漂移风险（复现了字符串、
+  没复现版本语义）——已收编为本条「依赖的 dsh 行为」栏的显式复核项。

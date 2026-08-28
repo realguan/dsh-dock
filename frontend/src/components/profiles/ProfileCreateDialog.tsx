@@ -1,6 +1,6 @@
 // 新建对话框（4.3 前端刀）。前端只做名字预检（validateProfileName 镜像）+
-// 已占用预判；后端校验仍是权威。创建可长时阻塞（pnpm 安装），busy 态给
-// 明确预期；「已创建未装插件」按后端契约展示为 pending 而非失败。
+// 已占用预判；后端校验仍是权威。创建走 dsh plugin install（本地初始化，
+// 秒级）；「已创建未装插件」按后端契约展示为 pending 而非失败。
 import { useState } from "react"
 import { summarizeCreateOutcome, TEMPLATE_BUNDLES, validateProfileName } from "@/lib/profiles"
 import { api } from "@/lib/tauri"

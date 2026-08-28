@@ -32,6 +32,36 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · Profile 创建路径修订：add @deepseek-ai/dsh-base → install（原始版语义）—— guan（AI 协作）
+
+- 变更：本 commit——`src-tauri/src/profiles.rs`（`create_command_args` 改
+  `["plugin","--profile",<名>,"install"]`，删除 `CREATE_ADD_BUNDLE`；结果分类
+  文案与注释同步「原始版语义」；测试：install 参数 + 原产物语义 + 成功路径
+  `Already up to date`）；`lib.rs`（create_profile 文档注释）；`frontend`
+  （`content/zh-CN.ts` 创建文案：busy 秒级 / done 内置声明就绪 / hint 原始版；
+  `ProfileCreateDialog.tsx` 注释；`types/ipc.ts` 注释）；`docs/`（ADR-0009 §4
+  执行细则修订注 + §5 正面后果 + 验证项；ledger 复现点 7 与复核记录；
+  roadmap 4.3 ② 与事实边界行）。
+- 影响：**ADR-0009 方案 A 执行细则修订（非换方案）**——创建命令由
+  `add @deepseek-ai/dsh-base` 改为 `install`：创建语义 = 原始版 profile
+  （initProfile 写三件套，bundles 含内置插件随 dsh 安装目录解析；空依赖
+  `pnpm install` → `Already up to date`，零网络毫秒级）。触发：2026-08-28
+  本机创建 `test` profile 慢至 2 分钟失败/超时，查因 = `add` 裸包名按
+  dist-tag `latest` 解析到 dsh-base 0.0.1-rc.1（已弃用旧版，依赖 37+ 个已从
+  registry 删除的旧包名：dsh-bash-env / dsh-tasks-local / dsh-skill-local…，
+  npmmirror/npmjs 均 404）→ pnpm 递增重试（10s/60s × 37 包）卡死；npmmirror
+  对缺失 scoped 包回退到死域名 `r.cnpmjs.org`（本机解析到保留段 198.18.0.192）
+  放大表象。`install` 不解析 dist-tag，版本语义免疫。仅周知：pnpm 缺失 →
+  补齐 → 失败降级（ADR 口径 2）与「已创建未装插件」中间态重试语义不变；
+  后续加外挂插件走同一条 `dsh plugin add` 链（4.4）。
+- 凭据：`cargo test` 126 绿；`gate_tests` 三处同步一致
+  性绿；`cargo fmt --check` / `clippy -D warnings` 全过；前端 typecheck /
+  lint / test 40 绿；实机（macOS，DSH_HOME=临时目录零污染）
+  `dsh plugin --profile <新名> install` → init 先行 / `Already up to date`
+  186ms 零网络 / 产物 `dependencies:{}` + bundles 仅 dsh-base（含
+  pnpm-lock.yaml）/ 后 `--dump-config` 组合启动正常（退出码 0）；diff 已
+  逐行人肉复核。
+
 ### 2026-08-28 完成通知 · 工具窗口布局修正：内容顶部锚定替代垂直居中 —— guan（AI 协作）
 
 - 变更：commit `4bed1c9`（本 commit 落档本条）——`PageShell` 新增 `align`

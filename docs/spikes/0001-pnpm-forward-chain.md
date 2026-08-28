@@ -148,4 +148,4 @@ exit=127
 
 - [ ] pnpm 网络失败（镜像不可达）的实机一测（本次测试 1 遇到 `ECONNRESET`，但为镜像 audit 非安装主链路）——归 4.4 插件管理的失败模式验证。
 - [ ] Windows 平台转发链（`shell: win32` 分支）实机一测——本 spike 为 macOS 实机，Windows 语义不同（spawnSync 走 shell），3.4 静态核查不覆盖。
-- [ ] profile 名为 `web`/`headless` 时的模板命中（`PROFILE_TEMPLATES` 只命中这两个名字）——4.3 创建时若用户指定默认模板名，走 dsh 内置模板而非 `dsh-base`。
+- [ ] profile 名为 `web`/`headless` 时的模板命中（`PROFILE_TEMPLATES` 只命中这两个名字）——4.3 创建时若用户指定默认模板名，走 dsh 内置模板而非 `dsh-base`。（2026-08-28 收编：创建走 `install` 后模板命中由 initProfile 直接处理，`web`/`headless` 的 `install` 即触发模板初始化，见 ADR-0009 §4 修订注。）

@@ -20,7 +20,7 @@ export function validateProfileName(name: string): string | null {
   return null
 }
 
-/** 创建结果的前端展示态：ready=完整可用；pending=已创建待装插件；failed=未物化。 */
+/** 创建结果的前端展示态：ready=原始版就绪；pending=已创建待装插件；failed=未物化。 */
 export type CreateStatus = "ready" | "pending" | "failed"
 
 export function summarizeCreateOutcome(o: {

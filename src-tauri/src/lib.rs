@@ -481,11 +481,13 @@ fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail,
     crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
 }
 
-/// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> add
-/// @deepseek-ai/dsh-base` 半官方转发链创建 profile（dsh 首用 initProfile 写
-/// 三件套 -> pnpm 安装 -> reconcile；壳对 profiles/ 零写入，ADR-0009 方案 A）。
-/// 阻塞动作（系统探测 + 转发链最长 10 分钟）全部在 spawn_blocking——
-/// 同步命令跑主线程会冻结 UI（setup 注释同源坑）。
+/// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> install`
+/// 半官方转发链创建 profile——dsh 首用 initProfile 写三件套（bundles 声明
+/// 内置插件 dsh-base，随 dsh 安装目录解析）→ `pnpm install` 只装外挂插件
+/// 依赖（初始为空 → Already up to date，零网络毫秒级）；壳对 profiles/ 零
+/// 写入（ADR-0009 方案 A 执行细则修订，2026-08-28：add <bundle> → install，
+/// 「原始版 profile」语义）。阻塞动作（系统探测 + 转发链）全部在
+/// spawn_blocking——同步命令跑主线程会冻结 UI（setup 注释同源坑）。
 #[tauri::command]
 async fn create_profile(
     app: tauri::AppHandle,

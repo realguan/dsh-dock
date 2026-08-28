@@ -3,9 +3,11 @@
 //! 职责：扫描 `<dsh_home>/profiles/` 列出全部 profile（已物化 + 内置模板名两态
 //! 合并展示）、读取单个 profile 详情（package.json 关键字段 + cordis.patch.yml
 //! 原文）。只读零写入、零 dsh 子进程。
-//! 创建：spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` 半官方
-//! 转发链（ADR-0009 方案 A）——三件套由 dsh `initProfile` 写出，壳对 profiles/
-//! 零写入；spawn 前做 pnpm 防御检测（缺失给可行动错误，补齐归后续刀）。
+//! 创建：spawn `dsh plugin --profile <名> install` 半官方转发链（ADR-0009 方案 A
+//! 执行细则修订，2026-08-28）——三件套由 dsh `initProfile` 写出，壳对 profiles/
+//! 零写入；spawn 前做 pnpm 防御检测（缺失给可行动错误，补齐归后续刀）。创建
+//! 语义 = 原始版 profile：只含内置插件声明（dsh-base 随 dsh 安装目录解析），
+//! 零网络、毫秒级；外挂插件由后续 `dsh plugin add` 按需安装。
 //!
 //! 行为复现锚定（dsh v0.1.1-rc.2，`dsh-app-boot/lib/index.js`，2026-08-28 核对；
 //! 已入 `docs/contracts/dsh-behavior-ledger.md` §一 复现点 6/8）：
@@ -214,21 +216,36 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
     })
 }
 
-// ---------- 创建（4.3 第三刀，2026-08-28；ADR-0009 方案 A） ----------
+// ---------- 创建（4.3 第三刀，2026-08-28；ADR-0009 方案 A 执行细则修订
+// 2026-08-28：add <bundle> → install —— 原始版语义） ----------
 
-/// 创建 profile 的 add 参数：非模板名 = dsh `DEFAULT_PROFILE_BUNDLES` @ 334
-/// （`@deepseek-ai/dsh-base`）；模板名 web/headless 的 init 由 dsh 侧
-/// `PROFILE_TEMPLATES` @ 323 命中，与本参数无关——reconcile 对模板内置
-/// bundle 零动作（plugin-9h8shc4d.js reconcilePlugins 注释：In-box bundles
-/// from the profile template are not dependencies and are never touched），
-/// 故两类名字统一传 dsh-base，安全且幂等。
-const CREATE_ADD_BUNDLE: &str = "@deepseek-ai/dsh-base";
-
-/// 转发链超时上限：pnpm 冷网络安装的余量。超时杀 dsh 进程；其 pnpm 孙进程
-/// 会自行退出（不做进程组追杀），已写盘的依赖对重试幂等无碍。
+/// 转发链超时上限：原 add 为 pnpm 冷网络安装的余量；2026-08-28 起创建改走
+/// `install`（纯本地、零网络，毫秒级），超时仅是异常兜底（pnpm 挂死等）。
+/// 超时杀 dsh 进程；其 pnpm 孙进程会自行退出（不做进程组追杀）。
 const CREATE_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// spawn 参数序列：`plugin --profile <名> add @deepseek-ai/dsh-base`。
+/// spawn 参数序列：`plugin --profile <名> install`。
+///
+/// 2026-08-28 修订（ADR-0009 方案 A 执行细则）：不传 bundle 名。理由：
+/// - 创建语义 = 建一个「只有内置插件声明」的原始 profile：dsh 首用
+///   initProfile 以 `PROFILE_TEMPLATES[名] ?? DEFAULT_PROFILE_BUNDLES`
+///   （`@deepseek-ai/dsh-base`）写三件套，bundles 列表即内含 dsh-base，
+///   随后 `pnpm install` 只装 dependencies 里真正声明的外挂插件——初始为
+///   空 → `Already up to date`，零网络、毫秒级；
+/// - 内置 bundle（dsh-base）本体随 dsh 安装，boot 时 `resolveBundleDir`
+///   双锚点（dsh 安装目录 → profile node_modules）即可解析，无需下载进
+///   profile（Spike B 结论：闭包内插件农场已覆盖，立即可用）；
+/// - 传裸包名 `add @deepseek-ai/dsh-base` 有版本语义坑：pnpm 按 `latest`
+///   dist-tag 解析——上游 dsh-base 的 `latest` 停在 0.0.1-rc.1（已弃用
+///   旧版，依赖 37+ 个已删除的旧包名），而当前版本走 `next` tag
+///   （0.1.1-rc.2），裸名必装旧版 → 依赖树大面积 404 + pnpm 递增重试
+///   （10s/60s × 37 包）→ 2 分钟失败或拖满超时（本机 2026-08-28 实测
+///   `test` profile 创建日志逐字复现）。`install` 不解析任何 dist-tag，
+///   版本语义完全免疫；
+/// - `reconcilePlugins` 对模板内置 bundle 零动作（In-box bundles are
+///   not dependencies and are never touched），install 后 bundles 保持
+///   dsh 初始化写入的原始列表。
+///
 /// profile 名作为单个 argv 元素传递（不经 shell 拼接，空格/Unicode 名安全；
 /// 合法性由 creation_blocker 先行把关）。
 pub fn create_command_args(profile: &str) -> Vec<String> {
@@ -236,17 +253,16 @@ pub fn create_command_args(profile: &str) -> Vec<String> {
         "plugin".to_string(),
         "--profile".to_string(),
         profile.to_string(),
-        "add".to_string(),
-        CREATE_ADD_BUNDLE.to_string(),
+        "install".to_string(),
     ]
 }
 
 /// 创建前置校验：Ok = 可发起（新名，或半初始化重试）；Err = 拒绝（原因可行动）。
 /// - 非法名 / 路径被普通文件占用（initProfile 的 mkdirSync 会失败）：拒绝；
 /// - 已存在且 dependencies 非空：完整 profile，重名拒绝；
-/// - 已存在但依赖为空（半初始化 / 清单缺失或损坏）：**放行 = 重跑同名 add**
-///   （init-if-needed 幂等；ADR-0009 §4：「已创建未装插件」中间态的
-///   重试 = 重跑同名 add）。
+/// - 已存在但依赖为空（半初始化 / 清单缺失或损坏）：**放行 = 重跑同名
+///   create**（init-if-needed 幂等；ADR-0009 §4：「已创建未装插件」中间态的
+///   重试 = 重跑同名命令——2026-08-28 起命令为 `install`，对空依赖同样幂等）。
 pub fn creation_blocker(home: &Path, profile: &str) -> Result<(), String> {
     validate_profile_name(profile)?;
     let dir = home.join("profiles").join(profile);
@@ -348,7 +364,7 @@ pub struct CreateProfileOutcome {
     pub profile: String,
     /// 三件套已由 dsh initProfile 写出（调用方以 package.json 存在性判定）。
     pub materialized: bool,
-    /// dsh 退出码 0：基础插件已装（exit 0 = init + pnpm + reconcile 全过）。
+    /// dsh 退出码 0：原始 profile 就绪（exit 0 = init + pnpm install 全过）。
     pub installed: bool,
     /// 人读状态 + 可行动建议（附 dsh 输出尾部，便于排障）。
     pub detail: String,
@@ -359,6 +375,11 @@ pub struct CreateProfileOutcome {
 /// init 行 = `dsh: initialized profile <名> at <目录>`；
 /// pnpm 缺失 = `pnpm not found on PATH`（exit 127，dsh 自带文案）；
 /// pnpm 失败 = `pnpm failed in profile directory`（exit = pnpm 退出码）。
+///
+/// 2026-08-28 起创建走 `install`（非 add）：成功路径 dsh 输出为
+/// `Already up to date`（空 dependencies 的 pnpm install）——「install
+/// 成功」即「原始 profile 已建好」：bundles 声明全随 dsh 安装目录解析，
+/// 零下载；后续用户加外挂插件走同一条 `dsh plugin add` 链（4.4 插件管理）。
 pub fn classify_create_outcome(
     profile: &str,
     run: &ForwardRun,
@@ -371,7 +392,7 @@ pub fn classify_create_outcome(
         .map(|c| c.to_string())
         .unwrap_or_else(|| "未知".to_string());
     let status_line = if installed && materialized {
-        format!("profile「{profile}」已创建，基础插件（{CREATE_ADD_BUNDLE}）安装完成。")
+        format!("profile「{profile}」已创建：内置插件声明就绪，可立即启动使用。")
     } else if installed {
         "dsh 报告成功，但未检出 profile 目录（异常状态，请反馈）。".to_string()
     } else if run.timed_out {
@@ -381,12 +402,12 @@ pub fn classify_create_outcome(
         )
     } else if materialized && pnpm_missing {
         format!(
-            "profile「{profile}」已创建，但插件未安装：pnpm 不在 PATH 上。\
+            "profile「{profile}」已创建，但插件安装未完成：pnpm 不在 PATH 上。\
              可在终端运行 npm install -g pnpm 后重试创建（重跑幂等）。"
         )
     } else if materialized {
         format!(
-            "profile「{profile}」已创建，但插件安装失败（退出码 {code_text}）。\
+            "profile「{profile}」已创建，但插件安装未完成（退出码 {code_text}）。\
              可重试创建（重跑幂等）；若持续失败请检查网络与 npm 镜像配置。"
         )
     } else {
@@ -876,22 +897,17 @@ mod profiles_tests {
 
     #[test]
     fn create_args_forward_profile_name_verbatim() {
+        // 2026-08-28 修订：创建走 `install`（原始版语义），不传 bundle 名。
         // 名字作为单个 argv 元素（空格/Unicode 不经 shell 拼接）
         assert_eq!(
             create_command_args("my profile"),
-            vec![
-                "plugin",
-                "--profile",
-                "my profile",
-                "add",
-                "@deepseek-ai/dsh-base"
-            ]
+            vec!["plugin", "--profile", "my profile", "install"]
         );
-        // 模板名走同一命令：init 由 dsh PROFILE_TEMPLATES 命中，add 参数不变
-        // （ADR-0009 方案 D：dsh plugin add 对模板名也适用，无需单独路径）
+        // 模板名走同一命令：init 由 dsh PROFILE_TEMPLATES 命中，install 只装
+        // dependencies 里声明的外挂插件——初始为空 → Already up to date
         assert_eq!(
             create_command_args("web"),
-            vec!["plugin", "--profile", "web", "add", "@deepseek-ai/dsh-base"]
+            vec!["plugin", "--profile", "web", "install"]
         );
     }
 
@@ -926,18 +942,18 @@ mod profiles_tests {
             timed_out,
             output: output.to_string(),
         };
-        // ① 成功（Spike A §3.2 实测输出形态）
+        // ① 成功（2026-08-28 修订：install 路径实测输出形态——`Already up to date`）
         let ok = classify_create_outcome(
             "alpha",
             &run(
                 Some(0),
                 false,
-                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\nProgress: resolved 1\n",
+                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\nAlready up to date\n",
             ),
             true,
         );
         assert!(ok.installed && ok.materialized);
-        assert!(ok.detail.contains("安装完成"));
+        assert!(ok.detail.contains("内置插件声明就绪"));
 
         // ② pnpm 缺失（Spike A §3.3 实测输出，exit 127）：已创建未装 + 可行动建议
         let no_pnpm = classify_create_outcome(
@@ -980,6 +996,35 @@ mod profiles_tests {
         let timeout = classify_create_outcome("alpha", &run(None, true, ""), false);
         assert!(!timeout.installed);
         assert!(timeout.detail.contains("超时"));
+    }
+
+    /// 原始版 profile 产物语义（2026-08-28 修订，与 dsh 实测产物逐字一致）：
+    /// `install` 后 package.json 的 dependencies 保持空、bundles 声明 dsh-base
+    /// ——内置插件声明随 dsh 安装目录解析，零网络零下载。
+    #[test]
+    fn install_outcome_matches_raw_profile_semantics() {
+        // dsh initProfile 以 DEFAULT_PROFILE_BUNDLES 写三件套（bundles 含
+        // dsh-base）；pnpm install 空 dependencies → Already up to date
+        let home = tmp();
+        materialize(
+            &home,
+            "raw",
+            r#"{
+  "name": "dsh-profile-raw",
+  "private": true,
+  "dependencies": {},
+  "dsh": {
+    "profile": {
+      "bundles": ["@deepseek-ai/dsh-base"]
+    }
+  }
+}"#,
+        );
+        let (bundles, dependencies) =
+            read_manifest_fields(&home.join("profiles").join("raw").join("package.json"));
+        assert_eq!(bundles, vec!["@deepseek-ai/dsh-base"]);
+        assert!(dependencies.is_empty(), "原始版不依赖任何下载包");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]

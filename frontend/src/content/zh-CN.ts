@@ -166,11 +166,11 @@ export const t = {
     createNameHelp: "同一名字再次创建即重试安装（幂等）；已完整存在的名字会被拒绝",
     createTemplateHint: (name: string) =>
       `「${name}」是内置模板：将以官方模板初始化（${name} = 基础 + ${name === "web" ? "Web" : "Headless"} 工作台）`,
-    createDefaultHint: "非模板名将以 @deepseek-ai/dsh-base 初始化",
+    createDefaultHint: "将创建原始版 profile：内置插件声明就绪，外挂插件后续按需添加",
     createSubmit: "创建",
-    createBusy: "创建中…首次创建需经 pnpm 安装依赖，视网络数十秒到数分钟",
-    createDoneReady: "创建完成，基础插件已安装",
-    createDonePending: "已创建，但插件未安装——可稍后重试创建（幂等）",
+    createBusy: "创建中…（本地初始化，通常秒级完成）",
+    createDoneReady: "创建完成：内置插件声明就绪，可立即启动使用",
+    createDonePending: "已创建，但插件安装未完成——可稍后重试创建（幂等）",
     createDoneFailed: "创建未完成",
     createAgain: "再试一次",
     // 复制 / 重命名
