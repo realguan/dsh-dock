@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · pnpm 补齐落地（boot 硬依赖 + 创建时复用，ADR 红线 2 收口）—— guan（AI 协作）
+
+- 变更：本 commit——`updates.rs` 新增 `ensure_pnpm`（PATH 可见即返回；
+  缺失经 `npm install -g pnpm` 同步补齐，复用 ADR-0005 npm 全局链 +
+  ADR-0006 镜像序；补齐后必须在同一 PATH 重新可见，否则按失败处理）+
+  `install_pnpm_via_npm`（双镜像逐试、聚合报错；pnpm 纯 JS 不传
+  allow-scripts）+ 3 条测试（命中不装 / 装后可见性强制 / 失败聚合文案，
+  假 node/npm-cli fixture）；`executor.rs` LocalExecutor::probe 接线
+  （boot 期检查 → 失败阻断 boot 出可行动错误卡；基准 = 注入 dsh 的
+  PATH）；`profiles.rs` 创建时防御检测升级为「缺失 → 补齐 → 再失败才报
+  错」（复用同一函数）；`find_pnpm` 回归私有（外部消费点已被
+  ensure_pnpm 收编）。
+- 影响：仅周知。ADR-0009 红线 2 口径 2 至此完整：boot 环境检查保证
+  「dsh 全部子命令可用」，补齐失败 = 新增 boot 失败模式（可行动文案：
+  检查网络 / npm 镜像 / 手动 `npm install -g pnpm`）。WSL 客体内
+  node → pnpm → dsh 链仍归 4.9（ADR-0004 §7）。AGENTS §7 网络面登记
+  无变化（boot 期 pnpm 补齐已于 2026-08-28 登记）。4.3 遗留仅剩
+  Windows 转发链实机验证（Spike A 遗留）。
+- 凭据：`cargo test` 125 绿（+4，含恢复一处被测试插入截断的既有测试
+  node_download_urls_mirror_first）/ `fmt --check` / `clippy -D warnings`
+  全过；diff 已逐行人肉复核。
+
 ### 2026-08-28 完成通知 · 4.3④ defaultProfile 消费接线 + WSL 放开评估收口 —— guan（AI 协作）
 
 - 变更：本 commit——`resolve.rs` 新增纯函数 `consume_default_profile`

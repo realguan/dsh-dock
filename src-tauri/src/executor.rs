@@ -210,6 +210,17 @@ impl Executor for LocalExecutor {
             sink(1, "error", &e.to_string());
             e.to_string()
         })?;
+        // pnpm 环境检查硬依赖（ADR-0009 红线 2 口径 2：保证 dsh 全部子命令
+        // 可用——`dsh plugin` 硬编码 spawnSync("pnpm") 无回退）。缺失经
+        // `npm install -g pnpm` 同步补齐，失败阻断 boot 出可行动错误卡。
+        // 基准 = 注入 dsh 的 PATH（node 首位 + effective_path）。WSL 执行器
+        // 不走本路径（客体内补齐链归 4.9，ADR-0004 §7）。
+        let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
+        sink(1, "running", "检查 pnpm 环境（缺失将自动补齐）…");
+        if let Err(e) = crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path) {
+            sink(1, "error", &e);
+            return Err(e);
+        }
         sink(0, "done", "环境扫描完成");
         sink(1, "done", &format!("命中档位：{:?}", launch.tier));
         let home = crate::resolve::user_dsh_home();

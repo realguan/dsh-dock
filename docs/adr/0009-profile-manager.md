@@ -124,7 +124,7 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - [ ] 实现 4.3 Profile 管理器（按 roadmap 关键行动①②③④⑤；只读先行：列出 → 详情 → 创建 → 默认持久化 → 复制/重命名/删除）——**只读/创建/生命周期三刀均已落地（2026-08-28）**：`profiles.rs`（命名校验 + 扫描器两态合并 + 详情 + 创建转发链 + 复制/重命名/删除 + 运行中防护）与 IPC `list_profiles` / `get_profile_detail` / `create_profile` / `copy_profile` / `rename_profile` / `delete_profile` / `set_default_profile` / `get_default_profile`；消费 defaultProfile 的 boot 接线（含 WSL 放开多 profile 评估）归后续刀
 - [x] 新增 IPC 命令：`list_profiles` / `create_profile` / `copy_profile` / `delete_profile` / `rename_profile` / `get_profile_detail` / `set_default_profile` 三处同步 + AGENTS §7 登记——**全部落地（2026-08-28，另加只读 `get_default_profile`）**；三处同步流程已收敛为 ipc.rs COMMANDS → lib.rs + capabilities，机器闸门 gate_tests
 - [ ] YAML 依赖选型：`serde_yaml` 上游已归档停止维护（2024），评估后继（serde_norway 一类）后引入，用于 `cordis.patch.yml` 读写
-- [ ] pnpm 检测/补齐实现：检测基准 = `effective_path` 注入后的 PATH；补齐 = `npm i -g pnpm`（updates.rs，boot 期 + 操作时复用同一函数）；补齐后验证新 pnpm 在同 PATH 上可见——**检测半已落地（2026-08-28 创建刀）**：操作时防御检测（`updates::find_pnpm` 转 pub(crate) 共用，缺失拒 spawn 给可行动文案）；补齐函数与 boot 期接线归后续刀
+- [x] pnpm 检测/补齐实现：检测基准 = `effective_path` 注入后的 PATH；补齐 = `npm i -g pnpm`（updates.rs，boot 期 + 操作时复用同一函数）；补齐后验证新 pnpm 在同 PATH 上可见——**全部落地（2026-08-28）**：`updates::ensure_pnpm`（可见即返回 → 缺失经 npm 镜像链同步补齐 → 装完必须同 PATH 可见，否则按失败给可行动文案）。boot 期接线 = LocalExecutor::probe（缺失补齐、失败阻断 boot 出错误卡；WSL 执行器不走此路径，客体内链归 4.9）；创建时接线 = profiles.rs 防御检测升级为「缺失 → 补齐 → 再失败才报错」
 - [x] `settings.rs` 增加 `defaultProfile` 字段（原子写 + 损坏回退；失效回退 `web`），并同步登记 AGENTS §6（第二例外）——已落地（2026-08-28）；`switch_mode`/`choose_mode` 同步改为 load-modify-save 防抹掉该字段
 - [x] 复现台账入册：ledger 复现点 6/7/8 已落地（2026-08-28），name 一致化改写补录复现点 9
 - [x] 重命名实现时：自动扫描 `cordis.patch.yml` 的 `../` 相对路径引用并出警告（替用户做 Spike B 要求的人工检查）——已落地（2026-08-28，纯文本逐行扫描跳过注释行；复制同样带此警告）

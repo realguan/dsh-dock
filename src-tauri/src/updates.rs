@@ -1234,10 +1234,73 @@ fn find_npm_cli(node_bin: &Path) -> Option<PathBuf> {
     .find(|cand| cand.is_file())
 }
 
-/// 在 GUI 补全后的 PATH 中定位 pnpm；不调用 shell，避免 Finder 环境下丢失用户 PATH。
-/// 在 PATH 上找 pnpm 可执行文件（profiles.rs 创建刀的防御检测共用，
-/// ADR-0009 口径 2：基准 = effective_path 注入后的 PATH）。
-pub(crate) fn find_pnpm(path_env: &str) -> Option<PathBuf> {
+// ---------- pnpm 补齐（ADR-0009 红线 2 口径 2，2026-08-28） ----------
+//
+// pnpm 与 node/dsh 同列 boot 硬依赖：dsh 自身的 `dsh plugin` 子命令硬编码
+// spawnSync("pnpm")（plugin-9h8shc4d.js @ 101，无任何回退参数），「dsh 可用」
+// 不蕴含「pnpm 在」。boot 期（executor probe）与创建时（profiles.rs）复用
+// 本函数；补齐链 = `npm install -g pnpm`（node 自带 npm，复用 ADR-0005 的
+// npm 全局安装链 + ADR-0006 镜像序，非新下载机制）。AGENTS §7 已登记该
+// 网络用途。WSL 客体内的 node → pnpm → dsh 补齐链归 4.9（ADR-0004 §7）。
+
+/// pnpm 环境保障：PATH 上可见即返回；缺失经 npm 同步补齐；补齐后必须在
+/// 同一 PATH 上重新可见（ADR-0009 §5）——否则 dsh 的 spawnSync("pnpm")
+/// 同样找不到它，按失败处理并给可行动文案。
+pub(crate) fn ensure_pnpm(node_bin: &Path, path_env: &str) -> Result<PathBuf, String> {
+    if let Some(pnpm) = find_pnpm(path_env) {
+        return Ok(pnpm);
+    }
+    tracing::info!("pnpm 不在 PATH，尝试 npm install -g pnpm 补齐…");
+    install_pnpm_via_npm(node_bin, path_env)?;
+    find_pnpm(path_env).ok_or_else(|| {
+        "pnpm 已安装但不在壳可见 PATH 上（全局 bin 目录未覆盖）——\
+         请检查 npm 全局 bin 配置后重启应用，或在终端手动运行 `npm install -g pnpm`"
+            .to_string()
+    })
+}
+
+/// 用执行器 node 跑官方 npm-cli 全局安装 pnpm：镜像序逐个尝试（npmjs →
+/// npmmirror），全败聚合报错。pnpm 是纯 JS 包（无 native 构建），不传
+/// allow-scripts 放行参数。
+fn install_pnpm_via_npm(node_bin: &Path, path_env: &str) -> Result<(), String> {
+    let npm_cli = find_npm_cli(node_bin).ok_or_else(|| {
+        "执行器 node 未携带 npm（发行包异常），无法自动补齐 pnpm——\
+         请在终端手动运行 `npm install -g pnpm` 后重启应用"
+            .to_string()
+    })?;
+    let mut errors = Vec::new();
+    for registry in package_registry_bases() {
+        tracing::info!("npm install -g pnpm（registry={registry}）…");
+        let mut command = crate::child_cmd(node_bin);
+        command
+            .arg(&npm_cli)
+            .args(npm_install_args(registry, "pnpm", false))
+            .env("PATH", path_env)
+            .env("NPM_CONFIG_IGNORE_SCRIPTS", "false");
+        let out = match command.output() {
+            Ok(o) => o,
+            Err(e) => {
+                errors.push(format!("{registry}: 执行 npm 失败 {e}"));
+                continue;
+            }
+        };
+        if !out.status.success() {
+            errors.push(format!("{registry}: {}", output_detail(&out)));
+            continue;
+        }
+        return Ok(());
+    }
+    Err(format!(
+        "pnpm 自动补齐失败（npm 镜像均不可达）：{}\
+         ——请检查网络或 npm 镜像配置后重试；也可在终端手动运行 `npm install -g pnpm` 后重启应用",
+        errors.join("；")
+    ))
+}
+
+/// 在 GUI 补全后的 PATH 中定位 pnpm；不调用 shell，避免 Finder 环境下丢失
+/// 用户 PATH。boot 期与创建时经 `ensure_pnpm` 消费（基准 = effective_path
+/// 注入后的 PATH，ADR-0009 口径 2）。
+fn find_pnpm(path_env: &str) -> Option<PathBuf> {
     let separator = if cfg!(windows) { ';' } else { ':' };
     let names: &[&str] = if cfg!(windows) {
         &["pnpm.cmd", "pnpm.exe", "pnpm"]
@@ -1335,7 +1398,72 @@ mod tests {
         assert_eq!(package_registry_bases()[1], "https://registry.npmjs.org");
         assert!(npm_registry_urls()[0].starts_with("https://registry.npmmirror.com/"));
         assert!(npm_registry_urls()[1].starts_with("https://registry.npmjs.org/"));
+    }
 
+    /// 造一个「执行器 node」假体目录：bin/node 脚本 + npm-cli 布局
+    /// （find_npm_cli 的 `<node_dir>/node_modules/npm/bin/npm-cli.js` 候选）。
+    /// `exit_code` = 假 node 的退出码（0 = npm 安装成功）。
+    #[cfg(unix)]
+    fn fake_executor_node(dir: &Path, exit_code: i32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(bin.join("node_modules/npm/bin")).unwrap();
+        let node = bin.join("node");
+        std::fs::write(&node, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
+        std::fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            bin.join("node_modules/npm/bin/npm-cli.js"),
+            "// stub npm-cli\n",
+        )
+        .unwrap();
+        node
+    }
+
+    #[test]
+    fn ensure_pnpm_returns_existing_without_provisioning() {
+        // PATH 上已有 pnpm：直接返回，不触碰 node/npm（node_bin 可不存在）
+        let dir = tmp("ensure-pnpm-hit");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let pnpm = dir.join("pnpm");
+            std::fs::write(&pnpm, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&pnpm, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::write(dir.join("pnpm.cmd"), "stub").unwrap();
+        let got = ensure_pnpm(Path::new("/nonexistent/node"), &dir.display().to_string()).unwrap();
+        assert_eq!(got, dir.join(if cfg!(unix) { "pnpm" } else { "pnpm.cmd" }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_pnpm_installs_then_enforces_visibility_on_same_path() {
+        // 假 node 恒成功（npm 安装「成功」）但 PATH 上仍无 pnpm →
+        // 可见性验证必须失败（ADR-0009 §5：补齐后须同 PATH 可见）
+        let dir = tmp("ensure-pnpm-verify");
+        let node = fake_executor_node(&dir, 0);
+        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin").unwrap_err();
+        assert!(err.contains("不在"), "须点明可见性问题：{err}");
+        assert!(
+            err.contains("npm install -g pnpm"),
+            "须含手动安装建议：{err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_pnpm_surfaces_install_failure_with_actionable_advice() {
+        // 假 node 恒失败 → 两个镜像全败，聚合报错 + 可行动建议
+        let dir = tmp("ensure-pnpm-fail");
+        let node = fake_executor_node(&dir, 3);
+        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin").unwrap_err();
+        assert!(err.contains("pnpm 自动补齐失败"), "{err}");
+        assert!(err.contains("镜像"), "须提示检查镜像配置：{err}");
+    }
+
+    #[test]
+    fn node_download_urls_mirror_first_with_official_fallbacks() {
         let node_urls = node_download_urls("darwin-arm64", NODE_VERSION);
         assert!(node_urls[0].starts_with("https://cdn.npmmirror.com/binaries/node/"));
         assert!(node_urls[1].starts_with("https://nodejs.org/dist/"));

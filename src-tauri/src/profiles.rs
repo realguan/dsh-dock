@@ -439,13 +439,10 @@ pub fn create_profile_blocking(
         "未检出系统 dsh（PATH 上无官方安装）——profile 创建经 dsh CLI 完成，需要系统安装的 dsh",
     )?;
     let runtime_path = crate::resolve::path_with_bin(&node.bin, &path_env);
-    if crate::updates::find_pnpm(&runtime_path).is_none() {
-        return Err(
-            "pnpm 未在 PATH 上找到--dsh 的 plugin 子命令依赖 pnpm 管理插件。\
-             可在终端运行 npm install -g pnpm 后重试创建"
-                .to_string(),
-        );
-    }
+    // pnpm 防御检测 + 同步补齐（ADR-0009 §4：复用 boot 期同一函数，防 boot
+    // 后环境变化——卸载 pnpm / fnm 切 node 版本；可见即过（毫秒级），缺失
+    // 才走 npm 安装）。补齐失败即本错误，文案含平台化手动安装建议。
+    crate::updates::ensure_pnpm(&node.bin, &runtime_path)?;
     let args = create_command_args(profile);
     let run = run_dsh_plugin(
         &node.bin,
