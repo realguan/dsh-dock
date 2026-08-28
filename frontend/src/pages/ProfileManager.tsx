@@ -53,7 +53,7 @@ export function ProfileManager() {
   }
 
   return (
-    <PageShell width={620}>
+    <PageShell width={620} align="top">
       {/* 头部：徽章 + 标题 + 动作（新建 / 刷新） */}
       <header className="mb-4 flex items-center gap-3">
         <Emblem size={44} />

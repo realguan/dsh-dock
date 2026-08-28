@@ -49,7 +49,7 @@ export function About() {
   }, [hydrate, setVersions])
 
   return (
-    <PageShell width={432}>
+    <PageShell width={432} align="top">
       {/* 头部：徽章 + 品牌名（含当前客户端版本）+ 角色行 */}
       <header className="mb-5 flex items-center gap-3">
         <Emblem size={48} />
