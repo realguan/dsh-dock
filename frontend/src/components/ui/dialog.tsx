@@ -107,7 +107,12 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        // 2026-08-28 裁定：静默 footer——去模板自带的 bg-muted/50 灰底 +
+        // border-t 出血带。正文以白底 + 发丝线卡片为主语言，footer 再铺
+        // 填充色块与卡片下边框贴出双线噪音；无底无线，按钮右缘与正文对齐，
+        // 留白交给 DialogContent 自身节奏（前端迁移脚手架的库存样式，非
+        // 有意设计，按 frontend-design skill「有意大于强度」原则收编）。
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
         className
       )}
       {...props}

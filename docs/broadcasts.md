@@ -32,6 +32,19 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 对话框 footer 静默化：去库存灰底，收编为有意设计 —— guan（AI 协作）
+
+- 变更：本 commit——`ui/dialog.tsx` `DialogFooter` 去掉脚手架模板自带的
+  `bg-muted/50` 灰底 + `border-t` 出血分隔带（2026-08-27 `a9c1656` 库存样式，
+  未经审视），改为无底无线的静默 footer：按钮右缘与正文对齐，留白交给
+  `DialogContent` 自身节奏。四个 profile 对话框（详情/创建/重命名/删除）
+  共用组件，一致生效，无逐个覆盖。
+- 依据：对话框正文为白底 + 发丝线卡片语言，灰带是全对话框唯一的填充色块，
+  且详情对话框 footer 分隔线与 patch 卡片下边框相距 16px 贴出双线噪音；
+  按「意图优先于强度」（refined minimalism = restraint）收编为有意设计。
+- 凭据：前端 typecheck / lint / test 40 绿；tauri dev 实机目检（详情对话框
+  用户协同截图确认：灰带与分隔线移除、按钮对齐、内容区无回归）。
+
 ### 2026-08-28 补记 · 详情对话框上一刀引入 grid 撑破回归，已修 —— guan（AI 协作）
 
 - 变更：本 commit——`ProfileDetailDialog.tsx` 内容包装 div 补 `min-w-0`。
