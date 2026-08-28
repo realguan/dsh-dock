@@ -32,6 +32,18 @@
 
 ## 三、记录
 
+### 2026-08-28 补记 · 详情对话框上一刀引入 grid 撑破回归，已修 —— guan（AI 协作）
+
+- 变更：本 commit——`ProfileDetailDialog.tsx` 内容包装 div 补 `min-w-0`。
+- 原委：上一刀把 patch 原文改 `whitespace-pre` 后，`<pre>` 最小内容宽度 =
+  最长一行；`ui/dialog.tsx` 的 `DialogContent` 是 **grid** 布局，内容包装 div
+  作为 grid 项未设 `min-w-0`，自动最小尺寸被 pre 撑破 → 整条轨道比对话框宽，
+  依赖卡片与 footer 一起越界（用户实机截图复现）。`min-w-0` 归零该项对轨道
+  尺寸的贡献后，pre 收敛回对话框宽度、由自身 `overflow-auto` 横向滚动。
+- 凭据：前端 typecheck / lint / test 40 绿；**tauri dev 实机目检通过**
+  （vite HMR 后 AX 点开「web」详情截图核对：依赖三行完整、file: spec 省略号
+  截断、原文不折行、footer 归位）。
+
 ### 2026-08-28 完成通知 · Profile 详情对话框修复：file: 依赖行溢出 + patch 原文折行失真 —— guan（AI 协作）
 
 - 变更：本 commit——`frontend/src/components/profiles/ProfileDetailDialog.tsx`

@@ -61,7 +61,11 @@ export function ProfileDetailDialog({
           </div>
         )}
         {detail && (
-          <div className="text-dim space-y-4 text-sm">
+          <div className="text-dim min-w-0 space-y-4 text-sm">
+            {/* 2026-08-28 修复：DialogContent 是 grid——本项（grid 项）无 min-w-0
+                时最小宽度 = 内容 min-content，whitespace-pre 的最长行会把整条
+                轨道撑破，依赖卡片与 footer 一起越界；min-w-0 后 pre 由自身
+                overflow-auto 横向滚动。 */}
             {/* 插件组合 */}
             <section>
               <div className="text-faint mb-1.5 text-xs">{t.profiles.detailBundles}</div>
