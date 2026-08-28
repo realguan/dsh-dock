@@ -212,10 +212,35 @@ impl Executor for LocalExecutor {
         })?;
         sink(0, "done", "环境扫描完成");
         sink(1, "done", &format!("命中档位：{:?}", launch.tier));
-        // F-b：system 档且用户世界有多个 webUi profile → 由壳出选择器。
         let home = crate::resolve::user_dsh_home();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
-        let needs_selector = launch.tier == crate::manifest::TierKind::System && profiles.len() > 1;
+        // 4.3④ defaultProfile 消费（2026-08-28）：用户设过默认且在 webUi 候选
+        // 内 → 直接用它启动并跳过选择器。仅覆盖 dsh_home = 用户 home 的档位
+        // （system/download；bundle 档是快照世界，管理器与其默认值都不适用）。
+        let stored = crate::settings::load(&self.data_dir).default_profile;
+        let direct = if launch.dsh_home == home {
+            crate::resolve::consume_default_profile(stored.as_deref(), &profiles)
+        } else {
+            None
+        };
+        if let Some(p) = direct.as_ref() {
+            tracing::info!("defaultProfile 命中：本次启动 profile={p}（跳过选择器）");
+        } else if stored.is_some() {
+            tracing::info!("defaultProfile={stored:?} 未命中 webUi 候选，按常规流程启动");
+        }
+        let direct_hit = direct.is_some();
+        let tier = launch.tier;
+        let launch = match direct {
+            Some(p) => LaunchSpec {
+                profile: p,
+                ..launch
+            },
+            None => launch,
+        };
+        // F-b：system 档且用户世界有多个 webUi profile → 由壳出选择器；
+        // defaultProfile 已命中时跳过——默认值语义即「下次自动使用」。
+        let needs_selector =
+            !direct_hit && tier == crate::manifest::TierKind::System && profiles.len() > 1;
         self.launch = Some(launch);
         Ok(if needs_selector {
             ProbeOutcome::NeedsProfile(profiles)

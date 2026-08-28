@@ -128,7 +128,7 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - [x] `settings.rs` 增加 `defaultProfile` 字段（原子写 + 损坏回退；失效回退 `web`），并同步登记 AGENTS §6（第二例外）——已落地（2026-08-28）；`switch_mode`/`choose_mode` 同步改为 load-modify-save 防抹掉该字段
 - [x] 复现台账入册：ledger 复现点 6/7/8 已落地（2026-08-28），name 一致化改写补录复现点 9
 - [x] 重命名实现时：自动扫描 `cordis.patch.yml` 的 `../` 相对路径引用并出警告（替用户做 Spike B 要求的人工检查）——已落地（2026-08-28，纯文本逐行扫描跳过注释行；复制同样带此警告）
-- [ ] WSL GUEST_BOOT 放开多 profile 评估（与 4.3④ 默认 profile 合并评估，见 Spike B §2.5；客体内 profile 不存在时的行为须一并定义）
+- [x] WSL GUEST_BOOT 放开多 profile 评估（与 4.3④ 默认 profile 合并评估，见 Spike B §2.5；客体内 profile 不存在时的行为须一并定义）——**评估结论（2026-08-28）：本版不放开，GUEST_BOOT 维持 `--profile web`，归 4.9 WSL v2**。理由：① WSL 客体 boot 的是客体自身 dsh home 的 profile，管理器只管壳侧 home——壳侧存储的 defaultProfile 在客体内（自定义名）大概率不存在，dsh 报「profile does not exist」；② 非 webUi profile 无 URL 可导航，WSL 的就绪模型（哨兵文件解析 URL）与本地同样不成立；③ 客体内 profile 物化/管理本身是 4.9 的范围。本地消费已落地：`resolve::consume_default_profile` + LocalExecutor::probe 接线——存储默认值命中 webUi 候选即直接启动并跳过选择器（仅 system/download 档，bundle 快照世界不适用；非 webUi/失效值回退常规流程并记日志）
 - [ ] executor：客体内 node 自动安装落地（node-map 同源 tarball → `~/.dsh-dock/node`，`guest_prep` 纳入 PATH，`NODE_MISSING` 分支改为自动补齐；归 4.9，见 ADR-0004 §7）
 - [x] profile 命名校验复用 dsh 规则（空名 / `/` `\` / `.` / `..` / `node_modules`；锚定 `resolveProfileDir` `@ 318`）——`profiles::validate_profile_name`（2026-08-28，逐字一致含正反例测试，ledger 复现点 8）
 - [ ] 验证：`cargo test` 全绿 + `dsh plugin --profile <新名> add` 转发链实机验证（**macOS 已验 2026-08-28**：init 先行 / pnpm 经注入 PATH 可定位 / 网络失败 -> 已创建未装中间态 exit 1；成功路径 reconcile 沿用 Spike A §3.2）+ 复制/重命名后 `dsh --profile <新名> --dump-config` 可正常输出 + Windows 转发链（`shell: true` 分支，Spike A 遗留）+ WSL 客体内 node → pnpm → dsh 全补齐链实机（含 node 自动安装）

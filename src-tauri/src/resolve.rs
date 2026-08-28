@@ -757,6 +757,21 @@ fn is_executable(_p: &Path) -> bool {
     true
 }
 
+/// defaultProfile 消费决策（4.3④ 接线，2026-08-28；纯函数）。
+/// 存储的默认 profile 直接作为本次启动 profile（并跳过选择器）当且仅当：
+/// 它在 webUi 候选内。壳的启动链路以「日志解析 URL → WebView 导航」为前提，
+/// 非 webUi profile（如 headless）boot 后无 URL 可导航——自动启动必然超时，
+/// 故不在候选的存储值（headless / 自定义无 webUi / 已被手工删除）一律回退
+/// 常规流程（多 webUi 仍出选择器），不猜用户意图。未存储 = None 不消费。
+pub fn consume_default_profile(
+    stored: Option<&str>,
+    webui_candidates: &[String],
+) -> Option<String> {
+    stored
+        .filter(|n| webui_candidates.iter().any(|c| c == n))
+        .map(String::from)
+}
+
 /// 用户 home 下「webUi=true」的 profile 列表：scan profiles/*/package.json 的
 /// dsh.profile.bundles 是否含 `@deepseek-ai/dsh-web-app`；官方 web 恒为首选。
 /// （F-b：boot 选择器数据源；v1 默认 profile 仍是 manifest.default_profile。）
@@ -982,6 +997,25 @@ mod tests {
         let empty = tmp();
         assert!(detect_system_dsh(&empty.display().to_string()).is_none());
         std::fs::remove_dir_all(&empty).ok();
+    }
+
+    #[test]
+    fn consume_default_profile_only_for_webui_candidates() {
+        let cands = vec!["web".to_string(), "custom-a".to_string()];
+        // 候选内：直接消费（web 与自定义 webUi 均可）
+        assert_eq!(
+            consume_default_profile(Some("custom-a"), &cands).as_deref(),
+            Some("custom-a")
+        );
+        assert_eq!(
+            consume_default_profile(Some("web"), &cands).as_deref(),
+            Some("web")
+        );
+        // 非 webUi（headless）/已删除名：不消费（自动启动无 URL 可导航或必然失败）
+        assert_eq!(consume_default_profile(Some("headless"), &cands), None);
+        assert_eq!(consume_default_profile(Some("ghost"), &cands), None);
+        // 未设置：不消费
+        assert_eq!(consume_default_profile(None, &cands), None);
     }
 
     #[test]

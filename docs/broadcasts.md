@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 4.3④ defaultProfile 消费接线 + WSL 放开评估收口 —— guan（AI 协作）
+
+- 变更：本 commit——`resolve.rs` 新增纯函数 `consume_default_profile`
+  （存储默认值 ∈ webUi 候选才消费，含正反例测试）；`executor.rs`
+  LocalExecutor::probe 接线——命中即以该 profile 启动并跳过选择器，
+  仅覆盖 dsh_home = 用户 home 的档位（system/download），bundle 快照
+  世界不适用；未命中（headless 类无 webUi / 已被手工删除）回退常规
+  流程并记日志。ADR-0009 §5 WSL GUEST_BOOT 放开评估收口：**本版不放开，
+  维持 `--profile web`，归 4.9**（客体 home 与壳侧 home 不同世界 /
+  非 webUi 无 URL 可导航 / 客体内 profile 管理属 4.9 范围）。
+- 影响：仅周知。「设为默认启动」语义自此完整：设置 → 持久化 → 下次
+  启动自动使用（多 webUi 不再出选择器）；选择器仍在（未设默认时），
+  其「选择只影响本次会话」语义不变。验收路径：管理器设默认 → 重启
+  应用 → 直接进入该工作台（日志可见 defaultProfile 命中行）。
+- 凭据：`cargo test` 121 绿（+1）/ `fmt --check` / `clippy -D warnings`
+  全过；diff 已逐行人肉复核。
+
 ### 2026-08-28 完成通知 · 4.3 Profile 管理器第五刀（前端管理页）+ AGENTS §4.4 重评 —— guan（AI 协作）
 
 - 变更：本 commit——前端 `pages/ProfileManager.tsx` + `components/profiles/*`
