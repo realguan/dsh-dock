@@ -66,19 +66,32 @@ npm run typecheck   # tsc 全量类型检查
 npm run lint        # eslint
 npm run test        # vitest（纯逻辑）
 npm run build       # 生产构建
-# npm run dev       # 纯浏览器页面预览（无 Tauri IPC，壳功能不可用）
 
 # Rust 单元测试与闸门（宿主解析链、下载续传、签名验证、profile 生命周期等）
 cd src-tauri && cargo test
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+```
 
-# 本地运行（默认在线极简 manifest；首次运行需网络）
-# 注意：Cargo.toml 在 src-tauri/ 下，必须先进入该目录
-cd src-tauri && cargo run
+**本地运行**（默认在线极简 manifest；首次运行需联网）：
 
-# 当前平台出安装包（默认在线极简档：不内置 Node/dsh，无需任何前置步骤；
-# tauri-cli 需与 crate 同代 2.11.x）
+> ⚠️ debug 构建的前端从 `devUrl`（localhost:1420，vite dev server）加载——
+> **直接 `cargo run` 而 vite 未运行 = 壳窗口白屏**（主窗口看不出异常，因为
+> boot 完就导航进 dsh 工作台了；独立壳窗口如 Profile 管理器会全白）。
+> `Cargo.toml` 在 `src-tauri/` 下，cargo 命令须先进入该目录。二选一：
+
+```bash
+# a) 一条命令（tauri-cli 自动先起 vite 再编译运行，热重载）
+cargo tauri dev
+
+# b) 两终端
+cd frontend && npm run dev    # 终端 1：vite dev server @1420
+cd src-tauri && cargo run     # 终端 2
+```
+
+```bash
+# 出安装包无此问题（release 构建内嵌 frontend/dist 产物）；
+# tauri-cli 需与 crate 同代 2.11.x
 cd src-tauri && cargo tauri build
 
 # 出内置离线档（可选）：先注入自包含快照 + 产品身份再打包；仅装配方/CI 使用，

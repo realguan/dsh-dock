@@ -32,7 +32,10 @@ git clone git@github.com:realguan/dsh-dock.git && cd dsh-dock/src-tauri
 cargo test        # 全绿 = 环境就绪（首次编译需几分钟）
 
 # ④ 跑起来（默认在线极简档；首次启动需联网补 Node/dsh）
-cargo run
+#    debug 构建的前端从 devUrl（localhost:1420）加载：直接 `cargo run` 而
+#    vite 未运行 = 壳窗口白屏（主窗口被 dsh 导航掩盖，独立壳窗口全白）。
+cargo tauri dev        # 自动先起 vite 再编译运行（推荐）
+# 或两终端：cd frontend && npm run dev   +   cd src-tauri && cargo run
 ```
 
 说明：

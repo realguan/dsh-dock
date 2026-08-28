@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-08-28 排障记录 · debug 构建白屏——dev 工作流文档修正 —— guan（AI 协作）
+
+- 变更：本 commit——`README.md` 开发段与 `docs/CONTRIBUTING.md` ④ 的运行
+  指引改为 `cargo tauri dev`（或 vite + cargo run 两终端），并明示「直接
+  cargo run 而 vite 未起 = 壳窗口白屏」。
+- 影响：仅周知。**现象与根因**：用户以 `cd src-tauri && cargo run` 启动后
+  Profile 管理器 / 关于窗口全白。根因是 debug 构建的前端从 `devUrl`
+  （localhost:1420）加载（tauri.conf.json，前端迁移时引入），vite 未运行
+  → 资源加载失败；主窗口"正常"是假象——boot 完就导航进 dsh 工作台，把
+  白屏的壳 SPA 盖掉了（shell.log 佐证：dsh 就绪 + 导航均正常，1420 端口
+  无监听）。此为前端迁移后的既定工作流（`beforeDevCommand` 已配好），
+  非管理器代码缺陷；上一条文档修正 commit 写反了 npm run dev 的用途，
+  本次一并纠正。
+- 凭据：`lsof -i :1420` 无监听 + `~/Library/Application Support/
+  io.github.realguan.dsh-dock/shell.log` 显示 boot 全链正常；复现路径
+  与修复命令均实机核对（tauri-cli 2.11.4 在机）。
+
 ### 2026-08-28 文档修正 · README/CONTRIBUTING 面向前端迁移与 Profile 管理器现状更新 —— guan（AI 协作）
 
 - 变更：本 commit——`README.md`（「它做什么」补 Profile 管理器与 pnpm 环境
