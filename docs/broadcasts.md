@@ -32,6 +32,18 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 工具窗口布局修正：内容顶部锚定替代垂直居中 —— guan（AI 协作）
+
+- 变更：commit `4bed1c9`（本 commit 落档本条）——`PageShell` 新增 `align`
+  两态：常驻工具窗口（关于 / Profile 管理器）`top` 锚定 + `py-10` 上下
+  呼吸位；`BootMode` 等主窗口启动抉择屏维持默认 `center`。
+- 影响：仅周知。根因：旧静态壳窗口尺寸贴内容，`items-center` 居中不可见；
+  前端迁移后窗口可调大小（profiles 680×700），内容悬浮正中、且内容超高时
+  顶部被裁切（flex 居中 + overflow 的经典缺陷），顶部锚定一并消除。
+  纯布局改动，IPC / 契约 / Rust 零变化。
+- 凭据：`npm run typecheck` / `lint` / `test`（40）全绿；diff −4/+13 已
+  人肉复核；布局观感按 4.4 口径归人工目验（Vitest 纯逻辑无 DOM 断言）。
+
 ### 2026-08-28 排障记录 · debug 构建白屏——dev 工作流文档修正 —— guan（AI 协作）
 
 - 变更：本 commit——`README.md` 开发段与 `docs/CONTRIBUTING.md` ④ 的运行
