@@ -32,6 +32,29 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 4.3 Profile 管理器第四刀（生命周期 + 默认持久化）—— guan（AI 协作）
+
+- 变更：本 commit——`profiles.rs`（复制/重命名/删除文件层 + 前置校验 + 运行中
+  防护文案 + patch `../` 引用扫描警告 + 8 条测试）；`settings.rs`
+  （`defaultProfile` 字段，第二最小面例外）；`executor.rs`（`active_profile`
+  trait 方法：运行中防护比对源，本地取 launch、WSL 固定 web）；`lib.rs`
+  （5 个新 IPC 命令；**连带修复** `switch_mode`/`choose_mode` 改
+  load-modify-save——原整体覆盖写法会抹掉 defaultProfile）；三处同步
+  （ipc.rs/capabilities）。引用面全按 Spike B §3 执行：复制排除 node_modules
+  + name 改写；重命名删 node_modules 让 dsh 自愈；删除不级联 sessions；
+  defaultProfile 删除时清除、重命名时同步，失效读取侧兜底 web。
+- 影响：**触宪法级**——AGENTS §6 例外册登记 `defaultProfile` 落地、§7 IPC
+  登记表新增 5 命令（`copy_profile`/`rename_profile`/`delete_profile`/
+  `set_default_profile`/`get_default_profile`），仅周知。范围声明：管理器
+  后端能力至此齐备（列出/详情/创建/复制/重命名/删除/切换默认）；前端管理页、
+  defaultProfile 的 boot 消费接线（含 WSL GUEST_BOOT 放开多 profile 评估）、
+  pnpm 补齐均归后续刀。
+- 凭据：`cargo test` 120 绿（112 + 新增 8：复制排除与改写 / 重命名自愈 /
+  删除不级联 / 运行中防护文案要素 / 默认候选校验 / settings 旧格式兼容等）；
+  `gate_tests` 三处同步一致性绿；`cargo fmt --check` / `clippy -D warnings`
+  全过；diff 已逐行人肉复核（经维护者裁定 ①+② 范围：生命周期 + 默认持久化
+  一刀完成，pnpm 补齐与前端拆分后续刀）。
+
 ### 2026-08-28 完成通知 · 4.3 Profile 管理器第三刀（创建能力）—— guan（AI 协作）
 
 - 变更：本 commit——`src-tauri/src/profiles.rs`（创建段：转发链 spawn 封装 +

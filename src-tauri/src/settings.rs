@@ -40,6 +40,10 @@ impl Mode {
 pub struct ShellSettings {
     /// 未设置（None）= 首次运行：启动页先出运行环境选择。
     pub default_mode: Option<Mode>,
+    /// 默认启动 profile 名（4.3④；第二最小面例外，2026-08-28 落地，AGENTS §6
+    /// 已登记）。None = 未设置——消费方按 `web` 兜底（存储值失效同兜底，
+    /// ADR-0009 §4 定死回退值 `web`：模板名恒可首启）。
+    pub default_profile: Option<String>,
 }
 
 fn settings_path(data_dir: &Path) -> std::path::PathBuf {
@@ -100,9 +104,26 @@ mod tests {
         let dir = tmp();
         let s = ShellSettings {
             default_mode: Some(Mode::Wsl),
+            default_profile: None,
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_profile_roundtrips_and_old_format_still_parses() {
+        let dir = tmp();
+        let s = ShellSettings {
+            default_mode: Some(Mode::Local),
+            default_profile: Some("my-profile".to_string()),
+        };
+        save(&dir, &s).unwrap();
+        assert_eq!(load(&dir), s);
+        // 旧格式（仅 defaultMode，字段加入前的存量文件）兼容：default_profile 缺省 None
+        let old: ShellSettings = serde_json::from_str(r#"{"defaultMode":"wsl"}"#).unwrap();
+        assert_eq!(old.default_mode, Some(Mode::Wsl));
+        assert_eq!(old.default_profile, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 

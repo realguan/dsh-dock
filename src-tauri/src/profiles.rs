@@ -462,6 +462,194 @@ pub fn create_profile_blocking(
     Ok(classify_create_outcome(profile, &run, materialized))
 }
 
+// ---------- 生命周期：复制 / 重命名 / 删除（4.3 第四刀，2026-08-28） ----------
+//
+// 引用面全部按 Spike B（docs/spikes/0002-profile-reference-surface.md）执行：
+// 目录名是唯一硬身份；`name` 一致化改写是壳仅有的两处三件套写入之一（红线 3
+// 允许，ledger 复现点 9）；`profiles/node_modules` 农场不碰；sessions 不级联。
+// 运行中防护（ADR-0009 §2）在 IPC 层经 executor::active_profile 比对后调
+// running_conflict——复制不防护（源只读不动，ADR 仅要求删除/重命名）。
+
+/// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct LifecycleOutcome {
+    pub profile: String,
+    pub warnings: Vec<String>,
+}
+
+/// 删除结果。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DeleteOutcome {
+    pub profile: String,
+    /// 该 profile 是默认启动 profile，引用已清除（读取侧兜底 web，ADR-0009 §4）。
+    pub default_cleared: bool,
+}
+
+/// 运行中防护（ADR-0009 §2 工程准则）：目标 profile 正被壳当前会话使用 →
+/// 拒绝并给可行动文案（POSIX 删运行中目录致 dsh 半瘫、Windows 目录占用
+/// 删除失败；文案含「其他 dsh 实例」要素，ADR 明文要求）。
+pub fn running_conflict(active: Option<&str>, target: &str) -> Result<(), String> {
+    if active == Some(target) {
+        return Err(format!(
+            "profile「{target}」正由当前壳会话使用——请先停止运行中的 dsh（退出应用或切换会话）\
+             再删除/重命名；并确保没有其他 dsh 实例（含终端自启）正在使用该 profile"
+        ));
+    }
+    Ok(())
+}
+
+/// 默认启动 profile 候选校验（set_default_profile 用）：名字合法且在扫描结果中
+/// （已物化或内置模板名均可——模板名恒可首启，web 本身就是 ADR 定死的回退值）。
+pub fn ensure_default_candidate(home: &Path, name: &str) -> Result<(), String> {
+    validate_profile_name(name)?;
+    if scan_profiles(home).iter().any(|p| p.name == name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "「{name}」不是可用的默认 profile：既无目录也不是内置模板名（web/headless）"
+        ))
+    }
+}
+
+/// 复制前置校验：源必须已物化（is_dir，未物化模板名无内容可复制）；目标名
+/// 合法且完全不存在（目录/文件都算占用——复制不是创建，不走半初始化重试语义）。
+pub fn copy_blocker(home: &Path, source: &str, new_name: &str) -> Result<(), String> {
+    validate_profile_name(source)?;
+    validate_profile_name(new_name)?;
+    if !home.join("profiles").join(source).is_dir() {
+        return Err(format!(
+            "源 profile「{source}」不存在或尚未物化——复制需要已初始化的 profile 目录"
+        ));
+    }
+    if home.join("profiles").join(new_name).exists() {
+        return Err(format!("目标名「{new_name}」已被占用——复制请换名"));
+    }
+    Ok(())
+}
+
+/// 重命名前置校验：旧名存在（is_dir）；新名合法且完全不存在。
+pub fn rename_blocker(home: &Path, old_name: &str, new_name: &str) -> Result<(), String> {
+    validate_profile_name(old_name)?;
+    validate_profile_name(new_name)?;
+    if !home.join("profiles").join(old_name).is_dir() {
+        return Err(format!("profile「{old_name}」不存在或尚未物化"));
+    }
+    if home.join("profiles").join(new_name).exists() {
+        return Err(format!("目标名「{new_name}」已被占用——重命名请换名"));
+    }
+    Ok(())
+}
+
+/// 复制（Spike B §3.2）：整目录复制**排除 node_modules/**（让 pnpm 在新目录
+/// 重装，避免旧相对链接）；package.json `name` 一致化改写；其余文件（patch /
+/// workspace / 用户自加文件）逐字照搬。返回 warnings（patch 相对路径引用）。
+pub fn copy_profile_tree(
+    src_dir: &Path,
+    dst_dir: &Path,
+    new_name: &str,
+) -> Result<Vec<String>, String> {
+    copy_tree_excluding_node_modules(src_dir, dst_dir)?;
+    rewrite_manifest_name(dst_dir, new_name)?;
+    Ok(patch_relative_path_warnings(dst_dir))
+}
+
+/// 重命名（Spike B §3.1）：目录 rename（同文件系统原子）→ `name` 一致化改写
+/// → 删 node_modules（「删 + dsh 下次启动自愈」为第一方案：pnpm 的虚拟 store
+/// 相对链接搬移会断）→ patch 相对路径警告。
+pub fn rename_profile_dir(
+    home: &Path,
+    old_name: &str,
+    new_name: &str,
+) -> Result<Vec<String>, String> {
+    let old_dir = home.join("profiles").join(old_name);
+    let new_dir = home.join("profiles").join(new_name);
+    fs::rename(&old_dir, &new_dir).map_err(|e| {
+        format!(
+            "目录改名失败（{} → {}）：{e}",
+            old_dir.display(),
+            new_dir.display()
+        )
+    })?;
+    rewrite_manifest_name(&new_dir, new_name)?;
+    let modules = new_dir.join("node_modules");
+    if modules.exists() {
+        fs::remove_dir_all(&modules)
+            .map_err(|e| format!("清理 node_modules 失败（pnpm 将在下次启动重装）：{e}"))?;
+    }
+    Ok(patch_relative_path_warnings(&new_dir))
+}
+
+/// 删除（Spike B §3.3）：整目录删除。不级联 sessions（dsh 明示不级联，会话
+/// 容忍悬空 profile 引用）；符号农场残留链接不做（stale 链接对模块解析不可见，
+/// 且 dsh heal 幂等）。调用方先做存在性检查与运行中防护。
+pub fn delete_profile_dir(home: &Path, name: &str) -> Result<(), String> {
+    let dir = home.join("profiles").join(name);
+    fs::remove_dir_all(&dir).map_err(|e| format!("删除目录失败（{}）：{e}", dir.display()))
+}
+
+/// 递归复制目录，跳过名为 `node_modules` 的子树（复制与重命名的共用件；
+/// 符号农场同名的顶层目录天然被排除）。
+fn copy_tree_excluding_node_modules(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| format!("创建目录失败（{}）：{e}", dst.display()))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("读取目录失败（{src:?}）：{e}"))? {
+        let entry = entry.map_err(|e| format!("遍历目录失败（{src:?}）：{e}"))?;
+        if entry.file_name() == "node_modules" {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_tree_excluding_node_modules(&from, &to)?;
+        } else {
+            fs::copy(&from, &to).map_err(|e| format!("复制文件失败（{}）：{e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// package.json `name` 一致化改写为 `dsh-profile-<新名>`（dsh initProfile @ 353
+/// 写入约定；Spike B §2.2：该前缀字段无外部消费处，改写为一致性保持）。
+/// 清单缺失（半初始化）跳过；格式对齐 dsh writeProfileManifest（2 空格缩进 +
+/// 末尾换行；键序不敏感，dsh 以 JSON.parse 读取）。
+fn rewrite_manifest_name(dir: &Path, new_name: &str) -> Result<(), String> {
+    let path = dir.join("package.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let mut pkg: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("package.json 非法 JSON（{}）：{e}", path.display()))?;
+    if let Some(obj) = pkg.as_object_mut() {
+        obj.insert(
+            "name".to_string(),
+            serde_json::Value::String(format!("dsh-profile-{new_name}")),
+        );
+    }
+    let out = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
+    fs::write(&path, out + "\n").map_err(|e| format!("写 package.json 失败：{e}"))
+}
+
+/// 扫描 cordis.patch.yml 的 `../` 相对路径引用（Spike B §2.2：patch 语义不含
+/// profile 名，但相对路径在目录改名后可能断链——替用户做人工检查的机器版，
+/// ADR-0009 行动项）。纯文本逐行扫描（本刀不引 YAML 依赖）：跳过空行与
+/// `#` 注释行。
+pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)) else {
+        return Vec::new();
+    };
+    let hits = text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+        .filter(|l| l.contains("../"))
+        .count();
+    if hits == 0 {
+        Vec::new()
+    } else {
+        vec![format!(
+            "cordis.patch.yml 检测到 {hits} 处 ../ 相对路径引用——profile 目录变更后这些引用可能断链，请人工检查"
+        )]
+    }
+}
+
 #[cfg(test)]
 mod profiles_tests {
     use super::*;
@@ -807,5 +995,161 @@ mod profiles_tests {
         let long = format!("{}END", "x".repeat(5000));
         assert!(output_tail(&long).ends_with("END"));
         assert!(output_tail("").is_empty());
+    }
+
+    // ---------- 生命周期（第四刀） ----------
+
+    /// 造一个「完整」profile：三件套 + node_modules 假体（验证排除/清理）。
+    fn materialize_full(home: &Path, name: &str) {
+        materialize(home, name, PKG_ALPHA);
+        let dir = home.join("profiles").join(name);
+        std::fs::write(dir.join("cordis.patch.yml"), "# patch\n[]\n").unwrap();
+        std::fs::write(dir.join("pnpm-workspace.yaml"), "packages:\n  - .\n").unwrap();
+        std::fs::create_dir_all(dir.join("node_modules").join(".pnpm")).unwrap();
+        std::fs::write(dir.join("node_modules").join("junk"), "x").unwrap();
+    }
+
+    #[test]
+    fn copy_excludes_node_modules_and_rewrites_name() {
+        let home = tmp();
+        materialize_full(&home, "src");
+        let warnings = copy_profile_tree(
+            &home.join("profiles").join("src"),
+            &home.join("profiles").join("dst"),
+            "dst",
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "patch 无 ../ 时无警告：{warnings:?}");
+
+        let dst = home.join("profiles").join("dst");
+        assert!(dst.join("package.json").is_file());
+        assert!(dst.join("cordis.patch.yml").is_file());
+        assert!(dst.join("pnpm-workspace.yaml").is_file());
+        assert!(
+            !dst.join("node_modules").exists(),
+            "node_modules 必须排除（Spike B §3.2：让 pnpm 重装避免旧链接）"
+        );
+        // name 一致化改写；bundles/dependencies 照搬
+        let pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dst.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(pkg["name"], "dsh-profile-dst");
+        assert_eq!(pkg["dsh"]["profile"]["bundles"][0], "@deepseek-ai/dsh-base");
+        assert!(pkg["dependencies"]["my-plugin"].is_string());
+        // 源完全不动（含 name）
+        let src_pkg: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.join("profiles").join("src").join("package.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(src_pkg["name"], "dsh-profile-alpha");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn copy_warns_on_patch_relative_paths() {
+        let home = tmp();
+        let src = home.join("profiles").join("src");
+        materialize(&home, "src", PKG_ALPHA);
+        std::fs::write(
+            src.join("cordis.patch.yml"),
+            "# 注释行里的 ../ 不算引用\n[]\n- id: x\n  config:\n    path: ../shared/thing\n",
+        )
+        .unwrap();
+        let warnings = copy_profile_tree(&src, &home.join("profiles").join("dst"), "dst").unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("../"));
+        assert!(
+            warnings[0].contains("1 处"),
+            "注释行不得计入：{}",
+            warnings[0]
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn copy_and_rename_blockers_cover_edges() {
+        let home = tmp();
+        materialize_full(&home, "full");
+        std::fs::create_dir_all(home.join("profiles").join("half")).unwrap();
+        // 复制：源缺失 / 目标占用（含半初始化目录）/ 非法名
+        assert!(copy_blocker(&home, "ghost", "x").is_err());
+        assert!(
+            copy_blocker(&home, "full", "half").is_err(),
+            "半初始化目录也算占用"
+        );
+        assert!(copy_blocker(&home, "full", "a/b").is_err());
+        assert!(copy_blocker(&home, "full", "fresh").is_ok());
+        // 半初始化源：目录在即可复制（内容照搬）
+        assert!(copy_blocker(&home, "half", "c2").is_ok());
+        // 重命名：旧缺失 / 新占用（含普通文件）/ 非法名
+        assert!(rename_blocker(&home, "ghost", "x").is_err());
+        assert!(rename_blocker(&home, "full", "half").is_err());
+        std::fs::write(home.join("profiles").join("afile"), "x").unwrap();
+        assert!(
+            rename_blocker(&home, "full", "afile").is_err(),
+            "文件占用同样拒绝"
+        );
+        assert!(rename_blocker(&home, "full", "renamed").is_ok());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn rename_moves_rewrites_and_drops_node_modules() {
+        let home = tmp();
+        materialize_full(&home, "old");
+        let warnings = rename_profile_dir(&home, "old", "new").unwrap();
+        assert!(warnings.is_empty());
+        assert!(
+            !home.join("profiles").join("old").exists(),
+            "旧目录必须消失"
+        );
+        let new_dir = home.join("profiles").join("new");
+        assert!(new_dir.join("package.json").is_file());
+        assert!(
+            !new_dir.join("node_modules").exists(),
+            "删 node_modules 让 dsh 下次启动自愈（Spike B §3.1 第一方案）"
+        );
+        let pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(new_dir.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(pkg["name"], "dsh-profile-new");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn delete_removes_directory_only() {
+        let home = tmp();
+        materialize_full(&home, "gone");
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        delete_profile_dir(&home, "gone").unwrap();
+        assert!(!home.join("profiles").join("gone").exists());
+        assert!(home.join("sessions").is_dir(), "不级联全局数据（dsh 明示）");
+        // 调用方存在性检查的兜底：删不存在目录是错误而非静默成功
+        assert!(delete_profile_dir(&home, "ghost").is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn running_conflict_message_covers_adr_required_elements() {
+        assert!(running_conflict(None, "web").is_ok());
+        assert!(running_conflict(Some("other"), "web").is_ok());
+        let err = running_conflict(Some("web"), "web").unwrap_err();
+        assert!(err.contains("先停止"), "须提示先停止：{err}");
+        assert!(err.contains("其他 dsh 实例"), "ADR 要求的确认要素：{err}");
+    }
+
+    #[test]
+    fn default_candidate_accepts_templates_and_materialized_only() {
+        let home = tmp();
+        materialize(&home, "alpha", PKG_ALPHA);
+        assert!(ensure_default_candidate(&home, "alpha").is_ok());
+        assert!(
+            ensure_default_candidate(&home, "web").is_ok(),
+            "未物化模板名可作默认（恒可首启，ADR-0009 §4）"
+        );
+        assert!(ensure_default_candidate(&home, "ghost").is_err());
+        assert!(ensure_default_candidate(&home, "../x").is_err());
+        std::fs::remove_dir_all(&home).ok();
     }
 }

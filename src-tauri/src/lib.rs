@@ -502,6 +502,137 @@ async fn create_profile(
     .map_err(|e| format!("创建任务异常终止：{e}"))?
 }
 
+/// 读当前会话占用中的 profile（运行中防护比对源；无会话/未启动 = None）。
+fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.try_state::<Arc<ShellState>>()?;
+    let guard = state.session.lock().ok()?;
+    guard
+        .as_ref()
+        .and_then(|e| e.active_profile().map(String::from))
+}
+
+/// Profile 管理器（4.3 生命周期刀）：复制 profile——整目录复制排除
+/// node_modules + `name` 一致化改写（Spike B §3.2，红线 3 允许的两处
+/// 三件套写入之一）。阻塞文件操作在 spawn_blocking。
+#[tauri::command]
+async fn copy_profile(
+    source: String,
+    new_name: String,
+) -> Result<crate::profiles::LifecycleOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::profiles::copy_blocker(&home, &source, &new_name)?;
+        let warnings = crate::profiles::copy_profile_tree(
+            &home.join("profiles").join(&source),
+            &home.join("profiles").join(&new_name),
+            &new_name,
+        )?;
+        Ok(crate::profiles::LifecycleOutcome {
+            profile: new_name,
+            warnings,
+        })
+    })
+    .await
+    .map_err(|e| format!("复制任务异常终止：{e}"))?
+}
+
+/// Profile 管理器（4.3 生命周期刀）：重命名——目录 rename + `name` 改写 +
+/// 删 node_modules 让 dsh 自愈（Spike B §3.1）；运行中防护；defaultProfile
+/// 引用同步旧名 → 新名（保持用户意图）。
+#[tauri::command]
+async fn rename_profile(
+    app: tauri::AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<crate::profiles::LifecycleOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let active = active_session_profile(&app);
+    crate::profiles::running_conflict(active.as_deref(), &old_name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::profiles::rename_blocker(&home, &old_name, &new_name)?;
+        let warnings = crate::profiles::rename_profile_dir(&home, &old_name, &new_name)?;
+        // defaultProfile 引用同步（load-modify-save，防抹掉其他字段）
+        let mut settings = crate::settings::load(&data_dir);
+        if settings.default_profile.as_deref() == Some(old_name.as_str()) {
+            settings.default_profile = Some(new_name.clone());
+            crate::settings::save(&data_dir, &settings)
+                .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
+        }
+        Ok(crate::profiles::LifecycleOutcome {
+            profile: new_name,
+            warnings,
+        })
+    })
+    .await
+    .map_err(|e| format!("重命名任务异常终止：{e}"))?
+}
+
+/// Profile 管理器（4.3 生命周期刀）：删除——整目录删除，不级联 sessions
+/// （dsh 明示）；运行中防护；defaultProfile 指向被删 profile → 清除（读取侧
+/// 兜底 web，ADR-0009 §4）。node_modules 体量大，删除走 spawn_blocking。
+#[tauri::command]
+async fn delete_profile(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<crate::profiles::DeleteOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    crate::profiles::validate_profile_name(&profile)?;
+    let active = active_session_profile(&app);
+    crate::profiles::running_conflict(active.as_deref(), &profile)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        if !home.join("profiles").join(&profile).is_dir() {
+            return Err(format!(
+                "profile「{profile}」不存在或尚未物化——无目录可删除"
+            ));
+        }
+        crate::profiles::delete_profile_dir(&home, &profile)?;
+        // 默认启动 profile 引用检查（Spike B §3.3/ADR-0009 §4）：指向被删
+        // profile → 清除；None 读取侧即兜底 web
+        let mut settings = crate::settings::load(&data_dir);
+        let mut default_cleared = false;
+        if settings.default_profile.as_deref() == Some(profile.as_str()) {
+            settings.default_profile = None;
+            crate::settings::save(&data_dir, &settings)
+                .map_err(|e| format!("回退默认 profile 失败：{e}"))?;
+            default_cleared = true;
+        }
+        Ok(crate::profiles::DeleteOutcome {
+            profile,
+            default_cleared,
+        })
+    })
+    .await
+    .map_err(|e| format!("删除任务异常终止：{e}"))?
+}
+
+/// Profile 管理器（4.3④）：设置默认启动 profile（持久化 settings.json
+/// `defaultProfile`，第二最小面例外，AGENTS §6 已登记；None/失效值读取侧
+/// 兜底 web）。
+#[tauri::command]
+fn set_default_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+    let home = crate::resolve::user_dsh_home();
+    crate::profiles::ensure_default_candidate(&home, &profile)?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut settings = crate::settings::load(&data_dir);
+    settings.default_profile = Some(profile);
+    crate::settings::save(&data_dir, &settings).map_err(|e| format!("保存默认 profile 失败：{e}"))
+}
+
+/// 读取默认启动 profile（None = 未设置，消费方兜底 web；前端展示当前值用）。
+#[tauri::command]
+fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(crate::settings::load(&data_dir).default_profile)
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
 #[tauri::command]
@@ -654,12 +785,11 @@ fn switch_mode(
 ) {
     tracing::info!("切换运行环境 → {}", mode.as_str());
     let _ = teardown_session(&state);
-    if let Err(e) = crate::settings::save(
-        &data_dir,
-        &crate::settings::ShellSettings {
-            default_mode: Some(mode),
-        },
-    ) {
+    // load-modify-save：不得整体覆盖 ShellSettings——会把 defaultProfile 等
+    // 其他已存字段抹掉（4.3 生命周期刀引入 defaultProfile 后的必然要求）。
+    let mut shell_settings = crate::settings::load(&data_dir);
+    shell_settings.default_mode = Some(mode);
+    if let Err(e) = crate::settings::save(&data_dir, &shell_settings) {
         emit_boot_error(&app, &e, "");
         let _ = state.window.eval("location.assign('/')");
         return;
@@ -707,13 +837,11 @@ fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     if set_default {
-        crate::settings::save(
-            &data_dir,
-            &crate::settings::ShellSettings {
-                default_mode: Some(m),
-            },
-        )
-        .map_err(|e| format!("保存默认运行环境失败：{e}"))?;
+        // load-modify-save：同 switch_mode，不得抹掉其他已存字段。
+        let mut shell_settings = crate::settings::load(&data_dir);
+        shell_settings.default_mode = Some(m);
+        crate::settings::save(&data_dir, &shell_settings)
+            .map_err(|e| format!("保存默认运行环境失败：{e}"))?;
     }
     *state.active_mode.lock().unwrap() = Some(m);
     let handle = app.clone();
@@ -1141,7 +1269,12 @@ pub fn run() {
             choose_mode,
             list_profiles,
             get_profile_detail,
-            create_profile
+            create_profile,
+            copy_profile,
+            rename_profile,
+            delete_profile,
+            set_default_profile,
+            get_default_profile
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

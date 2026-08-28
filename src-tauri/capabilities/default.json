@@ -27,6 +27,11 @@
     "allow-choose-mode",
     "allow-list-profiles",
     "allow-get-profile-detail",
-    "allow-create-profile"
+    "allow-create-profile",
+    "allow-copy-profile",
+    "allow-rename-profile",
+    "allow-delete-profile",
+    "allow-set-default-profile",
+    "allow-get-default-profile"
   ]
 }

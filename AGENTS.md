@@ -101,7 +101,8 @@
 
 - 壳运行时无状态；**管理功能不在此限**——管理数据可按需持久化到 `app_data` 自有库/文件。
 - 运行时持久化例外册（新增字段须先在此登记）：`settings.json` 原子写、损坏回退默认；
-  已登记 `defaultMode`（2026-08-25）· 默认启动 profile（2026-08-27 批准，落地先登记）。
+  已登记 `defaultMode`（2026-08-25）· `defaultProfile` 默认启动 profile
+  （2026-08-28 落地；None/失效值读取侧兜底 `web`；删除时引用清除、重命名时引用同步）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制与 `name` 一致化改写属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
@@ -116,7 +117,9 @@
 - **IPC 命令登记**（新命令先登记再实现）：`choose_profile` `terminal_action`
   `get_update_status` `check_updates` `get_client_update` `client_update_check`
   `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
-  `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`。
+  `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`
+  `copy_profile` `rename_profile` `delete_profile` `set_default_profile`
+  `get_default_profile`。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。

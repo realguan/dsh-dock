@@ -21,6 +21,7 @@
 | 6 | profile 列举 / 详情（文件系统模拟） | `profiles.rs`（扫描 `profiles/*/package.json`；详情 = 清单关键字段 + `cordis.patch.yml` 原文不解析） | profile 目录布局与三件套格式（`initProfile` @ 353）、内置模板名与 bundle（`PROFILE_TEMPLATES` @ 323） | 2026-08-28 |
 | 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> add @deepseek-ai/dsh-base` + 结果分类；实机验证 2026-08-28 macOS：init 先行 / pnpm 经注入 PATH 可定位 / 失败不回滚） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353） | 2026-08-28 |
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
+| 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
@@ -34,3 +35,5 @@
 - 2026-08-28 4.3 创建刀：复现点 7 转入「已落地」（spawn 转发链 + 结果分类）；
   实机验证含 pnpm 网络失败模式（镜像 ECONNRESET -> 已创建未装中间态，exit 1），
   成功路径 reconcile 沿用 Spike A §3.2 同机同版本结论。
+- 2026-08-28 4.3 生命周期刀：复现点 9 入册（复制排除 node_modules / 重命名删
+  node_modules 让 dsh 自愈 / sessions 不级联，引用面全按 Spike B §3 执行）。

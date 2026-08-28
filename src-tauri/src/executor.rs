@@ -80,6 +80,13 @@ pub trait Executor: Send {
     /// F-b：用户从选择器选定的 profile（仅 `NeedsProfile` 之后调用）。
     fn select_profile(&mut self, profile: String);
 
+    /// 当前会话已启动的 profile（运行中防护比对源，ADR-0009 §2：删除/重命名
+    /// 前比对壳当前 launch.profile）。默认 None；本地档取 launch（select 后即
+    /// 真值）；WSL 档 GUEST_BOOT 写死 web（4.9 放开多 profile 时同步本方法）。
+    fn active_profile(&self) -> Option<&str> {
+        None
+    }
+
     /// 补齐运行时并启动 dsh（步 2）；返回后可轮询就绪。`log_path()` 下的日志
     /// 由壳统一等待/监护（同生命周期）。
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String>;
@@ -221,6 +228,10 @@ impl Executor for LocalExecutor {
         if let Some(l) = self.launch.as_mut() {
             l.profile = profile;
         }
+    }
+
+    fn active_profile(&self) -> Option<&str> {
+        self.launch.as_ref().map(|l| l.profile.as_str())
     }
 
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String> {
@@ -594,6 +605,11 @@ impl Executor for WslExecutor {
 
     /// 迭代 v1：WSL 内固定 boot web profile（选择器留后续版本）。
     fn select_profile(&mut self, _profile: String) {}
+
+    fn active_profile(&self) -> Option<&str> {
+        // GUEST_BOOT 固定 `--profile web`（迭代 v1）：会话在槽中 = web 正在运行
+        Some("web")
+    }
 
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String> {
         let target = self

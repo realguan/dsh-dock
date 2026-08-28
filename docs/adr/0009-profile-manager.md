@@ -121,13 +121,13 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 ### 行动项（负责人：guan；目标：4.3 开工前完成文档项，实现项随 4.3）
 
 - [ ] 文档同步（2026-08-28 已随本修订完成）：ADR-0005 补录 npm 链角色变化 · AGENTS §6 三件套表述精确化 · AGENTS §7 网络面登记（boot 期 pnpm 补齐）· AGENTS §9 索引行修正 · roadmap 4.3/4.9 更新 · 频道广播 + 落档 `docs/broadcasts.md`
-- [ ] 实现 4.3 Profile 管理器（按 roadmap 关键行动①②③④⑤；只读先行：列出 → 详情 → 创建 → 默认持久化 → 复制/重命名/删除）——**只读刀与创建刀已落地（2026-08-28）**：`profiles.rs`（命名校验 + 扫描器两态合并 + 详情 + 创建转发链/前置校验/结果分类）与 IPC `list_profiles` / `get_profile_detail` / `create_profile`（异步命令 + spawn_blocking；pnpm 防御检测缺失即拒 spawn）；默认持久化/复制/重命名/删除归后续刀
-- [ ] 新增 IPC 命令：`list_profiles` / `create_profile` / `copy_profile` / `delete_profile` / `rename_profile` / `get_profile_detail` / `set_default_profile` 三处同步（build.rs + capabilities + lib.rs）+ AGENTS §7 登记——`list_profiles` / `get_profile_detail` / `create_profile` 已落地登记（2026-08-28，三处同步流程已收敛为 ipc.rs COMMANDS → lib.rs + capabilities，机器闸门 gate_tests）；其余随对应刀
+- [ ] 实现 4.3 Profile 管理器（按 roadmap 关键行动①②③④⑤；只读先行：列出 → 详情 → 创建 → 默认持久化 → 复制/重命名/删除）——**只读/创建/生命周期三刀均已落地（2026-08-28）**：`profiles.rs`（命名校验 + 扫描器两态合并 + 详情 + 创建转发链 + 复制/重命名/删除 + 运行中防护）与 IPC `list_profiles` / `get_profile_detail` / `create_profile` / `copy_profile` / `rename_profile` / `delete_profile` / `set_default_profile` / `get_default_profile`；消费 defaultProfile 的 boot 接线（含 WSL 放开多 profile 评估）归后续刀
+- [x] 新增 IPC 命令：`list_profiles` / `create_profile` / `copy_profile` / `delete_profile` / `rename_profile` / `get_profile_detail` / `set_default_profile` 三处同步 + AGENTS §7 登记——**全部落地（2026-08-28，另加只读 `get_default_profile`）**；三处同步流程已收敛为 ipc.rs COMMANDS → lib.rs + capabilities，机器闸门 gate_tests
 - [ ] YAML 依赖选型：`serde_yaml` 上游已归档停止维护（2024），评估后继（serde_norway 一类）后引入，用于 `cordis.patch.yml` 读写
 - [ ] pnpm 检测/补齐实现：检测基准 = `effective_path` 注入后的 PATH；补齐 = `npm i -g pnpm`（updates.rs，boot 期 + 操作时复用同一函数）；补齐后验证新 pnpm 在同 PATH 上可见——**检测半已落地（2026-08-28 创建刀）**：操作时防御检测（`updates::find_pnpm` 转 pub(crate) 共用，缺失拒 spawn 给可行动文案）；补齐函数与 boot 期接线归后续刀
-- [ ] `settings.rs` 增加 `defaultProfile` 字段（原子写 + 损坏回退；失效回退 `web`），并同步登记 AGENTS §6（第二例外）
-- [ ] 复现台账入册：ledger §二 复现点 6/7/8 随实现落地，行号锚定按下述修正
-- [ ] 重命名实现时：自动扫描 `cordis.patch.yml` 的 `../` 相对路径引用并出警告（替用户做 Spike B 要求的人工检查）
+- [x] `settings.rs` 增加 `defaultProfile` 字段（原子写 + 损坏回退；失效回退 `web`），并同步登记 AGENTS §6（第二例外）——已落地（2026-08-28）；`switch_mode`/`choose_mode` 同步改为 load-modify-save 防抹掉该字段
+- [x] 复现台账入册：ledger 复现点 6/7/8 已落地（2026-08-28），name 一致化改写补录复现点 9
+- [x] 重命名实现时：自动扫描 `cordis.patch.yml` 的 `../` 相对路径引用并出警告（替用户做 Spike B 要求的人工检查）——已落地（2026-08-28，纯文本逐行扫描跳过注释行；复制同样带此警告）
 - [ ] WSL GUEST_BOOT 放开多 profile 评估（与 4.3④ 默认 profile 合并评估，见 Spike B §2.5；客体内 profile 不存在时的行为须一并定义）
 - [ ] executor：客体内 node 自动安装落地（node-map 同源 tarball → `~/.dsh-dock/node`，`guest_prep` 纳入 PATH，`NODE_MISSING` 分支改为自动补齐；归 4.9，见 ADR-0004 §7）
 - [x] profile 命名校验复用 dsh 规则（空名 / `/` `\` / `.` / `..` / `node_modules`；锚定 `resolveProfileDir` `@ 318`）——`profiles::validate_profile_name`（2026-08-28，逐字一致含正反例测试，ledger 复现点 8）
