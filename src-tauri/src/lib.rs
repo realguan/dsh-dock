@@ -15,6 +15,7 @@
 mod executor;
 pub mod ipc;
 mod manifest;
+mod profiles;
 mod resolve;
 mod settings;
 mod shell;
@@ -461,6 +462,23 @@ fn get_workbench_url(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let url = state.workbench_url.lock().unwrap().clone();
     Ok(url.map(|u| u.to_string()))
+}
+
+/// Profile 管理器（4.3 只读刀）：列出全部 profile——已物化目录 + 未物化的
+/// 内置模板名（web/headless）两态合并。纯读：零写入、零 dsh 子进程；home
+/// 复用壳既有解析链（resolve::user_dsh_home），范围仅壳侧本地 home。
+#[tauri::command]
+fn list_profiles() -> Result<Vec<crate::profiles::ProfileSummary>, String> {
+    Ok(crate::profiles::scan_profiles(
+        &crate::resolve::user_dsh_home(),
+    ))
+}
+
+/// Profile 管理器（4.3 只读刀）：单个 profile 详情（package.json 关键字段 +
+/// cordis.patch.yml 原文，不解析 YAML）。名字先过 dsh 同款校验（防路径遍历）。
+#[tauri::command]
+fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail, String> {
+    crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
 }
 
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
@@ -1099,7 +1117,9 @@ pub fn run() {
             open_workbench_in_browser,
             get_workbench_url,
             boot_in_wsl,
-            choose_mode
+            choose_mode,
+            list_profiles,
+            get_profile_detail
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

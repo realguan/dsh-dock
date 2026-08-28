@@ -18,15 +18,18 @@
 | 3 | pnpm global-bin-dir 注入 + npm 回退 | `updates.rs`（`pnpm_global_bin_dirs`，ADR-0005） | pnpm 10 全局目录解析（GUI 无 rc） | 基线 |
 | 4 | WSL PATH 兼容探测 | `executor.rs`（`bash -lic` + nvm/fnm/n/volta 兜底扫描） | nvm/fnm 非交互 rc 守卫行为 | 2026-08-26 |
 | 5 | WSL 客体内 dsh 自动安装 | `executor.rs`（ADR-0004：壳不触网，装进发行版） | dsh npm 包名与 `npm i -g` 语义 | 基线 |
+| 6 | profile 列举 / 详情（文件系统模拟） | `profiles.rs`（扫描 `profiles/*/package.json`；详情 = 清单关键字段 + `cordis.patch.yml` 原文不解析） | profile 目录布局与三件套格式（`initProfile` @ 353）、内置模板名与 bundle（`PROFILE_TEMPLATES` @ 323） | 2026-08-28 |
+| 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
 | # | 复现点 | 依据 | 锚定的 dsh 行为 |
 |:--|:--|:--|:--|
-| 6 | profile 列举 / 详情（文件系统模拟） | ADR-0009 方案 E | `profiles/<名>/` 目录布局与三件套格式 |
 | 7 | 创建 profile 半官方引导 | ADR-0009 方案 A | `dsh plugin add` 首用初始化（initProfile 三件套） |
-| 8 | profile 非法名校验 | ADR-0009 硬指标 | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / `node_modules`） |
 
 ## 三、复核记录（append-only）
 
 - 2026-08-28 建册：基线 v0.1.1-rc.2，已落地 5 项、计划 3 项，全量登记。
+- 2026-08-28 4.3 只读刀：复现点 6/8 自「计划」转入「已落地」（壳侧 `profiles.rs`；
+  行号按当日勘误口径 318/323/353，早期文档的 11826/13418 系 bundle 行号混入作废）；
+  复现点 7（创建）仍待创建刀。

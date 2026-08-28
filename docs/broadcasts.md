@@ -32,6 +32,24 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · 4.3 Profile 管理器第二刀（只读能力）—— guan（AI 协作）
+
+- 变更：本 commit——新增 `src-tauri/src/profiles.rs`；`ipc.rs` / `lib.rs` /
+  `capabilities/default.json`（IPC 三处同步）；`AGENTS.md` §7；`docs/adr/0009`
+  §5 勾选；`docs/contracts/dsh-behavior-ledger.md`。能力：profile 非法名校验
+  （与 dsh `resolveProfileDir` @ 318 逐字一致）、profiles 扫描器（已物化 +
+  未物化内置模板名两态合并；排除 `profiles/node_modules` 符号链接农场）、单
+  profile 详情（package.json 关键字段 + `cordis.patch.yml` 原文，YAML 不解析——
+  serde_yaml 已弃维，依赖选型推迟到启停插件刀）；新 IPC 命令
+  `list_profiles` / `get_profile_detail`。纯读：零写入、零 dsh 子进程、零网络。
+- 影响：**触宪法级**——AGENTS §7 IPC 命令登记表新增两条（新命令流程规定动作），
+  仅周知。范围声明：管理器仅覆盖壳侧本地 home（`user_dsh_home()`）；WSL 客体内
+  profile、创建/复制/重命名/删除、`--dump-config` 详情、pnpm 补齐均归后续刀。
+  ledger 复现点 6/8 已按行号勘误口径（318/323/353，弃 11826/13418）入册。
+- 凭据：`cargo test` 108 绿（基线 98 + 新增 10：校验正反例 / 扫描两态与农场
+  排除 / 详情路径遍历拒绝等）；`gate_tests` 验证三处同步一致性；
+  `cargo fmt --check` / `clippy -D warnings` 全过；diff 已逐行人肉复核。
+
 ### 2026-08-28 宪法级改动 · AGENTS.md 减法：248 → 178 行，删微观管理留边界 —— guan
 
 - 变更：`AGENTS.md` 全文重写（commit `876dbcb` 之后）——删除三类内容：① 通用工程

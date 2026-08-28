@@ -24,6 +24,8 @@ pub const COMMANDS: &[&str] = &[
     "get_workbench_url",
     "boot_in_wsl",
     "choose_mode",
+    "list_profiles",
+    "get_profile_detail",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

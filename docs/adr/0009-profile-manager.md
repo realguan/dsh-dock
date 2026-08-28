@@ -121,8 +121,8 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 ### 行动项（负责人：guan；目标：4.3 开工前完成文档项，实现项随 4.3）
 
 - [ ] 文档同步（2026-08-28 已随本修订完成）：ADR-0005 补录 npm 链角色变化 · AGENTS §6 三件套表述精确化 · AGENTS §7 网络面登记（boot 期 pnpm 补齐）· AGENTS §9 索引行修正 · roadmap 4.3/4.9 更新 · 频道广播 + 落档 `docs/broadcasts.md`
-- [ ] 实现 4.3 Profile 管理器（按 roadmap 关键行动①②③④⑤；只读先行：列出 → 详情 → 创建 → 默认持久化 → 复制/重命名/删除）
-- [ ] 新增 IPC 命令：`list_profiles` / `create_profile` / `copy_profile` / `delete_profile` / `rename_profile` / `get_profile_detail` / `set_default_profile` 三处同步（build.rs + capabilities + lib.rs）+ AGENTS §7 登记
+- [ ] 实现 4.3 Profile 管理器（按 roadmap 关键行动①②③④⑤；只读先行：列出 → 详情 → 创建 → 默认持久化 → 复制/重命名/删除）——**只读刀已落地（2026-08-28）**：`profiles.rs`（命名校验 + 扫描器两态合并 + 详情）与 IPC `list_profiles` / `get_profile_detail`；创建/持久化/复制/重命名/删除归后续刀
+- [ ] 新增 IPC 命令：`list_profiles` / `create_profile` / `copy_profile` / `delete_profile` / `rename_profile` / `get_profile_detail` / `set_default_profile` 三处同步（build.rs + capabilities + lib.rs）+ AGENTS §7 登记——`list_profiles` / `get_profile_detail` 已落地登记（2026-08-28，三处同步流程已收敛为 ipc.rs COMMANDS → lib.rs + capabilities，机器闸门 gate_tests）；其余随对应刀
 - [ ] YAML 依赖选型：`serde_yaml` 上游已归档停止维护（2024），评估后继（serde_norway 一类）后引入，用于 `cordis.patch.yml` 读写
 - [ ] pnpm 检测/补齐实现：检测基准 = `effective_path` 注入后的 PATH；补齐 = `npm i -g pnpm`（updates.rs，boot 期 + 操作时复用同一函数）；补齐后验证新 pnpm 在同 PATH 上可见
 - [ ] `settings.rs` 增加 `defaultProfile` 字段（原子写 + 损坏回退；失效回退 `web`），并同步登记 AGENTS §6（第二例外）
@@ -130,7 +130,7 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - [ ] 重命名实现时：自动扫描 `cordis.patch.yml` 的 `../` 相对路径引用并出警告（替用户做 Spike B 要求的人工检查）
 - [ ] WSL GUEST_BOOT 放开多 profile 评估（与 4.3④ 默认 profile 合并评估，见 Spike B §2.5；客体内 profile 不存在时的行为须一并定义）
 - [ ] executor：客体内 node 自动安装落地（node-map 同源 tarball → `~/.dsh-dock/node`，`guest_prep` 纳入 PATH，`NODE_MISSING` 分支改为自动补齐；归 4.9，见 ADR-0004 §7）
-- [ ] profile 命名校验复用 dsh 规则（空名 / `/` `\` / `.` / `..` / `node_modules`；锚定 `resolveProfileDir` `@ 318`）
+- [x] profile 命名校验复用 dsh 规则（空名 / `/` `\` / `.` / `..` / `node_modules`；锚定 `resolveProfileDir` `@ 318`）——`profiles::validate_profile_name`（2026-08-28，逐字一致含正反例测试，ledger 复现点 8）
 - [ ] 验证：`cargo test` 全绿 + `dsh plugin --profile <新名> add` 转发链实机验证 + 复制/重命名后 `dsh --profile <新名> --dump-config` 可正常输出 + Windows 转发链（`shell: true` 分支，Spike A 遗留）+ WSL 客体内 node → pnpm → dsh 全补齐链实机（含 node 自动安装）
 
 ## 6. 复审条件

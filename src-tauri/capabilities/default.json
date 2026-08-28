@@ -24,6 +24,8 @@
     "allow-open-workbench-in-browser",
     "allow-get-workbench-url",
     "allow-boot-in-wsl",
-    "allow-choose-mode"
+    "allow-choose-mode",
+    "allow-list-profiles",
+    "allow-get-profile-detail"
   ]
 }
