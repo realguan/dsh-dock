@@ -82,6 +82,9 @@ pub struct ProfileSummary {
     pub bundles: Vec<String>,
     /// package.json `dependencies` 的包名（字典序；仅物化且清单可读时非空）。
     pub dependencies: Vec<String>,
+    /// 是否 webUi 工作台（bundles 含 `WEBUI_BUNDLE`）：管理器「启动/切换」
+    /// 入口的可见性依据——非 webUi 无工作台 URL 可导航（ADR-0009 §4 三次修订）。
+    pub web_ui: bool,
 }
 
 /// 扫描 `<home>/profiles/`：每个子目录 = 一个已物化 profile（目录名是唯一硬
@@ -105,11 +108,16 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
                 continue;
             }
             let (bundles, dependencies) = read_manifest_fields(&dir.join("package.json"));
+            // webUi 判定在本模块内做（不可复用 resolve::list_web_ui_profiles，
+            // 见模块头）：bundles 含 WEBUI_BUNDLE 即是；损坏清单 → false（无
+            // URL 可导航，不给启动入口，与详情页容忍损坏的口径一致）。
+            let web_ui = bundles.iter().any(|b| b == WEBUI_BUNDLE);
             out.push(ProfileSummary {
                 name,
                 materialized: true,
                 bundles,
                 dependencies,
+                web_ui,
             });
         }
     }
@@ -122,6 +130,7 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
             materialized: false,
             bundles: bundles.iter().map(|s| (*s).to_string()).collect(),
             dependencies: Vec::new(),
+            web_ui: bundles.contains(&WEBUI_BUNDLE),
         });
     }
     out.sort_by(|a, b| {
@@ -259,9 +268,10 @@ pub fn create_command_args(profile: &str) -> Vec<String> {
     ]
 }
 
-/// 创建语义的 Web 工作台声明 bundle（对齐 dsh web 模板第二项，
-/// `PROFILE_TEMPLATES` @ 323；ADR-0009 §4 第二次修订 2026-08-28）。
-const CREATE_WEBUI_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
+/// Web 工作台标记 bundle：创建补写声明（ADR-0009 §4 第二次修订 2026-08-28）
+/// 与列表 webUi 判定（4.3⑥ 切换）共用同一权威常量（对齐 dsh web 模板第二项，
+/// `PROFILE_TEMPLATES` @ 323）。
+const WEBUI_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 
 /// 向 manifest 文本的 `dsh.profile.bundles` 追加一条声明（纯函数，幂等——
 /// 已存在返回 None）。JSON 往返后 2 空格缩进 + 尾换行，与 dsh initProfile 的
@@ -303,7 +313,7 @@ fn declare_webui_bundle(home: &Path, profile: &str) -> Result<bool, String> {
     let path = home.join("profiles").join(profile).join("package.json");
     let text =
         fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
-    let Some(edited) = append_bundle_declaration(&text, CREATE_WEBUI_BUNDLE)? else {
+    let Some(edited) = append_bundle_declaration(&text, WEBUI_BUNDLE)? else {
         return Ok(false);
     };
     fs::write(&path, edited).map_err(|e| format!("写 {} 失败：{e}", path.display()))?;
@@ -830,6 +840,7 @@ mod profiles_tests {
         let alpha = &list[0];
         assert!(alpha.materialized);
         assert_eq!(alpha.bundles, vec!["@deepseek-ai/dsh-base"]);
+        assert!(!alpha.web_ui, "仅 dsh-base 无工作台界面，不给启动入口");
         assert_eq!(
             alpha.dependencies,
             vec!["@deepseek-ai/dsh-base", "my-plugin"]
@@ -837,6 +848,7 @@ mod profiles_tests {
 
         let web = &list[1];
         assert!(web.materialized);
+        assert!(web.web_ui, "物化 web = webUi，可启动");
         assert_eq!(
             web.bundles,
             vec!["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]
@@ -844,6 +856,7 @@ mod profiles_tests {
 
         let headless = &list[2];
         assert!(!headless.materialized, "无目录的模板名 = 可首启态");
+        assert!(!headless.web_ui, "headless 无工作台界面");
         assert_eq!(
             headless.bundles,
             vec!["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"]
@@ -870,6 +883,8 @@ mod profiles_tests {
         );
         for broken in list.iter().take(2) {
             assert!(broken.bundles.is_empty() && broken.dependencies.is_empty());
+            // 损坏/半初始化：web_ui=false（无 bundles 依据，不给启动入口）
+            assert!(!broken.web_ui);
         }
         std::fs::remove_dir_all(&home).ok();
     }
@@ -881,7 +896,9 @@ mod profiles_tests {
         assert_eq!(list.len(), 2);
         assert!(list.iter().all(|p| !p.materialized));
         assert_eq!(list[0].name, "headless");
+        assert!(!list[0].web_ui);
         assert_eq!(list[1].name, "web");
+        assert!(list[1].web_ui, "可首启 web 模板 = webUi（首启即可切换）");
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1109,7 +1126,7 @@ mod profiles_tests {
     }
   }
 }"#;
-        let edited = append_bundle_declaration(base, CREATE_WEBUI_BUNDLE)
+        let edited = append_bundle_declaration(base, WEBUI_BUNDLE)
             .unwrap()
             .expect("首次追加应发生写入");
         let pkg: serde_json::Value = serde_json::from_str(&edited).unwrap();
@@ -1129,13 +1146,13 @@ mod profiles_tests {
             "声明不进 dependencies，零下载"
         );
         assert!(
-            append_bundle_declaration(&edited, CREATE_WEBUI_BUNDLE)
+            append_bundle_declaration(&edited, WEBUI_BUNDLE)
                 .unwrap()
                 .is_none(),
             "已存在 → 幂等无写入"
         );
-        assert!(append_bundle_declaration(r#"{"dependencies":{}}"#, CREATE_WEBUI_BUNDLE).is_err());
-        assert!(append_bundle_declaration("not json", CREATE_WEBUI_BUNDLE).is_err());
+        assert!(append_bundle_declaration(r#"{"dependencies":{}}"#, WEBUI_BUNDLE).is_err());
+        assert!(append_bundle_declaration("not json", WEBUI_BUNDLE).is_err());
 
         // 文件级：非模板名落盘 + 幂等 + 模板名跳过（dsh 拥有模板元组）
         let home = tmp();

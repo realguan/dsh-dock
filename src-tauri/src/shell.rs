@@ -118,7 +118,7 @@ pub enum ReadyOutcome {
 ///   3. 进程活着但日志 `stall` 内无进展 → `Stalled`（防死等，提示卡死）。
 ///
 /// 双路就绪源（2026-08-26 裁定，WSL 缓冲兜底）：
-///   - **marker 优先**（`marker` 闭包）——WSL 用，GUEST_BOOT 把 dsh 输出
+///   - **marker 优先**（`marker` 闭包）——WSL 用，guest_boot_script 把 dsh 输出
 ///     `tee` 到客体内哨兵文件，shell 经 `wsl.exe -e cat` 直读，绕开 wsl.exe
 ///     stdout 转发的内部缓冲（实测：URL 不出现直到 wsl.exe 退出）。命中即返
 ///     回 Ready，不等 log 文件。本地执行器传 `&mut (|| None)` 跳过此路。

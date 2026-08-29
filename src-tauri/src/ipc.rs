@@ -32,6 +32,8 @@ pub const COMMANDS: &[&str] = &[
     "delete_profile",
     "set_default_profile",
     "get_default_profile",
+    "switch_profile",
+    "get_active_profile",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

@@ -53,4 +53,7 @@ export const api = {
   deleteProfile: (profile: string) => invoke<DeleteOutcome>("delete_profile", { profile }),
   setDefaultProfile: (profile: string) => invoke<void>("set_default_profile", { profile }),
   getDefaultProfile: () => invoke<string | null>("get_default_profile"),
+  // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）
+  switchProfile: (profile: string) => invoke<void>("switch_profile", { profile }),
+  getActiveProfile: () => invoke<string | null>("get_active_profile"),
 }

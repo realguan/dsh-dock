@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { Plus, RefreshCw } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
+import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
@@ -14,6 +15,7 @@ import { ProfileDetailDialog } from "@/components/profiles/ProfileDetailDialog"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
 import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
+import { ProfileSwitchDialog } from "@/components/profiles/ProfileSwitchDialog"
 
 interface Notice {
   kind: "ok" | "warn"
@@ -21,12 +23,13 @@ interface Notice {
 }
 
 export function ProfileManager() {
-  const { list, defaultProfile, loading, loadError, load } = useProfilesStore()
+  const { list, defaultProfile, activeProfile, loading, loadError, load } = useProfilesStore()
 
   const [detailName, setDetailName] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [nameOp, setNameOp] = useState<{ mode: NameOpMode; source: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -34,6 +37,24 @@ export function ProfileManager() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 窗口聚焦时重取运行中徽标：切换是否完成只有壳知道，聚焦即对齐真相
+  useEffect(() => {
+    const onFocus = () => void load()
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [load])
+
+  // 徽标实时化：boot:step 经事件总线（模块期装配，每窗口生效）流入 bootStore，
+  // activeStep 每变一次重取运行中真相——切换开始（teardown）徽标即灭，boot
+  // 完成即亮，不等聚焦。load 自带 loading 去重，事件密也只串行取。
+  useEffect(
+    () =>
+      useBootStore.subscribe((s, prev) => {
+        if (s.activeStep !== prev.activeStep) void load()
+      }),
+    [load],
+  )
 
   const refresh = () => {
     void load()
@@ -46,6 +67,28 @@ export function ProfileManager() {
       .setDefaultProfile(name)
       .then(() => {
         setNotice({ kind: "ok", text: t.profiles.setDefaultDone(name) })
+        refresh()
+      })
+      .catch((e) => setActionError(String(e)))
+      .finally(() => setRowBusy(null))
+  }
+
+  // 切换入口（4.3⑥）：有活跃会话先确认（停 dsh 有中断代价），无会话直接切
+  const handleLaunch = (name: string) => {
+    setActionError(null)
+    if (activeProfile !== null) {
+      setSwitchTarget(name)
+      return
+    }
+    doSwitch(name)
+  }
+
+  const doSwitch = (name: string) => {
+    setRowBusy(name)
+    api
+      .switchProfile(name)
+      .then(() => {
+        setNotice({ kind: "ok", text: t.profiles.switchDone(name) })
         refresh()
       })
       .catch((e) => setActionError(String(e)))
@@ -134,9 +177,11 @@ export function ProfileManager() {
               profile={p}
               index={i}
               isDefault={defaultProfile === p.name}
+              isRunning={activeProfile === p.name}
               busy={rowBusy === p.name}
               onDetail={() => setDetailName(p.name)}
               onSetDefault={() => handleSetDefault(p.name)}
+              onLaunch={() => handleLaunch(p.name)}
               onRename={() => setNameOp({ mode: "rename", source: p.name })}
               onCopy={() => setNameOp({ mode: "copy", source: p.name })}
               onDelete={() => setDeleteTarget(p.name)}
@@ -146,6 +191,15 @@ export function ProfileManager() {
 
       {/* 对话框群 */}
       <ProfileDetailDialog name={detailName} onClose={() => setDetailName(null)} />
+      <ProfileSwitchDialog
+        target={switchTarget}
+        active={activeProfile}
+        onClose={() => setSwitchTarget(null)}
+        onDone={() => {
+          setNotice({ kind: "ok", text: t.profiles.switchDone(switchTarget ?? "") })
+          refresh()
+        }}
+      />
       <ProfileCreateDialog
         open={createOpen}
         existing={list}

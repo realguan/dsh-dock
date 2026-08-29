@@ -80,9 +80,15 @@ pub trait Executor: Send {
     /// F-b：用户从选择器选定的 profile（仅 `NeedsProfile` 之后调用）。
     fn select_profile(&mut self, profile: String);
 
+    /// 注入「强制目标 profile」（管理器切换 / 错误卡重试的延续目标，ADR-0009
+    /// §4 三次修订）。实现须在 `probe` 内按档位消费：仅 dsh_home = 用户 home
+    /// 的世界生效——bundle 快照档无 profile 管理语义，忽略（同 defaultProfile
+    /// 消费的档位守卫）。优先级高于 defaultProfile（用户此刻明确指定）。
+    fn set_forced_profile(&mut self, profile: Option<String>);
+
     /// 当前会话已启动的 profile（运行中防护比对源，ADR-0009 §2：删除/重命名
     /// 前比对壳当前 launch.profile）。默认 None；本地档取 launch（select 后即
-    /// 真值）；WSL 档 GUEST_BOOT 写死 web（4.9 放开多 profile 时同步本方法）。
+    /// 真值）；WSL 档取 guest 启动目标（4.3⑥ 起 guest 脚本 profile 参数化）。
     fn active_profile(&self) -> Option<&str> {
         None
     }
@@ -97,7 +103,7 @@ pub trait Executor: Send {
 
     /// 就绪标记读取器（**WSL 用**，绕开 wsl.exe 输出缓冲导致的就绪误判）：
     /// 返回 Some(text) = 当前 marker 内容（可能为空字符串）；None = 不支持 /
-    /// 不可读。本地默认 None 走 log 路径；WSL 实现在 GUEST_BOOT 把 dsh 输出
+    /// 不可读。本地默认 None 走 log 路径；WSL 实现在 guest_boot_script 把 dsh 输出
     /// tee 到客体内哨兵文件，shell 经 wsl.exe -e cat 直读（绕开 wsl.exe 转发
     /// stdout 时的内部缓冲）。详见 docs/executor.md。
     fn read_ready_marker(&mut self) -> Option<String> {
@@ -165,6 +171,17 @@ pub enum ExecutionMode {
 /// 本机执行器：system → bundle → download 宿主解析链 + 本地子进程。
 /// 这是现有本地行为的**原样搬移**（纯重构）：probe=解析链；start=spawn；
 /// 就绪=轮询本地日志；清理=优雅停止。
+/// 强制目标档位守卫（纯函数，4.3⑥）：仅 dsh_home = 用户 home 的世界消费——
+/// bundle 快照档是快照世界，profile 管理语义（切换/重试延续）不适用，忽略之
+/// （与 defaultProfile 消费的档位条件一致）。
+fn effective_forced_profile(forced: Option<String>, dsh_home_is_user_home: bool) -> Option<String> {
+    if dsh_home_is_user_home {
+        forced
+    } else {
+        None
+    }
+}
+
 pub struct LocalExecutor {
     manifest: ProductManifest,
     resources_dir: PathBuf,
@@ -172,6 +189,8 @@ pub struct LocalExecutor {
     path_env: String,
     launch: Option<LaunchSpec>,
     proc: Option<crate::shell::DshProcess>,
+    /// 强制目标 profile（管理器切换/重试注入）：probe 内按档位消费后即取走。
+    forced_profile: Option<String>,
 }
 
 impl LocalExecutor {
@@ -183,6 +202,7 @@ impl LocalExecutor {
             path_env: crate::resolve::effective_path(),
             launch: None,
             proc: None,
+            forced_profile: None,
         }
     }
 }
@@ -229,13 +249,18 @@ impl Executor for LocalExecutor {
         // 内 → 直接用它启动并跳过选择器。仅覆盖 dsh_home = 用户 home 的档位
         // （system/download；bundle 档是快照世界，管理器与其默认值都不适用）。
         let stored = crate::settings::load(&self.data_dir).default_profile;
-        let direct = if launch.dsh_home == home {
-            crate::resolve::consume_default_profile(stored.as_deref(), &profiles)
-        } else {
-            None
-        };
+        // 强制目标（管理器切换/重试，4.3⑥）优先于 defaultProfile：用户此刻
+        // 明确指定；档位守卫同上——bundle 快照档不消费（ADR-0009 §4 三次修订）。
+        let forced = effective_forced_profile(self.forced_profile.take(), launch.dsh_home == home);
+        let direct = forced.or_else(|| {
+            if launch.dsh_home == home {
+                crate::resolve::consume_default_profile(stored.as_deref(), &profiles)
+            } else {
+                None
+            }
+        });
         if let Some(p) = direct.as_ref() {
-            tracing::info!("defaultProfile 命中：本次启动 profile={p}（跳过选择器）");
+            tracing::info!("启动目标已定：profile={p}（跳过选择器）");
         } else if stored.is_some() {
             tracing::info!("defaultProfile={stored:?} 未命中 webUi 候选，按常规流程启动");
         }
@@ -264,6 +289,10 @@ impl Executor for LocalExecutor {
         if let Some(l) = self.launch.as_mut() {
             l.profile = profile;
         }
+    }
+
+    fn set_forced_profile(&mut self, profile: Option<String>) {
+        self.forced_profile = profile;
     }
 
     fn active_profile(&self) -> Option<&str> {
@@ -442,7 +471,7 @@ fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Op
 #[cfg(windows)]
 const GUEST_STOP_FILE: &str = "/tmp/dsh-dock-stop";
 
-/// 客体内就绪哨兵文件：GUEST_BOOT 用 `tee` 把 dsh 输出镜像到这里（WSL 内
+/// 客体内就绪哨兵文件：guest_boot_script 用 `tee` 把 dsh 输出镜像到这里（WSL 内
 /// 行缓冲，**不**经 wsl.exe stdout 转发），壳经 `wsl.exe -e cat` 直读
 /// 绕开 wsl.exe 输出缓冲导致的就绪误判。详见 docs/executor.md。
 #[cfg(windows)]
@@ -477,7 +506,15 @@ macro_rules! guest_prep {
     };
 }
 
-/// 客体内启动 dsh 的固定脚本模板（不插值用户输入；迭代 v1 固定 boot web profile）。
+/// POSIX shell 单引号字面量：`'` → `'\''`。profile 名虽经 `validate_profile_name`
+/// 校验，拒绝集之外仍可含空格/引号/`;`/`$`/反引号等元字符——插入 guest 脚本
+/// 必须过这里，防脚本断裂与注入面（同机自伤亦是伤）。
+#[cfg(any(windows, test))]
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// 客体内启动 dsh 的脚本模板（4.3⑥ profile 参数化；v1 曾固定 web）。
 /// 结构：guest_prep（PATH）→ 后台起 dsh（tee 镜像到就绪哨兵）→ 起 watcher（轮询 stop
 /// 标志）→ wait dsh → 退出码回传。dsh 崩溃或收到 stop 都让本 wrapper 退出，wsl.exe
 /// 子进程随之退出（= 会话存活代理，check_exited 可用）。
@@ -488,13 +525,16 @@ macro_rules! guest_prep {
 // 非 Windows 非 test 目标下编译但无引用（引用点在 Windows 运行时路径与跨平台
 // 测试里）——保留 cfg 以维持「模板可在 macOS/Linux 直接实跑测试」，豁免 dead。
 #[allow(dead_code)]
-const GUEST_BOOT: &str = concat!(
-    "rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready;",
-    guest_prep!(),
-    "cd \"$HOME\"; ( dsh --profile web --port 0 --no-open 2>&1 | tee /tmp/dsh-dock-ready ) & PID=$!;",
-    "(while [ ! -f /tmp/dsh-dock-stop ]; do sleep 1; done; kill -TERM \"$PID\" 2>/dev/null) & WATCH=$!;",
-    "wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready; exit $RC",
-);
+fn guest_boot_script(profile: &str) -> String {
+    format!(
+        "rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready;{}\
+         cd \"$HOME\"; ( dsh --profile {} --port 0 --no-open 2>&1 | tee /tmp/dsh-dock-ready ) & PID=$!;\
+         (while [ ! -f /tmp/dsh-dock-stop ]; do sleep 1; done; kill -TERM \"$PID\" 2>/dev/null) & WATCH=$!;\
+         wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready; exit $RC",
+        guest_prep!(),
+        sh_quote(profile)
+    )
+}
 
 /// 客体内探测工具链的固定脚本模板（先 guest_prep 补 PATH）。
 /// 三态输出：`READY`（node+dsh）/ `DSH_MISSING`（有 node 缺 dsh，可自动装）/
@@ -512,7 +552,7 @@ const GUEST_PROBE: &str = concat!(
 /// 规避 run_with_timeout_raw 的「非零退出=无输出」语义；npm 全量输出进
 /// /tmp/dsh-dock-npm.log（管道无死锁风险），只回传尾部 2KB 作诊断。
 #[cfg(any(windows, test))]
-#[allow(dead_code)] // 同 GUEST_BOOT：非 Windows 非 test 目标无引用，保跨平台可测性
+#[allow(dead_code)] // 同 guest_boot_script：非 Windows 非 test 目标无引用，保跨平台可测性
 const GUEST_INSTALL_DSH: &str = concat!(
     "rm -f /tmp/dsh-dock-npm.log;",
     guest_prep!(),
@@ -530,6 +570,11 @@ pub struct WslExecutor {
     child: Option<std::process::Child>,
     log_path: PathBuf,
     installed_dsh: bool, // 本次 probe 是否自动装过 dsh（→ 壳刷新版本状态）
+    /// guest 启动目标 profile（4.3⑥ 参数化，默认 web；切换/重试经 forced 覆写）
+    profile: String,
+    /// 强制目标注入（probe 消费，同 LocalExecutor 语义；guest 世界恒为用户
+    /// WSL home，无 bundle 快照档，故无档位守卫）
+    forced_profile: Option<String>,
 }
 
 #[cfg(windows)]
@@ -542,6 +587,8 @@ impl WslExecutor {
             child: None,
             log_path: data_dir.join("dsh-wsl.log"),
             installed_dsh: false,
+            profile: "web".to_string(),
+            forced_profile: None,
         }
     }
 }
@@ -558,6 +605,10 @@ impl Executor for WslExecutor {
         progress: DownloadProgress<'_>,
     ) -> Result<ProbeOutcome, String> {
         let _ = progress; // WSL 迭代 v1 不在客体内下载，无字节进度
+                          // 消费强制目标（管理器切换/重试，4.3⑥）：guest 世界恒为用户 WSL home。
+        if let Some(p) = self.forced_profile.take() {
+            self.profile = p;
+        }
         sink(0, "running", "探测 WSL（wsl.exe · WSL2 发行版）");
         let distros = wsl_distros()?;
         if distros.is_empty() {
@@ -639,12 +690,18 @@ impl Executor for WslExecutor {
         }
     }
 
-    /// 迭代 v1：WSL 内固定 boot web profile（选择器留后续版本）。
-    fn select_profile(&mut self, _profile: String) {}
+    /// guest 启动目标（4.3⑥ 起参数化；选择器不会在 WSL 触发，此方法实际由
+    /// 强制目标注入链路覆写 `profile` 字段，此处兜底可写）。
+    fn select_profile(&mut self, profile: String) {
+        self.profile = profile;
+    }
+
+    fn set_forced_profile(&mut self, profile: Option<String>) {
+        self.forced_profile = profile;
+    }
 
     fn active_profile(&self) -> Option<&str> {
-        // GUEST_BOOT 固定 `--profile web`（迭代 v1）：会话在槽中 = web 正在运行
-        Some("web")
+        Some(&self.profile)
     }
 
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String> {
@@ -664,7 +721,7 @@ impl Executor for WslExecutor {
         cmd.arg("-e")
             .arg("bash")
             .arg("-lic")
-            .arg(GUEST_BOOT)
+            .arg(guest_boot_script(&self.profile))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::from(
                 log.try_clone().map_err(|e| e.to_string())?,
@@ -709,7 +766,7 @@ impl Executor for WslExecutor {
     fn teardown(&mut self) -> Result<(), String> {
         // 1) 通知客体内 wrapper 停 dsh：touch stop 标志 → wrapper kill dsh → 退出。
         //    wsl.exe 子进程随之退出（会话存活代理）。只动标志文件，不影响发行版
-        //    内其它进程。注意 /tmp/dsh-dock-stop 须与 GUEST_BOOT 内字面量一致。
+        //    内其它进程。注意 /tmp/dsh-dock-stop 须与 guest_boot_script 内字面量一致。
         if let Some(target) = &self.selected {
             let script = format!("touch {GUEST_STOP_FILE}");
             let _ = run_wsl_capture(
@@ -719,7 +776,7 @@ impl Executor for WslExecutor {
             );
         }
         // 2) 等 wsl.exe 退出（grace），兜底 kill。若客体内 wrapper 未退出
-        //    （异常），kill 掉 wsl.exe 后客体内进程可能残留——见 GUEST_BOOT 注释，
+        //    （异常），kill 掉 wsl.exe 后客体内进程可能残留——见 guest_boot_script 注释，
         //    TODO(Windows 实机) 验证后决定是否需要 `wsl --terminate` 兜底。
         if let Some(child) = self.child.as_mut() {
             let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -906,6 +963,71 @@ Windows Subsystem for Linux Distributions:
         assert_eq!(distros.len(), 1);
         assert_eq!(distros[0].name, "Ubuntu-24.04");
         assert_eq!(distros[0].version, Some(2));
+    }
+
+    #[test]
+    fn sh_quote_never_lets_metacharacters_escape() {
+        // 反例集（恶意/刁钻名）：任何元字符都不得逃出单引号字面量
+        for name in [
+            "web",
+            "my profile",
+            "it's",
+            "a'; b",
+            "a'; rm -rf ~; b",
+            "x$(rm -rf ~)y",
+            "`rm -rf ~`",
+            "a\"b",
+            "a\\b",
+        ] {
+            let q = sh_quote(name);
+            assert!(q.starts_with('\'') && q.ends_with('\''), "{name} -> {q}");
+        }
+        // 转义形状逐字：' → '\''
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sh_quote_round_trips_through_bash() {
+        // 真实 bash 求值回读： quoted 字面量必须还原为原名（注入面收口的实证）
+        for name in [
+            "web",
+            "my profile",
+            "it's",
+            "a'; b",
+            "x$(echo no)y",
+            "`echo no`",
+        ] {
+            let out = std::process::Command::new("/bin/bash")
+                .arg("-c")
+                .arg(format!("printf %s {}", sh_quote(name)))
+                .output()
+                .expect("spawn bash");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), name);
+        }
+    }
+
+    #[test]
+    fn guest_boot_script_parameterizes_profile_safely() {
+        let plain = guest_boot_script("web");
+        // 结构不变量：prep → 启动（--port 0 --no-open）→ watcher → wait，逐字保留
+        assert!(plain.contains("dsh --profile 'web' --port 0 --no-open"));
+        assert!(plain.contains("/tmp/dsh-dock-stop"));
+        // 含空格/引号名：安全进参、脚本不断裂
+        assert!(guest_boot_script("my profile").contains("dsh --profile 'my profile' --port 0"));
+        assert!(guest_boot_script("it's").contains("dsh --profile 'it'\\''s' --port 0"));
+    }
+
+    #[test]
+    fn effective_forced_profile_guarded_by_user_home() {
+        // 用户 home 世界：强制目标生效且优先于 defaultProfile（or 链序保证）
+        assert_eq!(
+            effective_forced_profile(Some("33".into()), true).as_deref(),
+            Some("33")
+        );
+        // bundle 快照档：忽略（快照世界无 profile 管理语义）
+        assert_eq!(effective_forced_profile(Some("33".into()), false), None);
+        assert_eq!(effective_forced_profile(None, true), None);
     }
 
     #[test]

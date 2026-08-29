@@ -135,6 +135,25 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 插件」pending 态（重试幂等，重试同时补写）；旧版创建的纯 dsh-base profile
 > **不追溯**（既有清单是用户财产，重试创建才按新标准补齐）。
 
+> **2026-08-29 第三次执行细则修订（范围扩展：新增「切换 profile」生命周期操作）**。
+> 管理器行内「启动」入口：**停当前会话 → 以目标 profile 重启**（重启语义，非热
+> 切换——bundles 在进程启动时挂载，dsh CLI 旗标面只有 `--profile`/`--patch`
+> （dsh-cmdline @ 4-9），热切换需改 dsh 源码踩红线 1，排除）。**语义裁定**：
+> ① 仅 webUi 候选可切换（bundles 含 web-app；headless 无工作台 URL 可导航），
+> 列表新增 `web_ui` 字段做入口可见性（本模块内判定，不复活 `list_web_ui_profiles`
+> 复用禁令）；② 切换**不写** defaultProfile——星标是唯一写入口，杜绝「临时切
+> 一下，重启后默认被改」的双写口意外；③ 失败落既有错误卡 + 重试同目标
+> （`forced_profile` 注入 probe 延续），**不自动回滚**（回滚自身可失败成级联）；
+> ④ 强制目标仅用户 home 世界消费（bundle 快照档忽略，同 defaultProfile 档位
+> 守卫）。**WSL 同轮覆盖**：guest 启动脚本由写死 `--profile web` 参数化
+> （`guest_boot_script(profile)`），profile 名经 `sh_quote` 单引号字面量进脚本
+> （validate 拒绝集外仍可含空格/引号/`;` 等元字符——防脚本断裂与注入面；
+> 反例测试 + bash 实跑回读覆盖）；teardown 的 stop 标志文件机制不变。
+> **多开（多 profile 并行多窗口）不在本修订**：机制面可行（`--port 0` 官方旗标
+> = OS 选空闲端口，dsh-web-app help 明文），但双实例并发写全局 `~/.dsh/storages`
+> JSON 的竞态未验证，且突破「壳与 dsh 1:1 生命周期」约束需先 spike + 修订本 ADR
+> ——已登记 roadmap 待办，届时另立修订或新 ADR。
+
 - 创建：spawn `dsh plugin --profile <新名> install`（2026-08-28 执行细则修订：原
   `add <bundle>` 改 `install`，见本页 §4 修订注——原始版语义，零网络毫秒级），
   任一新名首用即 dsh 自动 initProfile + `pnpm install` + reconcile。bundle 声明
@@ -148,6 +167,7 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
   `runPlugin` `@ 101`；第二次修订后重试同时补写 web-app 声明，同幂等），
   UI 状态机据此简化。
 - 列出/详情/删除/复制/重命名：纯文件系统 + dsh CLI 无相应命令的部分用文件读；删除/重命名前执行运行中防护（比对 `launch.profile`，见 §2 工程准则）。
+- 切换（4.3⑥，第三次修订）：管理器行内「启动」→ `switch_profile` IPC（校验：合法名 + webUi 候选）→ teardown → 主窗口回壳 boot 屏（**先回屏再启动**：事件总线模块加载期装配，反序吞首发遥测）→ 强制目标注入 probe → 重启 → 就绪自动导航。当前运行 profile 查询走 `get_active_profile`（会话槽真相，与删除/重命名防护同源）；运行中徽标/确认文案共用。
 - 复制/重命名的引用面按 Spike B 的结论执行（尤其：rename 需改写 `name: dsh-profile-<新名>`；`profiles/node_modules` 农场不动的修正；node_modules 处理以「删 + dsh 下次启动自愈」为第一方案）。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
 - 失败模式（2026-08-28 口径 2 统一）：创建/插件操作前防御性检测 pnpm（基准 = `effective_path` 注入后的 PATH——壳注入什么 dsh 就能看见什么，Spike A §3.4 同链）→ 缺失则同步补齐（`npm i -g pnpm`，复用 boot 同一函数）→ 补齐失败才降级为 dsh 自带文案（exit 127）+ 壳侧平台化安装建议；网络失败 → 提示检查 npm registry 镜像可达性（ADR-0006）。boot 期同一补齐失败 = 阻断启动 + 可行动文案。

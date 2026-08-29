@@ -143,10 +143,14 @@ export const t = {
     // 列表行
     tagMaterialized: "已创建",
     tagTemplate: "可首启",
+    tagNoUi: "无界面",
     templateHint: "内置模板 · 首次启动自动创建",
     defaultBadge: "默认启动",
+    runningBadge: "运行中",
     setDefault: "设为默认启动",
     defaultIs: "当前默认",
+    launch: "启动",
+    launchWorking: "启动中…",
     metaBundles: (n: number) => `${n} 个插件`,
     metaDeps: (n: number) => (n > 0 ? `${n} 项依赖` : "无额外依赖"),
     metaSep: "·",
@@ -202,6 +206,13 @@ export const t = {
     deleteDone: "已删除",
     // 设默认
     setDefaultDone: (name: string) => `已设「${name}」为默认启动 profile`,
+    // 切换（4.3⑥）：停当前会话以目标 profile 重启；不写默认，失败可重试
+    switchTitle: (name: string) => `切换到「${name}」？`,
+    switchNote: "将停止当前 dsh 并以该 profile 重启，进行中的任务会中断（会话历史已落盘，不受影响）；默认启动设置不变。",
+    switchFrom: (active: string) => `当前运行：「${active}」`,
+    switchConfirm: (name: string) => `切换到「${name}」`,
+    switchBusy: "切换中…",
+    switchDone: (name: string) => `已开始切换到「${name}」，进度见主窗口`,
   },
 } as const
 

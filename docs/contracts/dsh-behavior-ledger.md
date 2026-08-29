@@ -22,6 +22,7 @@
 | 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> install` + 结果分类；**2026-08-28 两次修订**：① add @deepseek-ai/dsh-base → install（零网络毫秒级，实测 `Already up to date`）；② install 成功后壳对非模板名追加 `@deepseek-ai/dsh-web-app` 单键声明（`declare_webui_bundle`，幂等）——创建即 webUi 候选可设为默认启动，与出厂 web 模板同构零下载，后 `--dump-config` 可正常组合启动） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353）——注意：**add 裸包名会按 dist-tag `latest` 解析**（dsh-base 的 latest 停在已弃用 0.0.1-rc.1，当前版走 `next` tag 0.1.1-rc.2；0.0.1-rc.1 依赖 37+ 个已从 registry 删除的旧包名 → 404 + pnpm 递增重试 → 数分钟失败/超时），`install` 不解析任何 dist-tag，版本语义免疫；**bundles 追加的 dsh 侧依据**：`normalizeShippedProfile`（app-boot index.js @ 472，2026-08-28 读）——模板精确元组之外的 bundles 列表 = user-owned，且 `reconcilePlugins` 对 in-box bundle 零动作（never touched），web-app 由 `resolveBundleDir` 双锚点从 dsh 安装目录解析 | 2026-08-28 |
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 | 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
+| 10 | profile 切换（webUi 重启语义）+ WSL guest 脚本参数化 | `lib.rs`（`switch_profile` / `forced_profile` 注入 probe）、`executor.rs`（`guest_boot_script(profile)` + `sh_quote` 单引号进参，ADR-0009 §4 第三次修订） | dsh CLI 旗标面：launcher 只认 `--profile`/`--patch`/config dumps，其余原样转发给 app 树（dsh-cmdline @ 4-9）；web 命令族自带 `--host`/`--port`/`--no-open`/`--trusted-host`（dsh-web-app startup.js @ 16-44），**`--port 0` = OS 选空闲端口（help 明文）**；bundles 进程启动时挂载，无运行时切换/热加载能力 | 2026-08-29 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
@@ -54,3 +55,9 @@
   in-box bundle 零动作；目标状态与出厂 web 模板同构（该形态即 web profile
   日常运行态）。红线走 ADR-0009 §4 第二次修订（写入例外 #2），AGENTS §6
   不变量行同步扩展，详见当日广播。
+- 2026-08-29 4.3⑥ 切换刀：复现点 10 入册（CLI 旗标面 + `--port 0` 官方语义 +
+  无运行时切换能力——切换 = 重启的依据）。WSL guest 启动脚本由写死
+  `--profile web` 参数化为 `guest_boot_script(profile)`（`sh_quote` 单引号字面量，
+  反例测试 + bash 实跑回读）；WSL 真机验证待 Windows 侧按 docs/executor.md
+  清单人工执行，切换其余路径本机已实装验证。多开（多实例并行）依赖同一
+  旗标面，storages 竞态未验证，登记 roadmap 待办。

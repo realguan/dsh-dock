@@ -141,6 +141,11 @@ struct ShellState {
     update_status: Mutex<Option<crate::updates::UpdateStatus>>,
     /// 当前工作台地址（dsh 就绪导航时记录；「在浏览器中打开」入口用）。
     workbench_url: Mutex<Option<tauri::Url>>,
+    /// 强制启动目标（4.3⑥ 管理器切换写入；错误卡重试经注入延续同一目标；
+    /// 模式切换清空重走常规解析）。probe 内按档位消费——bundle 快照档忽略。
+    /// 与 `active_session_profile`（会话槽真相：删除/重命名防护、
+    /// get_active_profile 数据源）分工——本字段是「目标记录」，非「运行真相」。
+    forced_profile: Mutex<Option<String>>,
     /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
     client_update: Mutex<Option<crate::updater::ClientUpdate>>,
 }
@@ -180,7 +185,7 @@ fn run_executor_session(
                 .and_then(|e| e.check_exited())
         };
         // 就绪标记读取器（WSL 用，绕开 wsl.exe 输出缓冲——见 executor.rs
-        // GUEST_BOOT 注释）：本地执行器 read_ready_marker 默认返回 None，
+        // guest_boot_script 注释）：本地执行器 read_ready_marker 默认返回 None，
         // wait_for_ready 立即走 log 路径。
         let mut marker = || {
             state
@@ -635,6 +640,52 @@ fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, String> 
     Ok(crate::settings::load(&data_dir).default_profile)
 }
 
+/// Profile 管理器「启动/切换」（4.3⑥，ADR-0009 §4 三次修订）：停当前会话 →
+/// 以目标 profile 重启（重启语义，dsh 无运行时切换能力；主窗口回壳 boot 屏
+/// 走既有进度，就绪自动进新工作台）。切换**不写** defaultProfile（唯一写入口
+/// = 星标）；失败落错误卡，重试经 forced_profile 延续同一目标，不自动回滚。
+/// 仅 webUi 候选（非 webUi 无工作台 URL 可导航）；bundle 快照档由 probe 内
+/// 档位守卫忽略强制目标。WSL 模式同链路（guest 脚本已参数化）。
+#[tauri::command]
+fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+    crate::profiles::validate_profile_name(&profile)?;
+    let candidates = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+    ensure_switchable_profile(&profile, &candidates)?;
+    let state = app.state::<Arc<ShellState>>().inner().clone();
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let _ = teardown_session(&state);
+    *state.forced_profile.lock().unwrap() = Some(profile.clone());
+    tracing::info!("切换 profile → {profile}");
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // 先回壳 boot 屏再启动：事件总线模块加载期装配——晚挂监听吞首发
+        // 遥测（AGENTS §4.3）；就绪后 run_executor_session 导航进新工作台。
+        let _ = state.window.eval("location.assign('/')");
+        lib_boot_again(state, handle, data_dir);
+    });
+    Ok(())
+}
+
+/// 当前会话占用的 profile（None = 无活跃会话）：管理器「运行中」徽标与切换
+/// 确认文案的数据源（读侧，与删除/重命名防护同源 `active_session_profile`）。
+#[tauri::command]
+fn get_active_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(active_session_profile(&app))
+}
+
+/// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
+/// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
+/// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
+fn ensure_switchable_profile(profile: &str, webui_candidates: &[String]) -> Result<(), String> {
+    if webui_candidates.iter().any(|c| c == profile) {
+        Ok(())
+    } else {
+        Err(format!(
+            "profile「{profile}」不是可启动的 webUi 工作台（无工作台界面或不存在，无法在窗口中切换）。"
+        ))
+    }
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
 #[tauri::command]
@@ -688,6 +739,9 @@ fn launch_executor_after_probe(
     // 旧 probe 线程完成后必须静默丢弃，否则会覆盖新会话（自动安装让窗口变长，
     // 0.4.2 修复前该竞态一直存在，只是窗口小）。
     let probe_epoch = state.session_epoch.load(Ordering::SeqCst);
+    // 强制目标注入（4.3⑥ 管理器切换 / 错误卡重试延续）：probe 内按档位消费。
+    // 首启与模式切换此处为 None（switch_mode 清空后重走常规解析）。
+    executor.set_forced_profile(state.forced_profile.lock().unwrap().clone());
     // probe 借 app 构造两个 sink（boot:step + 下载进度 bridge）；作用域结束即释放，
     // 之后 app 才能 move 进后续动作/监护线程。
     let probe_result = {
@@ -787,6 +841,9 @@ fn switch_mode(
 ) {
     tracing::info!("切换运行环境 → {}", mode.as_str());
     let _ = teardown_session(&state);
+    // 清空强制目标：模式切换重走常规解析（defaultProfile → 选择器），
+    // 不继承上一次的 profile 切换目标（4.3⑥）。
+    *state.forced_profile.lock().unwrap() = None;
     // load-modify-save：不得整体覆盖 ShellSettings——会把 defaultProfile 等
     // 其他已存字段抹掉（4.3 生命周期刀引入 defaultProfile 后的必然要求）。
     let mut shell_settings = crate::settings::load(&data_dir);
@@ -1147,6 +1204,7 @@ pub fn run() {
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
                 workbench_url: Mutex::new(None),
+                forced_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
             });
             app.manage(state.clone());
@@ -1277,7 +1335,9 @@ pub fn run() {
             rename_profile,
             delete_profile,
             set_default_profile,
-            get_default_profile
+            get_default_profile,
+            switch_profile,
+            get_active_profile
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -1414,7 +1474,7 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{cached_status_or_default, classify_boot_error};
+    use super::{cached_status_or_default, classify_boot_error, ensure_switchable_profile};
 
     #[test]
     fn update_status_is_safe_before_shell_state_is_managed() {
@@ -1456,6 +1516,19 @@ mod tests {
         let (title, _, actions) = classify_boot_error("some weird crash");
         assert!(title.contains("启动失败"));
         assert_eq!(actions, vec!["retry"]);
+    }
+
+    #[test]
+    fn switch_target_must_be_webui_candidate() {
+        let cands = vec!["web".to_string(), "33".to_string()];
+        // 候选内：web 与自定义 webUi 均可
+        assert!(ensure_switchable_profile("web", &cands).is_ok());
+        assert!(ensure_switchable_profile("33", &cands).is_ok());
+        // 非 webUi（headless）/ 不存在 / 恶意名：拒绝且文案可行动
+        for bad in ["headless", "ghost", "../escape", "node_modules"] {
+            let err = ensure_switchable_profile(bad, &cands).unwrap_err();
+            assert!(err.contains("webUi"), "{bad} -> {err}");
+        }
     }
 }
 

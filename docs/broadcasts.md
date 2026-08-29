@@ -32,6 +32,37 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · 4.3⑥ Profile 切换落地（重启语义）+ WSL guest 脚本参数化；多开登记待办 —— guan（AI 协作）
+
+- 变更：本 commit——`executor.rs`（Executor trait 新增 `set_forced_profile`；
+  Local/WSL 双执行器 probe 内按档位消费，bundle 快照档忽略；`GUEST_BOOT` 常量
+  改 `guest_boot_script(profile)` + `sh_quote` 单引号进参——profile 名可含
+  空格/引号等元字符，反例测试 + bash 实跑回读；WSL `select_profile`/`active_profile`
+  同步参数化，v1「写死 web」收口）、`lib.rs`（`switch_profile` / `get_active_profile`
+  两条新 IPC；`forced_profile` 目标记录 + `launch_executor_after_probe` 注入，
+  错误卡重试延续同目标；模式切换清空重走常规解析）、`profiles.rs`
+  （`ProfileSummary.web_ui` 字段 = 启动入口可见性，本模块内判定）、
+  `ipc.rs`/`capabilities`/前端（types/api/store/行内启动按钮/运行中徽标/切换
+  确认弹窗/文案）。维护者实测反馈两处收口：① 运行中徽标**实时化**——管理器
+  订阅 `bootStore.activeStep`（boot:step 经事件总线每窗口广播），切换开始
+  徽标即灭、boot 完成即亮，不再等聚焦/手动刷新；② 新增 UI 按 frontend-design
+  口径与页面既有语言对齐——启动升级为带字按钮（与页头「新建 Profile」同配方）、
+  运行中徽标加脉动心跳点、「无界面」由徽标降级进 meta 行、切换弹窗描述中性化
+  （切换非常规破坏性操作，不走删除那套警示红）。
+- 影响：**语义裁定（ADR-0009 §4 第三次修订，已先行经维护者逐题确认）**——
+  ① 切换 = 停当前 dsh 以目标 profile 重启（dsh 无运行时切换能力，重启是唯一
+  语义）；② 仅 webUi 候选可切换，headless/无界面档不给入口；③ 切换**不写**
+  defaultProfile（星标是唯一写入口）；④ 失败错误卡 + 重试同目标，不自动回滚；
+  ⑤ **WSL 同轮覆盖**：guest 脚本已参数化，但 WSL 真机验证无法在 macOS 执行，
+  **待 guan 在 Windows 侧按 `docs/executor.md` 清单人工过一遍**（含切换到
+  非 web 档 + 引号/空格 profile 名）。**多开（多 profile 并行多窗口）登记
+  roadmap 待办未排期**：机制面可行（`--port 0` 官方旗标），前置 = 双实例
+  并发写 `~/.dsh/storages` 竞态 spike + 1:1 生命周期约束的 ADR 修订。
+- 凭据：cargo test 131 绿（+5：sh_quote 反例/回读、guest 脚本参数化、
+  强制目标档位守卫、切换目标校验）/ fmt / clippy 全过 + `cargo check
+  --target x86_64-pc-windows-gnu` 过（WSL 块编译目标语义）；前端
+  typecheck / lint / test 40 绿。行为变更纯增，既有命令语义未动。
+
 ### 2026-08-28 完成通知 · Profile 创建二次修订：install 后壳补写 Web 工作台声明（创建即 webUi 候选）—— guan（AI 协作）
 
 - 变更：本 commit——`profiles.rs`（`declare_webui_bundle` + 纯函数

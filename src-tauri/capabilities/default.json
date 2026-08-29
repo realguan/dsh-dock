@@ -33,6 +33,8 @@
     "allow-rename-profile",
     "allow-delete-profile",
     "allow-set-default-profile",
-    "allow-get-default-profile"
+    "allow-get-default-profile",
+    "allow-switch-profile",
+    "allow-get-active-profile"
   ]
 }

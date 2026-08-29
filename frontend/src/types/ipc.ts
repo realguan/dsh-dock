@@ -52,6 +52,8 @@ export interface ProfileSummary {
   bundles: string[]
   /** package.json dependencies 的包名（字典序） */
   dependencies: string[]
+  /** 是否 webUi 工作台（bundles 含 dsh-web-app）：启动/切换入口的可见性依据 */
+  web_ui: boolean
 }
 
 /// 单个 profile 详情（package.json 关键字段 + cordis.patch.yml 原文）。
