@@ -71,10 +71,15 @@ export function ProfileDetailDialog({
     runtime !== null && runtime.profile !== null && runtime.profile === name
       ? runtime.entries
       : []
+  const deps = plugins?.filter((p) => p.kind === "dependency") ?? []
+  const depCount = deps.length
 
   return (
     <Dialog open={!!name} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[480px]">
+      {/* 2026-08-29 修复：基件 DialogContent 垂直居中且无高度上限——插件一多
+          对话框上下两头裁出屏幕（同工具窗口裁顶族）。这里覆写为纵向 flex +
+          视口限高，内容区自身滚动，header/footer 恒在。 */}
+      <DialogContent className="flex max-h-[calc(100vh-4rem)] flex-col sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>{name ? t.profiles.detailTitle(name) : ""}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -91,7 +96,7 @@ export function ProfileDetailDialog({
           </div>
         )}
         {detail && (
-          <div className="text-dim min-w-0 space-y-4 text-sm">
+          <div className="text-dim min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto pr-1 text-sm">
             {/* 2026-08-28 修复：DialogContent 是 grid——本项（grid 项）无 min-w-0
                 时最小宽度 = 内容 min-content，whitespace-pre 的最长行会把整条
                 轨道撑破，依赖卡片与 footer 一起越界；min-w-0 后 pre 由自身
@@ -126,9 +131,15 @@ export function ProfileDetailDialog({
               </div>
             </section>
 
-            {/* 外挂插件（4.4①）：官方/第三方、已装版本、运行态徽标 */}
+            {/* 外挂插件（4.4①）：官方/第三方、已装版本、运行态徽标；列表自限高
+                滚动（max-h-64，同 patch 原文区模式）——多插件不撑破对话框 */}
             <section>
-              <div className="text-faint mb-1.5 text-xs">{t.profiles.detailDeps}</div>
+              <div className="text-faint mb-1.5 flex items-baseline justify-between gap-2 text-xs">
+                <span>{t.profiles.detailDeps}</span>
+                {plugins !== null && depCount > 0 && (
+                  <span className="shrink-0 font-mono">{t.profiles.metaBundles(depCount)}</span>
+                )}
+              </div>
               {liveEntries.length > 0 ? (
                 <div className="text-faint mb-1.5 text-[10px]">
                   {t.profiles.runtimeSummary(runtimeSummary(liveEntries))}
@@ -141,12 +152,11 @@ export function ProfileDetailDialog({
               )}
               {plugins === null ? (
                 <div className="text-faint text-xs">{t.profiles.busyShort}</div>
-              ) : plugins.filter((p) => p.kind === "dependency").length === 0 ? (
+              ) : depCount === 0 ? (
                 <div className="text-faint text-xs">{t.profiles.detailEmptyDeps}</div>
               ) : (
-                <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
-                  {plugins
-                    .filter((p) => p.kind === "dependency")
+                <div className="border-line bg-bg divide-line-soft max-h-64 overflow-y-auto rounded-lg border divide-y">
+                  {deps
                     .map((p) => {
                       const spec = detail.dependencies[p.name]
                       const chip = runtimeChipFor(p.name, liveEntries)
