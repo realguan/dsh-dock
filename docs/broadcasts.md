@@ -32,6 +32,48 @@
 
 ## 三、记录
 
+### 2026-08-29 发版事项 · v0.6.0 tag 已推送，冻结期开始 —— guan（AI 协作）
+
+- 变更：commit `5ef27ab`（`chore: 版本 0.6.0（Profile 管理器全量 + Profile 切换）`，
+  bump Cargo.toml / tauri.conf.json / package.json + 双 lock）+ 注解 tag `v0.6.0`
+  （指向 `5ef27ab`）；master 与 tag 已推 origin（`5cf0593..5ef27ab`）。tag `v*`
+  触发 CI Release（CONTRIBUTING §8）。
+- 影响：**冻结期开始**——Release notes 发出至三平台产物验收通过期间，master
+  只收 fix 不收 feat。Release notes 草稿见本条附录，频道确认后随 Release 发布。
+- 凭据：bump 后 cargo test 131 绿 / 前端 typecheck + test 40 绿；推送回执
+  `master -> master` + `* [new tag] v0.6.0`。
+
+**附录：Release notes 草稿（v0.5.1 → v0.6.0）**
+
+```markdown
+## 新增
+- Profile 管理器（4.3 全量）：列表/详情（已物化 + 可首启模板两态合并）、
+  创建（dsh plugin 转发链——零网络毫秒级，创建即 webUi 候选可设默认）、
+  复制/重命名/删除（运行中防护、node_modules 删除 + dsh 自愈）、
+  默认启动 profile 持久化与 boot 消费。
+- Profile 切换（4.3⑥）：管理器行内「启动」= 停当前 dsh 以目标 profile
+  重启；仅 webUi 候选；切换不写默认；运行中徽标实时（boot:step 广播订阅）；
+  WSL guest 启动脚本参数化（profile 名 shell 引号安全）。
+- pnpm 为 boot 硬依赖：缺失自动 `npm i -g pnpm` 补齐，失败阻断给可行动文案。
+- IPC 三处同步机器闸门：ipc.rs 单一事实源，漏登记 cargo test 即红。
+
+## 修复
+- 创建路径 dist-tag 版本坑：`add @deepseek-ai/dsh-base` 裸名按 latest 解析到
+  已弃用旧版 → 404 + 重试卡死；改 `install` 原始版语义。
+- Profile 详情对话框：file: 依赖行溢出丢包名、cordis.patch.yml 折行失真、
+  超长行 grid 撑破布局三连修。
+- 工具窗口内容超高被裁顶：垂直居中改顶部锚定。
+
+## 变更
+- 对话框 footer 去脚手架灰底，收编为有意设计（静默化）。
+- AGENTS.md 减法一轮 248→178 行；README/CONTRIBUTING/本地运行指引更新。
+
+## 已知问题
+- WSL 模式 Profile 切换待 Windows 真机人工验证（按 docs/executor.md 清单）。
+- 多开（多 profile 并行多窗口）未排期：前置 = 双实例 storages 竞态 spike +
+  1:1 生命周期 ADR 修订。
+```
+
 ### 2026-08-29 完成通知 · 4.3⑥ Profile 切换落地（重启语义）+ WSL guest 脚本参数化；多开登记待办 —— guan（AI 协作）
 
 - 变更：本 commit——`executor.rs`（Executor trait 新增 `set_forced_profile`；
