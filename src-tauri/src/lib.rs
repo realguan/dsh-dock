@@ -483,11 +483,11 @@ fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail,
 
 /// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> install`
 /// 半官方转发链创建 profile——dsh 首用 initProfile 写三件套（bundles 声明
-/// 内置插件 dsh-base，随 dsh 安装目录解析）→ `pnpm install` 只装外挂插件
-/// 依赖（初始为空 → Already up to date，零网络毫秒级）；壳对 profiles/ 零
-/// 写入（ADR-0009 方案 A 执行细则修订，2026-08-28：add <bundle> → install，
-/// 「原始版 profile」语义）。阻塞动作（系统探测 + 转发链）全部在
-/// spawn_blocking——同步命令跑主线程会冻结 UI（setup 注释同源坑）。
+/// 内置插件 dsh-base）→ `pnpm install` 空依赖零网络毫秒级；成功后壳对非模板
+/// 名追加 web-app 单键声明（三件套写入例外 #2，ADR-0009 §4 第二次修订
+/// 2026-08-28：创建即 webUi 候选，可设为默认启动；与出厂 web 模板同构）。
+/// 阻塞动作（系统探测 + 转发链 + 声明补写）全部在 spawn_blocking——同步命令
+/// 跑主线程会冻结 UI（setup 注释同源坑）。
 #[tauri::command]
 async fn create_profile(
     app: tauri::AppHandle,

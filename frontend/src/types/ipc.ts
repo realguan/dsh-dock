@@ -65,8 +65,9 @@ export interface ProfileDetail {
   patch_yaml: string | null
 }
 
-/// 创建结果：「原始版已建好」是成功态（内置插件声明就绪，零下载）；
-/// 「已创建未装插件」是合法中间态而非失败（ADR-0009 方案 A 执行细则修订）。
+/// 创建结果：「基础 + Web 工作台已就绪」是成功态（声明零下载，创建即 webUi
+/// 候选可设为默认启动）；「已创建未装插件」是合法中间态而非失败
+/// （ADR-0009 方案 A 执行细则两次修订）。
 export interface CreateProfileOutcome {
   profile: string
   materialized: boolean

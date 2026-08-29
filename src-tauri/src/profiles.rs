@@ -4,10 +4,11 @@
 //! 合并展示）、读取单个 profile 详情（package.json 关键字段 + cordis.patch.yml
 //! 原文）。只读零写入、零 dsh 子进程。
 //! 创建：spawn `dsh plugin --profile <名> install` 半官方转发链（ADR-0009 方案 A
-//! 执行细则修订，2026-08-28）——三件套由 dsh `initProfile` 写出，壳对 profiles/
-//! 零写入；spawn 前做 pnpm 防御检测（缺失给可行动错误，补齐归后续刀）。创建
-//! 语义 = 原始版 profile：只含内置插件声明（dsh-base 随 dsh 安装目录解析），
-//! 零网络、毫秒级；外挂插件由后续 `dsh plugin add` 按需安装。
+//! 执行细则两次修订，2026-08-28）——三件套由 dsh `initProfile` 写出；install
+//! 成功后壳对非模板名追加 web-app 单键声明（三件套写入例外 #2，dsh 自认该状态
+//! user-owned，见 `declare_webui_bundle` 与 ADR 第二次修订注）；spawn 前做 pnpm
+//! 防御检测。创建语义 = 基础 + Web 工作台声明（与出厂 web 模板同构，零网络、
+//! 毫秒级，创建即 webUi 候选可设为默认启动）；外挂插件由 `dsh plugin add` 按需安装。
 //!
 //! 行为复现锚定（dsh v0.1.1-rc.2，`dsh-app-boot/lib/index.js`，2026-08-28 核对；
 //! 已入 `docs/contracts/dsh-behavior-ledger.md` §一 复现点 6/8）：
@@ -244,7 +245,8 @@ const CREATE_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 ///   版本语义完全免疫；
 /// - `reconcilePlugins` 对模板内置 bundle 零动作（In-box bundles are
 ///   not dependencies and are never touched），install 后 bundles 保持
-///   dsh 初始化写入的原始列表。
+///   dsh 初始化写入的原始列表；web-app 声明由壳随后追加（第二次修订，
+///   见 `declare_webui_bundle`——终态 = 基础 + Web 工作台，与出厂 web 模板同构）。
 ///
 /// profile 名作为单个 argv 元素传递（不经 shell 拼接，空格/Unicode 名安全；
 /// 合法性由 creation_blocker 先行把关）。
@@ -255,6 +257,57 @@ pub fn create_command_args(profile: &str) -> Vec<String> {
         profile.to_string(),
         "install".to_string(),
     ]
+}
+
+/// 创建语义的 Web 工作台声明 bundle（对齐 dsh web 模板第二项，
+/// `PROFILE_TEMPLATES` @ 323；ADR-0009 §4 第二次修订 2026-08-28）。
+const CREATE_WEBUI_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
+
+/// 向 manifest 文本的 `dsh.profile.bundles` 追加一条声明（纯函数，幂等——
+/// 已存在返回 None）。JSON 往返后 2 空格缩进 + 尾换行，与 dsh initProfile 的
+/// `JSON.stringify(manifest, null, 2) + "\n"` 逐字同构（app-boot index.js @ 353）。
+/// 缺 bundles 数组（非 dsh 初始化的清单）→ Err，拒绝写入。
+fn append_bundle_declaration(text: &str, bundle: &str) -> Result<Option<String>, String> {
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    let bundles = manifest
+        .get_mut("dsh")
+        .and_then(|d| d.get_mut("profile"))
+        .and_then(|p| p.get_mut("bundles"))
+        .and_then(|b| b.as_array_mut())
+        .ok_or("package.json 缺少 dsh.profile.bundles 数组——非 dsh 初始化的清单，拒绝写入")?;
+    if bundles
+        .iter()
+        .filter_map(|v| v.as_str())
+        .any(|s| s == bundle)
+    {
+        return Ok(None);
+    }
+    bundles.push(serde_json::Value::String(bundle.to_string()));
+    let mut out = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    out.push('\n');
+    Ok(Some(out))
+}
+
+/// 非模板名创建成功后，向已初始化三件套追加 Web 工作台声明（幂等）。三件套
+/// 写入例外 #2（同类先例 = name 一致化改写）：dsh 自认模板精确元组之外的
+/// bundles 列表 user-owned（`normalizeShippedProfile` @ index.js 472，
+/// 2026-08-28 读）；目标状态与出厂 web 模板同构（web-app 不进 dependencies，
+/// 由 `resolveBundleDir` 双锚点从 dsh 安装目录解析，零下载），创建即 webUi
+/// 候选、可设为默认启动。模板名跳过：dsh 拥有模板元组，headless 语义即无
+/// webUi。返回是否发生写入。
+fn declare_webui_bundle(home: &Path, profile: &str) -> Result<bool, String> {
+    if PROFILE_TEMPLATES.iter().any(|(name, _)| *name == profile) {
+        return Ok(false);
+    }
+    let path = home.join("profiles").join(profile).join("package.json");
+    let text =
+        fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+    let Some(edited) = append_bundle_declaration(&text, CREATE_WEBUI_BUNDLE)? else {
+        return Ok(false);
+    };
+    fs::write(&path, edited).map_err(|e| format!("写 {} 失败：{e}", path.display()))?;
+    Ok(true)
 }
 
 /// 创建前置校验：Ok = 可发起（新名，或半初始化重试）；Err = 拒绝（原因可行动）。
@@ -364,7 +417,7 @@ pub struct CreateProfileOutcome {
     pub profile: String,
     /// 三件套已由 dsh initProfile 写出（调用方以 package.json 存在性判定）。
     pub materialized: bool,
-    /// dsh 退出码 0：原始 profile 就绪（exit 0 = init + pnpm install 全过）。
+    /// 创建完成：基础 + Web 工作台声明就绪（exit 0 = init + install + 声明补写全过）。
     pub installed: bool,
     /// 人读状态 + 可行动建议（附 dsh 输出尾部，便于排障）。
     pub detail: String,
@@ -377,22 +430,28 @@ pub struct CreateProfileOutcome {
 /// pnpm 失败 = `pnpm failed in profile directory`（exit = pnpm 退出码）。
 ///
 /// 2026-08-28 起创建走 `install`（非 add）：成功路径 dsh 输出为
-/// `Already up to date`（空 dependencies 的 pnpm install）——「install
-/// 成功」即「原始 profile 已建好」：bundles 声明全随 dsh 安装目录解析，
-/// 零下载；后续用户加外挂插件走同一条 `dsh plugin add` 链（4.4 插件管理）。
+/// `Already up to date`（空 dependencies 的 pnpm install）。第二次修订（同日）：
+/// install 成功后壳补写 Web 工作台声明——补写失败经 `webui_error` 传入，
+/// `installed` 判 false 走 pending 态（重试幂等补写），不静默吞掉。
 pub fn classify_create_outcome(
     profile: &str,
     run: &ForwardRun,
     materialized: bool,
+    webui_error: Option<&str>,
 ) -> CreateProfileOutcome {
-    let installed = !run.timed_out && run.code == Some(0);
+    let installed = !run.timed_out && run.code == Some(0) && webui_error.is_none();
     let pnpm_missing = run.output.contains("pnpm not found on PATH");
     let code_text = run
         .code
         .map(|c| c.to_string())
         .unwrap_or_else(|| "未知".to_string());
     let status_line = if installed && materialized {
-        format!("profile「{profile}」已创建：内置插件声明就绪，可立即启动使用。")
+        format!("profile「{profile}」已创建：基础 + Web 工作台声明就绪，可立即启动或设为默认启动。")
+    } else if let Some(err) = webui_error {
+        format!(
+            "profile「{profile}」已初始化，但 Web 工作台声明写入失败：{err}。\
+             可重试创建（重跑幂等，重试将补写声明）。"
+        )
     } else if installed {
         "dsh 报告成功，但未检出 profile 目录（异常状态，请反馈）。".to_string()
     } else if run.timed_out {
@@ -477,7 +536,20 @@ pub fn create_profile_blocking(
         .join(profile)
         .join("package.json")
         .is_file();
-    Ok(classify_create_outcome(profile, &run, materialized))
+    // 4.3 第二次修订（ADR-0009 §4，2026-08-28）：非模板名 install 成功后补写
+    // Web 工作台声明（幂等）——创建即 webUi 候选，可设为默认启动。失败降级
+    // pending 态（重试幂等补写），不静默吞掉。
+    let webui_error = if run.code == Some(0) && materialized {
+        declare_webui_bundle(&home, profile).err()
+    } else {
+        None
+    };
+    Ok(classify_create_outcome(
+        profile,
+        &run,
+        materialized,
+        webui_error.as_deref(),
+    ))
 }
 
 // ---------- 生命周期：复制 / 重命名 / 删除（4.3 第四刀，2026-08-28） ----------
@@ -951,9 +1023,10 @@ mod profiles_tests {
                 "dsh: initialized profile alpha at /tmp/x/profiles/alpha\nAlready up to date\n",
             ),
             true,
+            None,
         );
         assert!(ok.installed && ok.materialized);
-        assert!(ok.detail.contains("内置插件声明就绪"));
+        assert!(ok.detail.contains("Web 工作台声明就绪"));
 
         // ② pnpm 缺失（Spike A §3.3 实测输出，exit 127）：已创建未装 + 可行动建议
         let no_pnpm = classify_create_outcome(
@@ -965,6 +1038,7 @@ mod profiles_tests {
                  dsh: pnpm not found on PATH - install pnpm to manage profile plugins\n",
             ),
             true,
+            None,
         );
         assert!(no_pnpm.materialized && !no_pnpm.installed);
         assert!(
@@ -982,35 +1056,51 @@ mod profiles_tests {
                  dsh: pnpm failed in profile directory /tmp/x/profiles/alpha\n",
             ),
             true,
+            None,
         );
         assert!(failed.materialized && !failed.installed);
         assert!(failed.detail.contains("重试"));
 
         // ④ dsh 自身失败（未物化）：创建失败，不是「已创建未装」
-        let dsh_fail =
-            classify_create_outcome("alpha", &run(Some(1), false, "node: bad option\n"), false);
+        let dsh_fail = classify_create_outcome(
+            "alpha",
+            &run(Some(1), false, "node: bad option\n"),
+            false,
+            None,
+        );
         assert!(!dsh_fail.materialized && !dsh_fail.installed);
         assert!(dsh_fail.detail.contains("创建失败"));
 
         // ⑤ 超时：可重试提示
-        let timeout = classify_create_outcome("alpha", &run(None, true, ""), false);
+        let timeout = classify_create_outcome("alpha", &run(None, true, ""), false, None);
         assert!(!timeout.installed);
         assert!(timeout.detail.contains("超时"));
+
+        // ⑥ Web 工作台声明补写失败（第二次修订）：已初始化但非 ready——
+        // pending 态 + 幂等重试提示（重试将补写）
+        let no_declare = classify_create_outcome(
+            "alpha",
+            &run(
+                Some(0),
+                false,
+                "dsh: initialized profile alpha at /tmp/x/profiles/alpha\nAlready up to date\n",
+            ),
+            true,
+            Some("写 /tmp/x/profiles/alpha/package.json 失败：EACCES"),
+        );
+        assert!(no_declare.materialized && !no_declare.installed);
+        assert!(no_declare.detail.contains("Web 工作台声明写入失败"));
+        assert!(no_declare.detail.contains("重试"));
     }
 
-    /// 原始版 profile 产物语义（2026-08-28 修订，与 dsh 实测产物逐字一致）：
-    /// `install` 后 package.json 的 dependencies 保持空、bundles 声明 dsh-base
-    /// ——内置插件声明随 dsh 安装目录解析，零网络零下载。
+    /// 创建终态语义（2026-08-28 第二次修订）：install 后壳追加 web-app 声明——
+    /// 与出厂 web 模板同构（bundles = [dsh-base, dsh-web-app]、dependencies 空，
+    /// 本体随 dsh 安装目录解析零下载），创建即 webUi 候选可设为默认启动。
     #[test]
-    fn install_outcome_matches_raw_profile_semantics() {
-        // dsh initProfile 以 DEFAULT_PROFILE_BUNDLES 写三件套（bundles 含
-        // dsh-base）；pnpm install 空 dependencies → Already up to date
-        let home = tmp();
-        materialize(
-            &home,
-            "raw",
-            r#"{
-  "name": "dsh-profile-raw",
+    fn create_declares_webui_bundle_like_web_template() {
+        // 纯函数：追加 / 幂等 / 拒绝非 dsh 清单
+        let base = r#"{
+  "name": "dsh-profile-clean",
   "private": true,
   "dependencies": {},
   "dsh": {
@@ -1018,12 +1108,55 @@ mod profiles_tests {
       "bundles": ["@deepseek-ai/dsh-base"]
     }
   }
-}"#,
+}"#;
+        let edited = append_bundle_declaration(base, CREATE_WEBUI_BUNDLE)
+            .unwrap()
+            .expect("首次追加应发生写入");
+        let pkg: serde_json::Value = serde_json::from_str(&edited).unwrap();
+        let bundles: Vec<&str> = pkg["dsh"]["profile"]["bundles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            bundles,
+            ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"],
+            "与 dsh web 模板 PROFILE_TEMPLATES @ 323 同构"
         );
+        assert!(
+            pkg["dependencies"].as_object().unwrap().is_empty(),
+            "声明不进 dependencies，零下载"
+        );
+        assert!(
+            append_bundle_declaration(&edited, CREATE_WEBUI_BUNDLE)
+                .unwrap()
+                .is_none(),
+            "已存在 → 幂等无写入"
+        );
+        assert!(append_bundle_declaration(r#"{"dependencies":{}}"#, CREATE_WEBUI_BUNDLE).is_err());
+        assert!(append_bundle_declaration("not json", CREATE_WEBUI_BUNDLE).is_err());
+
+        // 文件级：非模板名落盘 + 幂等 + 模板名跳过（dsh 拥有模板元组）
+        let home = tmp();
+        materialize(&home, "clean", base);
+        assert!(declare_webui_bundle(&home, "clean").unwrap());
         let (bundles, dependencies) =
-            read_manifest_fields(&home.join("profiles").join("raw").join("package.json"));
-        assert_eq!(bundles, vec!["@deepseek-ai/dsh-base"]);
-        assert!(dependencies.is_empty(), "原始版不依赖任何下载包");
+            read_manifest_fields(&home.join("profiles").join("clean").join("package.json"));
+        assert_eq!(bundles.len(), 2);
+        assert!(dependencies.is_empty());
+        assert!(
+            !declare_webui_bundle(&home, "clean").unwrap(),
+            "再次调用幂等"
+        );
+        materialize(&home, "web", base);
+        assert!(
+            !declare_webui_bundle(&home, "web").unwrap(),
+            "模板名归 dsh 跳过"
+        );
+        let (web_bundles, _) =
+            read_manifest_fields(&home.join("profiles").join("web").join("package.json"));
+        assert_eq!(web_bundles, vec!["@deepseek-ai/dsh-base"]);
         std::fs::remove_dir_all(&home).ok();
     }
 

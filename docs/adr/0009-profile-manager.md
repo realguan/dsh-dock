@@ -113,15 +113,40 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 命令参数；pnpm 缺失 → 补齐 → 失败降级（ADR §4 口径 2）与「已创建未装插件」
 > 中间态重试语义不变（`install` 对空依赖同幂等）。
 
+> **2026-08-28 第二次执行细则修订（仍为方案 A 内部）：创建补 Web 工作台声明**。
+> 非模板名 install 成功后，壳对已初始化三件套的 `dsh.profile.bundles`
+> **追加 `@deepseek-ai/dsh-web-app` 单键声明**（幂等；模板名跳过——dsh 拥有
+> 模板元组，headless 语义即无 webUi）。动机：defaultProfile 消费只认 webUi
+> 候选（bundles 含 web-app，`list_web_ui_profiles`）——纯 dsh-base 原始版
+> 创建出来即无法设为默认启动（无 URL 可导航，boot 静默回退 web），与用户
+> 预期脱节（2026-08-28 用户实机踩坑）。**红线边界（三件套写入例外 #2，同类
+> 先例 = name 一致化改写）**：① 这是既有 dsh 初始化产物上的单键追加，非
+> 生成/复刻三件套；② dsh 自认此状态 user-owned——`normalizeShippedProfile`
+> （app-boot index.js @ 472，2026-08-28 读）：「Normalize an exact
+> installation-owned bundle tuple…**Any other list is user-owned**」，模板
+> 精确元组之外的 bundles 列表本就归用户/工具所有；③ 目标状态与出厂 web 模板
+> 同构（web 模板 bundles = `[dsh-base, dsh-web-app]` @ 323，web-app 不在
+> dependencies、由 `resolveBundleDir` 双锚点从 dsh 安装目录解析、零下载），
+> 该形态即用户日常运行的 web profile 本身，行为已被长期验证。**否决替代**：
+> `dsh plugin add @deepseek-ai/dsh-web-app@<版本>`（dsh 原生但把 web-app 变成
+> 真实依赖 + 网络安装 + 版本锚定难题）偏离「初始 web 标准」；JSON 直改范围
+> 严格限 `dsh.profile.bundles` 追加一元素，序列化与 initProfile 逐字同构
+> （2 空格缩进 + 尾换行）。写入失败 → `installed=false` 走既有「已创建未装
+> 插件」pending 态（重试幂等，重试同时补写）；旧版创建的纯 dsh-base profile
+> **不追溯**（既有清单是用户财产，重试创建才按新标准补齐）。
+
 - 创建：spawn `dsh plugin --profile <新名> install`（2026-08-28 执行细则修订：原
   `add <bundle>` 改 `install`，见本页 §4 修订注——原始版语义，零网络毫秒级），
   任一新名首用即 dsh 自动 initProfile + `pnpm install` + reconcile。bundle 声明
   由 initProfile 以 `PROFILE_TEMPLATES[名] ?? DEFAULT_PROFILE_BUNDLES`
   （`@deepseek-ai/dsh-base`，app-boot `@ 334`）写入三件套的 `dsh.profile.bundles`，
-  不参与下载；`web`/`headless` 由 dsh 模板命中（`PROFILE_TEMPLATES` `@ 323`，
-  Spike A 遗留事项第 3 条在此收编）；后续加外挂插件 = `dsh plugin add <包>`。
+  不参与下载；**非模板名 install 成功后壳追加 web-app 声明（第二次修订，见 §4——
+  创建即 webUi 候选，可设为默认启动）**；`web`/`headless` 由 dsh 模板命中
+  （`PROFILE_TEMPLATES` `@ 323`，Spike A 遗留事项第 3 条在此收编）；后续加外挂
+  插件 = `dsh plugin add <包>`。
   「已创建未装插件」中间态的**重试 = 重跑同名命令**（init-if-needed 幂等，
-  `runPlugin` `@ 101`），UI 状态机据此简化。
+  `runPlugin` `@ 101`；第二次修订后重试同时补写 web-app 声明，同幂等），
+  UI 状态机据此简化。
 - 列出/详情/删除/复制/重命名：纯文件系统 + dsh CLI 无相应命令的部分用文件读；删除/重命名前执行运行中防护（比对 `launch.profile`，见 §2 工程准则）。
 - 复制/重命名的引用面按 Spike B 的结论执行（尤其：rename 需改写 `name: dsh-profile-<新名>`；`profiles/node_modules` 农场不动的修正；node_modules 处理以「删 + dsh 下次启动自愈」为第一方案）。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。

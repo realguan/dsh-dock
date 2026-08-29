@@ -19,7 +19,7 @@
 | 4 | WSL PATH 兼容探测 | `executor.rs`（`bash -lic` + nvm/fnm/n/volta 兜底扫描） | nvm/fnm 非交互 rc 守卫行为 | 2026-08-26 |
 | 5 | WSL 客体内 dsh 自动安装 | `executor.rs`（ADR-0004：壳不触网，装进发行版） | dsh npm 包名与 `npm i -g` 语义 | 基线 |
 | 6 | profile 列举 / 详情（文件系统模拟） | `profiles.rs`（扫描 `profiles/*/package.json`；详情 = 清单关键字段 + `cordis.patch.yml` 原文不解析） | profile 目录布局与三件套格式（`initProfile` @ 353）、内置模板名与 bundle（`PROFILE_TEMPLATES` @ 323） | 2026-08-28 |
-| 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> install` + 结果分类；**2026-08-28 修订：add @deepseek-ai/dsh-base → install**——原始版语义：initProfile 写三件套（bundles 含内置插件，随 dsh 安装目录解析）+ 空依赖 `pnpm install` 零网络毫秒级；实测 macOS：`Already up to date` 199ms，后 `--dump-config` 可正常组合启动） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353）——注意：**add 裸包名会按 dist-tag `latest` 解析**（dsh-base 的 latest 停在已弃用 0.0.1-rc.1，当前版走 `next` tag 0.1.1-rc.2；0.0.1-rc.1 依赖 37+ 个已从 registry 删除的旧包名 → 404 + pnpm 递增重试 → 数分钟失败/超时），`install` 不解析任何 dist-tag，版本语义免疫 | 2026-08-28 |
+| 7 | 创建 profile 半官方引导 | `profiles.rs`（spawn `dsh plugin --profile <名> install` + 结果分类；**2026-08-28 两次修订**：① add @deepseek-ai/dsh-base → install（零网络毫秒级，实测 `Already up to date`）；② install 成功后壳对非模板名追加 `@deepseek-ai/dsh-web-app` 单键声明（`declare_webui_bundle`，幂等）——创建即 webUi 候选可设为默认启动，与出厂 web 模板同构零下载，后 `--dump-config` 可正常组合启动） | `runPlugin` init-if-needed + pnpm 转发 + reconcile（`lib/plugin-9h8shc4d.js` @ 101；initProfile 三件套 @ 353）——注意：**add 裸包名会按 dist-tag `latest` 解析**（dsh-base 的 latest 停在已弃用 0.0.1-rc.1，当前版走 `next` tag 0.1.1-rc.2；0.0.1-rc.1 依赖 37+ 个已从 registry 删除的旧包名 → 404 + pnpm 递增重试 → 数分钟失败/超时），`install` 不解析任何 dist-tag，版本语义免疫；**bundles 追加的 dsh 侧依据**：`normalizeShippedProfile`（app-boot index.js @ 472，2026-08-28 读）——模板精确元组之外的 bundles 列表 = user-owned，且 `reconcilePlugins` 对 in-box bundle 零动作（never touched），web-app 由 `resolveBundleDir` 双锚点从 dsh 安装目录解析 | 2026-08-28 |
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 | 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
 
@@ -46,3 +46,11 @@
   域名 r.cnpmjs.org（本机解析到保留段 198.18.0.192）放大了表象。Spike A §3.2
   当时「零网络全命中 store」结论掩盖了裸名版本语义的漂移风险（复现了字符串、
   没复现版本语义）——已收编为本条「依赖的 dsh 行为」栏的显式复核项。
+- 2026-08-28 创建路径二次修订：install 成功后壳对非模板名追加 web-app 声明。
+  触发：用户设默认 profile「11」（纯 dsh-base 原始版）重启仍启动 web——
+  defaultProfile 消费只认 webUi 候选（bundles 含 web-app），无 webUi 的 profile
+  无 URL 可导航属设计内回退。追加的 dsh 侧依据 = `normalizeShippedProfile`
+  「Any other list is user-owned」（index.js @ 472）+ reconcilePlugins 对
+  in-box bundle 零动作；目标状态与出厂 web 模板同构（该形态即 web profile
+  日常运行态）。红线走 ADR-0009 §4 第二次修订（写入例外 #2），AGENTS §6
+  不变量行同步扩展，详见当日广播。

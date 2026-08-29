@@ -32,6 +32,32 @@
 
 ## 三、记录
 
+### 2026-08-28 完成通知 · Profile 创建二次修订：install 后壳补写 Web 工作台声明（创建即 webUi 候选）—— guan（AI 协作）
+
+- 变更：本 commit——`profiles.rs`（`declare_webui_bundle` + 纯函数
+  `append_bundle_declaration`：非模板名 install 成功后向
+  `dsh.profile.bundles` 幂等追加 `@deepseek-ai/dsh-web-app`；声明补写失败
+  降级 pending 态可重试；classify 增 webui_error 分支；模板名跳过——dsh
+  拥有模板元组）；`lib.rs` doc；前端创建文案（基础 + Web 工作台/可设为默认）；
+  `ADR-0009` §4 第二次修订注；ledger 复现点 7 + 追记；roadmap 4.3② 与事实
+  边界行；**AGENTS §6 不变量行扩展（宪法改动，本条即知会 + diff 摘要）**：
+  三件套写入例外 #2 = 「非模板名创建成功后的 web-app 声明单键追加」。
+- 动机：defaultProfile 消费只认 webUi 候选（bundles 含 web-app，`resolve.rs`
+  `list_web_ui_profiles`）——纯 dsh-base 原始版创建出来即无法设为默认启动
+  （无 URL 可导航，boot 静默回退 web），用户实机踩坑（设「11」为默认、重启
+  仍进 web）。
+- 红线边界：三件套写入例外 #2，同类先例 = name 一致化改写。依据 dsh 源码
+  `normalizeShippedProfile`（app-boot index.js @ 472，2026-08-28 读）：
+  「Any other list is user-owned」——模板精确元组之外的 bundles 列表本就归
+  用户/工具所有；目标状态与出厂 web 模板同构（web-app 不进 dependencies、
+  `resolveBundleDir` 双锚点零下载），即 web profile 日常运行态。否决替代：
+  `dsh plugin add @…@版本`（真实依赖 + 网络安装 + 版本锚定难题，偏离「初始
+  web 标准」）。旧版创建的纯 dsh-base profile **不追溯**（重试创建才按新
+  标准补齐）。
+- 凭据：cargo test 126 绿（install_outcome 产物语义测试改写为
+  create_declares_webui_bundle_like_web_template，classify 增⑥声明失败分支）/
+  fmt / clippy 全过；前端 typecheck / lint / test 40 绿；实机目检见当日验证记录。
+
 ### 2026-08-28 完成通知 · 对话框 footer 静默化：去库存灰底，收编为有意设计 —— guan（AI 协作）
 
 - 变更：本 commit——`ui/dialog.tsx` `DialogFooter` 去掉脚手架模板自带的

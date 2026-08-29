@@ -105,7 +105,8 @@
   已登记 `defaultMode`（2026-08-25）· `defaultProfile` 默认启动 profile
   （2026-08-28 落地；None/失效值读取侧兜底 `web`；删除时引用清除、重命名时引用同步）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
-  整目录复制与 `name` 一致化改写属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
+  整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
+  （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
   农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
