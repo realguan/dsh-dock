@@ -434,10 +434,14 @@ export function ProfileDetailDialog({
                     return (
                       <div key={p.name} className="group min-w-0 px-3 py-1.5">
                         <div className="flex items-baseline gap-2">
+                          {/* 2026-08-29 修复：包名由 shrink-0 改截断——hover 操作组
+                              （3×24px）+ 更新徽标 + 版本同排，长名会把操作组推出
+                              卡片右缘裁掉；名让位 truncate + title 兜底 */}
                           <span
-                            className={`shrink-0 font-mono text-xs ${
+                            className={`min-w-0 truncate font-mono text-xs ${
                               shellDisabled ? "text-faint line-through" : "text-ink"
                             }`}
+                            title={p.name}
                           >
                             {p.name}
                           </span>
@@ -478,15 +482,17 @@ export function ProfileDetailDialog({
                             </span>
                           ) : (
                             <>
-                              {/* 禁用态常驻；运行徽标只对启用中的插件有意义 */}
+                              {/* 禁用态常驻；运行徽标只对启用中的插件显示。
+                                  hover 时与操作组换位（display 切换而非透明——
+                                  透明仍占位，会把操作组推出卡片裁掉） */}
                               {shellDisabled ? (
-                                <span className="border-line text-faint ml-auto shrink-0 rounded border px-1 text-[10px] leading-4">
+                                <span className="border-line text-faint ml-auto shrink-0 rounded border px-1 text-[10px] leading-4 group-hover:hidden">
                                   {t.profiles.pluginDisabled}
                                 </span>
                               ) : (
                                 chip && (
                                   <span
-                                    className={`ml-auto shrink-0 rounded px-1 text-[10px] leading-4 transition-opacity group-hover:opacity-0 ${
+                                    className={`ml-auto shrink-0 rounded px-1 text-[10px] leading-4 group-hover:hidden ${
                                       chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
                                     }`}
                                   >
@@ -494,8 +500,8 @@ export function ProfileDetailDialog({
                                   </span>
                                 )
                               )}
-                              {/* 行内操作：禁用/启用、更新、卸载，hover 显现 */}
-                              <span className="text-faint shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                              {/* 行内操作：禁用/启用、更新、卸载，hover 显现并补位 */}
+                              <span className="text-faint ml-auto hidden shrink-0 items-center gap-0.5 group-hover:flex">
                                 {row && (
                                   <button
                                     type="button"

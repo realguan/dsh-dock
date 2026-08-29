@@ -32,6 +32,43 @@
 
 ## 三、记录
 
+### 2026-08-29 发版事项 · v0.7.0 tag（插件管理器全量 + Profile 重启），冻结期随验收重启 —— guan（AI 协作）
+
+- 变更：本 commit——详情对话框行内操作防溢出修复（hover 操作组与运行徽标
+  display 换位，长包名截断兜底）+ roadmap 4.4 落地记录回写；随后
+  `chore: 版本 0.7.0` + 注解 tag `v0.7.0`，master 与 tag 推送。
+- 影响：**冻结期重启**——v0.6.0 冻结期经维护者裁定提前开工 feat（见当日
+  4.4① 批次条目），本 tag 即新的冻结点：Release notes 至三平台产物验收
+  期间 master 只收 fix。Release notes 草稿见附录。
+- 凭据：前端 typecheck / lint / test 49 绿；Rust 142 / fmt / clippy 全过。
+
+**附录：Release notes 草稿（v0.6.0 → v0.7.0）**
+
+```markdown
+## 新增
+- Profile 重启按钮（运行中行内，确认后同 profile 重启——插件变更借此生效）
+- 插件安装 / 卸载 / 更新：详情对话框行内操作（dsh plugin 转发链，规格校验
+  防参数注入，安装/卸载/更新均带「重启后生效」提示）
+- 插件禁用 / 启用：cordis.patch.yml `{id, disabled}` 单键切换（ADR-0009
+  第四次修订，写入例外 #3），行 id 经 dump-config 权威解析
+- 插件更新标识 + 选版本更新：registry dist-tags 口径（镜像链 npmmirror →
+  npmjs），版本选择弹窗标 最新/当前
+- Profile 详情对话框：插件清单卡（内置/外挂、实装版本、运行态徽标、
+  会话运行汇总）、多插件防溢出（对话框限高 + 分区滚动）
+
+## 修复
+- 行内操作组被卡片右缘裁切（hover 与徽标 display 换位 + 长包名截断）
+- 多插件时详情对话框超出屏幕（基件无高度上限）
+
+## 变更
+- 外挂插件在徽章区与卡片区去重显示（dsh reconcile 数据模型本然双写）
+- AGENTS §7 IPC 名册 +9、网络面 +2（回环运行态查询、registry 外网检查）
+
+## 已知问题
+- 安装进度为单行 busy（pnpm 流式输出未回传）
+- 跨 profile 插件复制未实现（4.4 收尾项）
+```
+
 ### 2026-08-29 完成通知 · 4.4④ 插件更新标识 + 选版本更新落地（registry 外网镜像链）—— guan（AI 协作）
 
 - 变更：本 commit——`updates.rs`（`npm_packument_versions`：任意 npm 包

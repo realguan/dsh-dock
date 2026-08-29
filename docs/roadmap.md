@@ -158,7 +158,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 | **依赖** | Profile 管理器（4.3）——需要先选 profile 再管插件；`serde_yaml` 依赖；pnpm 可用性 spike 结论（见 4.3 前置 spike） |
 | **结果信号** | 用户可在壳内完成插件的安装/卸载/启用禁用/跨 profile 复制，无需手动编辑 `package.json` 或 `cordis.patch.yml` |
 | **退出条件** | 列出/安装/卸载/启用禁用/跨 profile 复制五个核心能力可用，CLI 调用有错误处理和进度反馈 |
-| **落地记录** | 2026-08-29 ①部分落地（Spike B 方案，`docs/spikes/0002-plugin-inventory.md`）：`plugins.rs` 静态清单（bundles + dependencies + node_modules 已装版本/描述）与运行态回环快照（`POST /api/pluginInventory/list`，复现点 11），IPC `list_profile_plugins` / `get_plugin_runtime`，详情对话框插件卡（kind/版本/运行态徽标，按 profile 匹配合并）；②-⑤ 未开工 |
+| **落地记录** | 2026-08-29 全部五能力落地（Spike B 方案，`docs/spikes/0002-plugin-inventory.md`；ADR-0009 §4 第三/四次修订）：①清单（静态 + 运行态回环快照，`list_profile_plugins`/`get_plugin_runtime`，详情对话框插件卡）；②安装/卸载/更新（`dsh plugin add/remove/update` 转发链，spec 校验防旗标注入）；③启用/禁用（patch `{id,disabled}` 单键写入例外 #3，行 id 经 dump-config 行表）；④更新标识 + 选版本更新（registry dist-tags 口径，镜像链外网查询 §7 登记）；跨 profile 复制未做（后续）；重启按钮承接变更生效 |
 | **重排触发器** | 若 dsh 未来版本改变插件配置格式（如从 cordis.patch.yml 迁移到其他格式），需适配；若 `dsh plugin` CLI 接口变化，需更新封装 |
 
 ---
