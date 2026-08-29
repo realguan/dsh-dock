@@ -48,6 +48,21 @@ export function phaseLabel(phase: string | null): string {
   return map[phase] ?? phase
 }
 
+/**
+ * 插件名/规格输入预检（4.4②）——逐字镜像后端 plugins::validate_plugin_spec
+ * （前端只做提效预检，后端校验仍是权威）。防两类滥用：pnpm 旗标注入（前导
+ * `-`）与控制字符/空白；scope 包名与版本段（tag/精确/^~ 区间）放行，`><`
+ * 语义区间 v1 不开（走终端）。
+ */
+export function validatePluginSpec(spec: string): string | null {
+  if (spec === "") return "包名不能为空"
+  if (spec.length > 214) return "包名过长（npm 上限 214 字符）"
+  if (spec.startsWith("-")) return "包名不能以 - 开头（会被当作命令参数）"
+  if (!/^[a-zA-Z0-9@/._^~*-]+$/.test(spec))
+    return "包名只允许字母数字与 @/._^~*-（版本段支持 tag、精确版本、^~ 区间）"
+  return null
+}
+
 export interface RuntimeChip {
   label: string
   failed: boolean

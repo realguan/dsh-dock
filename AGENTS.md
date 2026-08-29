@@ -123,6 +123,7 @@
   `copy_profile` `rename_profile` `delete_profile` `set_default_profile`
   `get_default_profile` `switch_profile` `get_active_profile`
   `list_profile_plugins` `get_plugin_runtime`。
+  `install_plugin` `remove_plugin` `update_plugin`。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。

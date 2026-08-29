@@ -1,7 +1,12 @@
 // 插件运行态合并纯逻辑（4.4①）：相位标签、按 moduleName 的徽标归并、
 // 会话级汇总。fixture 内联，不引 DOM。
 import { describe, expect, it } from "vitest"
-import { phaseLabel, runtimeChipFor, runtimeSummary } from "@/lib/profiles"
+import {
+  phaseLabel,
+  runtimeChipFor,
+  runtimeSummary,
+  validatePluginSpec,
+} from "@/lib/profiles"
 import type { RuntimeEntry } from "@/types/ipc"
 
 const e = (
@@ -74,5 +79,34 @@ describe("runtimeSummary", () => {
 
   it("empty snapshot", () => {
     expect(runtimeSummary([])).toEqual({ active: 0, failed: 0, loading: 0, disabled: 0 })
+  })
+})
+
+describe("validatePluginSpec（镜像后端 plugins::validate_plugin_spec）", () => {
+  it("accepts names, scopes and version segments", () => {
+    for (const ok of [
+      "dsh-better-sidebar",
+      "@scope/pkg",
+      "pkg@0.16.1",
+      "pkg@next",
+      "pkg@^1.0.0",
+    ]) {
+      expect(validatePluginSpec(ok)).toBeNull()
+    }
+  })
+
+  it("rejects flag injection, whitespace, metacharacters, oversize", () => {
+    for (const bad of [
+      "",
+      "-flag",
+      "--frozen-lockfile",
+      "pkg; rm -rf ~",
+      "a b",
+      "pkg@>=2",
+      "pkg`id`",
+      "b".repeat(215),
+    ]) {
+      expect(validatePluginSpec(bad)).not.toBeNull()
+    }
   })
 })

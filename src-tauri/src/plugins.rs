@@ -289,3 +289,197 @@ mod tests {
         assert!(parse_runtime_response("not json").is_err());
     }
 }
+
+// ---------- 插件安装 / 卸载 / 更新（4.4②）：dsh plugin 转发链换动词 ----------
+//
+// 与创建刀同链（profiles.rs run_dsh_plugin）：`dsh plugin --profile <名>
+// add/remove/update <spec>` 原样转发 pnpm；pnpm 防御补齐复用创建同一函数。
+// add 裸包名 dist-tag 坑（ledger 复现点 7）由 UI 引导带版本段规避；reconcile
+// 会把声明 dsh.bundle 的新装依赖回写进 bundles（同复现点 7），装完刷新即见。
+
+/// 插件操作结果：ok = dsh 退出 0 且未超时；detail 为人读文案（失败附输出尾部）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PluginOpOutcome {
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// 插件操作种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginOp {
+    Install,
+    Remove,
+    Update,
+}
+
+impl PluginOp {
+    fn verb(self) -> &'static str {
+        match self {
+            PluginOp::Install => "add",
+            PluginOp::Remove => "remove",
+            PluginOp::Update => "update",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            PluginOp::Install => "安装",
+            PluginOp::Remove => "卸载",
+            PluginOp::Update => "更新",
+        }
+    }
+}
+
+/// 插件名/规格校验（纯函数）：spec 作为单个 argv 传给 dsh→pnpm（无 shell 参与，
+/// 无注入面），但仍须防两类滥用——① pnpm 旗标注入（前导 `-` 会被 pnpm 当参数，
+/// 如 `--frozen-lockfile`）；② 控制字符/空白进日志与清单。允许 scope 包名
+/// （`@scope/name`）、版本段（`@tag|精确|^~区间`，不含 `><`——需要语义区间时
+/// 走终端，v1 不开）。与前端 lib/profiles.ts 的预检镜像同规则。
+pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
+    if spec.is_empty() {
+        return Err("包名不能为空".to_string());
+    }
+    if spec.len() > 214 {
+        // npm 包名长度上限（scope 内每段 ≤214 总长），超长必非法
+        return Err("包名过长（npm 上限 214 字符）".to_string());
+    }
+    if spec.starts_with('-') {
+        return Err("包名不能以 - 开头（会被当作命令参数）".to_string());
+    }
+    if !spec
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "@/._^~*-".contains(c))
+    {
+        return Err(
+            "包名只允许字母数字与 @/._^~*-（版本段支持 tag、精确版本、^~ 区间）".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
+/// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
+pub fn mutate_plugin_blocking(
+    op: PluginOp,
+    profile: &str,
+    spec: &str,
+    data_dir: &Path,
+) -> Result<PluginOpOutcome, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_plugin_spec(spec)?;
+    let home = crate::resolve::user_dsh_home();
+    if !home
+        .join("profiles")
+        .join(profile)
+        .join("package.json")
+        .is_file()
+    {
+        return Err(format!(
+            "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
+        ));
+    }
+    let path_env = crate::resolve::effective_path();
+    let node = crate::resolve::detect_system_node(&path_env)
+        .ok_or("未检出系统 Node（PATH 上无 node）——插件操作需要系统 Node 与 dsh")?;
+    let dsh = crate::resolve::detect_system_dsh(&path_env)
+        .ok_or("未检出系统 dsh（PATH 上无官方安装）——插件操作经 dsh CLI 完成")?;
+    crate::updates::ensure_pnpm(
+        &node.bin,
+        &crate::resolve::path_with_bin(&node.bin, &path_env),
+    )?;
+    let run = crate::profiles::run_dsh_plugin(
+        &node.bin,
+        &dsh.bin_js,
+        &[
+            "plugin".to_string(),
+            "--profile".to_string(),
+            profile.to_string(),
+            op.verb().to_string(),
+            spec.to_string(),
+        ],
+        &home,
+        &data_dir.join("plugin-op.log"),
+    )?;
+    let ok = !run.timed_out && run.code == Some(0);
+    let detail = if ok {
+        format!(
+            "已{label} {spec}（profile「{profile}」）——若该 profile 正在运行，重启后生效。",
+            label = op.label(),
+        )
+    } else if run.timed_out {
+        format!(
+            "{label}超时（10 分钟）已终止：网络或 registry 不可达时常见，检查网络后重试。",
+            label = op.label()
+        )
+    } else {
+        let tail: String = run
+            .output
+            .lines()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{label}失败（dsh 退出码 {}）。输出尾部：\n{}",
+            run.code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "未知".into()),
+            tail,
+            label = op.label()
+        )
+    };
+    Ok(PluginOpOutcome { ok, detail })
+}
+
+#[cfg(test)]
+mod op_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_spec_rejects_flag_injection_and_metacharacters() {
+        // 合法：裸名 / scope / 版本段（tag、精确、^~ 区间）
+        for ok_spec in [
+            "dsh-better-sidebar",
+            "@scope/pkg",
+            "@mars-sea/dsh-commandcode-provider",
+            "pkg@0.16.1",
+            "pkg@next",
+            "pkg@^1.0.0",
+            "pkg@~2.3",
+        ] {
+            assert!(validate_plugin_spec(ok_spec).is_ok(), "{ok_spec}");
+        }
+        // 恶意/非法：pnpm 旗标注入、空白、元字符、超长、空串、>< 区间（v1 不开）
+        for bad in [
+            "",
+            "-flag",
+            "--frozen-lockfile",
+            "pkg; rm -rf ~",
+            "pkg && reboot",
+            "a b",
+            "pkg@>=2",
+            "pkg`id`",
+            "pkg$(id)",
+            "pkg|x",
+            &format!("a{}", "b".repeat(215)),
+        ] {
+            assert!(validate_plugin_spec(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn mutate_rejects_unmaterialized_profile_and_bad_spec_before_spawn() {
+        // 未物化：先于任何 spawn/网络拒绝
+        let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
+        let ghost = format!("dsh-dock-ghost-{}", std::process::id());
+        assert!(
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir)
+                .unwrap_err()
+                .contains("尚未初始化")
+        );
+        // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
+        assert!(mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir).is_err());
+    }
+}

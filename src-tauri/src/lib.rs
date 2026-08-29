@@ -725,6 +725,75 @@ async fn get_plugin_runtime(
     }
 }
 
+/// 安装/卸载/更新插件（4.4②）：`dsh plugin --profile <名> add/remove/update`
+/// 转发链（复用创建刀基建，pnpm 防御补齐同源）；阻塞转发走 spawn_blocking，
+/// 超时同创建 600s。ok=false 时 detail 带输出尾部，前端按警示态展示。
+#[tauri::command]
+async fn install_plugin(
+    app: tauri::AppHandle,
+    profile: String,
+    package: String,
+) -> Result<crate::plugins::PluginOpOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::plugins::mutate_plugin_blocking(
+            crate::plugins::PluginOp::Install,
+            &profile,
+            &package,
+            &data_dir,
+        )
+    })
+    .await
+    .map_err(|e| format!("安装任务异常终止：{e}"))?
+}
+
+#[tauri::command]
+async fn remove_plugin(
+    app: tauri::AppHandle,
+    profile: String,
+    package: String,
+) -> Result<crate::plugins::PluginOpOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::plugins::mutate_plugin_blocking(
+            crate::plugins::PluginOp::Remove,
+            &profile,
+            &package,
+            &data_dir,
+        )
+    })
+    .await
+    .map_err(|e| format!("卸载任务异常终止：{e}"))?
+}
+
+#[tauri::command]
+async fn update_plugin(
+    app: tauri::AppHandle,
+    profile: String,
+    package: String,
+) -> Result<crate::plugins::PluginOpOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::plugins::mutate_plugin_blocking(
+            crate::plugins::PluginOp::Update,
+            &profile,
+            &package,
+            &data_dir,
+        )
+    })
+    .await
+    .map_err(|e| format!("更新任务异常终止：{e}"))?
+}
+
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
@@ -1391,6 +1460,9 @@ pub fn run() {
             switch_profile,
             get_active_profile,
             list_profile_plugins,
+            install_plugin,
+            remove_plugin,
+            update_plugin,
             get_plugin_runtime
         ])
         .build(tauri::generate_context!())

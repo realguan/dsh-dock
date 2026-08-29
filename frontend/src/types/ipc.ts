@@ -103,6 +103,13 @@ export interface PluginRuntimeSnapshot {
   entries: RuntimeEntry[]
 }
 
+/// 插件安装/卸载/更新结果（4.4②）：ok = dsh 退出 0 且未超时；
+/// detail 为人读文案（失败附 dsh 输出尾部，成功含「重启后生效」提示）。
+export interface PluginOpOutcome {
+  ok: boolean
+  detail: string
+}
+
 /// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
 export interface LifecycleOutcome {
   profile: string

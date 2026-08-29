@@ -35,6 +35,9 @@ pub const COMMANDS: &[&str] = &[
     "switch_profile",
     "get_active_profile",
     "list_profile_plugins",
+    "install_plugin",
+    "remove_plugin",
+    "update_plugin",
     "get_plugin_runtime",
 ];
 

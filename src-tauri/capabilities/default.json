@@ -37,6 +37,9 @@
     "allow-switch-profile",
     "allow-get-active-profile",
     "allow-list-profile-plugins",
+    "allow-install-plugin",
+    "allow-remove-plugin",
+    "allow-update-plugin",
     "allow-get-plugin-runtime"
   ]
 }

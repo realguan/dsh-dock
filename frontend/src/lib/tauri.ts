@@ -10,6 +10,7 @@ import type {
   DeleteOutcome,
   LifecycleOutcome,
   PluginEntry,
+  PluginOpOutcome,
   PluginRuntimeSnapshot,
   ProfileDetail,
   ProfileSummary,
@@ -62,4 +63,11 @@ export const api = {
   listProfilePlugins: (profile: string) =>
     invoke<PluginEntry[]>("list_profile_plugins", { profile }),
   getPluginRuntime: () => invoke<PluginRuntimeSnapshot>("get_plugin_runtime"),
+  // 4.4② 插件安装/卸载/更新：dsh plugin 转发链（阻塞可达分钟级，前端按 busy 态处理）
+  installPlugin: (profile: string, pkg: string) =>
+    invoke<PluginOpOutcome>("install_plugin", { profile, package: pkg }),
+  removePlugin: (profile: string, pkg: string) =>
+    invoke<PluginOpOutcome>("remove_plugin", { profile, package: pkg }),
+  updatePlugin: (profile: string, pkg: string) =>
+    invoke<PluginOpOutcome>("update_plugin", { profile, package: pkg }),
 }

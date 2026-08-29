@@ -165,6 +165,16 @@ export const t = {
     detailClose: "关闭",
     // 插件清单（4.4①）：静态清单 + 运行态快照（复现点 11）
     pluginNotInstalled: "未安装",
+    // 插件安装/卸载/更新（4.4②）：dsh plugin 转发链
+    pluginInstallBtn: "安装插件",
+    pluginInstallPlaceholder: "包名 或 包名@版本（如 dsh-xxx@^1.2）",
+    pluginInstallSubmit: "安装",
+    pluginInstallCancel: "取消",
+    pluginInstallBusy: "安装中…（需要下载，可能数十秒到数分钟）",
+    pluginUninstall: "卸载",
+    pluginUpdate: "更新",
+    pluginOpBusyRemove: "卸载中…",
+    pluginOpBusyUpdate: "更新中…",
     pluginWithDsh: "版本随 dsh",
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行停用` : ""}`,

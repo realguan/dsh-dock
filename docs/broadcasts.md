@@ -32,6 +32,25 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · 4.4② 插件安装/卸载/更新落地：详情对话框行内操作 —— guan（AI 协作）
+
+- 变更：本 commit——`plugins.rs`（`validate_plugin_spec` 纯校验：防 pnpm 旗标
+  注入（前导 `-` 当参数）、控制字符/空白；scope 包名与版本段（tag/精确/^~
+  区间）放行，`><` 语义区间 v1 不开 + `mutate_plugin_blocking`：`dsh plugin
+  --profile <名> add/remove/update <spec>` 转发链复用创建刀基建，pnpm 防御
+  补齐同源，未物化/非法名先拒不 spawn，超时同创建 600s，失败附 dsh 输出
+  尾部）、`lib.rs`/`ipc.rs`/`capabilities`（`install_plugin` / `remove_plugin`
+  / `update_plugin` 三条 IPC 三处同步）、前端（详情对话框区头「安装插件」
+  输入行 + 行内更新/卸载 hover 操作 + busy 态 + 结果分箱展示；spec 预检
+  `validatePluginSpec` 镜像后端校验 + Vitest）。
+- 影响：**触宪法级**——`AGENTS.md` §7 IPC 名册 +3。本条即知会。语义边界：
+  装到**运行中**的 profile 时 dsh 不热重载，壳侧成功文案带「重启后生效」；
+  add 裸包名 dist-tag 坑由输入占位引导带版本段规避（复现点 7）；安装进度
+  v1 为单行 busy（不订阅 pnpm 流式输出），后续独立插件管理视图再升级。
+- 凭据：cargo test 137 绿（+2：spec 恶意反例集、未物化/非法名先拒不
+  spawn）/ fmt / clippy 全过；前端 typecheck / lint / test 49 绿（+2 镜像
+  校验）。
+
 ### 2026-08-29 完成通知 · 4.4① 插件清单落地：详情对话框插件卡 + 运行态回环快照 —— guan（AI 协作）
 
 - 变更：本 commit——`plugins.rs`（新模块：静态清单 = bundles + dependencies +
