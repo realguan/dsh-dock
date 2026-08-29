@@ -12,6 +12,7 @@ import type {
   PluginEntry,
   PluginOpOutcome,
   PluginRuntimeSnapshot,
+  PluginRowState,
   ProfileDetail,
   ProfileSummary,
   TerminalAction,
@@ -70,4 +71,9 @@ export const api = {
     invoke<PluginOpOutcome>("remove_plugin", { profile, package: pkg }),
   updatePlugin: (profile: string, pkg: string) =>
     invoke<PluginOpOutcome>("update_plugin", { profile, package: pkg }),
+  // 4.4③ 禁用/启用：行表（行 id 权威来源）+ patch 单键切换（重启后生效）
+  getPluginRows: (profile: string) =>
+    invoke<PluginRowState[]>("get_plugin_rows", { profile }),
+  setPluginDisabled: (profile: string, rowId: string, disabled: boolean) =>
+    invoke<void>("set_plugin_disabled", { profile, rowId, disabled }),
 }

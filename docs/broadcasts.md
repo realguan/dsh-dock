@@ -32,6 +32,22 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · 4.4③ 禁用/启用插件落地（patch 单键切换，ADR 第四次修订实施）—— guan（AI 协作）
+
+- 变更：本 commit——`Cargo.toml`（新增 `serde_yaml 0.9`，ADR 已裁定接受停维护
+  风险，读写收敛在 `set_plugin_disabled` 单函数便于后继替换）、`plugins.rs`
+  （`plugin_rows_blocking`：`dsh --profile <名> --dump-config` 行 id↔包名配对 +
+  壳 toggle 态，行级扫描避开 `!!js` 标签；`set_plugin_disabled`：patch 顶层数组
+  读改写——禁用置/追加 disabled 键、启用移键或整条移除，头部注释块保真，
+  非顶层数组拒绝写入）、`lib.rs`/`ipc.rs`/`capabilities`（`get_plugin_rows` /
+  `set_plugin_disabled` 三处同步）、前端（行内电源开关：禁用态常驻灰徽 +
+  包名划线，运行徽标只对启用中插件显示；操作带「重启后生效」提示）。
+- 影响：仅周知。行 id 权威来源 = dump-config 行表（一次 spawn 秒级，对话框
+  打开时异步取）；重启按钮承接生效。
+- 凭据：cargo test 140 绿（+3：toggle 幂等与注释保真、config 键保全、
+  dump 行配对解析）/ fmt / clippy 全过；前端 typecheck / lint / test 49 绿。
+  实机数据锚定见 ADR 第四次修订注。
+
 ### 2026-08-29 完成通知 · Profile 重启按钮 + 详情去重 + 禁用/启用 ADR（维护者四项指令批次 1/2）—— guan（AI 协作）
 
 - 变更：本 commit——① 重启按钮（运行中行 RotateCw，同 profile 走切换链

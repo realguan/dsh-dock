@@ -794,6 +794,41 @@ async fn update_plugin(
     .map_err(|e| format!("更新任务异常终止：{e}"))?
 }
 
+/// 插件行表（4.4③）：`dsh --profile <名> --dump-config` 行 id↔包名配对 +
+/// 壳 patch toggle 态——行 id 不可从包名推导（ADR-0009 第四次修订），一次
+/// spawn 全量拿到。阻塞 spawn 走 spawn_blocking。
+#[tauri::command]
+async fn get_plugin_rows(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<Vec<crate::plugins::PluginRowState>, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::plugins::plugin_rows_blocking(&profile, &data_dir)
+    })
+    .await
+    .map_err(|e| format!("行表任务异常终止：{e}"))?
+}
+
+/// 禁用/启用切换（4.4③）：patch 写入例外 #3（`{id, disabled}` 单键，
+/// ADR-0009 第四次修订）；运行中会话不热生效，重启承接。
+#[tauri::command]
+async fn set_plugin_disabled(
+    profile: String,
+    row_id: String,
+    disabled: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
+    })
+    .await
+    .map_err(|e| format!("切换任务异常终止：{e}"))?
+}
+
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
@@ -1463,6 +1498,8 @@ pub fn run() {
             install_plugin,
             remove_plugin,
             update_plugin,
+            get_plugin_rows,
+            set_plugin_disabled,
             get_plugin_runtime
         ])
         .build(tauri::generate_context!())

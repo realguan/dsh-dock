@@ -483,3 +483,272 @@ mod op_tests {
         assert!(mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir).is_err());
     }
 }
+
+// ---------- 禁用/启用（4.4③，ADR-0009 第四次修订：patch 写入例外 #3） ----------
+
+/// dump-config 行表条目：`- id: <行id>` / `name: <包名>` 配对 + 壳 toggle 态。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PluginRowState {
+    pub id: String,
+    /// dump-config 行内 `name:`（= 包名，与 dependencies 对并）。
+    pub pkg_name: String,
+    /// 壳写入的 patch toggle 是否为 disabled（生效意图真相，见 ADR 第四次修订）。
+    pub shell_disabled: bool,
+}
+
+/// 行 id 配对解析（行级扫描，不用 YAML 解析器）：dump-config 输出含 `!!js`
+/// 标签等 serde_yaml 不保证友好的形态；行表形态是机器生成的稳定两行组
+/// （`- id: X` 顶格 + `  name: Y` 二行缩进）。带引号的 name 去引号。
+fn parse_dump_rows(text: &str) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    let mut pending_id: Option<String> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("- id: ") {
+            pending_id = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("  name: ") {
+            if let Some(id) = pending_id.take() {
+                let name = rest.trim().trim_matches('\'').trim_matches('"').to_string();
+                rows.push((id, name));
+            }
+        } else if !line.starts_with(' ') && !line.is_empty() {
+            pending_id = None; // 顶格非空行打断配对（进入其他段落）
+        }
+    }
+    rows
+}
+
+/// 读 profile 自家 patch 的壳 toggle 集（id -> disabled: true）。
+fn patch_disabled_ids(patch_path: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(text) = std::fs::read_to_string(patch_path) else {
+        return Default::default();
+    };
+    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+        return Default::default();
+    };
+    let Some(seq) = v.as_sequence() else {
+        return Default::default();
+    };
+    seq.iter()
+        .filter_map(|e| {
+            let m = e.as_mapping()?;
+            let id = m.get(serde_yaml::Value::String("id".into()))?.as_str()?;
+            let disabled = m
+                .get(serde_yaml::Value::String("disabled".into()))
+                .and_then(|d| d.as_bool())
+                .unwrap_or(false);
+            disabled.then(|| id.to_string())
+        })
+        .collect()
+}
+
+/// 行表查询（阻塞 spawn `dsh --profile <名> --dump-config`，一次拿全量行 id
+/// 与包名配对；行 id 不可从包名推导——ADR 第四次修订）。dump-config 只读，
+/// 复用创建链的 spawn 基建（同 env 注入与超时）。
+pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<PluginRowState>, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let home = crate::resolve::user_dsh_home();
+    if !home
+        .join("profiles")
+        .join(profile)
+        .join("package.json")
+        .is_file()
+    {
+        return Err(format!("profile「{profile}」尚未初始化"));
+    }
+    let path_env = crate::resolve::effective_path();
+    let node = crate::resolve::detect_system_node(&path_env)
+        .ok_or("未检出系统 Node——行表查询需要系统 Node 与 dsh")?;
+    let dsh = crate::resolve::detect_system_dsh(&path_env)
+        .ok_or("未检出系统 dsh——行表查询经 dsh CLI 完成")?;
+    let run = crate::profiles::run_dsh_plugin(
+        &node.bin,
+        &dsh.bin_js,
+        &[
+            "--profile".to_string(),
+            profile.to_string(),
+            "--dump-config".to_string(),
+        ],
+        &home,
+        &data_dir.join("plugin-rows.log"),
+    )?;
+    if run.timed_out || run.code != Some(0) {
+        return Err(format!(
+            "行表查询失败（dsh 退出码 {}）",
+            run.code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "未知".into())
+        ));
+    }
+    let toggles = patch_disabled_ids(&home.join("profiles").join(profile).join("cordis.patch.yml"));
+    Ok(parse_dump_rows(&run.output)
+        .into_iter()
+        .map(|(id, pkg_name)| PluginRowState {
+            shell_disabled: toggles.contains(&id),
+            id,
+            pkg_name,
+        })
+        .collect())
+}
+
+/// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组；文件头部连续注释块
+/// 原样前置保真——注释为用户可见文档，序列化会丢其余位置注释，已知代价）。
+/// 禁用：id 条目存在则仅置 disabled 键，否则追加 `{id, disabled}` 双键条目；
+/// 启用：移除 disabled 键，条目只剩 id 则整条移除。
+pub fn set_plugin_disabled(
+    home: &Path,
+    profile: &str,
+    row_id: &str,
+    disabled: bool,
+) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    if row_id.is_empty() || row_id.contains(['/', '\n']) {
+        return Err("行 id 非法".to_string());
+    }
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let text = std::fs::read_to_string(&patch_path)
+        .map_err(|e| format!("读取 {} 失败：{e}", patch_path.display()))?;
+    // 头部注释块（从首行起的连续 # 行，含其间空行；首个实质行即止）
+    let mut header = String::new();
+    let mut body_start = 0usize;
+    for (i, line) in text.lines().enumerate() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            header.push_str(line);
+            header.push('\n');
+            body_start = i + 1;
+        } else {
+            break;
+        }
+    }
+    let body: String = text.lines().skip(body_start).collect::<Vec<_>>().join("\n");
+    let seq: Vec<serde_yaml::Value> = match serde_yaml::from_str::<serde_yaml::Value>(&body) {
+        Ok(v) if v.is_null() => Vec::new(),
+        Ok(v) => v
+            .as_sequence()
+            .ok_or_else(|| "cordis.patch.yml 顶层数组之外还有内容——拒绝写入".to_string())?
+            .clone(),
+        Err(e) => return Err(format!("cordis.patch.yml 解析失败：{e}")),
+    };
+    let id_key = serde_yaml::Value::String("id".into());
+    let disabled_key = serde_yaml::Value::String("disabled".into());
+    let mut seq = seq;
+    let mut found = false;
+    for entry in seq.iter_mut() {
+        let Some(m) = entry.as_mapping_mut() else {
+            continue;
+        };
+        if m.get(&id_key).and_then(|v| v.as_str()) == Some(row_id) {
+            found = true;
+            if disabled {
+                m.insert(disabled_key.clone(), serde_yaml::Value::Bool(true));
+            } else {
+                m.remove(&disabled_key);
+            }
+        }
+    }
+    if !found && disabled {
+        let mut m = serde_yaml::Mapping::new();
+        m.insert(
+            id_key.clone(),
+            serde_yaml::Value::String(row_id.to_string()),
+        );
+        m.insert(disabled_key, serde_yaml::Value::Bool(true));
+        seq.push(serde_yaml::Value::Mapping(m));
+    }
+    // 启用后只剩 id 键的条目整条移除（恢复原状）
+    if !disabled {
+        seq.retain(|e| {
+            e.as_mapping()
+                .map(|m| m.len() > 1 || !m.contains_key(&id_key))
+                .unwrap_or(true)
+        });
+    }
+    let mut out = header;
+    if !seq.is_empty() {
+        out.push_str(&serde_yaml::to_string(&seq).map_err(|e| format!("序列化失败：{e}"))?);
+    } else if !out.ends_with("[]\n") {
+        out.push_str("[]\n");
+    }
+    std::fs::write(&patch_path, out).map_err(|e| format!("写 {} 失败：{e}", patch_path.display()))
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    fn tmp() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "dsh-dock-patch-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(d.join("profiles/p")).unwrap();
+        d
+    }
+
+    const HEADER: &str =
+        "# Your patch layer for this dsh profile\n# applied after every bundle layer\n";
+
+    #[test]
+    fn disable_appends_entry_enabling_removes_it() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        std::fs::write(&patch, format!("{HEADER}[]\n")).unwrap();
+        // 禁用：追加双键条目 + 头部注释保真
+        set_plugin_disabled(&home, "p", "better-sidebar", true).unwrap();
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert!(text.starts_with(HEADER), "注释头保真：{text}");
+        assert!(text.contains("- id: better-sidebar"), "{text}");
+        assert!(text.contains("disabled: true"), "{text}");
+        // 重复禁用幂等（单条目）
+        set_plugin_disabled(&home, "p", "better-sidebar", true).unwrap();
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert_eq!(text.matches("better-sidebar").count(), 1, "{text}");
+        // 启用：条目只剩 id → 整条移除，恢复 `[]`
+        set_plugin_disabled(&home, "p", "better-sidebar", false).unwrap();
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert!(text.trim_end().ends_with("[]"), "{text}");
+        assert!(!text.contains("better-sidebar"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn enable_keeps_entries_with_other_keys_and_toggles_in_place() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        std::fs::write(
+            &patch,
+            format!("{HEADER}- id: row-a\n  config:\n    k: v\n"),
+        )
+        .unwrap();
+        // 已有带 config 的条目：禁用只加 disabled 键，不碰 config
+        set_plugin_disabled(&home, "p", "row-a", true).unwrap();
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert!(text.contains("config:"), "{text}");
+        assert!(text.contains("disabled: true"), "{text}");
+        // 启用：移除 disabled 键但条目保留（还有 config 键）
+        set_plugin_disabled(&home, "p", "row-a", false).unwrap();
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert!(text.contains("row-a") && text.contains("config:"), "{text}");
+        assert!(!text.contains("disabled:"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn parse_dump_rows_pairs_id_and_name_lines() {
+        let dump = "meta: 1\n- id: llm-pi-ai\n  name: '@deepseek-ai/dsh-llm-pi-ai'\n- id: llm-commandcode\n  name: '@mars-sea/dsh-commandcode-provider'\n  config:\n    apiKeyEnv: X\nsomewhere-else:\n  - id: nested\n    name: not-top\n";
+        let rows = parse_dump_rows(dump);
+        assert_eq!(
+            rows,
+            vec![
+                ("llm-pi-ai".into(), "@deepseek-ai/dsh-llm-pi-ai".into()),
+                (
+                    "llm-commandcode".into(),
+                    "@mars-sea/dsh-commandcode-provider".into()
+                ),
+            ]
+        );
+    }
+}

@@ -110,6 +110,14 @@ export interface PluginOpOutcome {
   detail: string
 }
 
+/// 插件行表条目（4.4③，复现点 7/ADR 第四次修订）：行 id 不可从包名推导，
+/// 来自 dump-config 行表；shell_disabled = 壳 patch toggle 的禁用意图。
+export interface PluginRowState {
+  id: string
+  pkg_name: string
+  shell_disabled: boolean
+}
+
 /// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
 export interface LifecycleOutcome {
   profile: string

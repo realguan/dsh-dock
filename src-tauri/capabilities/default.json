@@ -40,6 +40,8 @@
     "allow-install-plugin",
     "allow-remove-plugin",
     "allow-update-plugin",
+    "allow-get-plugin-rows",
+    "allow-set-plugin-disabled",
     "allow-get-plugin-runtime"
   ]
 }

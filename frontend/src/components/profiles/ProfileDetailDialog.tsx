@@ -6,11 +6,16 @@
 // 全程 busy 态；结果文案（成功含「重启后生效」、失败附 dsh 输出尾部）由
 // 后端给，前端只分箱展示。spec 预检镜像后端校验（validatePluginSpec）。
 import { useCallback, useEffect, useState } from "react"
-import { LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
-import type { PluginEntry, PluginRuntimeSnapshot, ProfileDetail } from "@/types/ipc"
+import type {
+  PluginEntry,
+  PluginRowState,
+  PluginRuntimeSnapshot,
+  ProfileDetail,
+} from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -39,6 +44,8 @@ export function ProfileDetailDialog({
   const [installOpen, setInstallOpen] = useState(false)
   const [installSpec, setInstallSpec] = useState("")
   const [installError, setInstallError] = useState<string | null>(null)
+  // 4.4③ 行表（行 id 权威来源；dump-config spawn ~秒级，独立容错）
+  const [rows, setRows] = useState<PluginRowState[] | null>(null)
 
   const reload = useCallback(() => {
     if (!name) return
@@ -55,6 +62,10 @@ export function ProfileDetailDialog({
       .getPluginRuntime()
       .then((s) => setRuntime(s))
       .catch(() => setRuntime({ profile: null, entries: [] }))
+    api
+      .getPluginRows(name)
+      .then((r) => setRows(r))
+      .catch(() => setRows([]))
   }, [name])
 
   useEffect(() => {
@@ -62,6 +73,7 @@ export function ProfileDetailDialog({
     setDetail(null)
     setPlugins(null)
     setRuntime(null)
+    setRows(null)
     setError(null)
     setOpMessage(null)
     setOpError(null)
@@ -115,6 +127,31 @@ export function ProfileDetailDialog({
         }
       })
       .catch((e) => setInstallError(String(e)))
+      .finally(() => setOpBusy(null))
+  }
+
+  // 禁用/启用（4.4③）：patch 单键切换；不热生效，成功文案带重启提示
+  const toggleDisabled = (pkg: string) => {
+    if (!name || opBusy) return
+    const row = rows?.find((r) => r.pkg_name === pkg)
+    if (!row) return
+    setOpError(null)
+    setOpMessage(null)
+    setOpBusy(`toggle:${pkg}`)
+    api
+      .setPluginDisabled(name, row.id, !row.shell_disabled)
+      .then(() => {
+        setOpMessage(
+          row.shell_disabled
+            ? `已启用 ${pkg}——重启该 profile 后生效。`
+            : `已禁用 ${pkg}——重启该 profile 后生效。`,
+        )
+        api
+          .getPluginRows(name)
+          .then((r) => setRows(r))
+          .catch(() => {})
+      })
+      .catch((e) => setOpError(String(e)))
       .finally(() => setOpBusy(null))
   }
 
@@ -298,11 +335,21 @@ export function ProfileDetailDialog({
                     const spec = detail.dependencies[p.name]
                     const chip = runtimeChipFor(p.name, liveEntries)
                     const rowBusy =
-                      opBusy === `remove:${p.name}` || opBusy === `update:${p.name}`
+                      opBusy === `remove:${p.name}` ||
+                      opBusy === `update:${p.name}` ||
+                      opBusy === `toggle:${p.name}`
+                    const row = rows?.find((r) => r.pkg_name === p.name)
+                    const shellDisabled = row?.shell_disabled ?? false
                     return (
                       <div key={p.name} className="group min-w-0 px-3 py-1.5">
                         <div className="flex items-baseline gap-2">
-                          <span className="text-ink shrink-0 font-mono text-xs">{p.name}</span>
+                          <span
+                            className={`shrink-0 font-mono text-xs ${
+                              shellDisabled ? "text-faint line-through" : "text-ink"
+                            }`}
+                          >
+                            {p.name}
+                          </span>
                           <span
                             className="text-faint min-w-0 truncate font-mono text-xs"
                             title={spec ? `声明：${spec}` : undefined}
@@ -312,21 +359,46 @@ export function ProfileDetailDialog({
                           {rowBusy ? (
                             <span className="text-faint ml-auto inline-flex shrink-0 items-center gap-1 text-[10px]">
                               <LoaderCircle className="size-3 animate-spin" aria-hidden />
-                              {opBusy?.startsWith("remove") ? t.profiles.pluginOpBusyRemove : t.profiles.pluginOpBusyUpdate}
+                              {opBusy?.startsWith("remove")
+                                ? t.profiles.pluginOpBusyRemove
+                                : opBusy?.startsWith("toggle")
+                                  ? t.profiles.pluginOpBusyUpdate
+                                  : t.profiles.pluginOpBusyUpdate}
                             </span>
                           ) : (
                             <>
-                              {chip && (
-                                <span
-                                  className={`ml-auto shrink-0 rounded px-1 text-[10px] leading-4 transition-opacity group-hover:opacity-0 ${
-                                    chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
-                                  }`}
-                                >
-                                  {chip.label}
+                              {/* 禁用态常驻；运行徽标只对启用中的插件有意义 */}
+                              {shellDisabled ? (
+                                <span className="border-line text-faint ml-auto shrink-0 rounded border px-1 text-[10px] leading-4">
+                                  {t.profiles.pluginDisabled}
                                 </span>
+                              ) : (
+                                chip && (
+                                  <span
+                                    className={`ml-auto shrink-0 rounded px-1 text-[10px] leading-4 transition-opacity group-hover:opacity-0 ${
+                                      chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
+                                    }`}
+                                  >
+                                    {chip.label}
+                                  </span>
+                                )
                               )}
-                              {/* 行内操作：更新/卸载，hover 显现（与运行徽标互斥位） */}
+                              {/* 行内操作：禁用/启用、更新、卸载，hover 显现 */}
                               <span className="text-faint shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                {row && (
+                                  <button
+                                    type="button"
+                                    title={shellDisabled ? t.profiles.pluginEnable : t.profiles.pluginDisable}
+                                    aria-label={`${shellDisabled ? t.profiles.pluginEnable : t.profiles.pluginDisable} ${p.name}`}
+                                    disabled={opBusy !== null}
+                                    onClick={() => toggleDisabled(p.name)}
+                                    className={`hover:bg-wash inline-flex size-6 items-center justify-center rounded-md transition-colors disabled:opacity-40 ${
+                                      shellDisabled ? "text-ok hover:text-ok" : "hover:text-ink"
+                                    }`}
+                                  >
+                                    <Power className="size-3.5" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   title={t.profiles.pluginUpdate}
