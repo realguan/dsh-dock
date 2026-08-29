@@ -125,6 +125,12 @@ export function ProfileDetailDialog({
       : []
   const deps = plugins?.filter((p) => p.kind === "dependency") ?? []
   const depCount = deps.length
+  // 去重（4.4③）：reconcile 会把装的外挂同时写进 bundles 与 dependencies
+  // （台账复现点 7）——徽章区只留「层叠内置层」，外挂在下方卡片区出现，
+  // 不重复渲染；隐藏数 >0 时留一行指引
+  const depNames = new Set(deps.map((d) => d.name))
+  const layerBundles = detail?.bundles.filter((b) => !depNames.has(b)) ?? []
+  const hiddenLayers = (detail?.bundles.length ?? 0) - layerBundles.length
 
   return (
     <Dialog open={!!name} onOpenChange={(o) => !o && onClose()}>
@@ -153,14 +159,14 @@ export function ProfileDetailDialog({
                 时最小宽度 = 内容 min-content，whitespace-pre 的最长行会把整条
                 轨道撑破，依赖卡片与 footer 一起越界；min-w-0 后 pre 由自身
                 overflow-auto 横向滚动。 */}
-            {/* 插件组合 */}
+            {/* 插件组合（层叠内置层；外挂层在下方卡片区，见 hiddenLayers 指引） */}
             <section>
               <div className="text-faint mb-1.5 text-xs">{t.profiles.detailBundles}</div>
               <div className="flex flex-wrap gap-1.5">
-                {detail.bundles.length === 0 && (
+                {layerBundles.length === 0 && (
                   <span className="text-faint text-xs">{t.profiles.detailEmptyDeps}</span>
                 )}
-                {detail.bundles.map((b) => {
+                {layerBundles.map((b) => {
                   const chip = runtimeChipFor(b, liveEntries)
                   return (
                     <span
@@ -181,6 +187,11 @@ export function ProfileDetailDialog({
                   )
                 })}
               </div>
+              {hiddenLayers > 0 && (
+                <div className="text-faint mt-1.5 text-[10px]">
+                  {t.profiles.hiddenLayersHint(hiddenLayers)}
+                </div>
+              )}
             </section>
 
             {/* 外挂插件（4.4①/②）：清单 + 行内卸载/更新 + 区头安装 */}

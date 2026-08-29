@@ -175,6 +175,7 @@ export const t = {
     pluginUpdate: "更新",
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
+    hiddenLayersHint: (n: number) => `另有 ${n} 个外挂插件层，见下方外挂插件清单`,
     pluginWithDsh: "版本随 dsh",
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行停用` : ""}`,
@@ -229,6 +230,11 @@ export const t = {
     switchConfirm: (name: string) => `切换到「${name}」`,
     switchBusy: "切换中…",
     switchDone: (name: string) => `已开始切换到「${name}」，进度见主窗口`,
+    // 重启（4.4③）：同 profile 走切换链；恒弹确认（必杀运行中会话）
+    restart: "重启",
+    restartTitle: (name: string) => `重启「${name}」？`,
+    restartNote: "将停止当前 dsh 并以同一 profile 重新启动，进行中的任务会中断（会话历史已落盘，不受影响）；刚安装/卸载/禁用的插件借此生效。",
+    restartConfirm: (name: string) => `重启「${name}」`,
   },
 } as const
 

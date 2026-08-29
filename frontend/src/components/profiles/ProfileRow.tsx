@@ -4,7 +4,7 @@
 // 4.3⑥ 切换：webUi 候选（profile.web_ui）额外暴露「启动」——主动词给带字
 // 按钮（与页头「新建 Profile」同一语言），图标动作保持静默次级；运行中行以
 // 心跳徽标标识且不重复给启动；非 webUi 的「无界面」是恒定属性，归 meta 行。
-import { Copy, Info, LoaderCircle, Pencil, Play, Star, Trash2 } from "lucide-react"
+import { Copy, Info, LoaderCircle, Pencil, Play, RotateCw, Star, Trash2 } from "lucide-react"
 import { t } from "@/content/zh-CN"
 import type { ProfileSummary } from "@/types/ipc"
 
@@ -19,6 +19,8 @@ interface ProfileRowProps {
   onDetail: () => void
   onSetDefault: () => void
   onLaunch: () => void
+  /** 仅运行中行：以同 profile 重启（切换链路复用，见 ProfileManager） */
+  onRestart: () => void
   onRename: () => void
   onCopy: () => void
   onDelete: () => void
@@ -63,6 +65,7 @@ export function ProfileRow({
   onDetail,
   onSetDefault,
   onLaunch,
+  onRestart,
   onRename,
   onCopy,
   onDelete,
@@ -145,6 +148,17 @@ export function ProfileRow({
             </button>
           )}
           <div className="flex items-center gap-0.5">
+            {/* 运行中行：重启（同 profile 切换链路）；「运行中」行没有启动按钮，
+                重启是它的在场动作 */}
+            {isRunning && (
+              <IconAction
+                label={busy ? t.profiles.launchWorking : t.profiles.restart}
+                disabled={busy}
+                onClick={onRestart}
+              >
+                <RotateCw className="size-4" />
+              </IconAction>
+            )}
             <IconAction
               label={isDefault ? t.profiles.defaultIs : t.profiles.setDefault}
               disabled={busy}

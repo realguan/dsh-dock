@@ -169,6 +169,26 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 - 列出/详情/删除/复制/重命名：纯文件系统 + dsh CLI 无相应命令的部分用文件读；删除/重命名前执行运行中防护（比对 `launch.profile`，见 §2 工程准则）。
 - 切换（4.3⑥，第三次修订）：管理器行内「启动」→ `switch_profile` IPC（校验：合法名 + webUi 候选）→ teardown → 主窗口回壳 boot 屏（**先回屏再启动**：事件总线模块加载期装配，反序吞首发遥测）→ 强制目标注入 probe → 重启 → 就绪自动导航。当前运行 profile 查询走 `get_active_profile`（会话槽真相，与删除/重命名防护同源）；运行中徽标/确认文案共用。
 - 复制/重命名的引用面按 Spike B 的结论执行（尤其：rename 需改写 `name: dsh-profile-<新名>`；`profiles/node_modules` 农场不动的修正；node_modules 处理以「删 + dsh 下次启动自愈」为第一方案）。
+
+> **2026-08-29 第四次执行细则修订（范围扩展：插件禁用/启用，4.4③）——patch 写入例外 #3**。
+> 禁用/启用 = 修改 profile 的 `cordis.patch.yml`：写入 `{id: <行id>, disabled: true}`
+> 单键条目（禁用）或移除该条目/disabled 键（启用恢复原状）。**dsh 侧依据**：patch
+> 语义「纯 disabled 键不碰原行 config」（roadmap §1 已核 2026-08-27；config 键
+> 整体替换不深合并，故任何写回只增删 disabled 键、不动既有行）。**行 id 不可从
+> 包名推导**（2026-08-29 实测：`@mars-sea/dsh-commandcode-provider` 行 id =
+> `llm-commandcode`；`dsh-better-sidebar` = `better-sidebar`——id 由各插件包导出
+> 的 `dsh.bundle.patch` 声明）⇒ id 来源定死 `dsh --profile <名> --dump-config`
+> 的行表（`- id:`/`name:` 配对；一次 spawn 全量拿到，勿自解析包内 patch 结构）。
+> **写入策略**：serde_yaml 0.9 读改写 patch 顶层数组——找到 `id` 匹配条目则仅
+> 增删其 `disabled` 键，无条目则追加 `{id, disabled: true}` 双键条目；启用时若
+> 条目只剩 id 键则整条移除。**注释保真**：模板头注释为用户可见文档，序列化会
+> 丢——实现必须抽取文件头部连续 `#` 注释块、写回时原样前置（其余位置注释不保，
+> 记为已知代价）。**选型代价**：serde_yaml 上游已停维护（roadmap 已登记），
+> 接受用于本最小写面，读写各收敛在一个函数内便于后继替换。**运行语义**：patch
+> 变更对运行中会话不热生效（hmr 默认停用），重启后生效（4.4③ 重启按钮承接）；
+> 生效后的运行态变化经回环快照可见。**生效状态真相**：壳写入的 toggle 条目是
+> 禁用意图的真相（读自家 patch 文件），dump-config 的 `disabled:`（可能是 `!!js`
+> 表达式）只作展示佐证不作解析目标。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
 - 失败模式（2026-08-28 口径 2 统一）：创建/插件操作前防御性检测 pnpm（基准 = `effective_path` 注入后的 PATH——壳注入什么 dsh 就能看见什么，Spike A §3.4 同链）→ 缺失则同步补齐（`npm i -g pnpm`，复用 boot 同一函数）→ 补齐失败才降级为 dsh 自带文案（exit 127）+ 壳侧平台化安装建议；网络失败 → 提示检查 npm registry 镜像可达性（ADR-0006）。boot 期同一补齐失败 = 阻断启动 + 可行动文案。
 

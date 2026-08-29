@@ -83,6 +83,13 @@ export function ProfileManager() {
     doSwitch(name)
   }
 
+  // 重启（4.4③）：同 profile 走切换链（teardown → 原样重起）；恒弹确认——
+  // 重启必杀运行中会话。弹窗文案按重启语义分叉（isRestart）。
+  const handleRestart = (name: string) => {
+    setActionError(null)
+    setSwitchTarget(name)
+  }
+
   const doSwitch = (name: string) => {
     setRowBusy(name)
     api
@@ -182,6 +189,7 @@ export function ProfileManager() {
               onDetail={() => setDetailName(p.name)}
               onSetDefault={() => handleSetDefault(p.name)}
               onLaunch={() => handleLaunch(p.name)}
+              onRestart={() => handleRestart(p.name)}
               onRename={() => setNameOp({ mode: "rename", source: p.name })}
               onCopy={() => setNameOp({ mode: "copy", source: p.name })}
               onDelete={() => setDeleteTarget(p.name)}
@@ -194,6 +202,7 @@ export function ProfileManager() {
       <ProfileSwitchDialog
         target={switchTarget}
         active={activeProfile}
+        restart={switchTarget !== null && switchTarget === activeProfile}
         onClose={() => setSwitchTarget(null)}
         onDone={() => {
           setNotice({ kind: "ok", text: t.profiles.switchDone(switchTarget ?? "") })

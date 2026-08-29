@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · Profile 重启按钮 + 详情去重 + 禁用/启用 ADR（维护者四项指令批次 1/2）—— guan（AI 协作）
+
+- 变更：本 commit——① 重启按钮（运行中行 RotateCw，同 profile 走切换链
+  `switch_profile`，恒弹确认，弹窗文案按重启语义分叉）；④ 详情对话框去重
+  （reconcile 把外挂同时写进 bundles 与 dependencies——徽章区只留层叠内置
+  层，隐藏数 >0 给指引行，台账复现点 7）；③ 决策先行：**ADR-0009 第四次
+  修订**——patch 写入例外 #3（`cordis.patch.yml` 的 `{id, disabled}` 单键
+  切换）：行 id 不可从包名推导（实测 commandcode→`llm-commandcode`），来源
+  定死 dump-config 行表；serde_yaml 0.9 读改写（注释头部保真策略）；运行中
+  不热生效、重启承接；生效真相 = 壳自家 patch 条目。
+- 影响：仅周知；③ 的**实现**（serde_yaml 依赖 + IPC + 行内开关 UI）随后续
+  commit 落地，② 更新标识（npm registry 外网查询，§7 需新登记）排最后。
+- 凭据：前端 typecheck / lint / test 49 绿；行 id 映射实测锚定（本机 web 档
+  dump-config）。
+
 ### 2026-08-29 完成通知 · 4.4② 插件安装/卸载/更新落地：详情对话框行内操作 —— guan（AI 协作）
 
 - 变更：本 commit——`plugins.rs`（`validate_plugin_spec` 纯校验：防 pnpm 旗标

@@ -17,6 +17,7 @@ import {
 export function ProfileSwitchDialog({
   target,
   active,
+  restart = false,
   onClose,
   onDone,
 }: {
@@ -24,6 +25,8 @@ export function ProfileSwitchDialog({
   target: string | null
   /** 当前会话占用中的 profile（null = 无活跃会话） */
   active: string | null
+  /** target === active：重启语义（同 profile 停止重起），文案分叉 */
+  restart?: boolean
   onClose: () => void
   /** 切换指令已被壳受理后的页面级提示 */
   onDone: () => void
@@ -59,10 +62,14 @@ export function ProfileSwitchDialog({
     <Dialog open={target !== null} onOpenChange={(o) => !o && close()}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle>{target ? t.profiles.switchTitle(target) : ""}</DialogTitle>
-          {/* 切换是常规操作（会话历史落盘不丢）：描述走中性灰，不走删除那套
-              警示红——中断代价一句话说清即可 */}
-          <DialogDescription className="text-xs">{t.profiles.switchNote}</DialogDescription>
+          <DialogTitle>
+            {target ? (restart ? t.profiles.restartTitle(target) : t.profiles.switchTitle(target)) : ""}
+          </DialogTitle>
+          {/* 切换/重启是常规操作（会话历史落盘不丢）：描述走中性灰，不走删除
+              那套警示红——中断代价一句话说清即可 */}
+          <DialogDescription className="text-xs">
+            {restart ? t.profiles.restartNote : t.profiles.switchNote}
+          </DialogDescription>
         </DialogHeader>
 
         {active && (
@@ -80,7 +87,13 @@ export function ProfileSwitchDialog({
             {t.profiles.detailClose}
           </Button>
           <Button disabled={busy} onClick={submit}>
-            {busy ? t.profiles.switchBusy : target ? t.profiles.switchConfirm(target) : ""}
+            {busy
+              ? t.profiles.switchBusy
+              : target
+                ? restart
+                  ? t.profiles.restartConfirm(target)
+                  : t.profiles.switchConfirm(target)
+                : ""}
           </Button>
         </DialogFooter>
       </DialogContent>
