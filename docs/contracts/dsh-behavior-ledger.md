@@ -23,6 +23,7 @@
 | 8 | profile 非法名校验 | `profiles.rs`（`validate_profile_name`，详情/后续创建重命名共用的路径遍历防线） | `resolveProfileDir` 校验规则（空名 / `/` `\` / `.` / `..` / 字面量 `node_modules`，@ 318；拒绝集之外一律合法） | 2026-08-28 |
 | 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
 | 10 | profile 切换（webUi 重启语义）+ WSL guest 脚本参数化 | `lib.rs`（`switch_profile` / `forced_profile` 注入 probe）、`executor.rs`（`guest_boot_script(profile)` + `sh_quote` 单引号进参，ADR-0009 §4 第三次修订） | dsh CLI 旗标面：launcher 只认 `--profile`/`--patch`/config dumps，其余原样转发给 app 树（dsh-cmdline @ 4-9）；web 命令族自带 `--host`/`--port`/`--no-open`/`--trusted-host`（dsh-web-app startup.js @ 16-44），**`--port 0` = OS 选空闲端口（help 明文）**；bundles 进程启动时挂载，无运行时切换/热加载能力 | 2026-08-29 |
+| 11 | 插件运行时清单（4.4 前置，Spike B） | 壳侧回环调用（实施时落位；仅会话在跑时 `POST http://127.0.0.1:<port>/api/pluginInventory/list`，信封 `{type:"client-request",rpcId,method,payload:{args:{}}}`，见 `docs/spikes/0002-plugin-inventory.md`） | unary 调用兼走普通 HTTP POST（`dsh-client-connection` callUnary @ 6203-6211：`postJson("/api/${method}")`）；`payload` 恰一 plain-object `args` 字段；响应 `{entries:[{entryId,moduleName,enabled,fiberPhase}]}`（`dsh-host-plugin-inventory/typert.host.js` schema；FiberState→phase 映射 index.js @ 33-46，disposed→null）；回环无鉴权门（伪造 Host 仍 200，2026-08-29 实测）；patch/配置行 id ≠ entryId（无组前缀 vs `include:*` 树路径），patch 写入 id 以 `--dump-config` 行 id 为准 | 2026-08-29 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
@@ -61,3 +62,8 @@
   反例测试 + bash 实跑回读）；WSL 真机验证待 Windows 侧按 docs/executor.md
   清单人工执行，切换其余路径本机已实装验证。多开（多实例并行）依赖同一
   旗标面，storages 竞态未验证，登记 roadmap 待办。
+- 2026-08-29 4.4 前置 Spike B：复现点 11 入册（插件运行时清单 = 回环 HTTP
+  POST 单调用，`payload:{args:{}}` 信封实机打通；WS mux 并非唯一传输）。
+  关键意外：回环无鉴权门（伪造 Host 仍 200）——记为 dsh 既有姿态，壳侧
+  只读使用；id 空间分叉（patch 行 id vs entryId）以 dump-config 为 patch
+  写入源。详见 docs/spikes/0002-plugin-inventory.md。
