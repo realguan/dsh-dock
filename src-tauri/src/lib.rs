@@ -15,6 +15,7 @@
 mod executor;
 pub mod ipc;
 mod manifest;
+mod plugins;
 mod profiles;
 mod resolve;
 mod settings;
@@ -671,6 +672,57 @@ fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
 #[tauri::command]
 fn get_active_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
     Ok(active_session_profile(&app))
+}
+
+/// 插件清单（4.4①，Spike B 方案）：静态清单 = bundles（官方内置）+
+/// dependencies（第三方，含已装版本/描述）。阻塞文件操作走 spawn_blocking。
+#[tauri::command]
+async fn list_profile_plugins(profile: String) -> Result<Vec<crate::plugins::PluginEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::plugins::list_profile_plugins(&home, &profile)
+    })
+    .await
+    .map_err(|e| format!("清单任务异常终止：{e}"))?
+}
+
+/// 插件运行态快照（一次性，不订阅）：仅活跃会话的 profile 有数据——
+/// 无会话返回 `{profile: None, entries: []}`。回环只读查询见 AGENTS §7
+/// 登记与复现点 11；阻塞 HTTP 走 spawn_blocking（2s 超时兜底）。
+#[tauri::command]
+async fn get_plugin_runtime(
+    app: tauri::AppHandle,
+) -> Result<crate::plugins::PluginRuntimeSnapshot, String> {
+    let target = {
+        let state = app.state::<Arc<ShellState>>().inner().clone();
+        let profile = active_session_profile(&app);
+        let origin = state.workbench_url.lock().unwrap().as_ref().map(|u| {
+            format!(
+                "{}://{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or("127.0.0.1"),
+                u.port().map(|p| format!(":{p}")).unwrap_or_default()
+            )
+        });
+        (profile, origin)
+    };
+    match target {
+        (Some(profile), Some(origin)) => {
+            let entries = tauri::async_runtime::spawn_blocking(move || {
+                crate::plugins::fetch_runtime_snapshot(&origin)
+            })
+            .await
+            .map_err(|e| format!("运行态任务异常终止：{e}"))??;
+            Ok(crate::plugins::PluginRuntimeSnapshot {
+                profile: Some(profile),
+                entries,
+            })
+        }
+        _ => Ok(crate::plugins::PluginRuntimeSnapshot {
+            profile: None,
+            entries: Vec::new(),
+        }),
+    }
 }
 
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
@@ -1337,7 +1389,9 @@ pub fn run() {
             set_default_profile,
             get_default_profile,
             switch_profile,
-            get_active_profile
+            get_active_profile,
+            list_profile_plugins,
+            get_plugin_runtime
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

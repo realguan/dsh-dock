@@ -158,6 +158,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 | **依赖** | Profile 管理器（4.3）——需要先选 profile 再管插件；`serde_yaml` 依赖；pnpm 可用性 spike 结论（见 4.3 前置 spike） |
 | **结果信号** | 用户可在壳内完成插件的安装/卸载/启用禁用/跨 profile 复制，无需手动编辑 `package.json` 或 `cordis.patch.yml` |
 | **退出条件** | 列出/安装/卸载/启用禁用/跨 profile 复制五个核心能力可用，CLI 调用有错误处理和进度反馈 |
+| **落地记录** | 2026-08-29 ①部分落地（Spike B 方案，`docs/spikes/0002-plugin-inventory.md`）：`plugins.rs` 静态清单（bundles + dependencies + node_modules 已装版本/描述）与运行态回环快照（`POST /api/pluginInventory/list`，复现点 11），IPC `list_profile_plugins` / `get_plugin_runtime`，详情对话框插件卡（kind/版本/运行态徽标，按 profile 匹配合并）；②-⑤ 未开工 |
 | **重排触发器** | 若 dsh 未来版本改变插件配置格式（如从 cordis.patch.yml 迁移到其他格式），需适配；若 `dsh plugin` CLI 接口变化，需更新封装 |
 
 ---

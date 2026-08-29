@@ -78,6 +78,31 @@ export interface CreateProfileOutcome {
   detail: string
 }
 
+/// 插件清单条目（4.4①，形状锚定 src-tauri/src/plugins.rs）。
+export interface PluginEntry {
+  name: string
+  /** bundle = dsh 内置（随 dsh 安装目录）；dependency = 第三方外挂 */
+  kind: "bundle" | "dependency"
+  /** 已安装版本（node_modules 实读）；null = 未安装 / 内置随 dsh */
+  installed_version: string | null
+  description: string | null
+}
+
+/// 运行态快照条目（复现点 11：pluginInventory/list；一次性，不订阅）。
+export interface RuntimeEntry {
+  entry_id: string
+  module_name: string
+  enabled: boolean
+  /** null = 已停用（disposed） */
+  fiber_phase: "active" | "loading" | "pending" | "failed" | "unloading" | null
+}
+
+export interface PluginRuntimeSnapshot {
+  /** 快照归属 profile（活跃会话的）；null = 无活跃会话，前端不合并 */
+  profile: string | null
+  entries: RuntimeEntry[]
+}
+
 /// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
 export interface LifecycleOutcome {
   profile: string

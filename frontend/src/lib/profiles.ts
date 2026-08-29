@@ -1,3 +1,4 @@
+import type { RuntimeEntry } from "@/types/ipc"
 // Profile 管理器纯逻辑（4.3 前端刀）。校验规则逐字镜像后端
 // profiles::validate_profile_name（dsh resolveProfileDir @ 318）——前端只做
 // 输入预检提效，后端校验仍是权威（不可信边界在 IPC 之外）。
@@ -30,4 +31,69 @@ export function summarizeCreateOutcome(o: {
   if (o.installed && o.materialized) return "ready"
   if (o.materialized) return "pending"
   return "failed"
+}
+
+// ---------- 插件运行态合并（4.4①，Spike B / 复现点 11） ----------
+
+/** fiber phase 的中文标签；null = 已停用（disposed）。 */
+export function phaseLabel(phase: string | null): string {
+  if (phase === null) return "已停用"
+  const map: Record<string, string> = {
+    active: "运行中",
+    loading: "加载中",
+    pending: "等待中",
+    failed: "失败",
+    unloading: "卸载中",
+  }
+  return map[phase] ?? phase
+}
+
+export interface RuntimeChip {
+  label: string
+  failed: boolean
+}
+
+/**
+ * 某插件的运行态徽标：按 moduleName 匹配条目后取「最坏相位」——
+ * failed 优先（警示色），其次 loading/pending/unloading，再 active（enabled=false
+ * 的行不算 active——禁用行报「运行中」是误导），全停用兜底。
+ * 无匹配条目返回 null（内置 bundle 多不以此名出现，无徽标即无运行态可显）。
+ */
+export function runtimeChipFor(
+  moduleName: string,
+  entries: RuntimeEntry[],
+): RuntimeChip | null {
+  const mine = entries.filter((e) => e.module_name === moduleName)
+  if (mine.length === 0) return null
+  const failed = mine.filter((e) => e.fiber_phase === "failed").length
+  if (failed > 0) return { label: `${phaseLabel("failed")}×${failed}`, failed: true }
+  const loading = mine.filter(
+    (e) =>
+      e.fiber_phase === "loading" ||
+      e.fiber_phase === "pending" ||
+      e.fiber_phase === "unloading",
+  ).length
+  if (loading > 0) return { label: `${phaseLabel("loading")}×${loading}`, failed: false }
+  const active = mine.filter((e) => e.fiber_phase === "active" && e.enabled).length
+  if (active > 0) return { label: `${phaseLabel("active")}×${active}`, failed: false }
+  return { label: phaseLabel(null), failed: false }
+}
+
+export interface RuntimeSummary {
+  active: number
+  failed: number
+  loading: number
+  disabled: number
+}
+
+/** 快照全量汇总：徽标行上方的会话级一句话。禁用行（disposed 或 enabled=false）先归停用。 */
+export function runtimeSummary(entries: RuntimeEntry[]): RuntimeSummary {
+  const s: RuntimeSummary = { active: 0, failed: 0, loading: 0, disabled: 0 }
+  for (const e of entries) {
+    if (e.fiber_phase === null || !e.enabled) s.disabled += 1
+    else if (e.fiber_phase === "active") s.active += 1
+    else if (e.fiber_phase === "failed") s.failed += 1
+    else s.loading += 1
+  }
+  return s
 }

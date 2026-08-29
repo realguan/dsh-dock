@@ -143,7 +143,7 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
 
 /// 从 package.json 文本提取 `(dsh.profile.bundles, dependencies 包名)`。
 /// 缺失 / 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
-fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
+pub(crate) fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
     let Ok(text) = fs::read_to_string(path) else {
         return (Vec::new(), Vec::new());
     };
@@ -166,7 +166,7 @@ fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
 }
 
 /// 提取 `dsh.profile.bundles` 的字符串项（形状不符/混入非字符串项时取子集）。
-fn manifest_bundles(pkg: &serde_json::Value) -> Vec<String> {
+pub(crate) fn manifest_bundles(pkg: &serde_json::Value) -> Vec<String> {
     pkg.pointer("/dsh/profile/bundles")
         .and_then(|v| v.as_array())
         .map(|arr| {

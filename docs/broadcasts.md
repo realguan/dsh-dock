@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · 4.4① 插件清单落地：详情对话框插件卡 + 运行态回环快照 —— guan（AI 协作）
+
+- 变更：本 commit——`plugins.rs`（新模块：静态清单 = bundles + dependencies +
+  node_modules 已装版本/描述；运行态 = `POST /api/pluginInventory/list` 回环
+  只读快照，2s 超时，Spike B 方案 + 复现点 11）、`lib.rs`/`ipc.rs`/
+  `capabilities`（`list_profile_plugins` / `get_plugin_runtime` 两条 IPC 三处
+  同步）、前端（详情对话框依赖区升级为插件卡：官方/第三方、已装版本、运行态
+  徽标，快照按 profile 匹配合并防张冠李戴；纯函数 `runtimeChipFor` /
+  `runtimeSummary` + Vitest）。
+- 影响：**触宪法级**——`AGENTS.md` §7 两处：IPC 名册 +2；网络面登记新例外
+  「插件运行态回环只读查询」（127.0.0.1、只读、仅活跃会话、一次性快照）。
+  本条即对该宪法修订的知会。**冻结期说明**：v0.6.0 验收仍待三平台产物，
+  本 feat 经维护者当日裁定提前开工（「直接开工吧」），验收并行不受影响。
+- 凭据：cargo test 135 绿（+4：静态清单/非法名/信封形状/响应解析）/ fmt /
+  clippy 全过；前端 typecheck / lint / test 47 绿（+7 运行态合并纯逻辑）；
+  运行态获取路径已在本机运行中的 dsh 实例实机打通（Spike B 实测记录）。
+
 ### 2026-08-29 发版事项 · v0.6.0 tag 已推送，冻结期开始 —— guan（AI 协作）
 
 - 变更：commit `5ef27ab`（`chore: 版本 0.6.0（Profile 管理器全量 + Profile 切换）`，

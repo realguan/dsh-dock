@@ -121,7 +121,8 @@
   `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
   `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`
   `copy_profile` `rename_profile` `delete_profile` `set_default_profile`
-  `get_default_profile` `switch_profile` `get_active_profile`。
+  `get_default_profile` `switch_profile` `get_active_profile`
+  `list_profile_plugins` `get_plugin_runtime`。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。
@@ -130,7 +131,9 @@
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
 - **唯一网络面 = `updates.rs`**；其余模块禁触网，新网络需求先在此登记；外链域名在
   `EXTERNAL_URL_HOSTS` 登记。已登记用途：boot 期 pnpm 补齐（`npm i -g pnpm`，
-  2026-08-28，ADR-0009 口径 2）。专项裁定见 §9 索引对应 ADR。
+  2026-08-28，ADR-0009 口径 2）；**插件运行态回环只读查询**（`plugins.rs`，
+  `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
+  一次性快照不订阅——2026-08-29，Spike B / 复现点 11）。专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
 

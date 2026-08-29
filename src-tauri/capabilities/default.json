@@ -35,6 +35,8 @@
     "allow-set-default-profile",
     "allow-get-default-profile",
     "allow-switch-profile",
-    "allow-get-active-profile"
+    "allow-get-active-profile",
+    "allow-list-profile-plugins",
+    "allow-get-plugin-runtime"
   ]
 }

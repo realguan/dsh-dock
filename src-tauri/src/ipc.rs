@@ -34,6 +34,8 @@ pub const COMMANDS: &[&str] = &[
     "get_default_profile",
     "switch_profile",
     "get_active_profile",
+    "list_profile_plugins",
+    "get_plugin_runtime",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

@@ -9,6 +9,8 @@ import type {
   CreateProfileOutcome,
   DeleteOutcome,
   LifecycleOutcome,
+  PluginEntry,
+  PluginRuntimeSnapshot,
   ProfileDetail,
   ProfileSummary,
   TerminalAction,
@@ -56,4 +58,8 @@ export const api = {
   // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）
   switchProfile: (profile: string) => invoke<void>("switch_profile", { profile }),
   getActiveProfile: () => invoke<string | null>("get_active_profile"),
+  // 4.4① 插件清单：静态读文件层；运行态 = 回环只读快照（仅活跃会话有数据）
+  listProfilePlugins: (profile: string) =>
+    invoke<PluginEntry[]>("list_profile_plugins", { profile }),
+  getPluginRuntime: () => invoke<PluginRuntimeSnapshot>("get_plugin_runtime"),
 }

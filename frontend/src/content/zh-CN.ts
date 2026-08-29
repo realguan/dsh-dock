@@ -158,11 +158,17 @@ export const t = {
     detailTitle: (name: string) => `「${name}」详情`,
     detailPackage: "清单名",
     detailBundles: "插件组合（dsh.profile.bundles）",
-    detailDeps: "依赖（package.json）",
+    detailDeps: "外挂插件（dependencies）",
     detailPatch: "cordis.patch.yml 原文",
     detailPatchNone: "尚无 patch 层（首次启动时由 dsh 生成）",
     detailEmptyDeps: "无额外依赖",
     detailClose: "关闭",
+    // 插件清单（4.4①）：静态清单 + 运行态快照（复现点 11）
+    pluginNotInstalled: "未安装",
+    pluginWithDsh: "版本随 dsh",
+    runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
+      `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行停用` : ""}`,
+    runtimeUnavailable: "该 profile 当前未运行，仅显示静态清单",
     // 创建
     createTitle: "新建 Profile",
     createNameLabel: "Profile 名字",

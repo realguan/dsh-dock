@@ -1,9 +1,12 @@
 // 详情对话框（4.3 前端刀）：开窗时经 api 播种单 profile 详情；
 // patch 原文 mono 等宽展示（后端刻意不解析 YAML，原文即真相）。
+// 4.4① 插件清单：dependencies 区升级为插件卡（官方/第三方、已装版本、
+// 运行态徽标）——运行态快照仅在本 profile 是活跃会话时合并（复现点 11）。
 import { useEffect, useState } from "react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
-import type { ProfileDetail } from "@/types/ipc"
+import { runtimeChipFor, runtimeSummary } from "@/lib/profiles"
+import type { PluginEntry, PluginRuntimeSnapshot, ProfileDetail } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -22,13 +25,18 @@ export function ProfileDetailDialog({
   onClose: () => void
 }) {
   const [detail, setDetail] = useState<ProfileDetail | null>(null)
+  const [plugins, setPlugins] = useState<PluginEntry[] | null>(null)
+  const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!name) return
     let alive = true
     setDetail(null)
+    setPlugins(null)
+    setRuntime(null)
     setError(null)
+    // 静态两源并行；运行态独立容错——回环查询失败不遮蔽静态清单
     api
       .getProfileDetail(name)
       .then((d) => {
@@ -37,10 +45,32 @@ export function ProfileDetailDialog({
       .catch((e) => {
         if (alive) setError(String(e))
       })
+    api
+      .listProfilePlugins(name)
+      .then((p) => {
+        if (alive) setPlugins(p)
+      })
+      .catch(() => {
+        if (alive) setPlugins([])
+      })
+    api
+      .getPluginRuntime()
+      .then((s) => {
+        if (alive) setRuntime(s)
+      })
+      .catch(() => {
+        if (alive) setRuntime({ profile: null, entries: [] })
+      })
     return () => {
       alive = false
     }
   }, [name])
+
+  // 运行态只属于活跃会话的 profile——非本 profile 的快照不合并（防张冠李戴）
+  const liveEntries =
+    runtime !== null && runtime.profile !== null && runtime.profile === name
+      ? runtime.entries
+      : []
 
   return (
     <Dialog open={!!name} onOpenChange={(o) => !o && onClose()}>
@@ -73,38 +103,84 @@ export function ProfileDetailDialog({
                 {detail.bundles.length === 0 && (
                   <span className="text-faint text-xs">{t.profiles.detailEmptyDeps}</span>
                 )}
-                {detail.bundles.map((b) => (
-                  <span
-                    key={b}
-                    className="border-line bg-bg text-ink rounded-md border px-2 py-0.5 font-mono text-xs"
-                  >
-                    {b}
-                  </span>
-                ))}
+                {detail.bundles.map((b) => {
+                  const chip = runtimeChipFor(b, liveEntries)
+                  return (
+                    <span
+                      key={b}
+                      className="border-line bg-bg text-ink inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-xs"
+                    >
+                      {b}
+                      {chip && (
+                        <span
+                          className={`rounded px-1 text-[10px] leading-4 ${
+                            chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
+                          }`}
+                        >
+                          {chip.label}
+                        </span>
+                      )}
+                    </span>
+                  )
+                })}
               </div>
             </section>
 
-            {/* 依赖 */}
+            {/* 外挂插件（4.4①）：官方/第三方、已装版本、运行态徽标 */}
             <section>
               <div className="text-faint mb-1.5 text-xs">{t.profiles.detailDeps}</div>
-              {Object.keys(detail.dependencies).length === 0 ? (
+              {liveEntries.length > 0 ? (
+                <div className="text-faint mb-1.5 text-[10px]">
+                  {t.profiles.runtimeSummary(runtimeSummary(liveEntries))}
+                </div>
+              ) : (
+                plugins !== null &&
+                plugins.some((p) => p.kind === "dependency") && (
+                  <div className="text-faint mb-1.5 text-[10px]">{t.profiles.runtimeUnavailable}</div>
+                )
+              )}
+              {plugins === null ? (
+                <div className="text-faint text-xs">{t.profiles.busyShort}</div>
+              ) : plugins.filter((p) => p.kind === "dependency").length === 0 ? (
                 <div className="text-faint text-xs">{t.profiles.detailEmptyDeps}</div>
               ) : (
-                <div className="border-line bg-bg divide-line-soft rounded-lg border">
-                  {Object.entries(detail.dependencies).map(([pkg, spec]) => (
-                    <div
-                      key={pkg}
-                      className="flex items-baseline justify-between gap-3 px-3 py-1.5 font-mono text-xs"
-                    >
-                      {/* 2026-08-28 修复：spec 可为超长不可断行值（file: 路径）——
-                          包名 shrink-0 恒可见，spec truncate + title 兜底。
-                          原写法 spec shrink-0 把包名挤压至零宽、路径溢出边框。 */}
-                      <span className="text-ink shrink-0">{pkg}</span>
-                      <span className="text-faint min-w-0 truncate" title={spec}>
-                        {spec}
-                      </span>
-                    </div>
-                  ))}
+                <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
+                  {plugins
+                    .filter((p) => p.kind === "dependency")
+                    .map((p) => {
+                      const spec = detail.dependencies[p.name]
+                      const chip = runtimeChipFor(p.name, liveEntries)
+                      return (
+                        <div key={p.name} className="min-w-0 px-3 py-1.5">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-ink shrink-0 font-mono text-xs">{p.name}</span>
+                            <span
+                              className="text-faint min-w-0 truncate font-mono text-xs"
+                              title={spec ? `声明：${spec}` : undefined}
+                            >
+                              {p.installed_version ?? (spec ? t.profiles.pluginNotInstalled : "")}
+                            </span>
+                            {chip && (
+                              <span
+                                className={`ml-auto shrink-0 rounded px-1 text-[10px] leading-4 ${
+                                  chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
+                                }`}
+                              >
+                                {chip.label}
+                              </span>
+                            )}
+                          </div>
+                          {(p.description || spec) && (
+                            <div
+                              className="text-faint mt-0.5 truncate text-[10px]"
+                              title={p.description ?? spec}
+                            >
+                              {p.description ?? spec}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                 </div>
               )}
             </section>
