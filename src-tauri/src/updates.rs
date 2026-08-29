@@ -2035,3 +2035,83 @@ esac
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+// ---------- 插件更新检查（4.4④）：registry packument 通用查询 ----------
+//
+// §7 登记的外网用途（2026-08-29）：与 dsh 版本检查同链（镜像链 npmmirror →
+// npmjs、同超时、同 packument 体积上限），网络代码只住本模块——plugins.rs
+// 经本函数取版本数据，自身不触网。
+
+/// 解析 packument → (dist-tags.latest, 全版本升序)。纯函数，Vitest/Cargo 直测。
+fn parse_packument_versions(text: &str) -> Option<(String, Vec<String>)> {
+    let v = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    let latest = v.get("dist-tags")?.get("latest")?.as_str()?.to_string();
+    let mut versions: Vec<String> = v.get("versions")?.as_object()?.keys().cloned().collect();
+    versions.sort_by(|a, b| crate::resolve::compare_versions_asc(a, b));
+    Some((latest, versions))
+}
+
+/// 查询 npm 包的 (latest, 全版本升序)：镜像链顺序尝试，全部失败才 Err。
+/// 包名须先过 `plugins::validate_plugin_spec`（调用方把关），此处只做
+/// URL 安全拼装（scoped `/` → `%2F`，与 npm CLI 一致）。
+pub fn npm_packument_versions(package: &str) -> Result<(String, Vec<String>), String> {
+    if package.is_empty() || package.starts_with('-') {
+        return Err("包名非法".to_string());
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
+        .build();
+    let mut last_err = String::from("镜像链均不可达");
+    for base in package_registry_bases() {
+        let url = format!("{base}/{}", package.replace('/', "%2F"));
+        let resp = match agent.get(&url).call() {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("{base}：{e}");
+                continue;
+            }
+        };
+        let text = match read_body_capped(resp.into_reader(), PACKUMENT_MAX_BYTES) {
+            Ok(t) => t,
+            Err(e) => {
+                last_err = format!("{base}：读取失败 {e}");
+                continue;
+            }
+        };
+        match parse_packument_versions(&text) {
+            Some(pair) => return Ok(pair),
+            None => {
+                last_err = format!("{base}：packument 形状不符");
+            }
+        }
+    }
+    Err(last_err)
+}
+
+#[cfg(test)]
+mod packument_tests {
+    use super::*;
+
+    #[test]
+    fn parses_packument_latest_and_sorted_versions() {
+        let text = r#"{
+            "dist-tags": {"latest": "0.16.1", "next": "0.17.0-rc.1"},
+            "versions": {
+                "0.16.1": {"dist": {}},
+                "0.9.0": {"dist": {}},
+                "0.17.0-rc.1": {"dist": {}},
+                "0.10.0": {"dist": {}}
+            }
+        }"#;
+        let (latest, versions) = parse_packument_versions(text).unwrap();
+        assert_eq!(latest, "0.16.1");
+        // 升序按 semver（0.9 < 0.10 < 0.16 < 0.17-rc），非字典序
+        assert_eq!(versions, vec!["0.9.0", "0.10.0", "0.16.1", "0.17.0-rc.1"]);
+    }
+
+    #[test]
+    fn malformed_packument_is_none() {
+        assert!(parse_packument_versions("not json").is_none());
+        assert!(parse_packument_versions(r#"{"versions":{}}"#).is_none());
+    }
+}

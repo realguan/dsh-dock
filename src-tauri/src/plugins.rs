@@ -752,3 +752,66 @@ mod patch_tests {
         );
     }
 }
+
+// ---------- 更新检查（4.4④）：registry 外网查询经 updates.rs 镜像链 ----------
+
+/// 单插件可更新项。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PluginUpdateInfo {
+    pub name: String,
+    pub current: String,
+    pub latest: String,
+}
+
+/// 更新检查报告：updates = 落后于 dist-tags.latest 的已装插件；
+/// failed = 查询失败的个数（镜像链不可达/包名不存在），不计入 checked。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PluginUpdateReport {
+    pub updates: Vec<PluginUpdateInfo>,
+    pub checked: usize,
+    pub failed: usize,
+}
+
+/// 逐个外挂插件查 registry（阻塞、串行；按钮触发不自动跑）。current ≥ latest
+/// 的不进报告；latest 取 dist-tags（与 pnpm 默认安装语义一致，复现点 7 教训）。
+pub fn check_updates_blocking(home: &Path, profile: &str) -> Result<PluginUpdateReport, String> {
+    let deps: Vec<PluginEntry> = list_profile_plugins(home, profile)?
+        .into_iter()
+        .filter(|p| p.kind == PluginKind::Dependency && p.installed_version.is_some())
+        .collect();
+    let mut report = PluginUpdateReport {
+        updates: Vec::new(),
+        checked: 0,
+        failed: 0,
+    };
+    for dep in deps {
+        if validate_plugin_spec(&dep.name).is_err() {
+            continue; // 奇异名（file: 镜像等 registry 查不到的形态）不打 registry
+        }
+        let current = dep.installed_version.clone().unwrap_or_default();
+        report.checked += 1;
+        match crate::updates::npm_packument_versions(&dep.name) {
+            Ok((latest, _)) => {
+                if crate::resolve::compare_versions_asc(&current, &latest)
+                    == std::cmp::Ordering::Less
+                {
+                    report.updates.push(PluginUpdateInfo {
+                        name: dep.name,
+                        current,
+                        latest,
+                    });
+                }
+            }
+            Err(_) => report.failed += 1,
+        }
+    }
+    Ok(report)
+}
+
+/// 版本列表（选版本更新用）：降序，最新在前。
+pub fn plugin_versions_blocking(package: &str) -> Result<Vec<String>, String> {
+    validate_plugin_spec(package)?;
+    let (_, mut versions) = crate::updates::npm_packument_versions(package)?;
+    versions.reverse();
+    Ok(versions)
+}

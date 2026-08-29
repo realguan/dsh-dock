@@ -178,6 +178,17 @@ export const t = {
     pluginDisabled: "已禁用",
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
+    // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择
+    checkUpdatesBtn: "检查更新",
+    checkingBtn: "查询中…",
+    updateChecked: (r: { checked: number; failed: number }) =>
+      `已查 ${r.checked} 个插件${r.failed ? ` · ${r.failed} 个查询失败` : ""}`,
+    allUpToDate: "全部最新",
+    updateHint: "选择版本更新",
+    pickVersionTitle: (pkg: string) => `「${pkg}」可选版本`,
+    versionLatest: "最新",
+    versionCurrent: "当前",
+    versionsLoadFailed: "版本列表查询失败",
     hiddenLayersHint: (n: number) => `另有 ${n} 个外挂插件层，见下方外挂插件清单`,
     pluginWithDsh: "版本随 dsh",
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>

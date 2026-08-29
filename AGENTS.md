@@ -125,6 +125,7 @@
   `list_profile_plugins` `get_plugin_runtime`。
   `install_plugin` `remove_plugin` `update_plugin`。
   `get_plugin_rows` `set_plugin_disabled`。
+  `check_plugin_updates` `list_plugin_versions`。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。
@@ -135,7 +136,9 @@
   `EXTERNAL_URL_HOSTS` 登记。已登记用途：boot 期 pnpm 补齐（`npm i -g pnpm`，
   2026-08-28，ADR-0009 口径 2）；**插件运行态回环只读查询**（`plugins.rs`，
   `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
-  一次性快照不订阅——2026-08-29，Spike B / 复现点 11）。专项裁定见 §9 索引对应 ADR。
+  一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
+  registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /
+  同超时 / 同 packument 体积上限（2026-08-29，4.4④）。专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
 

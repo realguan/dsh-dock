@@ -32,6 +32,26 @@
 
 ## 三、记录
 
+### 2026-08-29 完成通知 · 4.4④ 插件更新标识 + 选版本更新落地（registry 外网镜像链）—— guan（AI 协作）
+
+- 变更：本 commit——`updates.rs`（`npm_packument_versions`：任意 npm 包
+  packument 查询，与 dsh 版本检查同镜像链 npmmirror → npmjs / 同超时 / 同
+  体积上限 + `parse_packument_versions` 纯函数 semver 升序排序 + 测试）、
+  `plugins.rs`（`check_updates_blocking`：逐外挂插件查 dist-tags.latest——
+  口径与 pnpm 默认安装一致，复现点 7 教训；current ≥ latest 不报；奇异名
+  跳过不打 registry；`plugin_versions_blocking` 全版本降序）、`lib.rs`/
+  `ipc.rs`/`capabilities`（`check_plugin_updates` / `list_plugin_versions`
+  三处同步）、前端（外挂插件区「检查更新」按钮 + 行内 `0.16.1 ↑0.17.0`
+  更新标识，点开版本选择弹窗——标 最新/当前，选定走既有安装链
+  `pkg@version`）。
+- 影响：**触宪法级**——`AGENTS.md` §7 两处：IPC 名册 +2；网络面登记新
+  外网用途「插件更新检查」（registry packument，同镜像链）。本条即知会。
+  语义：检查为按钮触发不自动跑（N 包串行查询，避免开窗即外网风暴）；
+  dist-tag 口径意味着 dsh-base 那种「latest 停在坏版本」的包不会被误标
+  升级目标之外——选版本弹窗可见全部版本自行决定。
+- 凭据：cargo test 142 绿（+2 packument 解析含 semver 排序反例）/ fmt /
+  clippy 全过；前端 typecheck / lint / test 49 绿。
+
 ### 2026-08-29 完成通知 · 4.4③ 禁用/启用插件落地（patch 单键切换，ADR 第四次修订实施）—— guan（AI 协作）
 
 - 变更：本 commit——`Cargo.toml`（新增 `serde_yaml 0.9`，ADR 已裁定接受停维护

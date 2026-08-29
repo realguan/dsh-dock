@@ -6,7 +6,7 @@
 // 全程 busy 态；结果文案（成功含「重启后生效」、失败附 dsh 输出尾部）由
 // 后端给，前端只分箱展示。spec 预检镜像后端校验（validatePluginSpec）。
 import { useCallback, useEffect, useState } from "react"
-import { LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowUpCircle, LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
@@ -46,6 +46,18 @@ export function ProfileDetailDialog({
   const [installError, setInstallError] = useState<string | null>(null)
   // 4.4③ 行表（行 id 权威来源；dump-config spawn ~秒级，独立容错）
   const [rows, setRows] = useState<PluginRowState[] | null>(null)
+  // 4.4④ 更新检查：name → dist-tags.latest（按钮触发，不自动跑）
+  const [updateMap, setUpdateMap] = useState<Record<string, string> | null>(null)
+  const [checkState, setCheckState] = useState<"idle" | "busy" | "done">("idle")
+  const [checkMeta, setCheckMeta] = useState<{ checked: number; failed: number } | null>(null)
+  // 版本选择弹窗：选中某插件的「更新」后拉全版本列表
+  const [versionPick, setVersionPick] = useState<{
+    pkg: string
+    current: string
+    latest: string
+    items: string[] | null
+  } | null>(null)
+  const [versionsError, setVersionsError] = useState<string | null>(null)
 
   const reload = useCallback(() => {
     if (!name) return
@@ -155,6 +167,63 @@ export function ProfileDetailDialog({
       .finally(() => setOpBusy(null))
   }
 
+  // 更新检查（4.4④）：外网镜像链，串行可达数十秒——按钮触发 + busy 态
+  const runUpdateCheck = () => {
+    if (!name || opBusy || checkState === "busy") return
+    setOpError(null)
+    setCheckState("busy")
+    api
+      .checkPluginUpdates(name)
+      .then((r) => {
+        setUpdateMap(Object.fromEntries(r.updates.map((u) => [u.name, u.latest])))
+        setCheckMeta({ checked: r.checked, failed: r.failed })
+        setCheckState("done")
+      })
+      .catch((e) => {
+        setOpError(String(e))
+        setCheckState("idle")
+      })
+  }
+
+  // 版本选择：打开即拉全版本（降序）；选定 → pkg@version 走既有安装链
+  const openVersionPick = (pkg: string, current: string, latest: string) => {
+    setVersionPick({ pkg, current, latest, items: null })
+    setVersionsError(null)
+    api
+      .listPluginVersions(pkg)
+      .then((items) => {
+        setVersionPick((v) => (v && v.pkg === pkg ? { ...v, items } : v))
+      })
+      .catch((e) => setVersionsError(String(e)))
+  }
+
+  const installVersion = (spec: string) => {
+    if (!name || opBusy) return
+    const pkg = versionPick?.pkg ?? ""
+    setOpError(null)
+    setOpMessage(null)
+    setOpBusy("install")
+    api
+      .installPlugin(name, spec)
+      .then((out) => {
+        if (out.ok) {
+          setOpMessage(out.detail)
+          setUpdateMap((m) => {
+            if (!m) return m
+            const next = { ...m }
+            delete next[pkg]
+            return next
+          })
+          setVersionPick(null)
+          reload()
+        } else {
+          setVersionsError(out.detail)
+        }
+      })
+      .catch((e) => setVersionsError(String(e)))
+      .finally(() => setOpBusy(null))
+  }
+
   // 运行态只属于活跃会话的 profile——非本 profile 的快照不合并（防张冠李戴）
   const liveEntries =
     runtime !== null && runtime.profile !== null && runtime.profile === name
@@ -256,6 +325,18 @@ export function ProfileDetailDialog({
                   )}
                   {opBusy === "install" ? t.profiles.pluginInstallBusy : t.profiles.pluginInstallBtn}
                 </button>
+                <button
+                  type="button"
+                  disabled={opBusy !== null || depCount === 0}
+                  onClick={runUpdateCheck}
+                  title={t.profiles.checkUpdatesBtn}
+                  aria-label={t.profiles.checkUpdatesBtn}
+                  className="border-line text-dim hover:border-brand hover:text-brand inline-flex size-7 shrink-0 items-center justify-center rounded-lg border bg-white transition-colors disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <RefreshCw
+                    className={`size-3.5 ${checkState === "busy" ? "animate-spin" : ""}`}
+                  />
+                </button>
               </div>
 
               {/* 安装输入行：预检镜像后端校验；后端权威（错误以其返回为准） */}
@@ -315,6 +396,16 @@ export function ProfileDetailDialog({
                 </div>
               )}
 
+              {/* 更新检查结论（4.4④） */}
+              {checkState === "done" && checkMeta && (
+                <div className="text-faint mb-1.5 text-[10px]">
+                  {t.profiles.updateChecked(checkMeta)}
+                  {updateMap &&
+                    Object.keys(updateMap).length === 0 &&
+                    ` · ${t.profiles.allUpToDate}`}
+                </div>
+              )}
+
               {liveEntries.length > 0 ? (
                 <div className="text-faint mb-1.5 text-[10px]">
                   {t.profiles.runtimeSummary(runtimeSummary(liveEntries))}
@@ -356,6 +447,26 @@ export function ProfileDetailDialog({
                           >
                             {p.installed_version ?? (spec ? t.profiles.pluginNotInstalled : "")}
                           </span>
+                          {/* 更新标识（4.4④）：current → latest，点开选版本 */}
+                          {(() => {
+                            const latest = updateMap?.[p.name]
+                            if (!latest || latest === p.installed_version) return null
+                            return (
+                              <button
+                                type="button"
+                                title={t.profiles.updateHint}
+                                aria-label={`${t.profiles.updateHint} ${p.name}`}
+                                disabled={opBusy !== null}
+                                onClick={() =>
+                                  openVersionPick(p.name, p.installed_version ?? "", latest)
+                                }
+                                className="text-brand hover:bg-wash inline-flex shrink-0 items-center gap-0.5 rounded px-1 font-mono text-xs transition-colors disabled:opacity-40"
+                              >
+                                <ArrowUpCircle className="size-3.5" aria-hidden />
+                                {latest}
+                              </button>
+                            )
+                          })()}
                           {rowBusy ? (
                             <span className="text-faint ml-auto inline-flex shrink-0 items-center gap-1 text-[10px]">
                               <LoaderCircle className="size-3 animate-spin" aria-hidden />
@@ -460,6 +571,64 @@ export function ProfileDetailDialog({
             {t.profiles.detailClose}
           </Button>
         </DialogFooter>
+
+        {/* 版本选择（4.4④）：降序全版本，标记 最新（dist-tags）/ 当前 */}
+        <Dialog open={versionPick !== null} onOpenChange={(o) => !o && setVersionPick(null)}>
+          <DialogContent className="flex max-h-[calc(100vh-6rem)] flex-col sm:max-w-[380px]">
+            <DialogHeader>
+              <DialogTitle className="text-base">
+                {versionPick ? t.profiles.pickVersionTitle(versionPick.pkg) : ""}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {versionPick ? t.profiles.pickVersionTitle(versionPick.pkg) : ""}
+              </DialogDescription>
+            </DialogHeader>
+            {versionsError && (
+              <div className="bg-warn-soft text-warn rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
+                {versionsError}
+              </div>
+            )}
+            {versionPick?.items === null && !versionsError && (
+              <div className="text-faint py-4 text-center text-xs">{t.profiles.busyShort}</div>
+            )}
+            {versionPick?.items && (
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
+                  {versionPick.items.map((v) => {
+                    const isLatest = v === versionPick.latest
+                    const isCurrent = v === versionPick.current
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        disabled={opBusy !== null}
+                        onClick={() => installVersion(`${versionPick.pkg}@${v}`)}
+                        className="hover:bg-wash flex w-full items-baseline gap-2 px-3 py-1.5 text-left transition-colors disabled:opacity-40"
+                      >
+                        <span className="text-ink font-mono text-xs">{v}</span>
+                        {isLatest && (
+                          <span className="bg-ok-soft text-ok rounded px-1 text-[10px] leading-4">
+                            {t.profiles.versionLatest}
+                          </span>
+                        )}
+                        {isCurrent && (
+                          <span className="border-line text-faint ml-auto rounded border px-1 text-[10px] leading-4">
+                            {t.profiles.versionCurrent}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setVersionPick(null)}>
+                {t.profiles.pluginInstallCancel}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )

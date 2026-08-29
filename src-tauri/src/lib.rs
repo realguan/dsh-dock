@@ -828,6 +828,27 @@ async fn set_plugin_disabled(
     .await
     .map_err(|e| format!("切换任务异常终止：{e}"))?
 }
+/// 更新检查（4.4④）：逐外挂插件查 registry dist-tags.latest（外网经
+/// `updates.rs` 镜像链，§7 已登记）；串行阻塞走 spawn_blocking，按钮触发。
+#[tauri::command]
+async fn check_plugin_updates(
+    profile: String,
+) -> Result<crate::plugins::PluginUpdateReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::plugins::check_updates_blocking(&home, &profile)
+    })
+    .await
+    .map_err(|e| format!("更新检查任务异常终止：{e}"))?
+}
+
+/// 版本列表（选版本更新，4.4④）：降序最新在前；外网同镜像链。
+#[tauri::command]
+async fn list_plugin_versions(package: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::plugins::plugin_versions_blocking(&package))
+        .await
+        .map_err(|e| format!("版本查询任务异常终止：{e}"))?
+}
 
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
@@ -1500,6 +1521,8 @@ pub fn run() {
             update_plugin,
             get_plugin_rows,
             set_plugin_disabled,
+            check_plugin_updates,
+            list_plugin_versions,
             get_plugin_runtime
         ])
         .build(tauri::generate_context!())

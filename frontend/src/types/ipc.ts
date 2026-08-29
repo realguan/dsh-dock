@@ -118,6 +118,13 @@ export interface PluginRowState {
   shell_disabled: boolean
 }
 
+/// 更新检查报告（4.4④，registry dist-tags.latest 口径）：failed 不计入 checked。
+export interface PluginUpdateReport {
+  updates: { name: string; current: string; latest: string }[]
+  checked: number
+  failed: number
+}
+
 /// 复制/重命名结果（warnings = 需人工关注项，如 patch 相对路径引用）。
 export interface LifecycleOutcome {
   profile: string

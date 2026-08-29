@@ -13,6 +13,7 @@ import type {
   PluginOpOutcome,
   PluginRuntimeSnapshot,
   PluginRowState,
+  PluginUpdateReport,
   ProfileDetail,
   ProfileSummary,
   TerminalAction,
@@ -76,4 +77,9 @@ export const api = {
     invoke<PluginRowState[]>("get_plugin_rows", { profile }),
   setPluginDisabled: (profile: string, rowId: string, disabled: boolean) =>
     invoke<void>("set_plugin_disabled", { profile, rowId, disabled }),
+  // 4.4④ 更新检查：外网 registry 镜像链（updates.rs），按钮触发不自动跑
+  checkPluginUpdates: (profile: string) =>
+    invoke<PluginUpdateReport>("check_plugin_updates", { profile }),
+  listPluginVersions: (pkg: string) =>
+    invoke<string[]>("list_plugin_versions", { package: pkg }),
 }

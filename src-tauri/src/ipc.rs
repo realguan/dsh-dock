@@ -40,6 +40,8 @@ pub const COMMANDS: &[&str] = &[
     "update_plugin",
     "get_plugin_rows",
     "set_plugin_disabled",
+    "check_plugin_updates",
+    "list_plugin_versions",
     "get_plugin_runtime",
 ];
 
