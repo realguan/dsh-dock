@@ -1340,8 +1340,30 @@ pub fn install_latest_global(
     let private_prefix = cached_node_dir(data_dir, &plan_version);
     let node_is_private = node.starts_with(&private_prefix);
     let npm_prefix = node_is_private.then_some(private_prefix.as_path());
-    let latest = fetch_latest_version()
-        .ok_or_else(|| anyhow::anyhow!("无法获取官方版本列表（registry 不可达或返回异常）"))?;
+    // 可安装性预检（2026-08-30）：H-1 sort-max 目标可能是未完整发布的预发布
+    // （实测 0.1.2-alpha.2 依赖 dsh-util-time 等未发布子包，pnpm 重试阶梯耗尽数
+    // 分钟才失败，用户全程干等）。对目标版本直接依赖做存在性检查：确认缺失 →
+    // 立即失败并指名；网络原因无法判定 → 不阻断（维持旧行为）。
+    let packument =
+        fetch_packument().context("无法获取官方版本列表（registry 不可达或返回异常）")?;
+    let latest = parse_versions(&packument)
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("官方版本列表为空或形状异常"))?;
+    {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
+            .build();
+        let missing =
+            missing_dependencies(&packument, &latest, &|p| registry_package_state(&agent, p));
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "版本 {latest} 依赖未完整发布（缺失：{}）——无法安装。\
+                 可等待官方发布修复版，或手动安装 dist-tag：pnpm add -g @deepseek-ai/dsh@latest",
+                missing.join("、")
+            );
+        }
+    }
     tracing::info!("下载档将全局安装 dsh {latest}");
     if node_is_private {
         if let Some(tree) = cached_dsh_tree(data_dir, &plan_version) {
@@ -2113,5 +2135,81 @@ mod packument_tests {
     fn malformed_packument_is_none() {
         assert!(parse_packument_versions("not json").is_none());
         assert!(parse_packument_versions(r#"{"versions":{}}"#).is_none());
+    }
+}
+
+// ---------- 可安装性预检（2026-08-30，H-1 sort-max 边界治理） ----------
+
+/// 目标版本直接依赖的存在性检查（纯函数，存在性由 `has` 闭包注入）：
+/// 返回缺失依赖列表。packument 缺 dependencies 键（如纯 meta）→ 空表跳过。
+/// `has` 三态：Some(true) 存在 / Some(false) 全源明确 404 / None 网络不可判
+/// ——不可判不记缺失（不因网络抖动阻断安装，维持旧行为）。
+fn missing_dependencies(
+    packument: &serde_json::Value,
+    version: &str,
+    has: &dyn Fn(&str) -> Option<bool>,
+) -> Vec<String> {
+    let Some(deps) = packument
+        .pointer(&format!("/versions/{version}/dependencies"))
+        .and_then(|d| d.as_object())
+    else {
+        return Vec::new();
+    };
+    deps.keys()
+        .filter(|name| has(name) == Some(false))
+        .cloned()
+        .collect()
+}
+
+/// 依赖包在已配置 registry 的存在性三态：任一源 200 = 存在；全源明确
+/// 404/410 = 不存在；网络错误 = 无法判定。
+fn registry_package_state(agent: &ureq::Agent, package: &str) -> Option<bool> {
+    let mut saw_definite_missing = false;
+    for base in package_registry_bases() {
+        let url = format!("{base}/{}", package.replace('/', "%2F"));
+        match agent.get(&url).call() {
+            Ok(_) => return Some(true),
+            Err(ureq::Error::Status(code, _)) if code == 404 || code == 410 => {
+                saw_definite_missing = true;
+            }
+            Err(_) => return None,
+        }
+    }
+    saw_definite_missing.then_some(false)
+}
+
+#[cfg(test)]
+mod dependency_preflight_tests {
+    use super::*;
+
+    const PACKUMENT: &str = r#"{
+        "versions": {
+            "0.1.2-alpha.2": {
+                "dependencies": {
+                    "@deepseek-ai/dsh-util-time": "^1.0.0",
+                    "@deepseek-ai/dsh-base": "^0.1.0"
+                }
+            },
+            "0.1.1-rc.2": { "dependencies": {} }
+        }
+    }"#;
+
+    #[test]
+    fn flags_only_definitely_missing_dependencies() {
+        let packument: serde_json::Value = serde_json::from_str(PACKUMENT).unwrap();
+        let has = |name: &str| -> Option<bool> {
+            match name {
+                "@deepseek-ai/dsh-util-time" => Some(false), // 全源 404
+                "@deepseek-ai/dsh-base" => Some(true),
+                _ => None, // 网络不可判
+            }
+        };
+        let missing = missing_dependencies(&packument, "0.1.2-alpha.2", &has);
+        assert_eq!(missing, vec!["@deepseek-ai/dsh-util-time"]);
+        // 不可判定不记缺失（不因网络抖动阻断）
+        let has_flaky = |_: &str| -> Option<bool> { None };
+        assert!(missing_dependencies(&packument, "0.1.2-alpha.2", &has_flaky).is_empty());
+        // 无 dependencies 键的版本 → 空表跳过
+        assert!(missing_dependencies(&packument, "0.9.9.9", &has).is_empty());
     }
 }
