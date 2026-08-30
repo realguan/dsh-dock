@@ -5,7 +5,9 @@
 // 由 Tauri 自动映射 snake_case Rust 参数 set_default。
 import { invoke } from "@tauri-apps/api/core"
 import type {
+  AggregatePlugin,
   ClientUpdate,
+  CopyConfigOutcome,
   CreateProfileOutcome,
   DeleteOutcome,
   LifecycleOutcome,
@@ -82,4 +84,8 @@ export const api = {
     invoke<PluginUpdateReport>("check_plugin_updates", { profile }),
   listPluginVersions: (pkg: string) =>
     invoke<string[]>("list_plugin_versions", { package: pkg }),
+  // 4.4④ 收口：插件总览聚合（只读文件扫描）+ 配置行原样复制（写入例外 #4）
+  listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
+  copyPluginConfig: (source: string, target: string, pkg: string) =>
+    invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
 }

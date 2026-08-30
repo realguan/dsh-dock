@@ -1,4 +1,4 @@
-import type { RuntimeEntry } from "@/types/ipc"
+import type { AggregatePlugin, PluginRowState, RuntimeEntry } from "@/types/ipc"
 // Profile 管理器纯逻辑（4.3 前端刀）。校验规则逐字镜像后端
 // profiles::validate_profile_name（dsh resolveProfileDir @ 318）——前端只做
 // 输入预检提效，后端校验仍是权威（不可信边界在 IPC 之外）。
@@ -111,4 +111,71 @@ export function runtimeSummary(entries: RuntimeEntry[]): RuntimeSummary {
     else s.loading += 1
   }
   return s
+}
+
+// ---------- 从其他 profile 安装（4.4④ 收口，ADR-0009 第五次修订） ----------
+
+/** 选择器候选：一行 = 插件 × 来源 profile（多来源成多行，避免版本歧义）。 */
+export interface PickerCandidate {
+  pkg: string
+  source: string
+  /** 来源已装版本（同版本口径安装用）；只收已安装项——声明未安装的不进候选 */
+  version: string
+  description: string | null
+  /** 来源自身 patch 中该插件条目数 >0：「连配置」勾选框的置灰预检 */
+  hasConfig: boolean
+}
+
+/**
+ * 选择器候选过滤（纯函数）：目标已装的排除（已装无需再装）；来源 = 其他
+ * profile 且已安装（version 实读非空）才进候选。hasConfig 来自行表预检
+ * （patch_entries；行表查询失败的 profile 不在其中 → hasConfig=false 置灰，
+ * 由提示行说明可能不准）。
+ */
+export function pickerCandidates(
+  aggregate: AggregatePlugin[],
+  target: string,
+  targetDeps: string[],
+  rowsByProfile: Record<string, PluginRowState[]>,
+): PickerCandidate[] {
+  const installed = new Set(targetDeps)
+  const out: PickerCandidate[] = []
+  for (const agg of aggregate) {
+    if (installed.has(agg.name)) continue
+    for (const s of agg.sources) {
+      if (s.profile === target || s.version === null) continue
+      out.push({
+        pkg: agg.name,
+        source: s.profile,
+        version: s.version,
+        description: agg.description,
+        hasConfig: (rowsByProfile[s.profile] ?? []).some(
+          (r) => r.pkg_name === agg.name && r.patch_entries > 0,
+        ),
+      })
+    }
+  }
+  return out
+}
+
+export interface BatchItemResult {
+  pkg: string
+  ok: boolean
+  detail: string
+}
+
+export interface BatchSummary {
+  okCount: number
+  failCount: number
+  failures: BatchItemResult[]
+}
+
+/** 批量结果汇总（纯函数）：失败继续口径——最后一屏只突出失败项明细。 */
+export function summarizeBatch(results: BatchItemResult[]): BatchSummary {
+  const okCount = results.filter((r) => r.ok).length
+  return {
+    okCount,
+    failCount: results.length - okCount,
+    failures: results.filter((r) => !r.ok),
+  }
 }

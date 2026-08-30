@@ -189,6 +189,29 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 生效后的运行态变化经回环快照可见。**生效状态真相**：壳写入的 toggle 条目是
 > 禁用意图的真相（读自家 patch 文件），dump-config 的 `disabled:`（可能是 `!!js`
 > 表达式）只作展示佐证不作解析目标。
+> **2026-08-30 第五次执行细则修订（范围扩展：跨 profile 插件聚合 + 从其他
+> profile 安装，4.4「跨 profile 复制」收口）——patch 写入例外 #4**。维护者
+> 裁定把路线图原「跨 profile 复制（整条目搬移）」重定义为两个更贴使用场景的
+> 能力（经 grilling 逐条确认）：①**插件总览**——管理器页内切换视图，聚合展示
+> 全部已物化 profile 的第三方依赖插件（内置 bundle 每个 profile 一套、无聚合
+> 信息量，不进聚合）；纯文件扫描 manifest（`scan_profiles` 同源，复用
+> `list_profile_plugins`），零 dsh 子进程、零网络、只读；视图不承载写操作
+> （启停/卸载仍在各 profile 详情）。②**从其他 profile 安装**——详情对话框
+> 入口，多选批量（一行 = 插件 × 来源 profile）、失败继续、末尾汇总成败与
+> 失败原因；版本默认取来源已装版本（`pkg@<ver>` 固定——规避裸名 dist-tag 坑
+> 复现点 7；声明未安装的条目不进候选）；执行走既有 `install_plugin` 转发链
+> 前端串行逐项 await，无新安装 IPC。**可选「连配置」（勾选框，默认不勾）**：
+> 把来源 profile `cordis.patch.yml` 中该插件行 id 的**全部条目原样复制**到目标
+> patch 顶层数组——**写入例外 #4**（同类先例 = #2 web-app 声明、#3 disabled
+> 单键）：ⅰ 用户显式勾选触发，非壳自作主张；ⅱ 原样搬移 = 用户既有 patch
+> 数据的整体迁移，非壳生成/复刻 dsh 格式内容；ⅲ **只追加不覆盖**——目标已有
+> 同 id 条目时零写入并报 skipped（patch 行按 id 定位、config 键整体替换，
+> 覆盖会毁目标既有配置）。**行 id 映射**：包名 → 行 id 不可推导（第四次修订
+> 实测），复制前经 dump-config 行表定位；`PluginRowState` 扩展 `patch_entries`
+> （来源自身 patch 中该 id 的条目数）供勾选框置灰预检，复制时后端权威复核。
+> 配置复制独立 IPC `copy_plugin_config`（文件层 + 一次 dump-config spawn），
+> 聚合查询新 IPC `list_all_plugins`；两者均 spawn_blocking。变更生效同 #3：
+> 不热生效，重启承接。**npm 搜索（roadmap 4.4⑤）维持挂账**，本修订不涉及。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
 - 失败模式（2026-08-28 口径 2 统一）：创建/插件操作前防御性检测 pnpm（基准 = `effective_path` 注入后的 PATH——壳注入什么 dsh 就能看见什么，Spike A §3.4 同链）→ 缺失则同步补齐（`npm i -g pnpm`，复用 boot 同一函数）→ 补齐失败才降级为 dsh 自带文案（exit 127）+ 壳侧平台化安装建议；网络失败 → 提示检查 npm registry 镜像可达性（ADR-0006）。boot 期同一补齐失败 = 阻断启动 + 可行动文案。
 

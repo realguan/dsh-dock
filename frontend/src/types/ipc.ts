@@ -116,6 +116,9 @@ export interface PluginRowState {
   id: string
   pkg_name: string
   shell_disabled: boolean
+  /** 该 profile 自身 cordis.patch.yml 中此 id 的条目数（连配置勾选的置灰预检，
+      4.4④ 收口 / ADR-0009 第五次修订） */
+  patch_entries: number
 }
 
 /// 更新检查报告（4.4④，registry dist-tags.latest 口径）：failed 不计入 checked。
@@ -129,6 +132,29 @@ export interface PluginUpdateReport {
 export interface LifecycleOutcome {
   profile: string
   warnings: string[]
+}
+
+/// 插件总览聚合条目（4.4④ 收口，ADR-0009 第五次修订）：第三方插件在各
+/// profile 的安装分布；纯文件扫描，只读。
+export interface AggregateSource {
+  profile: string
+  /** 已装版本（node_modules 实读）；null = 声明未安装 */
+  version: string | null
+}
+
+export interface AggregatePlugin {
+  name: string
+  /** 首个非空 description（任一来源 profile 实读）；null = 均无 */
+  description: string | null
+  sources: AggregateSource[]
+}
+
+/// 配置行原样复制结果（patch 写入例外 #4）：copied = 追加条目数；
+/// skipped_existing = 目标已有同 id 条目零写入（不覆盖）。
+export interface CopyConfigOutcome {
+  copied: number
+  skipped_existing: boolean
+  detail: string
 }
 
 /// 删除结果。

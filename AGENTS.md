@@ -126,6 +126,8 @@
   `install_plugin` `remove_plugin` `update_plugin`。
   `get_plugin_rows` `set_plugin_disabled`。
   `check_plugin_updates` `list_plugin_versions`。
+  `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
+  配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。

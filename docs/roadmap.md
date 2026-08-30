@@ -1,8 +1,8 @@
 # DSH Dock 产品路线图
 
 > 状态：活文档，随阶段退出、关键数据更新、资源变化或风险暴露时重排。
-> 最后更新：2026-08-27（对照 dsh 源码 v0.1.1-rc.2 逐条核查，修订事实表与各行动项；
-> 同日 Now 阶段收口：4.1 工程化基线 ✅ / 4.2 updater 测试 ✅，Next 进入条件满足）
+> 最后更新：2026-08-30（4.4 收口——插件总览聚合 + 从其他 profile 安装落地，
+> Next 阶段核心能力扩展全部完成，后续进入 Later 排期）
 > 适用版本：v0.5.0 起
 
 ## 1. 背景与定位
@@ -158,7 +158,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 | **依赖** | Profile 管理器（4.3）——需要先选 profile 再管插件；`serde_yaml` 依赖；pnpm 可用性 spike 结论（见 4.3 前置 spike） |
 | **结果信号** | 用户可在壳内完成插件的安装/卸载/启用禁用/跨 profile 复制，无需手动编辑 `package.json` 或 `cordis.patch.yml` |
 | **退出条件** | 列出/安装/卸载/启用禁用/跨 profile 复制五个核心能力可用，CLI 调用有错误处理和进度反馈 |
-| **落地记录** | 2026-08-29 全部五能力落地（Spike B 方案，`docs/spikes/0002-plugin-inventory.md`；ADR-0009 §4 第三/四次修订）：①清单（静态 + 运行态回环快照，`list_profile_plugins`/`get_plugin_runtime`，详情对话框插件卡）；②安装/卸载/更新（`dsh plugin add/remove/update` 转发链，spec 校验防旗标注入）；③启用/禁用（patch `{id,disabled}` 单键写入例外 #3，行 id 经 dump-config 行表）；④更新标识 + 选版本更新（registry dist-tags 口径，镜像链外网查询 §7 登记）；跨 profile 复制未做（后续）；重启按钮承接变更生效 |
+| **落地记录** | 2026-08-29 全部五能力落地（Spike B 方案，`docs/spikes/0002-plugin-inventory.md`；ADR-0009 §4 第三/四次修订）：①清单（静态 + 运行态回环快照，`list_profile_plugins`/`get_plugin_runtime`，详情对话框插件卡）；②安装/卸载/更新（`dsh plugin add/remove/update` 转发链，spec 校验防旗标注入）；③启用/禁用（patch `{id,disabled}` 单键写入例外 #3，行 id 经 dump-config 行表）；④更新标识 + 选版本更新（registry dist-tags 口径，镜像链外网查询 §7 登记）；重启按钮承接变更生效。**2026-08-30 ④收口（维护者经 grilling 重定义原「跨 profile 复制」，ADR-0009 第五次修订）**：插件总览聚合视图（管理器页内切换，`list_all_plugins` 只读文件扫描，内置 bundle 不进聚合）+ 从其他 profile 安装（多选批量选择器、串行队列失败继续末尾汇总、来源同版本 `pkg@ver`；「连配置」逐行可选 = patch 行 id 条目原样复制，`copy_plugin_config` 只追加不覆盖 = **写入例外 #4**，`patch_entries` 预检置灰）——**五核心能力全齐，4.4 退出条件满足**；npm 搜索（⑤）挂账 |
 | **重排触发器** | 若 dsh 未来版本改变插件配置格式（如从 cordis.patch.yml 迁移到其他格式），需适配；若 `dsh plugin` CLI 接口变化，需更新封装 |
 
 ---

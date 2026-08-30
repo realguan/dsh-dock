@@ -44,6 +44,8 @@
     "allow-set-plugin-disabled",
     "allow-check-plugin-updates",
     "allow-list-plugin-versions",
-    "allow-get-plugin-runtime"
+    "allow-get-plugin-runtime",
+    "allow-list-all-plugins",
+    "allow-copy-plugin-config"
   ]
 }

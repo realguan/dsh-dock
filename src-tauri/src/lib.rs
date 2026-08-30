@@ -850,6 +850,47 @@ async fn list_plugin_versions(package: String) -> Result<Vec<String>, String> {
         .map_err(|e| format!("版本查询任务异常终止：{e}"))?
 }
 
+/// 插件总览聚合（4.4④ 收口，ADR-0009 第五次修订）：全部已物化 profile 的第
+/// 三方插件按包名归组。只读纯文件扫描（零 dsh 子进程、零网络），spawn_blocking。
+#[tauri::command]
+async fn list_all_plugins() -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::plugins::aggregate_plugins_blocking(
+            &crate::resolve::user_dsh_home(),
+        ))
+    })
+    .await
+    .map_err(|e| format!("聚合任务异常终止：{e}"))?
+}
+
+/// 配置行原样复制（4.4④ 收口，patch 写入例外 #4，ADR-0009 第五次修订）：
+/// 来源 patch 中该插件行 id 的全部条目 → 追加到目标 patch（只追加不覆盖，
+/// 目标已有同 id 条目则零写入 skipped）。dump-config spawn + 文件操作走
+/// spawn_blocking。
+#[tauri::command]
+async fn copy_plugin_config(
+    app: tauri::AppHandle,
+    source: String,
+    target: String,
+    package: String,
+) -> Result<crate::plugins::CopyConfigOutcome, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::plugins::copy_plugin_config_blocking(
+            &crate::resolve::user_dsh_home(),
+            &source,
+            &target,
+            &package,
+            &data_dir,
+        )
+    })
+    .await
+    .map_err(|e| format!("配置复制任务异常终止：{e}"))?
+}
+
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
@@ -1532,7 +1573,9 @@ pub fn run() {
             set_plugin_disabled,
             check_plugin_updates,
             list_plugin_versions,
-            get_plugin_runtime
+            get_plugin_runtime,
+            list_all_plugins,
+            copy_plugin_config
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

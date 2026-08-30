@@ -1,8 +1,9 @@
 // Profile 管理器页（4.3 前端刀）。独立窗口（label=profiles，镜像 about 的
 // 「常驻入口在菜单/托盘」架构——主窗口 boot 后会导航进 dsh 工作台，壳页
 // 不可达）。编排：列表/默认值经 profilesStore 播种；增删改走 api 后刷新；
-// 详情与各对话框状态均为对话框局部态。
-import { useEffect, useState } from "react"
+// 详情与各对话框状态均为对话框局部态。4.4④ 收口：页内两视图切换——
+// Profile 列表 | 插件总览（跨 profile 第三方插件聚合，只读）。
+import { useCallback, useEffect, useState } from "react"
 import { Plus, RefreshCw } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
@@ -11,6 +12,7 @@ import { useProfilesStore } from "@/stores/profilesStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
+import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { ProfileDetailDialog } from "@/components/profiles/ProfileDetailDialog"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
@@ -33,17 +35,25 @@ export function ProfileManager() {
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // 4.4④ 收口：页内视图 + 总览重取节奏（与列表同源刷新面：聚焦 / boot 事件 / 手动）
+  const [view, setView] = useState<"list" | "plugins">("list")
+  const [overviewTick, setOverviewTick] = useState(0)
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // 窗口聚焦时重取运行中徽标：切换是否完成只有壳知道，聚焦即对齐真相
+  // 双视图统一刷新面：聚焦即对齐真相（切换是否完成只有壳知道）
+  const refreshAll = useCallback(() => {
+    void load()
+    setOverviewTick((n) => n + 1)
+  }, [load])
+
   useEffect(() => {
-    const onFocus = () => void load()
+    const onFocus = () => refreshAll()
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
-  }, [load])
+  }, [refreshAll])
 
   // 徽标实时化：boot:step 经事件总线（模块期装配，每窗口生效）流入 bootStore，
   // activeStep 每变一次重取运行中真相——切换开始（teardown）徽标即灭，boot
@@ -51,14 +61,12 @@ export function ProfileManager() {
   useEffect(
     () =>
       useBootStore.subscribe((s, prev) => {
-        if (s.activeStep !== prev.activeStep) void load()
+        if (s.activeStep !== prev.activeStep) refreshAll()
       }),
-    [load],
+    [refreshAll],
   )
 
-  const refresh = () => {
-    void load()
-  }
+  const refresh = refreshAll
 
   const handleSetDefault = (name: string) => {
     setRowBusy(name)
@@ -130,6 +138,28 @@ export function ProfileManager() {
         </button>
       </header>
 
+      {/* 视图切换（4.4④ 收口）：Profile 列表 | 插件总览——分段控件整宽铺陈 */}
+      <div
+        role="tablist"
+        aria-label={t.profiles.title}
+        className="border-line bg-line-soft mb-3 flex rounded-lg border p-0.5"
+      >
+        {(["list", "plugins"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs transition-all ${
+              view === v ? "bg-panel text-ink shadow-sm" : "text-dim hover:text-ink"
+            }`}
+          >
+            {v === "list" ? t.profiles.viewProfiles : t.profiles.viewPlugins}
+          </button>
+        ))}
+      </div>
+
       {/* 页面级提示（操作结果 / 操作错误），可关闭 */}
       {notice && (
         <div
@@ -162,7 +192,10 @@ export function ProfileManager() {
         </div>
       )}
 
-      {/* 列表：已物化在前、模板名殿后（后端已排序，这里只渲染） */}
+      {/* 两视图：插件总览（只读聚合）| 列表（已物化在前、模板名殿后，后端已排序） */}
+      {view === "plugins" ? (
+        <PluginOverview refreshKey={overviewTick} />
+      ) : (
       <section aria-label={t.profiles.title} className="space-y-2">
         {loadError && (
           <div className="border-line bg-panel rounded-xl border border-dashed px-4 py-8 text-center">
@@ -196,6 +229,7 @@ export function ProfileManager() {
             />
           ))}
       </section>
+      )}
 
       {/* 对话框群 */}
       <ProfileDetailDialog name={detailName} onClose={() => setDetailName(null)} />

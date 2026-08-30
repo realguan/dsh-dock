@@ -250,6 +250,31 @@ export const t = {
     restartTitle: (name: string) => `重启「${name}」？`,
     restartNote: "将停止当前 dsh 并以同一 profile 重新启动，进行中的任务会中断（会话历史已落盘，不受影响）；刚安装/卸载/禁用的插件借此生效。",
     restartConfirm: (name: string) => `重启「${name}」`,
+    // 视图切换（4.4④ 收口）：管理器页内两视图
+    viewProfiles: "Profile 列表",
+    viewPlugins: "插件总览",
+    overviewSubtitle: "全部 profile 的第三方插件分布",
+    overviewSourceCount: (n: number) => `${n} 个 profile`,
+    overviewEmpty: "各 profile 还没有安装第三方插件",
+    overviewEmptyHint: "在任一 profile 的详情里安装后，这里会自动汇总",
+    overviewNotInstalled: "未安装",
+    // 从其他 profile 安装（4.4④ 收口）：多选批量 + 可选连配置（写入例外 #4）
+    importBtn: "从其他导入",
+    importBtnTitle: "把其他 profile 已安装的插件装到这里",
+    importTitle: (name: string) => `从其他 profile 安装到「${name}」`,
+    importNote: "默认安装来源同版本；「连配置」会把来源 profile 里该插件的配置行原样复制过来（目标已有配置时不覆盖）",
+    importLoading: "正在扫描其他 profile…",
+    importEmpty: "其他 profile 还没有已安装的第三方插件",
+    importRowsFailedNote: "部分行表查询失败，「连配置」可用性可能不准",
+    importConfig: "连配置",
+    importNoConfig: "无配置可带",
+    importSelected: (n: number) => `已选 ${n} 项`,
+    importStart: (n: number) => `安装 ${n} 项`,
+    importRunning: (i: number, total: number) => `正在安装 ${i}/${total}`,
+    importDone: (ok: number, fail: number) =>
+      `从其他 profile 安装完成：${ok} 成功${fail ? ` · ${fail} 失败` : ""}`,
+    importDoneBtn: "完成",
+    importFailures: "失败明细",
   },
 } as const
 

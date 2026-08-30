@@ -32,6 +32,22 @@
 
 ## 三、记录
 
+### 2026-08-30 完成通知 · 4.4 收口：插件总览聚合 + 从其他 profile 安装（ADR-0009 第五次修订，patch 写入例外 #4）—— guan（AI 协作）
+
+- 变更：本 commit——维护者经 grilling 逐条确认后把原「跨 profile 复制」重定义为
+  ①**插件总览**（管理器页内切换视图，`list_all_plugins` 只读文件扫描聚合全部
+  已物化 profile 的第三方插件，内置 bundle 不进聚合）与②**从其他 profile 安装**
+  （详情对话框多选批量选择器，串行队列失败继续末尾汇总，版本默认来源同版本
+  `pkg@ver`；「连配置」逐行可选勾选=来源 cordis.patch.yml 该插件行 id 全部条目
+  原样复制，`copy_plugin_config` 只追加不覆盖——**写入例外 #4**，`PluginRowState`
+  扩展 `patch_entries` 供置灰预检）。新 IPC 两枚三处同步 + AGENTS §7 登记；
+  ADR-0009 第五次修订先行落档；roadmap 4.4 落地记录回写（五核心能力全齐）。
+- 影响：仅周知。npm 搜索（4.4⑤）维持挂账；注意 `updates.rs` 尚有另一条工作线的
+  H-1 预检未提交改动，本 commit 未包含、未触碰。
+- 凭据：cargo test 147 绿（新增聚合归组 / 配置行原样复制与不覆盖 / patch 条目
+  计数等 4 测试）+ fmt/clippy 干净；前端 55 测试绿（新增候选过滤与批量汇总
+  纯逻辑）+ typecheck/lint 干净；IPC 一致性 gate_tests 兜底。
+
 ### 2026-08-30 排障 + 修复 · DSH 升级「点了没反应」——根因 = 不可安装的 alpha 版本 + 失败不可见；升级链路事件化 —— guan（AI 协作）
 
 - 变更：本 commit——`lib.rs`（`terminal_action` 升级链路新增 `dsh:upgrade`

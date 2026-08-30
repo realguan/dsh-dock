@@ -43,6 +43,8 @@ pub const COMMANDS: &[&str] = &[
     "check_plugin_updates",
     "list_plugin_versions",
     "get_plugin_runtime",
+    "list_all_plugins",
+    "copy_plugin_config",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

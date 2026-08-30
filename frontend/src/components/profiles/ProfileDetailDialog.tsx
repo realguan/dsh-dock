@@ -6,7 +6,7 @@
 // 全程 busy 态；结果文案（成功含「重启后生效」、失败附 dsh 输出尾部）由
 // 后端给，前端只分箱展示。spec 预检镜像后端校验（validatePluginSpec）。
 import { useCallback, useEffect, useState } from "react"
-import { ArrowUpCircle, LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowUpCircle, Import, LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
@@ -17,6 +17,7 @@ import type {
   ProfileDetail,
 } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
 import {
   Dialog,
   DialogContent,
@@ -44,6 +45,8 @@ export function ProfileDetailDialog({
   const [installOpen, setInstallOpen] = useState(false)
   const [installSpec, setInstallSpec] = useState("")
   const [installError, setInstallError] = useState<string | null>(null)
+  // 4.4④ 收口：从其他 profile 安装（多选批量选择器，完成后回填清单）
+  const [importOpen, setImportOpen] = useState(false)
   // 4.4③ 行表（行 id 权威来源；dump-config spawn ~秒级，独立容错）
   const [rows, setRows] = useState<PluginRowState[] | null>(null)
   // 4.4④ 更新检查：name → dist-tags.latest（按钮触发，不自动跑）
@@ -92,6 +95,7 @@ export function ProfileDetailDialog({
     setInstallOpen(false)
     setInstallSpec("")
     setInstallError(null)
+    setImportOpen(false)
     reload()
   }, [name, reload])
 
@@ -324,6 +328,18 @@ export function ProfileDetailDialog({
                     <Plus className="size-3" aria-hidden />
                   )}
                   {opBusy === "install" ? t.profiles.pluginInstallBusy : t.profiles.pluginInstallBtn}
+                </button>
+                {/* 4.4④ 收口：从其他 profile 已装插件里导入（多选批量） */}
+                <button
+                  type="button"
+                  title={t.profiles.importBtnTitle}
+                  aria-label={t.profiles.importBtnTitle}
+                  disabled={opBusy !== null}
+                  onClick={() => setImportOpen(true)}
+                  className="border-line text-dim hover:border-brand hover:text-brand inline-flex shrink-0 items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs transition-colors disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Import className="size-3" aria-hidden />
+                  {t.profiles.importBtn}
                 </button>
                 <button
                   type="button"
@@ -577,6 +593,17 @@ export function ProfileDetailDialog({
             {t.profiles.detailClose}
           </Button>
         </DialogFooter>
+
+        {/* 从其他 profile 安装（4.4④ 收口）：多选批量，完成后刷新清单并回填提示 */}
+        <PluginImportPickerDialog
+          target={name ?? ""}
+          open={importOpen && name !== null}
+          onClose={() => setImportOpen(false)}
+          onDone={(ok, fail) => {
+            setOpMessage(t.profiles.importDone(ok, fail))
+            reload()
+          }}
+        />
 
         {/* 版本选择（4.4④）：降序全版本，标记 最新（dist-tags）/ 当前 */}
         <Dialog open={versionPick !== null} onOpenChange={(o) => !o && setVersionPick(null)}>
