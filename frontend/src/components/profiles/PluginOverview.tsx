@@ -68,21 +68,20 @@ export function PluginOverview({ refreshKey }: { refreshKey: number }) {
           style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
         >
           <div className="px-4 py-3">
-            {/* 首行：包名（mono 主语）+ 描述让位截断 + 分布数徽标 */}
-            <div className="flex items-baseline gap-2">
-              <span className="text-ink min-w-0 truncate font-mono text-sm font-medium" title={a.name}>
+            {/* 首行：包名独占整行、尽量展示齐全（超长折行不截断——名字是本视图
+                的主语，2026-08-31 维护者裁定）；分布数徽标右缘随行。 */}
+            <div className="flex items-start justify-between gap-2">
+              <span
+                className="text-ink min-w-0 break-all font-mono text-sm font-medium leading-snug"
+                title={a.name}
+              >
                 {a.name}
               </span>
-              {a.description && (
-                <span className="text-faint min-w-0 truncate text-xs" title={a.description}>
-                  {a.description}
-                </span>
-              )}
-              <span className="border-line text-dim ml-auto shrink-0 rounded-full border px-1.5 text-[10px] leading-4">
+              <span className="border-line text-dim mt-0.5 shrink-0 rounded-full border px-1.5 text-[10px] leading-4">
                 {t.profiles.overviewSourceCount(a.sources.length)}
               </span>
             </div>
-            {/* 分布 chips：profile × 实装版本；未安装警示态 */}
+            {/* 次行：分布 chips（本视图的核心聚合信息，紧跟主语） */}
             <div className="mt-2 flex flex-wrap gap-1.5">
               {a.sources.map((s) =>
                 s.version === null ? (
@@ -102,6 +101,12 @@ export function PluginOverview({ refreshKey }: { refreshKey: number }) {
                 ),
               )}
             </div>
+            {/* 末行：描述降级为辅助信息（单行截断 + title 兜底，不与主语争位） */}
+            {a.description && (
+              <div className="text-faint mt-1.5 truncate text-[11px]" title={a.description}>
+                {a.description}
+              </div>
+            )}
           </div>
         </article>
       ))}
