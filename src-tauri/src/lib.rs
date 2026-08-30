@@ -864,20 +864,26 @@ fn ensure_switchable_profile(profile: &str, webui_candidates: &[String]) -> Resu
 }
 
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
-/// upgrade_only：仅升级 + 刷新状态（托盘场景，不打断进行中的会话）。
+/// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
 #[tauri::command]
 fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
     std::thread::spawn(move || {
-        // upgrade / upgrade_only：动用户全局 dsh（按钮确认即授权，动作在后台线程）
-        if action == "upgrade" || action == "upgrade_only" {
+        // upgrade / upgrade_only：动用户全局 dsh（按钮确认即授权，动作在后台线程）。
+        // 4.4⑤：全链路发 `dsh:upgrade` 事件（关于页升级按钮的真实反馈通道）——
+        // 此前失败只发 boot:error，主窗口不在 boot 屏时用户完全看不到：
+        // 2026-08-30 实测 0.1.2-alpha.2 依赖未完整发布，pnpm 两个 registry 均
+        // 失败，错误无任何可见出口，用户视角 = 「点了没反应，等了也没升级」。
+        let only = action == "upgrade_only";
+        if only || action == "upgrade" {
+            emit_upgrade(&handle, "running", "");
             emit_step(
                 &handle,
                 2,
                 "running",
-                "升级官方 DSH（pnpm 优先，npm 回退，最新版）…",
+                "升级官方 DSH（pnpm 优先，npm 回退，排序最高版）…",
             );
             match crate::updates::install_latest_global(
                 &data_dir,
@@ -887,13 +893,16 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
                     emit_step(&handle, 2, "done", "DSH 升级完成");
                     // 刷新版本状态（托盘/前端 chip）
                     refresh_update_ui(&handle, &state);
+                    emit_upgrade(&handle, "done", "");
                 }
                 Err(e) => {
-                    emit_boot_error(&handle, &format!("升级失败：{e}"), "");
+                    emit_upgrade(&handle, "failed", &format!("{e:#}"));
+                    emit_boot_error(&handle, &format!("升级失败：{e:#}"), "");
                     return;
                 }
             }
-            if action == "upgrade_only" {
+            if only {
+                let _ = handle;
                 return;
             }
         }
@@ -1584,6 +1593,16 @@ fn download_progress_bridge(app: &tauri::AppHandle) -> impl FnMut(u64, Option<u6
             }),
         );
     }
+}
+
+/// 发射 `dsh:upgrade` 事件（4.4⑤：DSH 升级链路 running/done/failed，detail =
+/// 失败时安装器错误链含 pnpm 输出尾部；广播全窗口，关于页升级按钮消费）。
+fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(
+        "dsh:upgrade",
+        serde_json::json!({ "phase": phase, "detail": detail }),
+    );
 }
 
 /// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。

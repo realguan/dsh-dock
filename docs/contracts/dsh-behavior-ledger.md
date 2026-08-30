@@ -67,3 +67,12 @@
   关键意外：回环无鉴权门（伪造 Host 仍 200）——记为 dsh 既有姿态，壳侧
   只读使用；id 空间分叉（patch 行 id vs entryId）以 dump-config 为 patch
   写入源。详见 docs/spikes/0002-plugin-inventory.md。
+- 2026-08-30 H-1 口径边界实测：**排序最高版本可能不可安装**。`@deepseek-ai/dsh`
+  0.1.2-alpha.2（当前 sort-max，挂 dist-tag `alpha`；`latest` = 0.1.1-rc.2）依赖
+  `@deepseek-ai/dsh-util-time` / `dsh-util-workspace-path` 等未发布子包——npmmirror
+  缺失回退死域名 r.cnpmjs.org（复现点 7 同款放大器）ECONNRESET，npmjs 亦不可达
+  依赖 → `pnpm add -g` 两 registry 均失败（app 内复现：shell.log 14:41-14:49 多次
+  尝试全败；手工复现同错）。H-1「rc 也追，不认 dist-tag」口径会向用户提示一个
+  装不上的版本——已知边界：失败现经 `dsh:upgrade` 事件对用户可见（含 pnpm 输出
+  尾部）；根治需检查侧可安装性预校验（每依赖一查，成本高）或口径改 dist-tag 优先
+  （裁定事项，未动）。

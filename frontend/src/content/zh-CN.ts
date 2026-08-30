@@ -125,6 +125,7 @@ export const t = {
     dshUpgradeNote: "升级 DSH 只动 pnpm/npm 全局包，不触碰你的数据与配置。",
     upgrading: "升级中…",
     upgradeFailed: "升级失败",
+    upgradeRunning: "正在全局安装（pnpm/npm），可能需要数分钟…",
     btnCheck: "检查",
     btnUpgrade: "升级",
     // 工作台入口

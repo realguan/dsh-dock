@@ -4,6 +4,7 @@
 // 点击后的本地 busy 不需要单独 state：run_check/run_download_and_install
 // 起手即回推 checking/downloading 事件，AnimatePresence 以 phase 为 key 过渡。
 import { useEffect } from "react"
+import { LoaderCircle } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 import { api } from "@/lib/tauri"
 import { fmtBytes } from "@/lib/format"
@@ -154,25 +155,26 @@ export function ClientUpdateCard() {
         </motion.div>
       </AnimatePresence>
 
-      {/* 动作区：进行中隐藏全部按钮避免并发；其余状态常驻「检查更新」 */}
-      {!busy && (
-        <div className="mt-3 flex items-center gap-2">
-          {phase === "available" ? (
-            <Button size="sm" onClick={() => api.clientUpdateApply().catch(() => {})}>
-              {t.about.downloadBtn}
-              {latest ? ` v${latest}` : ""}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => api.clientUpdateCheck().catch(() => {})}
-            >
-              {t.about.checkBtn}
-            </Button>
-          )}
-        </div>
-      )}
+      {/* 动作区：检查钮常驻（busy 时禁用 + 转圈——原实现整组消失，用户视角
+          「点了没动效」）；下载按钮仅在 available 出现，进行中隐藏避免并发 */}
+      <div className="mt-3 flex items-center gap-2">
+        {phase === "available" && !busy ? (
+          <Button size="sm" onClick={() => api.clientUpdateApply().catch(() => {})}>
+            {t.about.downloadBtn}
+            {latest ? ` v${latest}` : ""}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => api.clientUpdateCheck().catch(() => {})}
+          >
+            {phase === "checking" && <LoaderCircle className="size-3 animate-spin" aria-hidden />}
+            {t.about.checkBtn}
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

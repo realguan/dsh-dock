@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-08-30 排障 + 修复 · DSH 升级「点了没反应」——根因 = 不可安装的 alpha 版本 + 失败不可见；升级链路事件化 —— guan（AI 协作）
+
+- 变更：本 commit——`lib.rs`（`terminal_action` 升级链路新增 `dsh:upgrade`
+  事件 running/done/failed，failed 携带安装器完整错误链含 pnpm 输出尾部），
+  `DshVersionCard`（升级 busy 改事件驱动真实时长，失败显示错误详情——原 2s
+  固定假 busy，之后数分钟全程无反馈）、`ClientUpdateCard`（检查更新按钮
+  busy 时禁用 + 内联转圈——原实现整组消失，无动效）。
+- 影响：仅周知 + **一项裁定待议**：根因是 H-1 检查口径（排序最高，rc/预发布
+  也追）会把 `0.1.2-alpha.2` 这种**依赖未发布的不可安装版本**提示为「有新版」
+  （ledger 已记边界）。候选：a) 检查侧做可安装性预校验（每依赖一查，成本高）；
+  b) 口径改 dist-tag 优先（推翻 H-1，需裁定）。现维持 H-1 + 失败可见。Windows
+  侧注意：`install_global_dsh_with_prefix` 的回退链未变。
+- 凭据：根因实机复现——shell.log 14:41-14:49 多次 `pnpm add -g
+  @deepseek-ai/dsh@0.1.2-alpha.2` 双 registry 全败；手工复现同错
+  （ERR_PNPM_META_FETCH_FAIL，依赖走死域名 r.cnpmjs.org）。cargo test 142 绿 /
+  fmt / clippy；前端 typecheck / lint / test 49 绿。
+
 ### 2026-08-29 发版事项 · v0.7.0 tag（插件管理器全量 + Profile 重启），冻结期随验收重启 —— guan（AI 协作）
 
 - 变更：本 commit——详情对话框行内操作防溢出修复（hover 操作组与运行徽标
