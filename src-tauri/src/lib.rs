@@ -1778,6 +1778,28 @@ mod tests {
             assert!(err.contains("webUi"), "{bad} -> {err}");
         }
     }
+
+    /// 版本一致性契约（2026-09-01 维护者裁定）：关于页/更新中心的当前版本
+    /// 显示与 updater 比较均锚定 Cargo.toml（CARGO_PKG_VERSION），而打包产物
+    /// 版本来自 tauri.conf.json；两者漂移 = 「已升级但仍提示更新」事故
+    /// （0.8.5 事故：tag 已发但版本号未同步，用户升级后仍提示升至 0.8.5）。
+    #[test]
+    fn cargo_version_matches_tauri_conf() {
+        let cargo = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("读取 Cargo.toml");
+        let conf =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
+                .expect("读取 tauri.conf.json");
+        let pkg_version = env!("CARGO_PKG_VERSION");
+        assert!(
+            cargo.contains(&format!("version = \"{pkg_version}\"")),
+            "Cargo.toml 的 version 与 CARGO_PKG_VERSION 不一致：预期 {pkg_version}"
+        );
+        assert!(
+            conf.contains(&format!("\"version\": \"{pkg_version}\"")),
+            "tauri.conf.json 的 version 与 CARGO_PKG_VERSION 不一致：预期 {pkg_version}"
+        );
+    }
 }
 
 // ---------- 更新应用菜单（仅 macOS 菜单栏；托盘已砍，裁定 2026-08-23） ----------
