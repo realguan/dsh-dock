@@ -26,6 +26,7 @@ pub struct SessionItem {
     pub id: String,
     pub project_name: String,
     pub project_dir_raw: String,
+    pub decoded_project_path: String,
     pub file_path: String,
     pub updated_at: u64,
     pub size_bytes: u64,
@@ -54,11 +55,78 @@ pub struct BatchRepairSummary {
     pub failures: Vec<String>,
 }
 
-/// 将项目目录名称（例如 `--Users-guan-git-dsh-dock--`）转为可读的项目标识
+/// 将编码后的项目目录名反解为真实工作区操作系统路径（支持文件系统智能贪婪探测与带连字符目录还原）
+pub fn decode_project_dir_to_path(raw: &str) -> String {
+    let stripped = raw.trim_matches('-');
+    if stripped.is_empty() {
+        return "/".to_string();
+    }
+
+    // Windows 盘符判定，如 C:-Users-guan-project-
+    let is_windows = stripped.len() >= 2 && stripped.chars().nth(1) == Some(':');
+    let (sep, mut current_base, remaining_raw) = if is_windows {
+        let drive = &stripped[..2];
+        let rest = stripped[2..].trim_start_matches('-');
+        ("\\", format!("{drive}\\"), rest)
+    } else {
+        ("/", String::from("/"), stripped)
+    };
+
+    let segments: Vec<&str> = remaining_raw.split('-').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return current_base;
+    }
+
+    let mut i = 0;
+    while i < segments.len() {
+        let mut matched_len = 1;
+        let max_lookahead = (segments.len() - i).min(6);
+
+        let mut found_dir = false;
+        let base_path = Path::new(&current_base);
+        if base_path.is_dir() {
+            for len in (1..=max_lookahead).rev() {
+                let joined_name = segments[i..i + len].join("-");
+                let candidate_path = base_path.join(&joined_name);
+                if candidate_path.exists() {
+                    current_base = candidate_path.to_string_lossy().to_string();
+                    matched_len = len;
+                    found_dir = true;
+                    break;
+                }
+            }
+        }
+
+        if !found_dir {
+            if current_base.ends_with(sep) {
+                current_base.push_str(segments[i]);
+            } else {
+                current_base.push_str(sep);
+                current_base.push_str(segments[i]);
+            }
+        }
+
+        i += matched_len;
+    }
+
+    current_base
+}
+
+/// 将项目目录名称（例如 `--Users-guan-git-dsh-dock--`）转为简洁可读的项目名（如 `dsh-dock`）
 pub fn decode_project_dir_name(raw: &str) -> String {
     let stripped = raw.trim_matches('-');
     if stripped.is_empty() {
         return "root".to_string();
+    }
+
+    let path_str = decode_project_dir_to_path(raw);
+    let p = Path::new(&path_str);
+    if p.exists() {
+        if let Some(file_name) = p.file_name().and_then(|n| n.to_str()) {
+            if !file_name.is_empty() {
+                return file_name.to_string();
+            }
+        }
     }
     stripped.to_string()
 }
@@ -128,10 +196,13 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
                 };
                 let has_backup = bak_file.is_file();
 
+                let decoded_project_path = decode_project_dir_to_path(&project_dir_name);
+
                 items.push(SessionItem {
                     id: session_id,
                     project_name: project_name.clone(),
                     project_dir_raw: project_dir_name.clone(),
+                    decoded_project_path,
                     file_path: target_file.to_string_lossy().to_string(),
                     updated_at,
                     size_bytes,
@@ -192,18 +263,62 @@ pub fn run_repair(target: Option<&str>, home: &Path) -> Result<RepairOutcome, St
     })
 }
 
+/// 删除指定会话文件或目录（4.6 会话维护）
+pub fn remove_session(home: &Path, session_path_str: &str) -> Result<(), String> {
+    let session_path = PathBuf::from(session_path_str);
+    let sessions_root = home.join("sessions");
+
+    // 安全检查：目标必须落在 sessions_root 内部
+    if !session_path.starts_with(&sessions_root) {
+        return Err("非法会话路径：超出 sessions 根目录范围".to_string());
+    }
+
+    if !session_path.exists() {
+        return Ok(());
+    }
+
+    if session_path.is_file() {
+        // 如果是单文件（如 session.jsonl / session.jsonl.zst），且父目录即会话目录，删除父目录或文件
+        if let Some(parent) = session_path.parent() {
+            if parent != sessions_root && parent.parent() != Some(&sessions_root) {
+                // 是 session-xxx 文件夹
+                let _ = fs::remove_dir_all(parent);
+                return Ok(());
+            }
+        }
+        fs::remove_file(&session_path).map_err(|e| format!("删除会话文件失败：{e}"))?;
+    } else if session_path.is_dir() {
+        fs::remove_dir_all(&session_path).map_err(|e| format!("删除会话目录失败：{e}"))?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn decode_project_dir_extracts_basename() {
-        assert_eq!(
-            decode_project_dir_name("--Users-guan-git-realguan-dsh-dock--"),
-            "Users-guan-git-realguan-dsh-dock"
-        );
         assert_eq!(decode_project_dir_name("----"), "root");
         assert_eq!(decode_project_dir_name("--my-project--"), "my-project");
+        assert_eq!(
+            decode_project_dir_to_path("-C:-Users-guan-project-"),
+            "C:\\Users\\guan\\project"
+        );
+
+        // 如果在真实文件系统上有匹配的目录，能够贪婪还原复合名称
+        let temp = std::env::temp_dir().join(format!("dsh-dock-greedy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        let nested = temp.join("sub-project-a").join("deep-hub");
+        fs::create_dir_all(&nested).unwrap();
+
+        let encoded = format!("--{}--", nested.to_string_lossy().trim_matches('/').replace('/', "-"));
+        let decoded = decode_project_dir_to_path(&encoded);
+        assert_eq!(decoded, nested.to_string_lossy().to_string());
+        assert_eq!(decode_project_dir_name(&encoded), "deep-hub");
+
+        let _ = fs::remove_dir_all(&temp);
     }
 
     #[test]
@@ -235,6 +350,56 @@ mod tests {
         assert_eq!(list[0].id, "session-12345");
         assert_eq!(list[0].project_name, "my-app");
         assert!(!list[0].is_compressed);
+
+        // 测试删除
+        remove_session(&temp, &list[0].file_path).unwrap();
+        let after = scan_sessions(&temp).unwrap();
+        assert!(after.is_empty());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn decode_project_dir_to_path_edge_cases() {
+        assert_eq!(decode_project_dir_to_path(""), "/");
+        assert_eq!(decode_project_dir_to_path("---"), "/");
+        assert_eq!(decode_project_dir_to_path("-D:-workspace-app-"), "D:\\workspace\\app");
+        assert_eq!(decode_project_dir_to_path("--var-log-dsh--"), "/var/log/dsh");
+    }
+
+    #[test]
+    fn repair_session_cleans_corrupt_jsonl_and_creates_backup() {
+        let temp = std::env::temp_dir().join(format!("dsh-sess-repair-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let sess_dir = temp
+            .join("sessions")
+            .join("--demo--")
+            .join("sess-fail");
+        fs::create_dir_all(&sess_dir).unwrap();
+        let target_file = sess_dir.join("session.jsonl");
+
+        // 写入含有 header 和乱序/倒退事件的数据
+        let corrupt_data = r#"{"id":"sess-fail","type":"session_header"}
+{"seq":5,"turn":2,"msg":"later"}
+{"seq":1,"turn":1,"msg":"earlier"}
+"#;
+        fs::write(&target_file, corrupt_data).unwrap();
+
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp).unwrap();
+        assert!(outcome.success);
+
+        // 验证备份文件已创建
+        let backup_file = sess_dir.join("session.jsonl.bak");
+        assert!(backup_file.is_file());
+
+        // 验证修复后的文件内容按 turn/seq 重排
+        let repaired_content = fs::read_to_string(&target_file).unwrap();
+        let valid_lines: Vec<&str> = repaired_content.lines().collect();
+        assert_eq!(valid_lines.len(), 3);
+        assert!(valid_lines[0].contains("\"id\":\"sess-fail\""));
+        assert!(valid_lines[1].contains("\"turn\":1"));
+        assert!(valid_lines[2].contains("\"turn\":2"));
 
         let _ = fs::remove_dir_all(&temp);
     }

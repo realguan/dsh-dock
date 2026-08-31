@@ -1,16 +1,15 @@
-// Profile 管理器主页面（Master-Detail 工作台重构）。
-// 布局：左侧 Profile 列表与快捷筛选，右侧 Profile 沉浸式工作台 / 插件全景矩阵。
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Layers,
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n, useI18nStore } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { Emblem } from "@/components/layout/Emblem"
@@ -19,6 +18,7 @@ import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { SessionManager } from "@/components/profiles/SessionManager"
+import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
 import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
@@ -27,6 +27,7 @@ import { FloatingToast, type ToastMessage } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
 
 export function ProfileManager() {
+  const { t } = useI18n()
   const { list, defaultProfile, activeProfile, loading, loadError, load } = useProfilesStore()
 
   // 选中的 Profile（默认为当前运行中的 Profile 或第一个 Profile）
@@ -39,9 +40,14 @@ export function ProfileManager() {
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
 
-  // 视图切换（Profile 管理列表 vs 插件全景矩阵 vs 会话维护与自愈）
-  const [view, setView] = useState<"list" | "plugins" | "sessions">("list")
+  // 视图切换（Profile 管理列表 vs 插件全景矩阵 vs 会话维护与自愈 vs 系统控制台）
+  const [view, setView] = useState<"list" | "plugins" | "sessions" | "console">("list")
   const [overviewTick, setOverviewTick] = useState(0)
+
+  // 初始化语言
+  useEffect(() => {
+    void useI18nStore.getState().initFromSettings()
+  }, [])
 
   // Profile 搜索筛选
   const [profileFilter, setProfileFilter] = useState("")
@@ -143,11 +149,11 @@ export function ProfileManager() {
   }, [list, selectedName])
 
   return (
-    <PageShell width={1000} align="top" className="px-4 py-4 sm:px-6">
+    <PageShell width={1040} align="top" className="px-4 py-4 sm:px-6">
       {/* 顶部全局标题栏 */}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Emblem size={40} />
+          <Emblem size={32} />
           <div>
             <h1 className="text-ink text-base font-bold tracking-tight">
               {t.profiles.title}
@@ -156,7 +162,7 @@ export function ProfileManager() {
           </div>
         </div>
 
-        {/* 顶部右侧：视图分段切换 + 新建 + 刷新 */}
+        {/* 顶部右侧：视图分段切换 + 刷新 */}
         <div className="flex items-center gap-2">
           <div
             role="tablist"
@@ -206,18 +212,22 @@ export function ProfileManager() {
               <ShieldCheck className="size-3.5" />
               <span>{t.profiles.viewSessions}</span>
             </button>
-          </div>
 
-          {view === "list" && (
-            <Button
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-              className="gap-1 text-xs"
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "console"}
+              onClick={() => setView("console")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                view === "console"
+                  ? "bg-panel text-ink shadow-xs"
+                  : "text-dim hover:text-ink"
+              }`}
             >
-              <Plus className="size-3.5" />
-              <span>{t.profiles.createBtn}</span>
-            </Button>
-          )}
+              <Settings className="size-3.5" />
+              <span>{t.profiles.viewConsole}</span>
+            </button>
+          </div>
 
           <Button
             size="sm"
@@ -233,7 +243,11 @@ export function ProfileManager() {
       </header>
 
       {/* 主视图区 */}
-      {view === "sessions" ? (
+      {view === "console" ? (
+        <SystemConsole
+          onNotice={(msg, kind) => showToast(msg, kind)}
+        />
+      ) : view === "sessions" ? (
         <SessionManager
           refreshKey={overviewTick}
           onNotice={(msg, kind) => showToast(msg, kind)}
@@ -244,14 +258,22 @@ export function ProfileManager() {
           onNotice={(msg, kind) => showToast(msg, kind)}
         />
       ) : (
-        /* Master-Detail 双栏工作台 */
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          {/* 左侧 Master：Profile 导航列表 */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* 左侧 List：Profile 列表导航 */}
           <section
             aria-label="Profile 列表"
-            className="flex flex-col space-y-2.5 lg:col-span-4 xl:col-span-4"
+            className="space-y-3 lg:col-span-4 xl:col-span-4"
           >
-            {/* 快速搜索框 */}
+            {/* 新建 Profile 专属醒目操作条 */}
+            <Button
+              onClick={() => setCreateOpen(true)}
+              className="w-full gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs h-9 rounded-xl font-medium"
+            >
+              <Plus className="size-4" />
+              <span>{t.profiles.createBtn}</span>
+            </Button>
+
+            {/* 搜索框 */}
             <div className="relative">
               <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
               <input

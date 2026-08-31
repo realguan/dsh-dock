@@ -15,22 +15,70 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { promisify } from 'node:util'
-import { zstdCompress, constants } from 'node:zlib'
+import { zstdCompress, zstdDecompressSync, constants } from 'node:zlib'
 
 const zstdCompressAsync = promisify(zstdCompress)
 const CHECKSUM_OPTIONS = {
   params: { [constants.ZSTD_c_checksumFlag]: 1 },
 }
+const ZSTD_MAGIC = 4247762216
 
 function getDshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
 }
 
+function scanZstdFrames(buffer) {
+  const frames = []
+  let offset = 0
+  while (offset < buffer.length) {
+    const start = offset
+    if (buffer.length - offset < 4) return { frames, tornStart: start }
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) throw new Error(`invalid frame magic at byte ${offset}`)
+    offset += 4
+    const descriptor = buffer.readUInt8(offset)
+    offset += 1
+    const contentSizeFlag = descriptor >>> 6
+    const singleSegment = (descriptor & 32) !== 0
+    const checksum = (descriptor & 4) !== 0
+    const dictionaryFlag = descriptor & 3
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
+    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
+    offset += remainingHeaderBytes
+    for (;;) {
+      if (buffer.length - offset < 3) return { frames, tornStart: start }
+      const blockHeader = buffer.readUIntLE(offset, 3)
+      offset += 3
+      const lastBlock = (blockHeader & 1) !== 0
+      const blockType = (blockHeader >>> 1) & 3
+      const blockSize = blockHeader >>> 3
+      if (blockType === 3) throw new Error(`reserved block type at byte ${offset - 3}`)
+      const payloadBytes = blockType === 1 ? 1 : blockSize
+      if (buffer.length - offset < payloadBytes) return { frames, tornStart: start }
+      offset += payloadBytes
+      if (lastBlock) break
+    }
+    if (checksum) offset += 4
+    frames.push({ start, end: offset })
+  }
+  return { frames }
+}
+
 function decompressZstd(filePath) {
+  const buf = readFileSync(filePath)
   try {
-    return execSync(`zstd -dc "${filePath}"`, { maxBuffer: 100 * 1024 * 1024 })
+    const { frames } = scanZstdFrames(buf)
+    if (frames.length === 0) {
+      return Buffer.alloc(0)
+    }
+    const chunks = frames.map(f => zstdDecompressSync(buf.subarray(f.start, f.end)))
+    return Buffer.concat(chunks)
   } catch (e) {
-    throw new Error(`zstd 解压失败 (${filePath}): ${e.message}`)
+    try {
+      return execSync(`zstd -dc "${filePath}"`, { maxBuffer: 100 * 1024 * 1024 })
+    } catch {
+      throw new Error(`zstd 解压失败 (${filePath}): ${e.message}`)
+    }
   }
 }
 

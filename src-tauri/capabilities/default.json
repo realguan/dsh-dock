@@ -49,6 +49,21 @@
     "allow-copy-plugin-config",
     "allow-list-sessions",
     "allow-repair-session",
-    "allow-repair-all-sessions"
+    "allow-repair-all-sessions",
+    "allow-get-shell-settings",
+    "allow-set-shell-settings",
+    "allow-get-system-diagnostics",
+    "allow-get-app-logs",
+    "allow-get-credentials-raw",
+    "allow-save-credentials-raw",
+    "allow-get-credentials-summary",
+    "allow-set-credential-key",
+    "allow-get-dsh-settings-raw",
+    "allow-save-dsh-settings-raw",
+    "allow-list-mcp-servers",
+    "allow-save-mcp-server",
+    "allow-delete-mcp-server",
+    "allow-delete-session",
+    "allow-reset-profile-dependencies"
   ]
 }

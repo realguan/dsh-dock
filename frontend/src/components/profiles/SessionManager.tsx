@@ -1,23 +1,29 @@
-// 会话维护与自愈工作台（Session Doctor & Health Manager）。
-// 提供 DSH 会话日志的健康体检、乱序检测与一键自愈修复。
+// SessionManager.tsx —— 会话与工作区维护工作台（4.6 优化版：布局规整 + 正确 Icon + 智能项目名）。
 import { useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Archive,
   Check,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Copy,
+  ExternalLink,
   FileCode,
+  Folder,
   HardDrive,
+  Layers,
+  List,
   LoaderCircle,
   RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { SessionItem } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 
@@ -48,22 +54,30 @@ export function SessionManager({
   refreshKey: number
   onNotice?: (text: string, kind?: "ok" | "warn") => void
 }) {
+  const { t } = useI18n()
   const [sessions, setSessions] = useState<SessionItem[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
+  const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+
+  // 视图模式：按项目分组 vs 平铺列表
+  const [viewMode, setViewMode] = useState<"grouped" | "flat">("grouped")
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
 
   const loadSessions = async () => {
     setLoading(true)
     setError(null)
     try {
-      const list = await api.listSessions()
-      setSessions(list)
+      const data = await api.listSessions()
+      setSessions(data)
     } catch (e) {
       setError(String(e))
+      onNotice?.(String(e), "warn")
     } finally {
       setLoading(false)
     }
@@ -73,7 +87,27 @@ export function SessionManager({
     void loadSessions()
   }, [refreshKey])
 
-  // 单会话修复
+  const stats = useMemo(() => {
+    if (!sessions) return { total: 0, healthy: 0, needsRepair: 0, projectsCount: 0 }
+    let healthy = 0
+    let needsRepair = 0
+    const projects = new Set<string>()
+    for (const s of sessions) {
+      projects.add(s.projectDirRaw)
+      if (s.status === "needs_repair") {
+        needsRepair++
+      } else {
+        healthy++
+      }
+    }
+    return {
+      total: sessions.length,
+      healthy,
+      needsRepair,
+      projectsCount: projects.size,
+    }
+  }, [sessions])
+
   const handleRepairSingle = async (session: SessionItem) => {
     setRepairingTarget(session.id)
     try {
@@ -91,7 +125,6 @@ export function SessionManager({
     }
   }
 
-  // 全量体检与自愈修复
   const handleRepairAll = async () => {
     setBatchRepairing(true)
     try {
@@ -110,9 +143,54 @@ export function SessionManager({
   }
 
   const handleCopyId = (id: string) => {
-    navigator.clipboard.writeText(id)
-    setCopiedId(id)
-    setTimeout(() => setCopiedId((curr) => (curr === id ? null : curr)), 2000)
+    void navigator.clipboard.writeText(id).then(() => {
+      setCopiedId(id)
+      setTimeout(() => setCopiedId((curr) => (curr === id ? null : curr)), 2000)
+    })
+  }
+
+  const handleCopyPath = (path: string) => {
+    void navigator.clipboard.writeText(path).then(() => {
+      setCopiedPath(path)
+      onNotice?.(t.sessions.pathCopied, "ok")
+      setTimeout(() => setCopiedPath((curr) => (curr === path ? null : curr)), 2000)
+    })
+  }
+
+  const handleOpenWorkspace = async (path: string) => {
+    try {
+      await api.openExternal(path)
+    } catch (e) {
+      onNotice?.(`打开目录失败：${e}`, "warn")
+    }
+  }
+
+  const handleDeleteSingle = async (session: SessionItem) => {
+    if (!window.confirm(`${t.sessions.deleteConfirmTitle(session.id)}\n\n${t.sessions.deleteConfirmNote}`)) {
+      return
+    }
+    setDeletingTarget(session.id)
+    try {
+      await api.deleteSession(session.filePath)
+      onNotice?.(t.sessions.deleteSuccess, "ok")
+      await loadSessions()
+    } catch (e) {
+      onNotice?.(String(e), "warn")
+    } finally {
+      setDeletingTarget(null)
+    }
+  }
+
+  const toggleProjectCollapse = (proj: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev)
+      if (next.has(proj)) {
+        next.delete(proj)
+      } else {
+        next.add(proj)
+      }
+      return next
+    })
   }
 
   const filteredSessions = useMemo(() => {
@@ -123,12 +201,44 @@ export function SessionManager({
       (s) =>
         s.id.toLowerCase().includes(q) ||
         s.projectName.toLowerCase().includes(q) ||
+        s.decodedProjectPath.toLowerCase().includes(q) ||
         s.projectDirRaw.toLowerCase().includes(q),
     )
   }, [sessions, searchQuery])
 
+  // 按工作区项目分组
+  const projectGroups = useMemo(() => {
+    const map = new Map<
+      string,
+      { projectName: string; decodedPath: string; items: SessionItem[]; totalBytes: number }
+    >()
+
+    for (const sess of filteredSessions) {
+      const key = sess.projectDirRaw
+      if (!map.has(key)) {
+        map.set(key, {
+          projectName: sess.projectName,
+          decodedPath: sess.decodedProjectPath,
+          items: [],
+          totalBytes: 0,
+        })
+      }
+      const g = map.get(key)!
+      g.items.push(sess)
+      g.totalBytes += sess.sizeBytes
+    }
+
+    return Array.from(map.entries())
+  }, [filteredSessions])
+
   return (
     <div className="space-y-4">
+      {error && (
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-500">
+          {error}
+        </div>
+      )}
+
       {/* 顶部状态与操作条 */}
       <div className="rounded-2xl border border-line bg-panel p-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -137,29 +247,22 @@ export function SessionManager({
               <ShieldCheck className="size-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-ink text-sm font-semibold">
-                  {t.sessions.title}
-                </h2>
-                {sessions && (
-                  <span className="rounded-full bg-line-soft px-2 py-0.5 text-xs text-dim">
-                    {t.sessions.totalCount(sessions.length)}
-                  </span>
-                )}
-              </div>
-              <p className="text-faint text-xs">{t.sessions.subtitle}</p>
+              <h3 className="text-sm font-bold text-ink">
+                {t.sessions.title}
+              </h3>
+              <p className="text-xs text-faint">{t.sessions.subtitle}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               variant="outline"
               onClick={loadSessions}
-              disabled={loading}
+              disabled={loading || batchRepairing}
               className="gap-1.5 text-xs"
             >
-              <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
+              <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
               <span>{t.sessions.scanBtn}</span>
             </Button>
 
@@ -167,7 +270,7 @@ export function SessionManager({
               size="sm"
               onClick={handleRepairAll}
               disabled={batchRepairing || loading || !sessions || sessions.length === 0}
-              className="gap-1.5 text-xs bg-brand text-white shadow-xs hover:bg-brand/90"
+              className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
             >
               {batchRepairing ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -179,117 +282,332 @@ export function SessionManager({
           </div>
         </div>
 
-        {/* 搜索过滤框 */}
-        <div className="mt-3 pt-3 border-t border-line/60">
-          <div className="relative">
-            <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t.sessions.searchPlaceholder}
-              className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8 text-xs outline-none shadow-2xs transition-colors"
-            />
+        {/* 统计指标 */}
+        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <div className="rounded-xl border border-line bg-bg p-3">
+            <span className="text-[11px] text-faint">工作区项目数</span>
+            <div className="mt-1 font-mono text-base font-bold text-ink">
+              {stats.projectsCount}
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-bg p-3">
+            <span className="text-[11px] text-faint">会话总数</span>
+            <div className="mt-1 font-mono text-base font-bold text-ink">
+              {stats.total}
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-bg p-3">
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400">健康就绪</span>
+            <div className="mt-1 font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
+              {stats.healthy}
+            </div>
+          </div>
+          <div className="rounded-xl border border-line bg-bg p-3">
+            <span className="text-[11px] text-amber-500">待修复异常</span>
+            <div className="mt-1 font-mono text-base font-bold text-amber-500">
+              {stats.needsRepair}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* 异常错误提示 */}
-      {error && (
-        <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/5 p-4 text-xs text-danger">
-          <AlertTriangle className="size-4 shrink-0" />
-          <span>{error}</span>
+      {/* 搜索与视图切换 */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="relative min-w-[240px] flex-1">
+          <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t.sessions.searchPlaceholder}
+            className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8.5 font-mono text-xs outline-none transition-colors shadow-2xs"
+          />
         </div>
-      )}
 
-      {/* 会话列表 */}
+        <div className="flex items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setViewMode("grouped")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              viewMode === "grouped" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
+            }`}
+          >
+            <Layers className="size-3.5" />
+            <span>{t.sessions.groupByProject}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("flat")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              viewMode === "flat" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
+            }`}
+          >
+            <List className="size-3.5" />
+            <span>平铺列表</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 会话列表呈现 */}
       {loading && !sessions ? (
-        <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-dim">
-          <div className="flex flex-col items-center gap-2">
-            <LoaderCircle className="size-6 animate-spin text-brand" />
-            <span className="text-xs">{t.profiles.refreshing}</span>
-          </div>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-panel py-12 text-center">
+          <LoaderCircle className="size-6 animate-spin text-brand" />
+          <span className="text-faint mt-2 text-xs">正在扫描 DSH 会话记录...</span>
         </div>
       ) : filteredSessions.length === 0 ? (
-        <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-center">
-          <FileCode className="text-faint mb-2 size-8" />
-          <p className="text-ink text-xs font-medium">
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel py-12 text-center">
+          <FileCode className="text-faint size-8" />
+          <p className="text-ink mt-2 text-xs font-medium">
             {searchQuery ? t.sessions.emptyFilter : t.sessions.emptyList}
           </p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-2.5">
-          {filteredSessions.map((sess) => {
-            const isBusy = repairingTarget === sess.id
+      ) : viewMode === "grouped" ? (
+        /* 分组呈现（优化规整布局） */
+        <div className="space-y-3.5">
+          {projectGroups.map(([rawKey, group]) => {
+            const isCollapsed = collapsedProjects.has(rawKey)
             return (
               <div
-                key={sess.id}
-                className="group flex flex-col justify-between gap-3 rounded-xl border border-line bg-panel p-3.5 shadow-2xs transition-all hover:border-brand/40 hover:shadow-xs sm:flex-row sm:items-center"
+                key={rawKey}
+                className="overflow-hidden rounded-2xl border border-line bg-panel shadow-xs transition-colors hover:border-brand/30"
               >
-                {/* 会话信息主体 */}
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand transition-colors">
-                    <FileCode className="size-4" />
+                {/* 分组头部：规整上下两层设计 */}
+                <div className="border-b border-line bg-line-soft/40 px-4 py-3 space-y-1.5">
+                  {/* 第一行：标题与主要操作 */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div
+                      onClick={() => toggleProjectCollapse(rawKey)}
+                      className="flex cursor-pointer items-center gap-2 min-w-0 flex-1 select-none"
+                    >
+                      {isCollapsed ? (
+                        <ChevronRight className="size-4 text-faint shrink-0" />
+                      ) : (
+                        <ChevronDown className="size-4 text-faint shrink-0" />
+                      )}
+                      <Folder className="size-4 text-brand shrink-0" />
+                      <span className="font-mono text-xs font-bold text-ink truncate">
+                        {group.projectName}
+                      </span>
+                      <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-[10px] font-mono text-faint">
+                        {group.items.length} 个会话 · {formatBytes(group.totalBytes)}
+                      </span>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      title={t.sessions.openInFinder}
+                      onClick={() => handleOpenWorkspace(group.decodedPath)}
+                      className="h-7 shrink-0 gap-1.5 px-2.5 text-xs hover:border-brand hover:text-brand"
+                    >
+                      <ExternalLink className="size-3" />
+                      <span>{t.sessions.openInFinder}</span>
+                    </Button>
                   </div>
 
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-ink font-mono text-xs font-semibold truncate max-w-sm">
-                        {sess.id}
-                      </span>
-                      <button
-                        type="button"
-                        title="复制会话 ID"
-                        onClick={() => handleCopyId(sess.id)}
-                        className="text-faint hover:text-ink transition-colors p-0.5 rounded"
-                      >
-                        {copiedId === sess.id ? (
-                          <Check className="size-3 text-brand" />
-                        ) : (
-                          <Copy className="size-3" />
-                        )}
-                      </button>
-
-                      {/* 项目标签 */}
-                      <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-[11px] font-medium text-dim">
-                        📁 {sess.projectName}
-                      </span>
-
-                      {/* 压缩状态 */}
-                      <span className="rounded-md border border-line px-1.5 py-0.5 text-[10px] text-faint">
-                        {sess.isCompressed ? t.sessions.compressedTag : t.sessions.plainTag}
-                      </span>
-
-                      {/* 备份标识 */}
-                      {sess.hasBackup && (
-                        <span className="flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                          <Archive className="size-2.5" />
-                          {t.sessions.backupTag}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* 辅助元数据 */}
-                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
-                      <span className="flex items-center gap-1">
-                        <Clock className="size-3" />
-                        {t.sessions.lastUpdated}: {formatRelativeTime(sess.updatedAt)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <HardDrive className="size-3" />
-                        {t.sessions.fileSize}: {formatBytes(sess.sizeBytes)}
-                      </span>
-                    </div>
+                  {/* 第二行：完整反解工作区路径 */}
+                  <div className="pl-6">
+                    <span
+                      className="font-mono text-[11px] text-faint block truncate"
+                      title={group.decodedPath}
+                    >
+                      {group.decodedPath}
+                    </span>
                   </div>
                 </div>
 
-                {/* 右侧动作 */}
-                <div className="flex shrink-0 items-center gap-2 sm:self-center">
+                {/* 分组内会话列表 */}
+                {!isCollapsed && (
+                  <div className="divide-y divide-line/60">
+                    {group.items.map((sess) => {
+                      const isBusy = repairingTarget === sess.id
+                      const isDeleting = deletingTarget === sess.id
+                      const isNeedsRepair = sess.status === "needs_repair"
+
+                      return (
+                        <div
+                          key={sess.id}
+                          className={`flex flex-col justify-between gap-3 p-3.5 transition-colors sm:flex-row sm:items-center ${
+                            isNeedsRepair
+                              ? "bg-amber-500/5 hover:bg-amber-500/10"
+                              : "hover:bg-line-soft/30"
+                          }`}
+                        >
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-xs font-semibold text-ink">
+                                {sess.id}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyId(sess.id)}
+                                title="复制会话 ID"
+                                className="text-faint hover:text-ink rounded p-0.5 transition-colors"
+                              >
+                                {copiedId === sess.id ? (
+                                  <Check className="size-3 text-emerald-500" />
+                                ) : (
+                                  <Copy className="size-3" />
+                                )}
+                              </button>
+
+                              {isNeedsRepair && (
+                                <span className="flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                  <AlertTriangle className="size-2.5" />
+                                  需自愈
+                                </span>
+                              )}
+
+                              {sess.hasBackup && (
+                                <span className="flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                                  <Archive className="size-2.5" />
+                                  {t.sessions.backupTag}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
+                              <span className="flex items-center gap-1">
+                                <Clock className="size-3" />
+                                {formatRelativeTime(sess.updatedAt)}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <HardDrive className="size-3" />
+                                {formatBytes(sess.sizeBytes)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 操作按钮组：图标纠正 */}
+                          <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              title="复制会话文件完整路径"
+                              onClick={() => handleCopyPath(sess.filePath)}
+                              className="size-7 p-0"
+                            >
+                              {copiedPath === sess.filePath ? (
+                                <Check className="size-3 text-emerald-500" />
+                              ) : (
+                                <Copy className="size-3 text-faint" />
+                              )}
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRepairSingle(sess)}
+                              disabled={isBusy || batchRepairing || isDeleting}
+                              className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand"
+                            >
+                              {isBusy ? (
+                                <LoaderCircle className="size-3 animate-spin text-brand" />
+                              ) : (
+                                <Wrench className="size-3 text-dim" />
+                              )}
+                              <span>{t.sessions.repairBtn}</span>
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              title={t.sessions.deleteBtn}
+                              onClick={() => handleDeleteSingle(sess)}
+                              disabled={isBusy || batchRepairing || isDeleting}
+                              className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
+                            >
+                              {isDeleting ? (
+                                <LoaderCircle className="size-3 animate-spin text-rose-500" />
+                              ) : (
+                                <Trash2 className="size-3 text-faint" />
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        /* 平铺列表呈现 */
+        <div className="divide-y divide-line rounded-2xl border border-line bg-panel shadow-xs overflow-hidden">
+          {filteredSessions.map((sess) => {
+            const isBusy = repairingTarget === sess.id
+            const isDeleting = deletingTarget === sess.id
+            const isNeedsRepair = sess.status === "needs_repair"
+
+            return (
+              <div
+                key={sess.id}
+                className={`flex flex-col justify-between gap-3 p-4 transition-colors sm:flex-row sm:items-center ${
+                  isNeedsRepair
+                    ? "bg-amber-500/5 hover:bg-amber-500/10"
+                    : "hover:bg-line-soft/30"
+                }`}
+              >
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-ink">
+                      {sess.id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyId(sess.id)}
+                      className="text-faint hover:text-ink rounded p-0.5 transition-colors"
+                    >
+                      {copiedId === sess.id ? (
+                        <Check className="size-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="size-3" />
+                      )}
+                    </button>
+                    <span className="rounded-md bg-line px-1.5 py-0.5 font-mono text-[10px] text-dim">
+                      {sess.projectName}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
+                    <span className="font-mono">{sess.decodedProjectPath}</span>
+                    <span>·</span>
+                    <span>{formatRelativeTime(sess.updatedAt)}</span>
+                    <span>·</span>
+                    <span>{formatBytes(sess.sizeBytes)}</span>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title={t.sessions.openInFinder}
+                    onClick={() => handleOpenWorkspace(sess.decodedProjectPath)}
+                    className="size-8 p-0"
+                  >
+                    <ExternalLink className="size-3.5 text-faint" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title={t.sessions.copyPath}
+                    onClick={() => handleCopyPath(sess.filePath)}
+                    className="size-8 p-0"
+                  >
+                    {copiedPath === sess.filePath ? (
+                      <Check className="size-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="size-3.5 text-faint" />
+                    )}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => handleRepairSingle(sess)}
-                    disabled={isBusy || batchRepairing}
-                    className="gap-1.5 text-xs hover:border-brand hover:text-brand"
+                    disabled={isBusy || batchRepairing || isDeleting}
+                    className="gap-1 text-xs hover:border-brand"
                   >
                     {isBusy ? (
                       <LoaderCircle className="size-3 animate-spin text-brand" />
@@ -297,6 +615,19 @@ export function SessionManager({
                       <Wrench className="size-3 text-dim" />
                     )}
                     <span>{t.sessions.repairBtn}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleDeleteSingle(sess)}
+                    disabled={isBusy || batchRepairing || isDeleting}
+                    className="size-8 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
+                  >
+                    {isDeleting ? (
+                      <LoaderCircle className="size-3.5 animate-spin text-rose-500" />
+                    ) : (
+                      <Trash2 className="size-3.5 text-faint" />
+                    )}
                   </Button>
                 </div>
               </div>

@@ -103,7 +103,8 @@
 - 壳运行时无状态；**管理功能不在此限**——管理数据可按需持久化到 `app_data` 自有库/文件。
 - 运行时持久化例外册（新增字段须先在此登记）：`settings.json` 原子写、损坏回退默认；
   已登记 `defaultMode`（2026-08-25）· `defaultProfile` 默认启动 profile
-  （2026-08-28 落地；None/失效值读取侧兜底 `web`；删除时引用清除、重命名时引用同步）。
+  （2026-08-28 落地；None/失效值读取侧兜底 `web`；删除时引用清除、重命名时引用同步）·
+  `locale` 界面语言偏好（2026-08-31）· `autoRestart` 崩溃自动拉起守护（2026-08-31）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
@@ -129,6 +130,12 @@
   `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
   配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
   `list_sessions` `repair_session` `repair_all_sessions`（会话维护与自愈，2026-08-31）。
+  `get_shell_settings` `set_shell_settings` `get_system_diagnostics` `get_app_logs`（系统控制台与诊断，2026-08-31）。
+  `get_credentials_raw` `save_credentials_raw` `get_credentials_summary` `set_credential_key`（凭据安全管理与脱敏，2026-08-31）。
+  `get_dsh_settings_raw` `save_dsh_settings_raw`（DSH 全局引擎设置，2026-08-31）。
+  `list_mcp_servers` `save_mcp_server` `delete_mcp_server`（MCP 服务器结构化管理，2026-08-31）。
+  `delete_session`（会话删除，2026-08-31）。
+  `reset_profile_dependencies`（Profile 依赖一键重置与修复，2026-08-31）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。

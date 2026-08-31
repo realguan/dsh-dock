@@ -12,9 +12,13 @@
 //! `window.__TAURI__.event.listen` 接收 `boot:step` / `boot:error` 事件流，
 //! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
+mod credentials;
+mod diagnostics;
+mod dsh_settings;
 mod executor;
 pub mod ipc;
 mod manifest;
+mod mcp;
 mod plugins;
 mod profiles;
 mod resolve;
@@ -150,6 +154,8 @@ struct ShellState {
     forced_profile: Mutex<Option<String>>,
     /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
     client_update: Mutex<Option<crate::updater::ClientUpdate>>,
+    /// 崩溃历史时间戳（4.12 崩溃守护与熔断，记录最近 60s 内异常退出次数）。
+    crash_timestamps: Mutex<Vec<std::time::Instant>>,
 }
 
 /// 启动当前会话（probe 已完成）：start → 就绪等待 → 导航 → 监护。
@@ -293,6 +299,68 @@ fn guard_session(
             let detail = read_error_detail(log);
             let tail = read_log_tail(log);
             tracing::error!("会话异常退出 code={code}{detail}");
+
+            let data_dir = match app.path().app_data_dir() {
+                Ok(d) => d,
+                Err(_) => {
+                    let _ = teardown_session(state);
+                    emit_boot_error(
+                        app,
+                        &format!("DSH 进程已退出（code={code}）{detail}"),
+                        &tail,
+                    );
+                    return;
+                }
+            };
+
+            let shell_settings = crate::settings::load(&data_dir);
+            let should_auto_restart = shell_settings.auto_restart.unwrap_or(false);
+
+            if should_auto_restart {
+                let now = std::time::Instant::now();
+                let mut crashes = state.crash_timestamps.lock().unwrap();
+                // 保留 60 秒内的崩溃记录
+                crashes.retain(|t| now.duration_since(*t).as_secs() < 60);
+
+                if crashes.len() >= 3 {
+                    tracing::warn!("60 秒内连续崩溃已达 {} 次，触发熔断保护", crashes.len());
+                    crashes.clear();
+                    let _ = teardown_session(state);
+                    emit_boot_error(
+                        app,
+                        &format!("DSH 连续崩溃（已触发 60s 内 3 次熔断保护）：code={code}{detail}"),
+                        &tail,
+                    );
+                    return;
+                }
+
+                crashes.push(now);
+                drop(crashes);
+
+                tracing::info!("崩溃守护触发：正在自动拉起 DSH 会话...");
+                emit_step(app, 2, "running", "检测到会话异常退出，崩溃守护正在自动拉起...");
+
+                let handle = app.clone();
+                let state_clone = Arc::clone(state);
+                let mode = state
+                    .active_mode
+                    .lock()
+                    .unwrap()
+                    .unwrap_or(crate::settings::Mode::Local);
+
+                let _ = teardown_session(state);
+
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    let _ = state_clone.window.eval("location.assign('/')");
+                    match executor_for_mode(mode, &handle, data_dir) {
+                        Ok(executor) => launch_executor_after_probe(state_clone, handle, executor),
+                        Err(e) => emit_boot_error(&handle, &format!("自动恢复启动失败: {e}"), ""),
+                    }
+                });
+                return;
+            }
+
             let _ = teardown_session(state);
             emit_boot_error(
                 app,
@@ -440,14 +508,31 @@ fn is_allowed_external_url(raw: &str) -> bool {
         .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
 }
 
-/// 用系统默认浏览器打开外链（dsh Web UI 里的超链接在 WebView 里点不动，
-/// 2026-08-25 实测；统一转系统浏览器）。URL 必须过白名单。
+/// 用系统默认浏览器打开外链或用系统文件管理器打开本地路径。
+/// - 若为 HTTP(S) URL：必须通过白名单校验后打开浏览器；
+/// - 若为本地路径：调用系统文件管理器（Finder / Explorer）打开该目录或文件。
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
-    if !is_allowed_external_url(&url) {
-        return Err(format!("不允许的外链：{url}"));
+    let trimmed = url.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        if !is_allowed_external_url(trimmed) {
+            return Err(format!("不允许的外链：{url}"));
+        }
+        open::that_detached(trimmed).map_err(|e| format!("打开浏览器失败：{e}"))
+    } else {
+        let p = std::path::Path::new(trimmed);
+        if p.exists() {
+            open::that_detached(trimmed).map_err(|e| format!("打开文件管理器失败：{e}"))
+        } else if let Some(parent) = p.parent() {
+            if parent.exists() {
+                open::that_detached(parent).map_err(|e| format!("打开文件管理器失败：{e}"))
+            } else {
+                Err(format!("目标路径不存在：{url}"))
+            }
+        } else {
+            Err(format!("目标路径不存在：{url}"))
+        }
     }
-    open::that_detached(&url).map_err(|e| format!("打开浏览器失败：{e}"))
 }
 
 /// 用系统默认浏览器打开当前工作台（壳内 WebView → 浏览器；dsh 就绪后可用）。
@@ -920,6 +1005,168 @@ async fn repair_all_sessions() -> Result<crate::sessions::RepairOutcome, String>
     })
     .await
     .map_err(|e| format!("全量会话自愈任务异常终止：{e}"))?
+}
+
+/// 偏好与设置：读取壳设置（locale、auto_restart、default_mode 等）
+#[tauri::command]
+fn get_shell_settings(app: tauri::AppHandle) -> Result<crate::settings::ShellSettings, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(crate::settings::load(&data_dir))
+}
+
+/// 偏好与设置：保存壳设置
+#[tauri::command]
+fn set_shell_settings(app: tauri::AppHandle, settings: crate::settings::ShellSettings) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::settings::save(&data_dir, &settings)
+}
+
+/// 环境健康体检：全量诊断大盘数据采集（4.11）
+#[tauri::command]
+async fn get_system_diagnostics(_app: tauri::AppHandle) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::diagnostics::collect_diagnostics(&home)
+    })
+    .await
+    .map_err(|e| format!("诊断报告收集异常终止：{e}"))
+}
+
+/// 运行日志：安全读取指定源的尾部日志（4.11）
+#[tauri::command]
+async fn get_app_logs(
+    app: tauri::AppHandle,
+    source: String,
+    tail_lines: Option<usize>,
+) -> Result<crate::diagnostics::LogQueryResult, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::diagnostics::read_app_logs(&source, &data_dir, &home, tail_lines.unwrap_or(500))
+    })
+    .await
+    .map_err(|e| format!("读取日志任务异常终止：{e}"))?
+}
+
+/// 凭据管理：读取 .credentials.yaml 原文（4.5）
+#[tauri::command]
+async fn get_credentials_raw() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::credentials::read_credentials(&home)
+    })
+    .await
+    .map_err(|e| format!("读取凭据任务异常终止：{e}"))?
+}
+
+/// 凭据管理：保存 .credentials.yaml 原文（4.5，严格 0600 权限与原子写）
+#[tauri::command]
+async fn save_credentials_raw(content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::credentials::write_credentials(&home, &content)
+    })
+    .await
+    .map_err(|e| format!("保存凭据任务异常终止：{e}"))?
+}
+
+/// 凭据管理：获取脱敏后的凭据摘要列表（4.5）
+#[tauri::command]
+async fn get_credentials_summary() -> Result<Vec<crate::credentials::CredentialSummaryItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::credentials::get_credentials_summary(&home)
+    })
+    .await
+    .map_err(|e| format!("读取凭据摘要任务异常终止：{e}"))?
+}
+
+/// 凭据管理：针对指定 Provider 设置 API Key（4.5）
+#[tauri::command]
+async fn set_credential_key(provider: String, key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::credentials::set_provider_key(&home, &provider, &key)
+    })
+    .await
+    .map_err(|e| format!("保存 Provider 凭据任务异常终止：{e}"))?
+}
+
+/// DSH 引擎设置：读取 settings.yaml 原文（4.5）
+#[tauri::command]
+async fn get_dsh_settings_raw() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::dsh_settings::read_dsh_settings(&home)
+    })
+    .await
+    .map_err(|e| format!("读取 DSH 设置任务异常终止：{e}"))?
+}
+
+/// DSH 引擎设置：保存 settings.yaml 原文（4.5）
+#[tauri::command]
+async fn save_dsh_settings_raw(content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::dsh_settings::write_dsh_settings(&home, &content)
+    })
+    .await
+    .map_err(|e| format!("保存 DSH 设置任务异常终止：{e}"))?
+}
+
+/// MCP 管理：获取指定 profile 的 MCP 服务列表（4.7）
+#[tauri::command]
+async fn list_mcp_servers(profile: String) -> Result<Vec<crate::mcp::McpServerConfig>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::mcp::list_mcp_servers(&home, &profile)
+    })
+    .await
+    .map_err(|e| format!("读取 MCP 服务列表任务异常终止：{e}"))?
+}
+
+/// MCP 管理：保存或更新单个 MCP 服务（4.7）
+#[tauri::command]
+async fn save_mcp_server(profile: String, server: crate::mcp::McpServerConfig) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::mcp::save_mcp_server(&home, &profile, server)
+    })
+    .await
+    .map_err(|e| format!("保存 MCP 服务任务异常终止：{e}"))?
+}
+
+/// MCP 管理：删除指定 MCP 服务（4.7）
+#[tauri::command]
+async fn delete_mcp_server(profile: String, server_name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::mcp::delete_mcp_server(&home, &profile, &server_name)
+    })
+    .await
+    .map_err(|e| format!("删除 MCP 服务任务异常终止：{e}"))?
+}
+
+/// 会话管理：删除指定会话（4.6）
+#[tauri::command]
+async fn delete_session(session_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::sessions::remove_session(&home, &session_path)
+    })
+    .await
+    .map_err(|e| format!("删除会话任务异常终止：{e}"))?
+}
+
+/// Profile 维护：重置依赖（清理 node_modules 并重新安装，4.11）
+#[tauri::command]
+async fn reset_profile_dependencies(profile: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::resolve::user_dsh_home();
+        crate::profiles::reset_dependencies(&home, &profile)
+    })
+    .await
+    .map_err(|e| format!("重置依赖任务异常终止：{e}"))?
 }
 
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
@@ -1464,6 +1711,7 @@ pub fn run() {
                 workbench_url: Mutex::new(None),
                 forced_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
+                crash_timestamps: Mutex::new(Vec::new()),
             });
             app.manage(state.clone());
             // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
@@ -1609,7 +1857,22 @@ pub fn run() {
             copy_plugin_config,
             list_sessions,
             repair_session,
-            repair_all_sessions
+            repair_all_sessions,
+            get_shell_settings,
+            set_shell_settings,
+            get_system_diagnostics,
+            get_app_logs,
+            get_credentials_raw,
+            save_credentials_raw,
+            get_credentials_summary,
+            set_credential_key,
+            get_dsh_settings_raw,
+            save_dsh_settings_raw,
+            list_mcp_servers,
+            save_mcp_server,
+            delete_mcp_server,
+            delete_session,
+            reset_profile_dependencies
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -1890,7 +2153,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tau
     let profiles_manager = MenuItem::with_id(
         app,
         "profiles_manager",
-        "Profile 管理器",
+        "控制中心",
         true,
         None::<&str>,
     )?;
@@ -1999,7 +2262,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
     let profiles_manager = MenuItem::with_id(
         app,
         "profiles_manager",
-        "Profile 管理器",
+        "控制中心",
         true,
         None::<&str>,
     )?;
@@ -2158,17 +2421,17 @@ fn open_profiles_window(app: &tauri::AppHandle) {
             "profiles",
             tauri::WebviewUrl::App("/".into()),
         )
-        .title("Profile 管理器")
+        .title("控制中心")
         // Master-Detail 双栏工作台：宽 960 + 高 680，自适应响应式伸缩
         .inner_size(960.0, 680.0)
         .min_inner_size(620.0, 540.0)
         .resizable(true)
         .center();
         match builder.build() {
-            Ok(_) => tracing::info!("Profile 管理器窗口已创建"),
-            Err(e) => tracing::error!("创建 Profile 管理器窗口失败：{e}"),
+            Ok(_) => tracing::info!("控制中心窗口已创建"),
+            Err(e) => tracing::error!("创建控制中心窗口失败：{e}"),
         }
     }) {
-        tracing::error!("调度 Profile 管理器窗口创建到主线程失败：{e}");
+        tracing::error!("调度控制中心窗口创建到主线程失败：{e}");
     }
 }

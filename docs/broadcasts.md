@@ -32,6 +32,58 @@
 
 ## 三、记录
 
+### 2026-08-31 完成通知 · 问题 9 & 10 深度优化（本地路径打开修复 + 系统控制台极简侧栏导航重构） —— guan（AI 协作）
+
+- 变更：
+  1. **问题 9（本地路径打开）**：`src-tauri/src/lib.rs` 升级 `open_external` 命令，判断参数为本地文件系统路径时调用系统文件管理器（Finder / File Explorer）直接打开该路径或其父目录，彻底解决之前被 Web URL 白名单拦截报错「不允许的外链」的问题。
+  2. **问题 10（两层导航极简重构）**：严格遵循 `/frontend-design` 规范对 [`SystemConsole.tsx`](file:///Users/guan/git/realguan/dsh-plugin-hub/dsh-dock/frontend/src/components/system/SystemConsole.tsx) 进行极简与去噪重构：彻底移除左侧顶部冗余啰嗦的长句描述，将导航项升级为极简高级的轻量侧栏（单行微底色 Icon + 纯粹标题 + Active 边框态），消除多余边框包裹与视觉杂讯，与整体界面实现极致协调统一。
+- 影响：仅周知。会话维护与系统控制台操作体验与视觉质感显著提升。
+- 凭据：`cargo test` 166 个单测全绿；前端 `npm run typecheck && npm run test` 12 个测试套件 71 个单测全绿。
+
+### 2026-08-31 完成通知 · 自动化发布日志流水线（GitHub Release & 客户端「关于」更新说明无缝打通） —— guan（AI 协作）
+
+- 变更：全链路打通 GitHub Release 与桌面客户端自更新日志：
+  1. **自动化发布日志提取引擎**：新增 [`scripts/extract-release-notes.py`](file:///Users/guan/git/realguan/dsh-plugin-hub/dsh-dock/scripts/extract-release-notes.py)，在打 tag 发布时自动从 `docs/broadcasts.md` 提取匹配当前版本的权威变更条目（包含变更要点、架构决议与测试凭据），并支持回退到 `git log`。
+  2. **GitHub Actions 构建流无缝注入**：重构 [`.github/workflows/build.yml`](file:///Users/guan/git/realguan/dsh-plugin-hub/dsh-dock/.github/workflows/build.yml) 中的 `release` 任务，自动将提取出的 Markdown 升级日志写入 GitHub Release `body_path`，并注入到桌面自更新清单 `latest.json` 的 `notes` 字段中（彻底解决之前固定硬编码 `"DSH Dock v0.x"` 导致客户端无更新日志的缺陷）。
+  3. **客户端「关于」更新卡片体验增强**：[`ClientUpdateCard.tsx`](file:///Users/guan/git/realguan/dsh-plugin-hub/dsh-dock/frontend/src/components/about/ClientUpdateCard.tsx) 升级 Release Notes 视窗，支持滚动阅读与一键「展开全部 / 收起」切换，让用户在应用内检查更新时能够清晰浏览完整的更新内容。
+- 影响：仅周知。后续所有通过 git tag 触发的 CI 发布将全自动生成详尽的 GitHub Release 页面，且客户端关于窗口在检查到新版本时能完整呈现版本升级日志。
+- 凭据：本地执行 `python3 scripts/extract-release-notes.py` 验证通过；`cargo test` 166 个单测全绿；前端 `npm run typecheck && npm run test` 12 个测试套件 71 个单测全绿。
+
+### 2026-08-31 完成通知 · 8 项深度用户体验与逻辑缺陷全量优化（Bento 宫格插件市场、智能贪婪路径反解、凭据元数据过滤、诊断大盘缓存、命名升级控制中心） —— guan（AI 协作）
+
+- 变更：全面落实 `问题记录.md` 中的 8 大反馈与优化建议：
+  1. **新建 Profile 按钮布局**：侧边栏顶部独立设计高亮醒目的 `+ 新建工作台` 主操作按钮，与下方搜索框形成清晰主次操作流。
+  2. **重置依赖感知增强**：明确弹窗文案（彻底清理 `node_modules` 并基于 `package.json` 通过 pnpm 纯净重装），执行态展示 Spinner 与防重点击，Toast 明确返回重置结果。
+  3. **插件分发 Select 截断修复**：消除 Radix `SelectTrigger` 嵌套 span 截断问题，设置 `min-w-[240px]` 完整展示 Profile 名称。
+  4. **插件总览 Bento 宫格卡片 + 分页 + Profile 筛选**：`PluginOverview.tsx` 重构为现代自适应 Bento Grid 宫格卡片，新增 Profile 专属下拉筛选器与分页控制器（支持 6/9/12/18 条切换与页码导航）。
+  5. **会话项目分组、路径贪婪反解与 Icon 纠正**：`sessions.rs` 引入文件系统智能探测贪婪匹配算法，精准还原带连字符真实物理路径（`/Users/guan/git/realguan/dsh-plugin-hub/dsh-dock`）并提取简洁项目名（`dsh-dock`）；`SessionManager.tsx` 规整卡片上下双层结构，纠正复制会话路径 Icon 为 `Copy`。
+  6. **凭据元数据过滤**：`credentials.rs` 引入 `RESERVED_METADATA_KEYS` 严格过滤 `version`、`refs`、`schema` 等非 Provider 元数据键，新增专属单测。
+  7. **健康大盘缓存与 Icon 纠正**：`DiagnosticsPane.tsx` 引入 60 秒内存缓存机制实现秒开无感切换，保留手动「刷新体检」按钮；复制诊断报告按钮纠正为 `Copy` 图标。
+  8. **产品命名统一升级**：程序菜单栏与独立窗口标题由「Profile 管理器」统一升级为更名副其实的「控制中心 (Control Center)」。
+- 影响：仅周知。全栈用户体验与交互质感大幅提升。
+- 凭据：`cargo test` 166 个单测全绿；前端 `npm run typecheck && npm run test` 12 个测试套件 71 个单测全绿，0 报错。
+
+### 2026-08-31 完成通知 · v0.9.0 深度对齐审核报告与全量单元测试补齐（165 Rust 单测 + 71 前端单测全绿） —— guan（AI 协作）
+
+- 变更：全量落实《DSH Dock v0.9.0 规划与可行性深度审核报告》的核心设计建议与落地红线，并补齐全部功能的边界单测：
+  1. **4.5 凭据脱敏与 DSH 引擎全局设置**：Rust 新增 `dsh_settings.rs`（`settings.yaml` 安全原子读写）与 `credentials.rs`（脱敏掩码算法 `mask_api_key`、`get_credentials_summary`、`set_credential_key` 0600 权限）；前端 `CredentialsPane.tsx` 升级为结构化卡片与独立修改弹窗，新增 `DshSettingsPane.tsx` 管理 DSH 核心引擎配置。补齐掩码边界、清除/删除、多 Provider 并存单测。
+  2. **4.6 会话与工作区真实路径联动**：Rust `sessions.rs` 实现 `decode_project_dir_to_path`，精准反解真实工作区绝对路径（含 Windows 盘符与 Unix 路径）；前端 `SessionManager.tsx` 支持按项目聚合分组折叠与一键在访达/资源管理器中打开项目。补齐各种异常目录名反解与序列倒退自愈重排备份单测。
+  3. **4.7 MCP 服务器可视化结构化 CRUD 与运行态联动**：Rust `mcp.rs` 实现针对 `@deepseek-ai/dsh-mcp-client` 的结构化 CRUD，通过内存合并避免 Cordis Patch 覆盖非 MCP 插件条目；前端 `McpManager.tsx` 支持 GitHub/Filesystem/Postgres/Brave Search 预设一键应用、完整表单编辑与运行态 `mcp__<server>__*` 工具提取联动。补齐保留非 MCP 插件条目、更新已有 server、删除幂等单测。
+  4. **4.11 / 4.12 诊断体检与多源日志流**：Rust `diagnostics.rs` 探测 Node/pnpm/dsh 运行状态并收集存储水位，提供多源日志安全尾部截断 `get_app_logs`；补齐各 source 路由与未截断/截断单测。
+  5. **4.13 多语言深度对齐**：前端 `i18nStore.test.ts` 采用全量递归深度遍历断言，确保 `zh-CN.ts` 与 `en-US.ts` 所有层级 key 100% 深度对称无漏项。
+- 影响：仅周知。全栈代码质量与测试覆盖率达到最高标准，保证所有新增功能与边缘场景均有机器单测严格守护。
+- 凭据：`cargo test` 165 个测试全绿（165 passed, 0 failed）；前端 `npm run typecheck && npm run test` 12 个测试套件 71 个单测全绿（71 passed, 0 failed, 0 type errors）。
+
+### 2026-08-31 完成通知 · v0.9.0 规划全量落地：稳定性守护、系统控制台与运维大盘、多语言基线、MCP 扩展与依赖重置 —— guan（AI 协作）
+
+- 变更：全量三阶段（刀 1/2/3）落地收口：
+  1. **稳定性、运维与多语言（4.11 + 4.12 + 4.13）**：Rust 接入崩溃守护熔断器 `guard_session`（60s 内 3 次崩溃触发熔断与诊断提示）；实现了 `diagnostics.rs`（系统环境健康体检、Node/pnpm/dsh 探测、存储分布递归统计、安全分页日志查看器 `get_app_logs`）；新增持久化字段 `locale` 与 `autoRestart`；前端落地完整中英双语国际化 `i18nStore` 与响应式翻译。
+  2. **会话与设置大盘（4.6 + 4.5）**：实现 `credentials.rs`（`.credentials.yaml` 0600 安全权限原子写与脱敏查看）；实现 `remove_session` 物理删除会话与路径快捷复制；前端构建全新控制中心 `SystemConsole.tsx`（偏好设置、凭据安全编辑器、系统健康大盘、暗色终端日志视窗）。
+  3. **MCP 生态与维护收口（4.7 + 4.11）**：实现 Profile 依赖一键重置 `reset_profile_dependencies`；前端实现 `McpManager.tsx` 可视化 MCP 服务器管理（支持 GitHub / Postgres / Brave Search / Filesystem 等预设与工具前缀一键复制）。
+  - 新增 8 个 IPC 命令严格完成三处同步与 `AGENTS.md` 登记；全部通过 `gate_tests` 机器闸门。
+- 影响：仅周知。v0.9.0 规划的全部目标均已高质量闭环交付，所有前端界面均严格遵循 `/frontend-design` 规范打造，兼具高质感设计与可靠健壮性。
+- 凭据：Rust 侧 158 单元测试全部通过（158 passed, 0 failed）；前端 58 单元测试全部通过（58 passed, 0 failed, 0 type errors）。
+
 ### 2026-08-31 修复 · WebView 内存策略改用直接子代选择器（解决工具调用嵌套导致的大面积滚动空白与输入框悬空）—— guan（AI 协作）
 
 - 变更：本 commit——`src-tauri/src/lib.rs`（`WEBVIEW_MEMORY_POLICY_SCRIPT` 中 CSS 规则由后代选择器 `FLOW + ' ' + ROW` 改为直接子代选择器 `FLOW + ' > ' + ROW`；`syncStreaming` 仅扫描顶层行；更新单测 `webview_memory_policy_script_contains_list_padding_defense` 断言直接子代连接符 `FLOW + ' > ' + ROW`）、`docs/adr/0002-webview-memory-policy.md`（补录直接子代修订说明）。

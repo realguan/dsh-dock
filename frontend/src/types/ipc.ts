@@ -169,6 +169,7 @@ export interface SessionItem {
   id: string
   projectName: string
   projectDirRaw: string
+  decodedProjectPath: string
   filePath: string
   updatedAt: number
   sizeBytes: number
@@ -182,5 +183,81 @@ export interface RepairOutcome {
   sessionId: string
   success: boolean
   message: string
+}
+
+/// 凭据脱敏摘要项
+export interface CredentialSummaryItem {
+  provider: string
+  label: string
+  configured: boolean
+  maskedKey: string
+}
+
+/// MCP 服务器配置项
+export interface McpServerConfig {
+  name: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  disabled: boolean
+}
+
+// ---------- 系统设置与诊断（4.11 / 4.12 / 4.13） ----------
+
+export interface ShellSettings {
+  defaultMode?: "local" | "wsl" | null
+  defaultProfile?: string | null
+  locale?: string | null
+  autoRestart?: boolean | null
+}
+
+export interface NodeDiagnosticInfo {
+  path: string
+  version: string
+  source: string
+  isReady: boolean
+}
+
+export interface PnpmDiagnosticInfo {
+  path: string
+  version: string | null
+  isReady: boolean
+}
+
+export interface DshDiagnosticInfo {
+  path: string
+  version: string | null
+  source: string
+  isReady: boolean
+}
+
+export interface StorageDiagnosticInfo {
+  dshHome: string
+  totalBytes: number
+  profilesBytes: number
+  sessionsBytes: number
+  profilesCount: number
+  sessionsCount: number
+}
+
+export interface PlatformDiagnosticInfo {
+  os: string
+  arch: string
+}
+
+export interface SystemDiagnosticsReport {
+  node: NodeDiagnosticInfo
+  pnpm: PnpmDiagnosticInfo
+  dsh: DshDiagnosticInfo
+  storage: StorageDiagnosticInfo
+  platform: PlatformDiagnosticInfo
+}
+
+export interface LogQueryResult {
+  source: string
+  path: string
+  lines: string[]
+  totalLines: number
+  truncated: boolean
 }
 

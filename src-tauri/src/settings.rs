@@ -44,6 +44,10 @@ pub struct ShellSettings {
     /// 已登记）。None = 未设置——消费方按 `web` 兜底（存储值失效同兜底，
     /// ADR-0009 §4 定死回退值 `web`：模板名恒可首启）。
     pub default_profile: Option<String>,
+    /// 壳界面语言偏好（4.13；None = 跟随操作系统语言；可设 "zh-CN", "en-US" 等）。
+    pub locale: Option<String>,
+    /// 崩溃自动拉起守护（4.12；None / false = 关闭；true = 启用，短时间多次崩溃自动熔断）。
+    pub auto_restart: Option<bool>,
 }
 
 fn settings_path(data_dir: &Path) -> std::path::PathBuf {
@@ -88,6 +92,8 @@ mod tests {
         let dir = tmp();
         assert_eq!(load(&dir), ShellSettings::default());
         assert_eq!(load(&dir).default_mode, None);
+        assert_eq!(load(&dir).locale, None);
+        assert_eq!(load(&dir).auto_restart, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -104,7 +110,9 @@ mod tests {
         let dir = tmp();
         let s = ShellSettings {
             default_mode: Some(Mode::Wsl),
-            default_profile: None,
+            default_profile: Some("custom-profile".to_string()),
+            locale: Some("en-US".to_string()),
+            auto_restart: Some(true),
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
@@ -117,13 +125,17 @@ mod tests {
         let s = ShellSettings {
             default_mode: Some(Mode::Local),
             default_profile: Some("my-profile".to_string()),
+            locale: None,
+            auto_restart: None,
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
-        // 旧格式（仅 defaultMode，字段加入前的存量文件）兼容：default_profile 缺省 None
+        // 旧格式（仅 defaultMode，字段加入前的存量文件）兼容：其余字段缺省 None
         let old: ShellSettings = serde_json::from_str(r#"{"defaultMode":"wsl"}"#).unwrap();
         assert_eq!(old.default_mode, Some(Mode::Wsl));
         assert_eq!(old.default_profile, None);
+        assert_eq!(old.locale, None);
+        assert_eq!(old.auto_restart, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 

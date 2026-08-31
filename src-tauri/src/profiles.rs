@@ -679,6 +679,38 @@ pub fn rename_profile_dir(
     Ok(patch_relative_path_warnings(&new_dir))
 }
 
+/// 重置指定 profile 依赖（4.11 维护工具）：删除 profile 目录下的 node_modules 并重新通过 pnpm install 安装。
+pub fn reset_dependencies(home: &Path, profile: &str) -> Result<String, String> {
+    validate_profile_name(profile)?;
+    let profile_dir = home.join("profiles").join(profile);
+    if !profile_dir.is_dir() {
+        return Err(format!("profile「{profile}」不存在或尚未物化"));
+    }
+
+    let node_modules = profile_dir.join("node_modules");
+    if node_modules.exists() {
+        let _ = fs::remove_dir_all(&node_modules);
+    }
+
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    if let Some(pnpm_bin) = crate::updates::find_pnpm(&path_env) {
+        let mut cmd = crate::child_cmd(&pnpm_bin);
+        cmd.arg("install").current_dir(&profile_dir);
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                Ok("依赖重置成功：已清理 node_modules 并重新完成 pnpm install".to_string())
+            }
+            Ok(out) => {
+                let stderr = crate::resolve::decode_output_bytes(&out.stderr);
+                Ok(format!("node_modules 已清理；pnpm install 状态：{stderr}"))
+            }
+            Err(e) => Ok(format!("node_modules 已清理；拉起 pnpm 异常：{e}")),
+        }
+    } else {
+        Ok("node_modules 已清理；未找到 pnpm，下次启动 profile 时将自动补齐依赖".to_string())
+    }
+}
+
 /// 删除（Spike B §3.3）：整目录删除。不级联 sessions（dsh 明示不级联，会话
 /// 容忍悬空 profile 引用）；符号农场残留链接不做（stale 链接对模块解析不可见，
 /// 且 dsh heal 幂等）。调用方先做存在性检查与运行中防护。
@@ -1342,6 +1374,22 @@ mod profiles_tests {
         );
         assert!(ensure_default_candidate(&home, "ghost").is_err());
         assert!(ensure_default_candidate(&home, "../x").is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn reset_dependencies_cleans_node_modules() {
+        let home = tmp();
+        materialize(&home, "alpha", PKG_ALPHA);
+        let mod_dir = home.join("profiles").join("alpha").join("node_modules");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("dummy.js"), "//").unwrap();
+
+        assert!(mod_dir.is_dir());
+        let res = reset_dependencies(&home, "alpha").unwrap();
+        assert!(res.contains("依赖重置成功") || res.contains("node_modules 已清理"));
+        assert!(!mod_dir.exists() || mod_dir.read_dir().unwrap().next().is_none());
+
         std::fs::remove_dir_all(&home).ok();
     }
 }

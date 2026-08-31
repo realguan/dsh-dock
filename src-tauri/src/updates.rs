@@ -1300,7 +1300,7 @@ fn install_pnpm_via_npm(node_bin: &Path, path_env: &str) -> Result<(), String> {
 /// 在 GUI 补全后的 PATH 中定位 pnpm；不调用 shell，避免 Finder 环境下丢失
 /// 用户 PATH。boot 期与创建时经 `ensure_pnpm` 消费（基准 = effective_path
 /// 注入后的 PATH，ADR-0009 口径 2）。
-fn find_pnpm(path_env: &str) -> Option<PathBuf> {
+pub(crate) fn find_pnpm(path_env: &str) -> Option<PathBuf> {
     let separator = if cfg!(windows) { ';' } else { ':' };
     let names: &[&str] = if cfg!(windows) {
         &["pnpm.cmd", "pnpm.exe", "pnpm"]

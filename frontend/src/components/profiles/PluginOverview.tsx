@@ -1,11 +1,10 @@
-// 插件总览矩阵（Plugin Matrix 2.0，4.4④ 收口重构）。
-// 跨 Profile 第三方插件全景聚合视图 + 实时搜索 + 一键跨 Profile 分发安装。
+// PluginOverview.tsx —— 全域插件总览与分发中心（4.4④ 升级版：宫格卡片 + 分页 + Profile 筛选）。
 import { useEffect, useMemo, useState } from "react"
 import {
-  ArrowRight,
-  CircleDot,
-  Copy,
+  ChevronLeft,
+  ChevronRight,
   Download,
+  Filter,
   Layers,
   LoaderCircle,
   Package,
@@ -13,7 +12,7 @@ import {
   Send,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,6 +32,8 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
+const PAGE_SIZE_OPTIONS = [6, 9, 12, 18]
+
 export function PluginOverview({
   refreshKey,
   onNotice,
@@ -40,10 +41,17 @@ export function PluginOverview({
   refreshKey: number
   onNotice?: (text: string, kind?: "ok" | "warn") => void
 }) {
+  const { t } = useI18n()
   const [list, setList] = useState<AggregatePlugin[] | null>(null)
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+
+  // 筛选与分页状态
+  const [selectedProfileFilter, setSelectedProfileFilter] = useState<string>("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(9)
 
   // 快速分发安装弹窗
   const [distributeTarget, setDistributeTarget] = useState<{
@@ -56,43 +64,66 @@ export function PluginOverview({
   const [distributing, setDistributing] = useState(false)
   const [distributeError, setDistributeError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let alive = true
+  const loadData = () => {
+    setLoading(true)
     setError(null)
     Promise.all([api.listAllPlugins(), api.listProfiles().catch(() => [])])
       .then(([plugins, profs]) => {
-        if (alive) {
-          setList(plugins)
-          setProfiles(profs)
-        }
+        setList(plugins)
+        setProfiles(profs)
       })
       .catch((e) => {
-        if (alive) setError(String(e))
+        setError(String(e))
       })
-    return () => {
-      alive = false
-    }
+      .finally(() => {
+        setLoading(false)
+      })
+  }
+
+  useEffect(() => {
+    loadData()
   }, [refreshKey])
 
-  // 过滤后的插件列表
+  // 过滤后的插件列表（按搜索关键词 + 按 Profile 筛选）
   const filteredList = useMemo(() => {
-    if (!list) return null
-    if (!searchQuery.trim()) return list
-    const q = searchQuery.toLowerCase().trim()
-    return list.filter(
-      (a) =>
-        a.name.toLowerCase().includes(q) ||
-        (a.description && a.description.toLowerCase().includes(q)) ||
-        a.sources.some((s) => s.profile.toLowerCase().includes(q)),
-    )
-  }, [list, searchQuery])
+    if (!list) return []
+    let result = list
 
-  // 汇总口径
-  const profileCount = list
-    ? new Set(list.flatMap((a) => a.sources.map((s) => s.profile))).size
-    : 0
+    // Profile 过滤
+    if (selectedProfileFilter !== "all") {
+      result = result.filter((item) =>
+        item.sources.some((s) => s.profile === selectedProfileFilter),
+      )
+    }
 
-  // 分发弹窗的可选目标 Profile 列表
+    // 关键词搜索
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim()
+      result = result.filter(
+        (item) =>
+          item.name.toLowerCase().includes(q) ||
+          (item.description && item.description.toLowerCase().includes(q)) ||
+          item.sources.some((s) => s.profile.toLowerCase().includes(q)),
+      )
+    }
+
+    return result
+  }, [list, selectedProfileFilter, searchQuery])
+
+  // 重置分页（当搜索或筛选变更时）
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, selectedProfileFilter, pageSize])
+
+  // 分页计算
+  const totalItems = filteredList.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const paginatedList = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredList.slice(start, start + pageSize)
+  }, [filteredList, currentPage, pageSize])
+
+  // 可分发的目标 Profiles（已物化且尚未安装该插件的）
   const distributeDestinations = useMemo(() => {
     if (!distributeTarget) return []
     return profiles.filter(
@@ -104,17 +135,18 @@ export function PluginOverview({
     if (!distributeTarget || !selectedDest || distributing) return
     setDistributing(true)
     setDistributeError(null)
+
     try {
-      const out = await api.installPlugin(
+      // 1. 安装插件
+      const outcome = await api.installPlugin(
         selectedDest,
         `${distributeTarget.pkg}@${distributeTarget.version}`,
       )
-      if (!out.ok) {
-        setDistributeError(out.detail)
-        setDistributing(false)
-        return
+      if (!outcome.ok) {
+        throw new Error(outcome.detail)
       }
 
+      // 2. 如果勾选了带配置迁移，复制 patch 配置行
       if (withConfig && distributeTarget.sources[0]) {
         try {
           await api.copyPluginConfig(
@@ -123,13 +155,13 @@ export function PluginOverview({
             distributeTarget.pkg,
           )
         } catch {
-          // 容忍配置复制失败
+          // 配置迁移非阻断
         }
       }
 
       onNotice?.(t.profiles.distributeDone(distributeTarget.pkg, selectedDest), "ok")
       setDistributeTarget(null)
-      setSelectedDest(null)
+      loadData()
     } catch (e) {
       setDistributeError(String(e))
     } finally {
@@ -138,282 +170,332 @@ export function PluginOverview({
   }
 
   return (
-    <section aria-label={t.profiles.viewPlugins} className="space-y-3">
-      {/* ── 矩阵顶栏：搜索框 + 统计指标 ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-panel p-3.5 shadow-xs">
-        <div className="relative min-w-[240px] flex-1">
-          <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={t.profiles.searchAllPluginsPlaceholder}
-            className="border-line bg-bg text-ink placeholder:text-faint focus:border-brand w-full rounded-lg border py-1.5 pr-3 pl-8.5 font-mono text-xs outline-none transition-colors"
-          />
+    <div className="space-y-4">
+      {/* 顶部搜索、Profile 筛选与分页大小控制栏 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+          {/* 搜索框 */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t.profiles.searchAllPluginsPlaceholder}
+              className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8.5 font-mono text-xs outline-none transition-colors shadow-2xs"
+            />
+          </div>
+
+          {/* Profile 下拉筛选器 */}
+          <div className="w-48">
+            <Select
+              value={selectedProfileFilter}
+              onValueChange={(v) => setSelectedProfileFilter(v)}
+            >
+              <SelectTrigger className="h-8.5 rounded-xl border-line bg-panel text-xs">
+                <div className="flex items-center gap-1.5 truncate">
+                  <Filter className="size-3 text-faint shrink-0" />
+                  <span className="truncate">
+                    {selectedProfileFilter === "all"
+                      ? "全部 Profile"
+                      : `Profile: ${selectedProfileFilter}`}
+                  </span>
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部 Profile</SelectItem>
+                {profiles.map((p) => (
+                  <SelectItem key={p.name} value={p.name}>
+                    {p.name} {p.web_ui ? "(Web)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        {list !== null && (
-          <div className="flex items-center gap-3 text-xs text-dim">
-            <span className="inline-flex items-center gap-1 font-mono">
-              <Package className="size-3.5 text-brand" />
-              {t.profiles.metaBundles(list.length)}
-            </span>
-            <span className="text-line">|</span>
-            <span className="inline-flex items-center gap-1 font-mono">
-              <Layers className="size-3.5 text-brand" />
-              {t.profiles.overviewSourceCount(profileCount)}
-            </span>
-          </div>
-        )}
+        {/* 条数与统计 */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono text-faint">
+            共 {totalItems} 个插件
+          </span>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => setPageSize(Number(v))}
+          >
+            <SelectTrigger className="h-8 w-24 rounded-lg border-line bg-panel text-[11px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map((opt) => (
+                <SelectItem key={opt} value={String(opt)}>
+                  {opt} 条/页
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {/* ── 状态：加载 / 错误 / 空态 ── */}
       {error && (
-        <div className="border-line bg-warn-soft text-warn rounded-xl border border-dashed px-4 py-6 text-center text-xs whitespace-pre-wrap">
-          {error}
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-500">
+          加载全域插件失败：{error}
         </div>
       )}
 
-      {!error && list === null && (
-        <div className="border-line bg-panel text-faint rounded-xl border border-dashed py-12 text-center text-xs">
-          <LoaderCircle className="mx-auto mb-2 size-5 animate-spin text-brand" />
-          {t.profiles.busyShort}
+      {/* 宫格卡片呈现 (Bento Grid) */}
+      {loading && !list ? (
+        <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-line bg-panel text-xs text-faint">
+          <LoaderCircle className="mb-2 size-6 animate-spin text-brand" />
+          <span>正在扫描全域 Profile 插件矩阵...</span>
         </div>
-      )}
-
-      {!error && list !== null && list.length === 0 && (
-        <div className="border-line bg-panel rounded-xl border border-dashed px-4 py-12 text-center">
-          <div className="text-dim text-sm font-medium">{t.profiles.overviewEmpty}</div>
-          <div className="text-faint mt-1 text-xs">{t.profiles.overviewEmptyHint}</div>
+      ) : paginatedList.length === 0 ? (
+        <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/60 text-center">
+          <Package className="text-faint mb-2 size-8" />
+          <p className="text-xs font-medium text-ink">未找到匹配的插件</p>
+          <p className="text-faint mt-1 text-[11px]">
+            尝试调整搜索关键词或重置 Profile 筛选条件。
+          </p>
         </div>
-      )}
-
-      {/* ── 插件卡片矩阵 ── */}
-      {!error && filteredList !== null && filteredList.length > 0 && (
-        <div className="space-y-2">
-          {filteredList.map((a, i) => {
-            const installedProfiles = new Set(a.sources.map((s) => s.profile))
-            const uninstalledProfiles = profiles.filter(
-              (p) => p.materialized && !installedProfiles.has(p.name),
-            )
-            const representativeVersion =
-              a.sources.find((s) => s.version !== null)?.version ?? "latest"
+      ) : (
+        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+          {paginatedList.map((item) => {
+            const latestVersion =
+              item.sources.find((s) => s.version)?.version || "latest"
+            const installedProfiles = item.sources.map((s) => s.profile)
 
             return (
-              <article
-                key={a.name}
-                style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
-                className="page-rise group/plugin rounded-xl border border-line bg-panel shadow-xs transition-all hover:shadow-md hover:border-brand/20"
+              <div
+                key={item.name}
+                className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs transition-all hover:border-brand/40 hover:shadow-xs"
               >
-                {/* ─── 卡片头部：插件名称 + 描述 + 分发按钮 ─── */}
-                <div className="flex items-start gap-3 p-4 pb-0">
-                  {/* 插件图标占位 */}
-                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-wash text-brand">
-                    <Package className="size-4" />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
+                <div className="space-y-2.5">
+                  {/* 头部：包名与版本 */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                        <Package className="size-3.5" />
+                      </div>
                       <span
-                        className="text-ink font-mono text-sm font-bold tracking-tight"
-                        title={a.name}
+                        className="font-mono text-xs font-bold text-ink truncate"
+                        title={item.name}
                       >
-                        {a.name}
+                        {item.name}
                       </span>
                     </div>
-
-                    {a.description && (
-                      <p className="text-dim mt-0.5 line-clamp-2 text-xs leading-relaxed" title={a.description}>
-                        {a.description}
-                      </p>
-                    )}
+                    <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 font-mono text-[10px] text-dim">
+                      v{latestVersion}
+                    </span>
                   </div>
 
-                  {/* 快捷分发按钮 */}
-                  {uninstalledProfiles.length > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setDistributeTarget({
-                          pkg: a.name,
-                          version: representativeVersion,
-                          sources: a.sources.map((s) => s.profile),
-                        })
-                        setSelectedDest(uninstalledProfiles[0]?.name ?? null)
-                        setWithConfig(false)
-                        setDistributeError(null)
-                      }}
-                      className="shrink-0 gap-1.5 text-xs opacity-60 transition-opacity group-hover/plugin:opacity-100"
-                    >
-                      <Send className="size-3" />
-                      <span>{t.profiles.quickDistribute}</span>
-                    </Button>
-                  )}
+                  {/* 描述信息 */}
+                  <p className="text-xs text-faint line-clamp-2 leading-relaxed min-h-[32px]">
+                    {item.description || "暂无插件描述说明"}
+                  </p>
+
+                  {/* 已安装到的 Profile 标签 */}
+                  <div>
+                    <span className="text-[10px] font-semibold text-dim block mb-1">
+                      已安装到 ({item.sources.length}):
+                    </span>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                      {item.sources.map((src) => (
+                        <span
+                          key={src.profile}
+                          className="inline-flex items-center gap-1 rounded-md bg-bg border border-line px-1.5 py-0.5 font-mono text-[10px] text-ink"
+                        >
+                          <Layers className="size-2.5 text-faint" />
+                          <span>{src.profile}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                {/* ─── 卡片底部：Profile 分布矩阵芯片 ─── */}
-                <div className="flex flex-wrap items-center gap-1.5 px-4 pt-2.5 pb-3.5">
-                  <span className="mr-1 text-[10px] font-medium tracking-wide text-faint uppercase">
-                    分布
+                {/* 底部操作条 */}
+                <div className="mt-3.5 flex items-center justify-between border-t border-line/60 pt-2.5">
+                  <span className="text-[11px] text-faint font-mono">
+                    {item.sources.length} 处引用
                   </span>
-                  {a.sources.map((s) =>
-                    s.version === null ? (
-                      <span
-                        key={s.profile}
-                        className="inline-flex items-center gap-1 rounded-md bg-warn-soft px-2 py-1 font-mono text-[11px] text-warn"
-                      >
-                        <CircleDot className="size-2.5" />
-                        {s.profile}
-                        <span className="text-[10px] opacity-70">· {t.profiles.overviewNotInstalled}</span>
-                      </span>
-                    ) : (
-                      <span
-                        key={s.profile}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-line bg-bg px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:border-brand/30 hover:bg-wash"
-                      >
-                        <span className="size-1.5 rounded-full bg-ok shrink-0" />
-                        <span className="text-ink font-semibold">{s.profile}</span>
-                        <span className="text-brand font-medium">{s.version}</span>
-                      </span>
-                    ),
-                  )}
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setDistributeTarget({
+                        pkg: item.name,
+                        version: latestVersion,
+                        sources: installedProfiles,
+                      })
+                      setSelectedDest(null)
+                      setWithConfig(false)
+                      setDistributeError(null)
+                    }}
+                    className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand"
+                  >
+                    <Send className="size-3" />
+                    <span>分发到...</span>
+                  </Button>
                 </div>
-              </article>
+              </div>
             )
           })}
         </div>
       )}
 
-      {/* 搜索结果为空提示 */}
-      {!error && filteredList !== null && filteredList.length === 0 && list !== null && list.length > 0 && (
-        <div className="border-line bg-panel rounded-xl border border-dashed px-4 py-10 text-center">
-          <Search className="mx-auto mb-2 size-5 text-faint" />
-          <div className="text-dim text-sm font-medium">未找到匹配的插件</div>
-          <div className="text-faint mt-1 text-xs">尝试缩短或修改搜索关键词</div>
+      {/* 分页控制器 */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-line pt-3 text-xs">
+          <span className="text-faint text-[11px] font-mono">
+            第 {currentPage} / {totalPages} 页
+          </span>
+
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1}
+              className="h-7 gap-1 px-2 text-xs"
+            >
+              <ChevronLeft className="size-3.5" />
+              <span>上一页</span>
+            </Button>
+
+            <div className="flex items-center gap-1 px-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => setCurrentPage(page)}
+                  className={`size-7 rounded-lg text-xs font-mono transition-colors ${
+                    currentPage === page
+                      ? "bg-brand text-white font-bold"
+                      : "text-dim hover:bg-line"
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+            </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="h-7 gap-1 px-2 text-xs"
+            >
+              <span>下一页</span>
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* ── 快捷分发安装弹窗 ── */}
+      {/* 快速分发安装弹窗 (解决 Select 宽度截断问题) */}
       <Dialog
         open={distributeTarget !== null}
-        onOpenChange={(o) => !o && setDistributeTarget(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDistributeTarget(null)
+            setDistributeError(null)
+          }
+        }}
       >
-        <DialogContent className="sm:max-w-[440px]">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold">
-              {distributeTarget ? t.profiles.distributeTitle(distributeTarget.pkg) : ""}
+            <DialogTitle className="text-sm font-bold flex items-center gap-2">
+              <Send className="size-4 text-brand" />
+              <span>{distributeTarget ? t.profiles.distributeTitle(distributeTarget.pkg) : ""}</span>
             </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogDescription className="text-xs text-faint">
               {t.profiles.distributeNote}
             </DialogDescription>
           </DialogHeader>
 
           {distributeError && (
-            <div className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
+            <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-500">
               {distributeError}
             </div>
           )}
 
           {distributeTarget && (
-            <div className="space-y-4 py-1">
-              {/* 目标 Profile 选择器（Radix Select） */}
-              <div>
-                <label className="text-dim mb-2 block text-xs font-medium">
-                  目标 Profile
+            <div className="space-y-4 py-2 text-xs">
+              {/* 目标 Profile 选择框（修复宽度截断） */}
+              <div className="space-y-1.5">
+                <label className="text-dim font-semibold text-[11px]">
+                  选择目标 Profile <span className="text-rose-500">*</span>
                 </label>
                 <Select
                   value={selectedDest ?? undefined}
                   onValueChange={(v) => setSelectedDest(v)}
                 >
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="选择目标 Profile..." />
+                  <SelectTrigger className="h-9 w-full min-w-[240px] rounded-xl border-line bg-bg font-mono text-xs">
+                    <SelectValue placeholder="请选择目标 Profile..." />
                   </SelectTrigger>
-                  <SelectContent>
-                    {distributeDestinations.map((p) => (
-                      <SelectItem key={p.name} value={p.name}>
-                        <span className="inline-flex items-center gap-2">
-                          <span>{p.name}</span>
-                          {p.web_ui && (
-                            <span className="rounded bg-wash px-1 py-px text-[9px] text-brand font-medium">
-                              Web
-                            </span>
-                          )}
-                        </span>
-                      </SelectItem>
-                    ))}
+                  <SelectContent className="min-w-[240px]">
+                    {distributeDestinations.length === 0 ? (
+                      <div className="p-3 text-center text-xs text-faint">
+                        所有已物化 Profile 均已安装此插件
+                      </div>
+                    ) : (
+                      distributeDestinations.map((p) => (
+                        <SelectItem key={p.name} value={p.name}>
+                          <span className="font-mono text-xs text-ink font-semibold">
+                            {p.name} {p.web_ui ? "(Web)" : ""}
+                          </span>
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* 安装版本信息卡 */}
-              <div className="rounded-lg border border-line bg-bg p-3">
+              {/* 安装版本信息 */}
+              <div className="rounded-xl border border-line bg-bg p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-dim flex items-center gap-1.5">
-                    <Download className="size-3 text-faint" />
-                    安装版本
+                  <span className="text-faint text-[11px] flex items-center gap-1">
+                    <Download className="size-3" />
+                    目标版本
                   </span>
-                  <span className="text-xs text-ink font-mono font-semibold">
+                  <span className="font-mono text-xs font-bold text-ink">
                     {distributeTarget.version}
                   </span>
                 </div>
-                {distributeTarget.sources.length > 0 && (
-                  <div className="mt-2 flex items-center gap-1.5 border-t border-line-soft pt-2">
-                    <span className="text-[10px] text-faint">来源</span>
-                    <ArrowRight className="size-2.5 text-faint" />
-                    <div className="flex flex-wrap gap-1">
-                      {distributeTarget.sources.map((src) => (
-                        <span
-                          key={src}
-                          className="inline-flex items-center gap-1 rounded bg-wash px-1.5 py-0.5 font-mono text-[10px] text-brand"
-                        >
-                          <Copy className="size-2" />
-                          {src}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {/* 配置迁移开关 */}
-              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-line-soft bg-bg/50 px-3 py-2.5 transition-colors hover:bg-wash/50">
-                <div>
-                  <div className="text-xs font-medium text-ink">连带复制 Patch 配置</div>
-                  <div className="text-[10px] text-faint mt-0.5">
-                    将来源 Profile 的 cordis.patch.yml 配置项一并迁移
-                  </div>
+              {/* 迁移配置选项 */}
+              <div className="flex items-center justify-between pt-2 border-t border-line/60">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-medium text-ink">连带复制配置行</span>
+                  <p className="text-[10px] text-faint">
+                    从首个来源 Profile 的 cordis.patch.yml 原样同步配置条目
+                  </p>
                 </div>
-                <Switch
-                  checked={withConfig}
-                  onCheckedChange={setWithConfig}
-                />
-              </label>
+                <Switch checked={withConfig} onCheckedChange={setWithConfig} />
+              </div>
             </div>
           )}
 
           <DialogFooter>
             <Button
               variant="outline"
-              disabled={distributing}
               onClick={() => setDistributeTarget(null)}
+              disabled={distributing}
             >
-              {t.profiles.pluginInstallCancel}
+              取消
             </Button>
             <Button
-              disabled={!selectedDest || distributing}
               onClick={handleDistribute}
-              className="gap-1.5"
+              disabled={distributing || !selectedDest}
+              className="bg-brand text-white hover:bg-brand/90"
             >
-              {distributing ? (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              ) : (
-                <Send className="size-3.5" />
-              )}
-              <span>确认分发安装</span>
+              {distributing && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
+              <span>开始分发安装</span>
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </section>
+    </div>
   )
 }

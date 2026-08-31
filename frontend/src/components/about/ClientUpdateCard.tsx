@@ -1,6 +1,6 @@
 // 客户端自更新状态机卡（更新中心重构）。
 // 包含流光下载进度条、Release Notes 展开与状态化动作按钮。
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import {
   ArrowDownCircle,
   CheckCircle2,
@@ -33,6 +33,7 @@ function phaseTone(phase: string): PhaseTone {
 export function ClientUpdateCard() {
   const snapshot = useClientUpdateStore((s) => s.snapshot)
   const phase = snapshot?.phase ?? "idle"
+  const [expandNotes, setExpandNotes] = useState(false)
 
   // done → 1.2s 后自动复查一次
   useEffect(() => {
@@ -131,14 +132,29 @@ export function ClientUpdateCard() {
             snapshot.phase === "available" &&
             typeof snapshot.notes === "string" &&
             snapshot.notes && (
-              <div className="rounded-xl border border-line bg-bg/80 p-2.5 text-xs text-dim">
-                <div className="text-faint mb-1 flex items-center gap-1 text-[10px] font-medium">
-                  <FileText className="size-3" />
-                  <span>{t.about.releaseNotes}</span>
+              <div className="rounded-xl border border-line bg-bg/80 p-3 text-xs text-dim space-y-1.5 shadow-2xs">
+                <div className="text-faint flex items-center justify-between text-[10px] font-semibold border-b border-line/60 pb-1">
+                  <div className="flex items-center gap-1.5 text-brand">
+                    <FileText className="size-3" />
+                    <span>{t.about.releaseNotes}</span>
+                  </div>
+                  {snapshot.notes.length > 150 && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandNotes(!expandNotes)}
+                      className="text-brand hover:underline cursor-pointer select-none"
+                    >
+                      {expandNotes ? "收起日志" : "展开全部"}
+                    </button>
+                  )}
                 </div>
-                <p className="line-clamp-3 leading-relaxed whitespace-pre-wrap">
+                <div
+                  className={`text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-ink/90 overflow-y-auto transition-all ${
+                    expandNotes ? "max-h-60" : "max-h-24"
+                  }`}
+                >
                   {snapshot.notes}
-                </p>
+                </div>
               </div>
             )}
 

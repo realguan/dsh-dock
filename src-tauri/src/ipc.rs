@@ -48,6 +48,21 @@ pub const COMMANDS: &[&str] = &[
     "list_sessions",
     "repair_session",
     "repair_all_sessions",
+    "get_shell_settings",
+    "set_shell_settings",
+    "get_system_diagnostics",
+    "get_app_logs",
+    "get_credentials_raw",
+    "save_credentials_raw",
+    "get_credentials_summary",
+    "set_credential_key",
+    "get_dsh_settings_raw",
+    "save_dsh_settings_raw",
+    "list_mcp_servers",
+    "save_mcp_server",
+    "delete_mcp_server",
+    "delete_session",
+    "reset_profile_dependencies",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

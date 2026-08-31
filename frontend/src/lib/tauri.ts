@@ -9,8 +9,11 @@ import type {
   ClientUpdate,
   CopyConfigOutcome,
   CreateProfileOutcome,
+  CredentialSummaryItem,
   DeleteOutcome,
   LifecycleOutcome,
+  LogQueryResult,
+  McpServerConfig,
   PluginEntry,
   PluginOpOutcome,
   PluginRuntimeSnapshot,
@@ -20,6 +23,8 @@ import type {
   ProfileSummary,
   RepairOutcome,
   SessionItem,
+  ShellSettings,
+  SystemDiagnosticsReport,
   TerminalAction,
   UpdateStatus,
 } from "@/types/ipc"
@@ -60,6 +65,8 @@ export const api = {
   renameProfile: (oldName: string, newName: string) =>
     invoke<LifecycleOutcome>("rename_profile", { oldName, newName }),
   deleteProfile: (profile: string) => invoke<DeleteOutcome>("delete_profile", { profile }),
+  resetProfileDependencies: (profile: string) =>
+    invoke<string>("reset_profile_dependencies", { profile }),
   setDefaultProfile: (profile: string) => invoke<void>("set_default_profile", { profile }),
   getDefaultProfile: () => invoke<string | null>("get_default_profile"),
   // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）
@@ -90,9 +97,42 @@ export const api = {
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
-  // 会话管理与自愈
+  // 会话管理与自愈（4.6）
   listSessions: () => invoke<SessionItem[]>("list_sessions"),
   repairSession: (sessionPath: string) =>
     invoke<RepairOutcome>("repair_session", { sessionPath }),
   repairAllSessions: () => invoke<RepairOutcome>("repair_all_sessions"),
+  deleteSession: (sessionPath: string) =>
+    invoke<void>("delete_session", { sessionPath }),
+
+  // 系统设置与诊断（4.11 / 4.12 / 4.13）
+  getShellSettings: () => invoke<ShellSettings>("get_shell_settings"),
+  setShellSettings: (settings: ShellSettings) =>
+    invoke<void>("set_shell_settings", { settings }),
+  getSystemDiagnostics: () =>
+    invoke<SystemDiagnosticsReport>("get_system_diagnostics"),
+  getAppLogs: (source: string, tailLines?: number) =>
+    invoke<LogQueryResult>("get_app_logs", { source, tailLines: tailLines ?? null }),
+
+  // 凭据安全管理与脱敏（4.5）
+  getCredentialsRaw: () => invoke<string>("get_credentials_raw"),
+  saveCredentialsRaw: (content: string) =>
+    invoke<void>("save_credentials_raw", { content }),
+  getCredentialsSummary: () =>
+    invoke<CredentialSummaryItem[]>("get_credentials_summary"),
+  setCredentialKey: (provider: string, key: string) =>
+    invoke<void>("set_credential_key", { provider, key }),
+
+  // DSH 全局引擎设置（4.5）
+  getDshSettingsRaw: () => invoke<string>("get_dsh_settings_raw"),
+  saveDshSettingsRaw: (content: string) =>
+    invoke<void>("save_dsh_settings_raw", { content }),
+
+  // MCP 服务器结构化管理（4.7）
+  listMcpServers: (profile: string) =>
+    invoke<McpServerConfig[]>("list_mcp_servers", { profile }),
+  saveMcpServer: (profile: string, server: McpServerConfig) =>
+    invoke<void>("save_mcp_server", { profile, server }),
+  deleteMcpServer: (profile: string, serverName: string) =>
+    invoke<void>("delete_mcp_server", { profile, serverName }),
 }

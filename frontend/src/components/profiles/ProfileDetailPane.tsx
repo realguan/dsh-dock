@@ -1,8 +1,7 @@
-// Profile 工作台详情面板（Master-Detail 右侧主控制台）。
-// 拆分为三大 Tab：外挂插件控制台 | 底座组合架构 | Patch YAML 代码视窗。
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ArrowUpCircle,
+  Boxes,
   Check,
   Code2,
   Copy,
@@ -15,9 +14,10 @@ import {
   Search,
   Star,
   Trash2,
+  Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
 import type {
   PluginEntry,
@@ -28,6 +28,7 @@ import type {
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
+import { McpManager } from "@/components/profiles/McpManager"
 import {
   Dialog,
   DialogContent,
@@ -59,7 +60,8 @@ export function ProfileDetailPane({
   onDelete: () => void
   onNotice: (text: string, kind?: "ok" | "warn") => void
 }) {
-  const [tab, setTab] = useState<"plugins" | "bundles" | "patch">("plugins")
+  const { t } = useI18n()
+  const [tab, setTab] = useState<"plugins" | "bundles" | "patch" | "mcp">("plugins")
   const [detail, setDetail] = useState<ProfileDetail | null>(null)
   const [plugins, setPlugins] = useState<PluginEntry[] | null>(null)
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
@@ -261,6 +263,23 @@ export function ProfileDetailPane({
     })
   }
 
+  const handleResetDeps = async () => {
+    if (!name || opBusy) return
+    if (!window.confirm(t.profiles.resetDepsConfirm(name))) {
+      return
+    }
+    setOpBusy("resetDeps")
+    try {
+      const res = await api.resetProfileDependencies(name)
+      onNotice(t.profiles.resetDepsSuccess(res), "ok")
+      reload()
+    } catch (e) {
+      onNotice(String(e), "warn")
+    } finally {
+      setOpBusy(null)
+    }
+  }
+
   const liveEntries =
     runtime !== null && runtime.profile !== null && runtime.profile === name
       ? runtime.entries
@@ -325,6 +344,22 @@ export function ProfileDetailPane({
           <div className="flex items-center gap-2">
             <Button
               size="sm"
+              variant="outline"
+              onClick={handleResetDeps}
+              disabled={opBusy !== null}
+              title={t.profiles.resetDepsBtn}
+              className="gap-1 text-xs hover:border-brand"
+            >
+              {opBusy === "resetDeps" ? (
+                <LoaderCircle className="size-3.5 animate-spin text-brand" />
+              ) : (
+                <Wrench className="size-3.5 text-faint" />
+              )}
+              <span>{opBusy === "resetDeps" ? t.profiles.resettingDeps : t.profiles.resetDepsBtn}</span>
+            </Button>
+
+            <Button
+              size="sm"
               variant={isDefault ? "secondary" : "outline"}
               onClick={onSetDefault}
               disabled={isDefault}
@@ -383,6 +418,21 @@ export function ProfileDetailPane({
                 {layerBundles.length}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "mcp"}
+            onClick={() => setTab("mcp")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-all ${
+              tab === "mcp"
+                ? "bg-panel text-ink shadow-xs"
+                : "text-dim hover:text-ink"
+            }`}
+          >
+            <Boxes className="size-3.5" />
+            <span>{t.profiles.tabMcp}</span>
           </button>
 
           <button
@@ -731,7 +781,16 @@ export function ProfileDetailPane({
           </div>
         )}
 
-        {/* ================= Tab 3: Patch YAML 原文视窗 ================= */}
+        {/* ================= Tab 3: MCP 扩展服务器 ================= */}
+        {tab === "mcp" && (
+          <McpManager
+            profileName={name}
+            patchYaml={detail?.patch_yaml ?? null}
+            onNotice={onNotice}
+          />
+        )}
+
+        {/* ================= Tab 4: Patch YAML 原文视窗 ================= */}
         {tab === "patch" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
