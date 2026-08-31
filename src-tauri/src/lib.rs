@@ -1787,9 +1787,8 @@ mod tests {
     fn cargo_version_matches_tauri_conf() {
         let cargo = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("读取 Cargo.toml");
-        let conf =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
-                .expect("读取 tauri.conf.json");
+        let conf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"))
+            .expect("读取 tauri.conf.json");
         let pkg_version = env!("CARGO_PKG_VERSION");
         assert!(
             cargo.contains(&format!("version = \"{pkg_version}\"")),
