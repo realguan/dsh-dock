@@ -136,6 +136,7 @@
   `list_mcp_servers` `save_mcp_server` `delete_mcp_server`（MCP 服务器结构化管理，2026-08-31）。
   `delete_session`（会话删除，2026-08-31）。
   `reset_profile_dependencies`（Profile 依赖一键重置与修复，2026-08-31）。
+  `fetch_market_registry`（社区插件市场 Registry 拉取，2026-08-31）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
   （仅 main/about，capability 授权）。
@@ -148,7 +149,8 @@
   `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
   一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
   registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /
-  同超时 / 同 packument 体积上限（2026-08-29，4.4④）。专项裁定见 §9 索引对应 ADR。
+  同超时 / 同 packument 体积上限（2026-08-29，4.4④）；**社区插件市场 Registry 拉取**：
+  `updates.rs` `fetch_market_registry`，镜像链 `awesome-dsh-plugin.com` 与 GitHub raw（2026-08-31）。专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
 

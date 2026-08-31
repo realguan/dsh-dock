@@ -135,4 +135,7 @@ export const api = {
     invoke<void>("save_mcp_server", { profile, server }),
   deleteMcpServer: (profile: string, serverName: string) =>
     invoke<void>("delete_mcp_server", { profile, serverName }),
+
+  // 社区插件市场 Registry 拉取
+  fetchMarketRegistry: () => invoke<string>("fetch_market_registry"),
 }

@@ -2178,6 +2178,43 @@ fn registry_package_state(agent: &ureq::Agent, package: &str) -> Option<bool> {
     saw_definite_missing.then_some(false)
 }
 
+// ---------- 社区插件市场 Registry 拉取 (dsh-market / awesome-dsh-plugin) ----------
+
+/// 市场 Registry CDN 列表（镜像链，与 packument 同模式）。
+const MARKET_REGISTRY_URLS: &[&str] = &[
+    "https://awesome-dsh-plugin.com/plugins.json",
+    "https://raw.githubusercontent.com/awesome-dsh-plugin/awesome-dsh-plugin/main/plugins.json",
+];
+
+/// Registry 最大体积上限（当前 ~650KB，预留到 3MB）。
+const MARKET_REGISTRY_MAX_BYTES: u64 = 3 * 1024 * 1024;
+
+/// 拉取社区插件市场目录 JSON（原样透传给前端解析）。
+pub fn fetch_market_registry() -> Result<String, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
+        .build();
+    let mut last_err = String::from("市场 Registry 均不可达");
+    for url in MARKET_REGISTRY_URLS {
+        tracing::info!("读取插件市场 Registry: {url}");
+        let resp = match agent.get(url).call() {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("{url}: {e}");
+                continue;
+            }
+        };
+        match read_body_capped(resp.into_reader(), MARKET_REGISTRY_MAX_BYTES) {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                last_err = format!("{url}: {e}");
+                continue;
+            }
+        }
+    }
+    Err(last_err)
+}
+
 #[cfg(test)]
 mod dependency_preflight_tests {
     use super::*;

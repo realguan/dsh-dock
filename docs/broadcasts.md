@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-08-31 发版通知 · v0.9.1 社区插件市场全量上线（awesome-dsh-plugin Registry 2700+ 插件发现与一键安装分发） —— guan（AI 协作）
+
+- 变更：
+  1. **社区插件市场（Registry 集成）**：`src-tauri/src/updates.rs` 接入 `awesome-dsh-plugin.com/plugins.json` 官方 Registry（单一网络面，带 3MB 上限与 GitHub raw 镜像兜底），新增 `fetch_market_registry` IPC 命令与外链域名白名单登记。
+  2. **高质感插件市场工作台（`/frontend-design`）**：`ProfileManager.tsx` 新增第 5 个视图 Tab（`market`），引入 `MarketplaceView.tsx`、`MarketPluginCard.tsx` 与 `MarketInstallDialog.tsx`。
+  3. **丰富发现与筛选能力**：支持全局搜索（名称/NPM/作者/描述）、22 个垂直分类快速筛选 Chips、四向排序（Stars ⭐ / Downloads ⬇️ / 最新 🆕 / 名称 🔤）与已安装插件过滤。
+  4. **全域状态联动与一键分发**：插件卡片与全域已装 Profile 芯片实时联动（带绿色脉冲圆点），支持一键安装到指定 Profile 或分发至其他 Profile。
+  5. **国际化与单测补齐**：中英多语言字典全量支持；新增 `market.test.ts` 14 个单测，全仓 166 Rust 单测 + 85 前端单测全绿。
+- 影响：仅周知。用户可在 DSH Dock 内直接浏览、检索与安装 2700+ 社区插件。
+- 凭据：`cargo test` 166 个单测全绿；前端 `npm run typecheck && npm run lint && npm run test && npm run build` 全量通过。
+
 ### 2026-08-31 完成通知 · 问题 9 & 10 深度优化（本地路径打开修复 + 系统控制台极简侧栏导航重构） —— guan（AI 协作）
 
 - 变更：

@@ -494,6 +494,9 @@ const EXTERNAL_URL_HOSTS: &[&str] = &[
     "www.deepseek.com",
     "platform.deepseek.com",
     "github.com",
+    "awesome-dsh-plugin.com",
+    "npmjs.com",
+    "www.npmjs.com",
 ];
 
 /// 校验外链：仅 http/https，且主机等于或以白名单域结尾（`.example.com` 子域）。
@@ -1181,6 +1184,14 @@ async fn reset_profile_dependencies(profile: String) -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("重置依赖任务异常终止：{e}"))?
+}
+
+/// 插件市场：拉取社区 Registry 静态 JSON 目录
+#[tauri::command]
+async fn fetch_market_registry() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(crate::updates::fetch_market_registry)
+        .await
+        .map_err(|e| format!("拉取插件市场任务异常终止：{e}"))?
 }
 
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
@@ -1886,7 +1897,8 @@ pub fn run() {
             save_mcp_server,
             delete_mcp_server,
             delete_session,
-            reset_profile_dependencies
+            reset_profile_dependencies,
+            fetch_market_registry
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

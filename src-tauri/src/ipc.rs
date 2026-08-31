@@ -63,6 +63,7 @@ pub const COMMANDS: &[&str] = &[
     "delete_mcp_server",
     "delete_session",
     "reset_profile_dependencies",
+    "fetch_market_registry",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

@@ -7,6 +7,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Store,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n, useI18nStore } from "@/stores/i18nStore"
@@ -17,6 +18,7 @@ import { PageShell } from "@/components/layout/PageShell"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
+import { MarketplaceView } from "@/components/market/MarketplaceView"
 import { SessionManager } from "@/components/profiles/SessionManager"
 import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
@@ -40,8 +42,8 @@ export function ProfileManager() {
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
 
-  // 视图切换（Profile 管理列表 vs 插件全景矩阵 vs 会话维护与自愈 vs 系统控制台）
-  const [view, setView] = useState<"list" | "plugins" | "sessions" | "console">("list")
+  // 视图切换（Profile 管理列表 vs 插件全景矩阵 vs 插件市场 vs 会话维护与自愈 vs 系统控制台）
+  const [view, setView] = useState<"list" | "plugins" | "market" | "sessions" | "console">("list")
   const [overviewTick, setOverviewTick] = useState(0)
 
   // 初始化语言
@@ -201,6 +203,21 @@ export function ProfileManager() {
             <button
               type="button"
               role="tab"
+              aria-selected={view === "market"}
+              onClick={() => setView("market")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                view === "market"
+                  ? "bg-panel text-ink shadow-xs"
+                  : "text-dim hover:text-ink"
+              }`}
+            >
+              <Store className="size-3.5" />
+              <span>{t.profiles.viewMarket}</span>
+            </button>
+
+            <button
+              type="button"
+              role="tab"
               aria-selected={view === "sessions"}
               onClick={() => setView("sessions")}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
@@ -255,6 +272,10 @@ export function ProfileManager() {
       ) : view === "plugins" ? (
         <PluginOverview
           refreshKey={overviewTick}
+          onNotice={(msg, kind) => showToast(msg, kind)}
+        />
+      ) : view === "market" ? (
+        <MarketplaceView
           onNotice={(msg, kind) => showToast(msg, kind)}
         />
       ) : (
