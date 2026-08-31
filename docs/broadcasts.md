@@ -32,6 +32,24 @@
 
 ## 三、记录
 
+### 2026-08-31 修复 · WebView 内存策略改用直接子代选择器（解决工具调用嵌套导致的大面积滚动空白与输入框悬空）—— guan（AI 协作）
+
+- 变更：本 commit——`src-tauri/src/lib.rs`（`WEBVIEW_MEMORY_POLICY_SCRIPT` 中 CSS 规则由后代选择器 `FLOW + ' ' + ROW` 改为直接子代选择器 `FLOW + ' > ' + ROW`；`syncStreaming` 仅扫描顶层行；更新单测 `webview_memory_policy_script_contains_list_padding_defense` 断言直接子代连接符 `FLOW + ' > ' + ROW`）、`docs/adr/0002-webview-memory-policy.md`（补录直接子代修订说明）。
+- 影响：仅周知。解决由于工具调用内部卡片（`ToolCallTree` 的 `callRow` / `subCalls`）带有相同的 `data-chat-anchor-key` 属性而触发多层嵌套 containment，导致 WebKit 严重虚高估算滚动高度、在内容到底后仍可下滑并露出大片空白、输入框脱离底部悬空的偶现 bug。
+- 凭据：`cargo test` 152 绿 / `cargo fmt --check` / `cargo clippy -- -D warnings` 全绿；前端 test 55 绿。
+
+### 2026-08-31 功能 · 会话自愈与健康维护面板（ProfileManager 会话工作台）—— guan（AI 协作）
+
+- 变更：本 commit——新增 `src-tauri/src/sessions.rs`（扫描 `$DSH_HOME/sessions/`、单会话/全量自愈）、`scripts/repair-session.mjs`（会话日志 Turn 归流、seq 连续化重排与 Zstd 校验重打包）；`ipc.rs` / `lib.rs` / `capabilities/default.json`（登记 `list_sessions` / `repair_session` / `repair_all_sessions`）；`AGENTS.md` §7；`frontend/src/components/profiles/SessionManager.tsx`；`frontend/src/pages/ProfileManager.tsx`（三视图切换新增「会话维护」）；`frontend/src/content/zh-CN.ts` 与 `frontend/src/types/ipc.ts`。
+- 影响：**触宪法级**——`AGENTS.md` §7 登记 3 项新 IPC 命令（IPC 三处同步严格保持一致）。不破坏 dsh 文件系统不变量，修复时自动备份原始 `.bak`，解决上游并发推流或断线重连导致的 "seq gap in committed region" / "history unavailable"。
+- 凭据：`cargo test` 152 绿（新增 3 单测）/ `cargo fmt --check` / `cargo clippy -- -D warnings` 全绿；前端 typecheck 0 报错 / test 55 绿 / build 产物成功生成。
+
+### 2026-08-31 修复 · WebView 内存策略 CSS 补齐列表内边距（解决 Paint Containment 裁切列表序号）—— guan（AI 协作）
+
+- 变更：本 commit——`src-tauri/src/lib.rs`（`WEBVIEW_MEMORY_POLICY_SCRIPT` 常量化，注入 CSS 追加 `FLOW ol, FLOW ul { padding-left: 1.5em !important; }` 防止 `content-visibility: auto` 隐式 Paint Containment 把挂在行左侧外沿的有序/无序列表 markers 裁切截断；增加单测 `webview_memory_policy_script_contains_list_padding_defense`）、`docs/adr/0002-webview-memory-policy.md`（补录 2026-08-31 修订说明）。
+- 影响：仅周知。保持长会话 WebKit 内存优化不变，彻底解决桌面端会话中有序列表序号（如 `1. 2. 3.`）只展示一半的问题。
+- 凭据：`cargo test` 149 绿（+1 单测）/ `cargo fmt --check` / `cargo clippy -- -D warnings` 全绿；前端 test 55 绿。
+
 ### 2026-08-31 修复 + 发版事项 · 插件总览 UX 修正（包名展示全 / 描述降级）+ v0.8.0 tag（4.4 收口）—— guan（AI 协作）
 
 - 变更：本 commit——PluginOverview 行布局重排（维护者实机截图反馈：包名被

@@ -41,7 +41,11 @@ dsh web 前端全量渲染会话（无虚拟化），WebKit 对视口外渲染�
 
 ## 4. 最终决策
 
-经 initialization_script（`webview_memory_policy`）注入 CSS：会话行 `content-visibility: auto` + `contain-intrinsic-size: auto 64px`；流式中行加 `dsh-cv-skip` 豁免类（MutationObserver 监听 `data-streaming` 增删动态维护）；`CSS.supports` 能力探测，不支持则整段 return（优雅降级）；document-start 时 `document.body` 为 null，观察 `documentElement` + `DOMContentLoaded` 兜底。不加 `contain: paint`（裁剪行内浮层）。HOW 见 `lib.rs`。
+经 initialization_script（`webview_memory_policy`）注入 CSS：会话行 `content-visibility: auto` + `contain-intrinsic-size: auto 64px`；流式中行加 `dsh-cv-skip` 豁免类（MutationObserver 监听 `data-streaming` 增删动态维护）；`CSS.supports` 能力探测，不支持则整段 return（优雅降级）；document-start 时 `document.body` 为 null，观察 `documentElement` + `DOMContentLoaded` 兜底。不显式加 `contain: paint`。HOW 见 `lib.rs`。
+
+- **2026-08-31 修订（列表裁切与选择器直接子代修复）**：
+  1. `content-visibility: auto` 规范隐式赋予元素 Paint Containment，导致有序/无序列表（`list-style-position: outside`）的序号/圆点挂在行左侧外沿时被行边界裁切截断（实测 `1. 2. 3.` 仅露出一半）。同步在注入 CSS 中追加 `FLOW ol, FLOW ul { padding-left: 1.5em !important; }`，补足内边距防止 markers 溢出被裁剪。
+  2. 原后代选择器 `FLOW + ' ' + ROW` 会渗透匹配到消息内部挂有 `data-chat-anchor-key="call:<id>"` 的每个工具调用（`ToolCallTree` 的 `callRow` / `subCalls`），在几十步工具调用的长轮次中产生多层嵌套 containment，导致 WebKit 估算排版高度严重虚高数千像素，在实际渲染收缩后遗留巨大底部滚动空白并导致 `composerSeat` 悬空。规则修改为直接子代选择器 `FLOW + ' > ' + ROW`，约束 containment 仅作用于顶层消息卡片。
 
 ## 5. 后果与后续行动项
 

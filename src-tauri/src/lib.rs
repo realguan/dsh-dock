@@ -1169,6 +1169,84 @@ fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result
     Ok(())
 }
 
+/// WebView 渲染内存与样式兜底策略（ADR-0002，2026-08-25 提出，2026-08-26 CSS 注入，2026-08-31 列表裁切与直接子代嵌套修复）：
+/// 1. `content-visibility: auto` + `contain-intrinsic-size` 缓解 WebKit 内存膨胀；
+/// 2. 补齐列表内边距（`padding-left: 1.5em !important`），避免 `content-visibility: auto`
+///    触发的 Paint Containment 把挂在行左侧外沿（`list-style-position: outside`）
+///    的有序/无序列表序号与圆点裁切掉（2026-08-31 修复）；
+/// 3. 使用直接子代选择器（`FLOW > ROW`）：仅对顶层会话行生效，防止规则穿透到嵌套
+///    的工具调用节点（`ToolCallTree` 的 `callRow` / `subCalls` 也挂有 `data-chat-anchor-key`），
+///    避免多层嵌套 containment 导致 WebKit 严重虚高估算滚动高度、在底部产生大片空白
+///    滚动区及输入框悬空（2026-08-31 修复）。
+pub const WEBVIEW_MEMORY_POLICY_SCRIPT: &str = r#"(function () {
+  if (window.__dshDockMemoryPolicyApplied) return;
+  window.__dshDockMemoryPolicyApplied = true;
+  // 能力探测：不支持的引擎（老 WebKitGTK 等）直接退出，零副作用。
+  if (!(window.CSS && CSS.supports && CSS.supports('content-visibility', 'auto'))) return;
+  var ROW = '[data-chat-anchor-key]';
+  var FLOW = '[data-chat-flow]';
+  var STREAMING = '[data-streaming]';
+  var SKIP = 'dsh-cv-skip';
+
+  // 注入 CSS：一条规则覆盖全部行（含未来插入的），豁免类后置覆盖；
+  // 补齐列表内边距，防止 content-visibility 隐式 Paint Containment 裁切序号。
+  var style = document.createElement('style');
+  style.id = 'dsh-dock-memory-policy';
+  style.textContent =
+    FLOW + ' > ' + ROW + ' { content-visibility: auto; contain-intrinsic-size: auto 64px; }' +
+    FLOW + ' > ' + ROW + '.' + SKIP + ' { content-visibility: visible; }' +
+    FLOW + ' ol, ' + FLOW + ' ul { padding-left: 1.5em !important; }';
+  (document.head || document.documentElement).appendChild(style);
+
+  // 活豁免：流式行加 SKIP 类，流式结束移除——内容增长期保持完整渲染。
+  function syncStreaming(root) {
+    if (!root || !root.querySelectorAll) return;
+    var rows = (root.matches && root.matches(FLOW))
+      ? root.querySelectorAll(':scope > ' + ROW)
+      : root.querySelectorAll(FLOW + ' > ' + ROW);
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var streaming = row.querySelector(STREAMING) !== null;
+      if (streaming && !row.classList.contains(SKIP)) row.classList.add(SKIP);
+      else if (!streaming && row.classList.contains(SKIP)) row.classList.remove(SKIP);
+    }
+  }
+
+  function scan(root) {
+    if (!root || !root.querySelectorAll) return;
+    // 新插入子树：行可能整体进入，先补类再同步豁免。
+    if (root.closest && root.closest(FLOW) !== null) syncStreaming(root.closest(FLOW));
+    else if (root.nodeType === 1 && root.matches && root.matches(FLOW)) syncStreaming(root);
+  }
+
+  // document-start 时 body 尚不存在（WKUserScript 时序）：先观察
+  // documentElement；body 就绪后再补全量同步。
+  var mo = new MutationObserver(function (muts) {
+    for (var m = 0; m < muts.length; m++) {
+      var mut = muts[m];
+      if (mut.type === 'attributes') {
+        // data-streaming 增删：同步该行所在 flow 的豁免类。
+        if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
+          syncStreaming(mut.target.closest(FLOW));
+        }
+        continue;
+      }
+      if (mut.type !== 'childList') continue;
+      if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
+        syncStreaming(mut.target.closest(FLOW));
+      }
+    }
+  });
+  mo.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-streaming'],
+  });
+  if (document.body) syncStreaming(document);
+  else document.addEventListener('DOMContentLoaded', function () { syncStreaming(document); });
+})();"#;
+
 /// 创建主窗口（含外链拦截）。原静态配置（tauri.conf.json windows）等价迁移：
 /// 1280x820、min 960x640、可缩放、居中、浅色底。
 ///
@@ -1205,90 +1283,12 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       }, true);
     })();"#;
 
-    // WebView 渲染内存策略（2026-08-25 提出，2026-08-26 修订为 CSS 注入版）：
-    // dsh web 前端把整个会话一次性渲染进 DOM（无虚拟化）；WebKit（macOS
-    // WKWebView / Linux WebKitGTK）对「视口外大量已渲染内容」的回收远不如
-    // Chromium——长会话下渲染资源持续累积，WebContent 进程膨胀到数 GB
-    // （实测 2.7~4.3 GB / PID WebKit.WebContent）。
-    //
-    // 对策：`content-visibility: auto`（CSS 原生渲染级虚拟化，Baseline
-    // 2025-09：Chromium 85+ / Safari 18+ / WebKitGTK 2.46+）。视口外的行仍在
-    // DOM、仍占布局（contain-intrinsic-size 占位），但引擎跳过其布局/绘制并
-    // 释放渲染资源；滚入视口立即完整渲染。与 dsh 前端 scroll anchoring
-    // （elementsFromPoint hit-test，ChatView.pagingAnchor）天然兼容——布局
-    // 坐标不受影响。
-    //
-    // 实现（CSS 注入而非逐行 inline style）：一条规则覆盖全部行，千级行零
-    // style 写入；豁免走「活类」`dsh-cv-skip`——流式行（[data-streaming]）由
-    // MutationObserver 动态维护（流式结束后自动恢复优化，无需重新扫描）。
-    // 不加 `contain: paint`：会裁剪行内浮层（tooltip/popover/阴影）。
-    // 作用域：只在 dsh 会话流容器 [data-chat-flow] 内，壳页不受影响。
-    // 兼容：@supports 包裹——老 WebKitGTK（Ubuntu 22.04 = 2.38）整段失效，
-    // 页面行为与未注入一致（优雅降级，不破坏功能）。
-    let webview_memory_policy = r#"(function () {
-      if (window.__dshDockMemoryPolicyApplied) return;
-      window.__dshDockMemoryPolicyApplied = true;
-      // 能力探测：不支持的引擎（老 WebKitGTK 等）直接退出，零副作用。
-      if (!(window.CSS && CSS.supports && CSS.supports('content-visibility', 'auto'))) return;
-      var ROW = '[data-chat-anchor-key]';
-      var FLOW = '[data-chat-flow]';
-      var STREAMING = '[data-streaming]';
-      var SKIP = 'dsh-cv-skip';
-
-      // 注入 CSS：一条规则覆盖全部行（含未来插入的），豁免类后置覆盖。
-      var style = document.createElement('style');
-      style.id = 'dsh-dock-memory-policy';
-      style.textContent =
-        FLOW + ' ' + ROW + ' { content-visibility: auto; contain-intrinsic-size: auto 64px; }' +
-        FLOW + ' ' + ROW + '.' + SKIP + ' { content-visibility: visible; }';
-      (document.head || document.documentElement).appendChild(style);
-
-      // 活豁免：流式行加 SKIP 类，流式结束移除——内容增长期保持完整渲染。
-      function syncStreaming(root) {
-        if (!root || !root.querySelectorAll) return;
-        var rows = root.querySelectorAll(ROW);
-        for (var i = 0; i < rows.length; i++) {
-          var row = rows[i];
-          var streaming = row.querySelector(STREAMING) !== null;
-          if (streaming && !row.classList.contains(SKIP)) row.classList.add(SKIP);
-          else if (!streaming && row.classList.contains(SKIP)) row.classList.remove(SKIP);
-        }
-      }
-
-      function scan(root) {
-        if (!root || !root.querySelectorAll) return;
-        // 新插入子树：行可能整体进入，先补类再同步豁免。
-        if (root.closest && root.closest(FLOW) !== null) syncStreaming(root.closest(FLOW));
-        else if (root.nodeType === 1 && root.matches && root.matches(FLOW)) syncStreaming(root);
-      }
-
-      // document-start 时 body 尚不存在（WKUserScript 时序）：先观察
-      // documentElement；body 就绪后再补全量同步。
-      var mo = new MutationObserver(function (muts) {
-        for (var m = 0; m < muts.length; m++) {
-          var mut = muts[m];
-          if (mut.type === 'attributes') {
-            // data-streaming 增删：同步该行所在 flow 的豁免类。
-            if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
-              syncStreaming(mut.target.closest(FLOW));
-            }
-            continue;
-          }
-          if (mut.type !== 'childList') continue;
-          if (mut.target && mut.target.closest && mut.target.closest(FLOW) !== null) {
-            syncStreaming(mut.target.closest(FLOW));
-          }
-        }
-      });
-      mo.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['data-streaming'],
-      });
-      if (document.body) syncStreaming(document);
-      else document.addEventListener('DOMContentLoaded', function () { syncStreaming(document); });
-    })();"#;
+    // WebView 内存与样式兜底策略脚本（ADR-0002，2026-08-26 引入，2026-08-31 修订）：
+    // 1. `content-visibility: auto` + `contain-intrinsic-size` 缓解 WebKit 内存膨胀；
+    // 2. 补齐列表内边距（`padding-left: 1.5em !important`），避免 `content-visibility: auto`
+    //    触发的 Paint Containment 把挂在行左侧外沿（`list-style-position: outside`）
+    //    的有序/无序列表序号与圆点裁切掉（2026-08-31 修复）。
+    let webview_memory_policy = WEBVIEW_MEMORY_POLICY_SCRIPT;
 
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
@@ -1840,6 +1840,13 @@ mod tests {
             pkg_json.contains(&format!("\"version\": \"{pkg_version}\"")),
             "frontend/package.json 的 version 与 CARGO_PKG_VERSION 不一致：预期 {pkg_version}"
         );
+    }
+
+    #[test]
+    fn webview_memory_policy_script_contains_list_padding_defense() {
+        assert!(super::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("content-visibility: auto"));
+        assert!(super::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("padding-left: 1.5em !important"));
+        assert!(super::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("FLOW + ' > ' + ROW"));
     }
 }
 
