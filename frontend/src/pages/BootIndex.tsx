@@ -1,13 +1,9 @@
-// 启动序列页（原 ui/index.html 完整迁移，frontend-migration §4.1，最复杂一页）。
-//
-// 组成：顶栏（wordmark + 版本芯片 + WSL 入口）→ Hero 一句话叙事（pulse 让位规则
-// 同旧 syncBars）→ 下载主角位接管 → 「启动详情」时间线卡（含内嵌错误区）。
-//
-// 模式握手（保真竞态规避裁定）：?mode=&default= 由 BootMode 携参跳转而来，
-// 本页挂载后 invoke choose_mode——事件总线已在模块加载期注册完毕，
-// 启动线程随后的 boot:step 遥测必然被消费（旧 ui/index.html 同款时序）。
+// 启动序列页（原 ui/index.html 升级重构，frontend-migration §4.1）。
+// 组成：磨砂顶栏（wordmark + 版本芯片 + WSL 入口）→ Hero 空间质感叙事 →
+// 下载主角位接管 → 「启动详情」控制台时间线卡（含内嵌错误区）。
 import { useEffect, useState } from "react"
-import { TerminalSquare } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+import { TerminalSquare, Sparkles } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
@@ -106,70 +102,98 @@ export function BootIndex() {
   const showPulse = !shownError && !(!hideDownload && progress !== null)
 
   return (
-    <div className="bg-bg relative min-h-dvh">
+    <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
+      {/* 顶部环境渐变光晕 */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
+
       {/* 顶栏 */}
-      <header className="border-line/70 absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-3">
-        <span className="text-faint text-[11px] font-semibold tracking-[0.18em]">
-          DSH DOCK
-        </span>
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-2">
+          <div className="flex size-5 items-center justify-center rounded bg-brand/10 text-brand">
+            <Sparkles className="size-3" />
+          </div>
+          <span className="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/90">
+            DSH DOCK
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2.5">
           <VersionChip />
           {/* WSL 仅 Windows 渲染（2026-08-26 平台裁定，能力经 can.bootWsl） */}
-          <button
-            type="button"
-            title={t.boot.wslOpenTip}
-            disabled={!can.bootWsl || wslBusy}
-            onClick={() => {
-              setWslBusy(true)
-              api
-                .bootInWsl()
-                .catch((e) =>
-                  setLocalError({
-                    title: t.boot.wslFailed,
-                    detail: String(e instanceof Error ? e.message : e),
-                  }),
-                )
-                .finally(() => setWslBusy(false))
-            }}
-            className="border-line text-dim hover:border-line hover:text-ink inline-flex items-center gap-1.5 rounded-full border bg-white px-2.5 py-1 text-[11px] transition-colors disabled:cursor-default disabled:opacity-50"
-          >
-            <TerminalSquare className="size-3.5" />
-            {t.boot.wslOpen}
-          </button>
+          {can.bootWsl && (
+            <button
+              type="button"
+              title={t.boot.wslOpenTip}
+              disabled={wslBusy}
+              onClick={() => {
+                setWslBusy(true)
+                api
+                  .bootInWsl()
+                  .catch((e) =>
+                    setLocalError({
+                      title: t.boot.wslFailed,
+                      detail: String(e instanceof Error ? e.message : e),
+                    }),
+                  )
+                  .finally(() => setWslBusy(false))
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs disabled:cursor-default disabled:opacity-50"
+            >
+              <TerminalSquare className="size-3.5 text-brand" />
+              {t.boot.wslOpen}
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="flex min-h-dvh flex-col items-center px-6 pt-20 pb-10">
-        {/* Hero：一句话状态。出错时整块让位给错误卡（旧 hero.style.display='none'） */}
-        {!shownError && (
-          <section className="page-rise flex w-full max-w-xl flex-col items-center text-center">
-            <Emblem size={52} />
-            <h1 className="text-ink mt-4 text-2xl font-semibold tracking-tight">
-              {headline}
-            </h1>
-            {subline && (
-              <p className="text-dim mx-auto mt-2.5 max-w-md text-sm leading-relaxed">
-                {subline}
-              </p>
-            )}
-            {showPulse && (
-              <div className="mt-6">
-                <PulseBar width={280} />
+      {/* 主工作区 */}
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-24 pb-12">
+        {/* Hero：一句话状态与生命感 */}
+        <AnimatePresence mode="wait">
+          {!shownError && (
+            <motion.section
+              key="boot-hero"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="flex w-full max-w-xl flex-col items-center text-center"
+            >
+              <div className="relative mb-2">
+                <div className="absolute -inset-2 rounded-2xl bg-brand/10 blur-xl" />
+                <Emblem size={56} />
               </div>
-            )}
-            {!hideDownload && progress !== null && maxStepSeen < 2 && (
-              <div className="w-full">
-                <DownloadProgress />
-              </div>
-            )}
-          </section>
-        )}
+
+              <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">
+                {headline}
+              </h1>
+
+              {subline && (
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-dim">
+                  {subline}
+                </p>
+              )}
+
+              {showPulse && (
+                <div className="mt-6 w-full">
+                  <PulseBar width={260} />
+                </div>
+              )}
+
+              {!hideDownload && progress !== null && maxStepSeen < 2 && (
+                <div className="w-full">
+                  <DownloadProgress />
+                </div>
+              )}
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {/* 启动详情：时间线 + 内嵌错误区 */}
-        <section className="page-rise mt-6 w-full max-w-xl [animation-delay:80ms]">
+        <section className="mt-7 w-full max-w-xl">
           <BootTimeline />
           {shownError && (
-            <div className="mt-3">
+            <div className="mt-4">
               <ErrorCard
                 payload={shownError}
                 diag
@@ -190,4 +214,5 @@ export function BootIndex() {
     </div>
   )
 }
+
 

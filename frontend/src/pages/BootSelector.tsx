@@ -1,12 +1,10 @@
-// 工作台选择器页（原 ui/selector.html 完整迁移，frontend-migration §4.3）。
+// 工作台选择器页（原 ui/selector.html 升级重构，frontend-migration §4.3）。
 // 两阶段叙事：一问一答（选卡片）→ 选定后原地切启动形态（与启动页同构）；
-// 复用 DownloadProgress / ErrorCard / PulseBar——整页导航后 store 重建，
-// 事件流持续驱动同一套组件（组件级复用而非运行时共享）。
-//
-// 时序保真（旧 syncBars 规则）：选定后 PulseBar 常驻生命感；仅「下载条接管」
-// 与「出错」两个时点让位。step>=2（spawn 起）隐藏下载条。
+// 复用 DownloadProgress / ErrorCard / PulseBar。
 import { useEffect, useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
+import { Layout, Sparkles, ChevronRight, Package } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
 import type { BootErrorEvent } from "@/types/events"
@@ -84,87 +82,134 @@ export function BootSelector() {
   })()
 
   return (
-    <div className="bg-bg relative min-h-dvh">
+    <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
+      {/* 顶部环境渐变光晕 */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
+
       {/* 顶栏：wordmark + 版本芯片 */}
-      <header className="border-line/70 absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-3">
-        <span className="text-faint text-[11px] font-semibold tracking-[0.18em]">
-          DSH DOCK
-        </span>
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md">
+        <div className="flex items-center gap-2">
+          <div className="flex size-5 items-center justify-center rounded bg-brand/10 text-brand">
+            <Sparkles className="size-3" />
+          </div>
+          <span className="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/90">
+            DSH DOCK
+          </span>
+        </div>
         <VersionChip />
       </header>
 
-      <main className="flex min-h-dvh flex-col items-center px-6 pt-16 pb-10">
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-20 pb-12">
         {/* Hero */}
-        <section className="page-rise w-full max-w-xl text-center" id="hero">
-          <div className="mb-4 flex justify-center">
-            <Emblem size={52} />
+        <section className="flex w-full max-w-xl flex-col items-center text-center">
+          <div className="relative mb-2">
+            <div className="absolute -inset-2 rounded-2xl bg-brand/10 blur-xl" />
+            <Emblem size={56} />
           </div>
-          <h1 className="text-ink text-2xl font-semibold tracking-tight">{headline}</h1>
-          <p className="text-dim mx-auto mt-2.5 max-w-md text-sm leading-relaxed">{subline}</p>
+          <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">{headline}</h1>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-dim">{subline}</p>
           {!shownError && showPulse && selected !== null && (
-            <div className="mt-6">
-              <PulseBar width={280} />
+            <div className="mt-6 w-full">
+              <PulseBar width={260} />
             </div>
           )}
         </section>
 
-        {/* 阶段一：问题清单 */}
-        {selected === null ? (
-          <>
-            <div className="mt-8 grid w-full max-w-xl gap-2.5">
-              {profiles.map((name, i) => {
-                const meta = profileMeta(name)
-                return (
-                  <button
-                    key={name}
-                    type="button"
-                    style={{ animationDelay: `${i * 70}ms` }}
-                    onClick={() => {
-                      setSelected({ name, title: meta.title })
-                      api
-                        .chooseProfile(name)
-                        .catch((e) =>
-                          setLocalError({
-                            title: t.error.fallbackTitle,
-                            detail: `${String(e instanceof Error ? e.message : e)}（可返回重选）`,
-                            actions: ["retry"],
-                          }),
-                        )
-                    }}
-                    className="page-rise border-line bg-panel group hover:border-brand/50 hover:shadow-md flex items-center gap-4 rounded-xl border p-4 text-left transition-all"
-                  >
-                    <span className="font-mono text-faint text-xs tabular-nums">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="text-ink block text-[15px] font-semibold">{meta.title}</span>
-                      <span className="text-dim mt-0.5 block truncate text-xs">{meta.desc}</span>
-                    </span>
-                    <span
-                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide ${
-                        meta.tag === "DEFAULT"
-                          ? "bg-wash text-brand-deep border-transparent"
-                          : "text-faint border-line"
-                      }`}
+        {/* 阶段一：Profile 卡片选择阵列 */}
+        <AnimatePresence mode="wait">
+          {selected === null ? (
+            <motion.div
+              key="selector-cards"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="mt-8 w-full max-w-xl"
+            >
+              <div className="grid gap-3">
+                {profiles.map((name, i) => {
+                  const meta = profileMeta(name)
+                  const isDefault = meta.tag === "DEFAULT"
+                  return (
+                    <motion.button
+                      key={name}
+                      type="button"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05, duration: 0.22 }}
+                      whileHover={{ scale: 1.01, y: -1 }}
+                      whileTap={{ scale: 0.99 }}
+                      onClick={() => {
+                        setSelected({ name, title: meta.title })
+                        api
+                          .chooseProfile(name)
+                          .catch((e) =>
+                            setLocalError({
+                              title: t.error.fallbackTitle,
+                              detail: `${String(e instanceof Error ? e.message : e)}（可返回重选）`,
+                              actions: ["retry"],
+                            }),
+                          )
+                      }}
+                      className="group relative flex items-center gap-4 rounded-2xl border border-line bg-panel/95 p-4 text-left shadow-xs transition-all hover:border-brand/50 hover:bg-wash/30 hover:shadow-md"
                     >
-                      {meta.tag}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-            <p className="text-faint mt-4 text-center text-xs">{t.selector.pickHint}</p>
-          </>
-        ) : !hideDownload && progress !== null ? (
-          /* 阶段二：下载条接管 */
-          <DownloadProgress />
-        ) : null}
+                      <div
+                        className={`flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                          isDefault
+                            ? "bg-wash text-brand-deep group-hover:bg-brand group-hover:text-white"
+                            : "bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand"
+                        }`}
+                      >
+                        {isDefault ? <Layout className="size-5" /> : <Package className="size-5" />}
+                      </div>
 
-        {/* 错误卡：后端错误 + 本地动作失败统一渲染；reselect = 整页重载 */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold tracking-tight text-ink group-hover:text-brand-deep">
+                            {meta.title}
+                          </span>
+                          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">
+                            {name}
+                          </span>
+                        </div>
+                        <span className="mt-1 block truncate text-xs text-dim">{meta.desc}</span>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span
+                          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-wide ${
+                            isDefault
+                              ? "border-brand/20 bg-brand/10 text-brand-deep"
+                              : "border-line bg-line-soft/60 text-faint"
+                          }`}
+                        >
+                          {meta.tag}
+                        </span>
+                        <ChevronRight className="size-4 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand" />
+                      </div>
+                    </motion.button>
+                  )
+                })}
+              </div>
+
+              <p className="mt-4 text-center text-xs text-faint">{t.selector.pickHint}</p>
+            </motion.div>
+          ) : !hideDownload && progress !== null ? (
+            /* 阶段二：下载条接管 */
+            <div className="w-full max-w-xl">
+              <DownloadProgress />
+            </div>
+          ) : null}
+        </AnimatePresence>
+
+        {/* 错误卡 */}
         {shownError && (
-          <ErrorCard payload={shownError} onReselect={() => window.location.reload()} />
+          <div className="mt-6 w-full max-w-xl">
+            <ErrorCard payload={shownError} onReselect={() => window.location.reload()} />
+          </div>
         )}
       </main>
     </div>
   )
 }
+

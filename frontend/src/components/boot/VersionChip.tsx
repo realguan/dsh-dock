@@ -21,12 +21,12 @@ export function VersionChip() {
     text = `DSH · ${t.selector.chipCheckFailed}`
   } else if (dsh.newer) {
     dot = "new"
-    text = `DSH ${dsh.current ?? "?"} · ${t.selector.chipDshNew} ${dsh.latest ?? ""}`
+    text = `DSH ${dsh.current ?? "?"} → ${dsh.latest ?? ""}`
   } else if (dsh.current && dsh.latest) {
     dot = "ok"
-    text = `DSH ${dsh.current} · ${t.selector.chipDshOk}`
+    text = `DSH ${dsh.current}`
   } else {
-    text = `DSH ${dsh.current ?? "…"} · ${t.selector.chipDetecting}`
+    text = `DSH ${dsh.current ?? "…"}`
   }
 
   let clientMsg: string | null = null
@@ -39,16 +39,23 @@ export function VersionChip() {
     clientMsg = t.selector.chipClientUpdatingRun
 
   return (
-    <span className="border-line bg-panel/80 text-dim inline-flex max-w-[280px] items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] whitespace-nowrap">
+    <div className="inline-flex max-w-[320px] items-center gap-2 rounded-full border border-line bg-panel/90 px-3 py-1 font-mono text-[11px] text-dim shadow-xs backdrop-blur-xs whitespace-nowrap">
       <span
-        className={`size-1.5 shrink-0 rounded-full ${
-          dot === "ok" ? "bg-ok" : dot === "new" ? "bg-warn animate-blink" : "bg-faint"
+        className={`size-2 shrink-0 rounded-full transition-colors ${
+          dot === "ok"
+            ? "bg-ok ring-2 ring-ok/20"
+            : dot === "new"
+              ? "animate-pulse bg-warn ring-2 ring-warn/25"
+              : "bg-faint"
         }`}
       />
-      <span className="truncate">{text}</span>
+      <span className="truncate font-medium text-ink/85">{text}</span>
       {clientMsg && (
-        <span className="text-warn truncate border-l pl-1.5">{clientMsg}</span>
+        <span className="truncate border-l border-line pl-2 font-medium text-warn">
+          {clientMsg}
+        </span>
       )}
-    </span>
+    </div>
   )
 }
+

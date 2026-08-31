@@ -17,6 +17,8 @@ import { BootSelector } from "@/pages/BootSelector"
 import { About } from "@/pages/About"
 import { ProfileManager } from "@/pages/ProfileManager"
 
+import { PulseBar } from "@/components/boot/PulseBar"
+
 export default function App() {
   const [label, setLabel] = useState<string | null>(null)
 
@@ -37,9 +39,7 @@ export default function App() {
       <main className="bg-bg text-ink flex min-h-dvh items-center justify-center">
         <div className="flex flex-col items-center gap-5">
           <Emblem size={56} />
-          <div className="pulse-bar w-40">
-            <div className="pulse-bar-fill" />
-          </div>
+          <PulseBar width={160} />
         </div>
       </main>
     )

@@ -1,9 +1,14 @@
-// 进行中动画条（步骤 running 时的生命感；下载条出现时让位）。
-// 样式本体在 index.css（pulse-bar / pulse-bar-fill，自旧 app.css 迁移）。
-export function PulseBar({ width = 320 }: { width?: number | string }) {
+// 进行中动态光条（步骤 running 时的生命感；下载条出现时让位）。
+export function PulseBar({ width = 300 }: { width?: number | string }) {
   return (
-    <div className="pulse-bar mx-auto" style={{ width }}>
-      <div className="pulse-bar-fill" />
+    <div
+      className="relative mx-auto h-1.5 overflow-hidden rounded-full border border-line bg-line-soft/80 shadow-xs"
+      style={{ width }}
+      role="progressbar"
+      aria-label="启动进行中"
+    >
+      <div className="pulse-bar-fill rounded-full" />
     </div>
   )
 }
+
