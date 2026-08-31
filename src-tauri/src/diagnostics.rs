@@ -99,7 +99,8 @@ pub fn dir_size_and_count(dir: &Path) -> (u64, usize) {
 
 /// 收集全量诊断信息
 pub fn collect_diagnostics(home: &Path) -> SystemDiagnosticsReport {
-    let path_env = std::env::var("PATH").unwrap_or_default();
+    // 使用完整合并环境 PATH（包含 login_shell_path、用户 home 固定目录与版本管理器目录）
+    let path_env = crate::resolve::effective_path();
 
     // Node 探测
     let node_detected = crate::resolve::detect_system_node(&path_env);
@@ -122,9 +123,21 @@ pub fn collect_diagnostics(home: &Path) -> SystemDiagnosticsReport {
     // pnpm 探测
     let pnpm_detected = crate::updates::find_pnpm(&path_env);
     let pnpm = if let Some(p) = pnpm_detected {
+        let version = crate::child_cmd(&p)
+            .arg("-v")
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            });
+
         PnpmDiagnosticInfo {
             path: p.to_string_lossy().to_string(),
-            version: None,
+            version,
             is_ready: true,
         }
     } else {

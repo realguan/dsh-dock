@@ -207,7 +207,7 @@ export function DiagnosticsPane({
               {t.console.pnpmCard}
             </h4>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
-              {pnpm.isReady ? "已全局就绪" : "缺失"}
+              {pnpm.isReady ? (pnpm.version ? `v${pnpm.version}` : "已全局就绪") : "缺失"}
             </p>
           </div>
           <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
@@ -236,7 +236,7 @@ export function DiagnosticsPane({
               {t.console.dshCard}
             </h4>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
-              {dsh.version || "官方源"}
+              {dsh.isReady ? (dsh.version ? `v${dsh.version}` : "官方源 (已就绪)") : "官方源 (未检出)"}
             </p>
           </div>
           <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
