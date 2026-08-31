@@ -36,6 +36,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 版本号一致性防呆闸门（2026-08-31）：
+      # 当由 tag（如 v0.8.7）触发构建时，强制校验 git tag 剥除 'v' 前缀后必须与
+      # Cargo.toml、tauri.conf.json、frontend/package.json 中的版本号完全一致！
+      # 彻底杜绝「打了个新 tag 但源码版本号仍是旧版本」导致客户端内部版本漂移事故。
+      - name: Verify tag version consistency
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "Checking tag version: $TAG_VER"
+          CARGO_VER=$(grep -E '^version = ' src-tauri/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          TAURI_VER=$(grep -E '"version": ' src-tauri/tauri.conf.json | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          PKG_VER=$(grep -E '"version": ' frontend/package.json | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          echo "Cargo.toml:        $CARGO_VER"
+          echo "tauri.conf.json:   $TAURI_VER"
+          echo "package.json:      $PKG_VER"
+          if [ "$TAG_VER" != "$CARGO_VER" ] || [ "$TAG_VER" != "$TAURI_VER" ] || [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "::error::Tag 版本 ($TAG_VER) 与代码内版本号不匹配！(Cargo: $CARGO_VER, Tauri: $TAURI_VER, Pkg: $PKG_VER)"
+            exit 1
+          fi
+          echo "✅ Tag 版本与代码内所有版本定义完全一致"
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
