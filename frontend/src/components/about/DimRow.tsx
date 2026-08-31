@@ -1,19 +1,28 @@
-// 维度行布局（About 运行环境区共用）：标签列 + 内容列，末行去分隔线。
+// 维度行布局（About 运行环境区共用）：标签列 + 内容列。
 import type { ReactNode } from "react"
 
 export function DimRow({
   label,
+  badge,
   children,
 }: {
   label: string
+  badge?: string
   children: ReactNode
 }) {
   return (
-    <div className="border-line flex min-h-[52px] items-center gap-3 border-b px-4 py-3 last:border-b-0">
-      <span className="text-dim w-20 shrink-0 text-xs font-medium tracking-wide">
-        {label}
-      </span>
-      <div className="min-w-0 flex-1">{children}</div>
+    <div className="border-line flex flex-col gap-2 border-b p-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-2">
+        <span className="text-ink text-xs font-semibold tracking-tight">
+          {label}
+        </span>
+        {badge && (
+          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-dim">
+            {badge}
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 sm:text-right">{children}</div>
     </div>
   )
 }
@@ -27,9 +36,9 @@ export function DimNote({
 }) {
   const cls =
     tone === "warn"
-      ? "text-warn ml-2 text-xs"
+      ? "text-warn text-xs"
       : tone === "accent"
-        ? "text-brand-deep ml-2 text-xs font-medium"
-        : "text-faint ml-2 text-xs"
+        ? "text-brand-deep text-xs font-medium"
+        : "text-faint text-xs"
   return <span className={cls}>{children}</span>
 }

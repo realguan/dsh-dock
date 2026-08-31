@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p ~/.claude/plans)",
+      "Bash(cargo test *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)"
+    ],
+    "additionalDirectories": [
+      "/Users/guan/.claude"
+    ]
+  }
+}

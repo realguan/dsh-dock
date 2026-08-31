@@ -131,6 +131,10 @@ export const t = {
     // 工作台入口
     openInBrowser: "在浏览器中打开",
     workbenchNotReady: "工作台尚未就绪",
+    liveSessionActive: "工作台实例就绪",
+    copyDiagnostics: "复制诊断信息",
+    diagnosticsCopied: "诊断信息已复制到剪贴板",
+    officialChannel: "官方发布通道",
   },
   // Profile 管理器（4.3 前端刀）。两态：已物化（目录在）vs 可首启（内置模板名）。
   profiles: {
@@ -275,6 +279,24 @@ export const t = {
       `从其他 profile 安装完成：${ok} 成功${fail ? ` · ${fail} 失败` : ""}`,
     importDoneBtn: "完成",
     importFailures: "失败明细",
+    // 扩展文案（Master-Detail 工作台与交互升级）
+    searchPlaceholder: "搜索 Profile...",
+    searchPluginsPlaceholder: "搜索已装插件...",
+    searchAllPluginsPlaceholder: "搜索全域插件名称、描述或 Profile...",
+    tabPlugins: "外挂插件",
+    tabBundles: "底座组合",
+    tabPatch: "Patch YAML",
+    emptySelectTitle: "未选定 Profile",
+    emptySelectSubtitle: "在左侧选择一个 Profile 或新建工作台，即可在此配置插件、查看底座与管理 YAML Patch。",
+    quickDistribute: "分发到...",
+    distributeTitle: (pkg: string) => `将「${pkg}」分发安装到其他 Profile`,
+    distributeNote: "选择目标 Profile，将以相同版本执行安装并可连带迁移配置",
+    distributeDone: (pkg: string, target: string) => `已成功将「${pkg}」安装至「${target}」`,
+    copyPatchSuccess: "Patch YAML 内容已复制到剪贴板",
+    rawYamlHint: "此为 dsh 生成的 cordis.patch.yml 权威底层配置（只读查看与诊断）",
+    filterAll: "全部",
+    filterMaterialized: "已创建",
+    filterTemplates: "模板",
   },
 } as const
 

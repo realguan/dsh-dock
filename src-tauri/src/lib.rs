@@ -2058,8 +2058,8 @@ fn open_about_window(app: &tauri::AppHandle) {
         // 480x360 装不下三行维度 + 浏览器入口 + 脚注（2026-08-25 实测裁切）；
         // 更新中心接入后内容更高（客户端状态机卡片 + dimrows + 入口 + 脚注），
         // 加高并允许滚动兜底。
-        .inner_size(480.0, 560.0)
-        .min_inner_size(440.0, 460.0)
+        .inner_size(480.0, 580.0)
+        .min_inner_size(440.0, 480.0)
         .resizable(true)
         .center();
         match builder.build() {
@@ -2089,9 +2089,9 @@ fn open_profiles_window(app: &tauri::AppHandle) {
             tauri::WebviewUrl::App("/".into()),
         )
         .title("Profile 管理器")
-        // 列表宽度 620 + 容器边距；详情/创建等对话框在窗内弹出
-        .inner_size(680.0, 700.0)
-        .min_inner_size(560.0, 540.0)
+        // Master-Detail 双栏工作台：宽 960 + 高 680，自适应响应式伸缩
+        .inner_size(960.0, 680.0)
+        .min_inner_size(620.0, 540.0)
         .resizable(true)
         .center();
         match builder.build() {

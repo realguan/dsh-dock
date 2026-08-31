@@ -1,16 +1,20 @@
-// 客户端自更新状态机卡（原 ui/about.html renderUpd 迁移）。
-// 数据源：clientUpdateStore（app:update 事件驱动，页面进入时播种）；
-// 前端零裁决——phase 由 Rust 写入，本组件只做「phase → 文案/控件」映射。
-// 点击后的本地 busy 不需要单独 state：run_check/run_download_and_install
-// 起手即回推 checking/downloading 事件，AnimatePresence 以 phase 为 key 过渡。
+// 客户端自更新状态机卡（更新中心重构）。
+// 包含流光下载进度条、Release Notes 展开与状态化动作按钮。
 import { useEffect } from "react"
-import { LoaderCircle } from "lucide-react"
+import {
+  ArrowDownCircle,
+  CheckCircle2,
+  Download,
+  FileText,
+  LoaderCircle,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 import { api } from "@/lib/tauri"
 import { fmtBytes } from "@/lib/format"
 import { t } from "@/content/zh-CN"
 import { useClientUpdateStore } from "@/stores/clientUpdateStore"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 
@@ -26,30 +30,11 @@ function phaseTone(phase: string): PhaseTone {
   return "idle"
 }
 
-function StateBadge({ phase }: { phase: string }) {
-  const tone = phaseTone(phase)
-  const cls =
-    tone === "ok"
-      ? "bg-ok-soft text-ok border-transparent"
-      : tone === "accent"
-        ? "bg-wash text-brand-deep border-transparent"
-        : tone === "warn"
-          ? "bg-warn-soft text-warn border-transparent"
-          : tone === "busy"
-            ? "bg-line-soft text-dim border-transparent"
-            : "bg-panel text-faint border-line"
-  return (
-    <Badge variant="outline" className={cls}>
-      {t.about.phases[phase as keyof typeof t.about.phases]}
-    </Badge>
-  )
-}
-
 export function ClientUpdateCard() {
   const snapshot = useClientUpdateStore((s) => s.snapshot)
   const phase = snapshot?.phase ?? "idle"
 
-  // done → 1.2s 后自动复查一次（沿用旧页语义：装完立即校准到最新态）
+  // done → 1.2s 后自动复查一次
   useEffect(() => {
     if (phase !== "done") return
     const timer = window.setTimeout(() => {
@@ -59,6 +44,7 @@ export function ClientUpdateCard() {
   }, [phase])
 
   const busy = BUSY_PHASES.has(phase)
+  const tone = phaseTone(phase)
   const latest =
     snapshot && "latest" in snapshot && typeof snapshot.latest === "string"
       ? snapshot.latest
@@ -84,57 +70,99 @@ export function ClientUpdateCard() {
   })()
 
   return (
-    <div className="border-line bg-panel rounded-xl border p-4 shadow-sm">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-dim text-sm font-medium">{t.about.clientLabel}</span>
-        <StateBadge phase={phase} />
+    <div className="border-line bg-panel rounded-2xl border p-4.5 shadow-xs transition-shadow hover:shadow-sm">
+      {/* 顶栏：标题 + 状态胶囊 */}
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+            <Sparkles className="size-3.5" />
+          </div>
+          <div>
+            <h3 className="text-ink text-xs font-bold tracking-tight">
+              {t.about.clientLabel}
+            </h3>
+            <p className="text-faint text-[10px]">{t.about.officialChannel}</p>
+          </div>
+        </div>
+
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+            tone === "ok"
+              ? "bg-ok-soft text-ok"
+              : tone === "accent"
+                ? "bg-brand/10 text-brand border border-brand/20"
+                : tone === "warn"
+                  ? "bg-warn-soft text-warn"
+                  : tone === "busy"
+                    ? "bg-line-soft text-dim"
+                    : "bg-bg text-faint border border-line"
+          }`}
+        >
+          {tone === "ok" && <CheckCircle2 className="size-2.5" />}
+          {tone === "accent" && <ArrowDownCircle className="size-2.5" />}
+          {tone === "busy" && <LoaderCircle className="size-2.5 animate-spin" />}
+          <span>{t.about.phases[phase as keyof typeof t.about.phases]}</span>
+        </span>
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={phase}
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
+          transition={{ duration: 0.15, ease: "easeOut" }}
+          className="space-y-2"
         >
           <p
-            className={
+            className={`text-sm font-semibold tracking-tight ${
               phase === "failed"
-                ? "text-warn text-lg font-semibold"
+                ? "text-warn"
                 : phase === "available" || phase === "done"
-                  ? "text-ink text-lg font-semibold"
-                  : "text-ink text-base font-medium"
-            }
+                  ? "text-brand-deep"
+                  : "text-ink"
+            }`}
           >
             {mainLine}
           </p>
 
+          {/* Release Notes */}
           {snapshot &&
-          snapshot.phase === "available" &&
-          typeof snapshot.notes === "string" &&
-          snapshot.notes && (
-            <p className="text-faint mt-1 line-clamp-2 text-xs">
-              {t.about.releaseNotes}：{snapshot.notes.slice(0, 120)}
-              {snapshot.notes.length > 120 ? "…" : ""}
-            </p>
-          )}
+            snapshot.phase === "available" &&
+            typeof snapshot.notes === "string" &&
+            snapshot.notes && (
+              <div className="rounded-xl border border-line bg-bg/80 p-2.5 text-xs text-dim">
+                <div className="text-faint mb-1 flex items-center gap-1 text-[10px] font-medium">
+                  <FileText className="size-3" />
+                  <span>{t.about.releaseNotes}</span>
+                </div>
+                <p className="line-clamp-3 leading-relaxed whitespace-pre-wrap">
+                  {snapshot.notes}
+                </p>
+              </div>
+            )}
+
+          {/* 错误详情 */}
           {phase === "failed" && snapshot && snapshot.phase === "failed" && (
-            <p className="text-dim mt-1 text-xs break-all">{snapshot.message}</p>
+            <div className="rounded-xl bg-warn-soft p-3 text-xs text-warn break-all">
+              {snapshot.message}
+            </div>
           )}
 
+          {/* 下载进度条 */}
           {phase === "downloading" && snapshot && snapshot.phase === "downloading" && (
-            <div className="mt-3">
+            <div className="mt-3 space-y-1.5">
               {snapshot.total != null && snapshot.total > 0 ? (
                 <>
                   <Progress
                     value={Math.min(100, ((snapshot.current ?? 0) / snapshot.total) * 100)}
+                    className="h-2 rounded-full"
                   />
-                  <div className="text-faint mt-1 flex justify-between text-xs">
+                  <div className="text-faint flex justify-between font-mono text-[11px]">
                     <span>
                       {fmtBytes(snapshot.current ?? 0)} / {fmtBytes(snapshot.total)}
                     </span>
-                    <span>
+                    <span className="font-semibold text-ink">
                       {Math.floor(((snapshot.current ?? 0) / snapshot.total) * 100)}%
                     </span>
                   </div>
@@ -144,9 +172,9 @@ export function ClientUpdateCard() {
                   <div className="pulse-bar">
                     <div className="pulse-bar-fill" />
                   </div>
-                  <div className="text-faint mt-1 flex justify-between text-xs">
+                  <div className="text-faint flex justify-between font-mono text-[11px]">
                     <span>{fmtBytes(snapshot.current ?? 0)}</span>
-                    <span>获取中…</span>
+                    <span>正在获取资源…</span>
                   </div>
                 </>
               )}
@@ -155,13 +183,19 @@ export function ClientUpdateCard() {
         </motion.div>
       </AnimatePresence>
 
-      {/* 动作区：检查钮常驻（busy 时禁用 + 转圈——原实现整组消失，用户视角
-          「点了没动效」）；下载按钮仅在 available 出现，进行中隐藏避免并发 */}
-      <div className="mt-3 flex items-center gap-2">
+      {/* 动作区 */}
+      <div className="mt-3.5 flex items-center gap-2 pt-1 border-t border-line/60">
         {phase === "available" && !busy ? (
-          <Button size="sm" onClick={() => api.clientUpdateApply().catch(() => {})}>
-            {t.about.downloadBtn}
-            {latest ? ` v${latest}` : ""}
+          <Button
+            size="sm"
+            onClick={() => api.clientUpdateApply().catch(() => {})}
+            className="gap-1.5 text-xs font-semibold"
+          >
+            <Download className="size-3.5" />
+            <span>
+              {t.about.downloadBtn}
+              {latest ? ` (v${latest})` : ""}
+            </span>
           </Button>
         ) : (
           <Button
@@ -169,9 +203,12 @@ export function ClientUpdateCard() {
             variant="outline"
             disabled={busy}
             onClick={() => api.clientUpdateCheck().catch(() => {})}
+            className="gap-1.5 text-xs"
           >
-            {phase === "checking" && <LoaderCircle className="size-3 animate-spin" aria-hidden />}
-            {t.about.checkBtn}
+            <RefreshCw
+              className={`size-3.5 ${phase === "checking" ? "animate-spin text-brand" : ""}`}
+            />
+            <span>{phase === "checking" ? t.about.phases.checking : t.about.checkBtn}</span>
           </Button>
         )}
       </div>

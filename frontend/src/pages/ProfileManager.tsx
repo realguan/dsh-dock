@@ -1,10 +1,13 @@
-// Profile 管理器页（4.3 前端刀）。独立窗口（label=profiles，镜像 about 的
-// 「常驻入口在菜单/托盘」架构——主窗口 boot 后会导航进 dsh 工作台，壳页
-// 不可达）。编排：列表/默认值经 profilesStore 播种；增删改走 api 后刷新；
-// 详情与各对话框状态均为对话框局部态。4.4④ 收口：页内两视图切换——
-// Profile 列表 | 插件总览（跨 profile 第三方插件聚合，只读）。
-import { useCallback, useEffect, useState } from "react"
-import { Plus, RefreshCw } from "lucide-react"
+// Profile 管理器主页面（Master-Detail 工作台重构）。
+// 布局：左侧 Profile 列表与快捷筛选，右侧 Profile 沉浸式工作台 / 插件全景矩阵。
+import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  Layers,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react"
 import { api } from "@/lib/tauri"
 import { t } from "@/content/zh-CN"
 import { useBootStore } from "@/stores/bootStore"
@@ -12,38 +15,48 @@ import { useProfilesStore } from "@/stores/profilesStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
+import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
-import { ProfileDetailDialog } from "@/components/profiles/ProfileDetailDialog"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
 import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
 import { ProfileSwitchDialog } from "@/components/profiles/ProfileSwitchDialog"
-
-interface Notice {
-  kind: "ok" | "warn"
-  text: string
-}
+import { FloatingToast, type ToastMessage } from "@/components/ui/toast"
+import { Button } from "@/components/ui/button"
 
 export function ProfileManager() {
   const { list, defaultProfile, activeProfile, loading, loadError, load } = useProfilesStore()
 
-  const [detailName, setDetailName] = useState<string | null>(null)
+  // 选中的 Profile（默认为当前运行中的 Profile 或第一个 Profile）
+  const [selectedName, setSelectedName] = useState<string | null>(null)
+
+  // 对话框状态
   const [createOpen, setCreateOpen] = useState(false)
   const [nameOp, setNameOp] = useState<{ mode: NameOpMode; source: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
-  const [notice, setNotice] = useState<Notice | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
-  // 4.4④ 收口：页内视图 + 总览重取节奏（与列表同源刷新面：聚焦 / boot 事件 / 手动）
+
+  // 视图切换（Profile 管理列表 vs 插件全景矩阵）
   const [view, setView] = useState<"list" | "plugins">("list")
   const [overviewTick, setOverviewTick] = useState(0)
+
+  // Profile 搜索筛选
+  const [profileFilter, setProfileFilter] = useState("")
+
+  // 浮动通知 Toast
+  const [toast, setToast] = useState<ToastMessage | null>(null)
+
+  const showToast = useCallback((message: string, kind: "ok" | "warn" | "info" = "ok") => {
+    setToast({ id: `${Date.now()}-${Math.random()}`, message, kind })
+    setTimeout(() => setToast((curr) => (curr?.message === message ? null : curr)), 3500)
+  }, [])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // 双视图统一刷新面：聚焦即对齐真相（切换是否完成只有壳知道）
+  // 双视图统一刷新面
   const refreshAll = useCallback(() => {
     void load()
     setOverviewTick((n) => n + 1)
@@ -55,9 +68,7 @@ export function ProfileManager() {
     return () => window.removeEventListener("focus", onFocus)
   }, [refreshAll])
 
-  // 徽标实时化：boot:step 经事件总线（模块期装配，每窗口生效）流入 bootStore，
-  // activeStep 每变一次重取运行中真相——切换开始（teardown）徽标即灭，boot
-  // 完成即亮，不等聚焦。load 自带 loading 去重，事件密也只串行取。
+  // 会话状态感知自动刷新
   useEffect(
     () =>
       useBootStore.subscribe((s, prev) => {
@@ -66,24 +77,34 @@ export function ProfileManager() {
     [refreshAll],
   )
 
-  const refresh = refreshAll
+  // 首次加载或列表变更时自动选定 Profile
+  useEffect(() => {
+    if (list.length === 0) return
+    if (!selectedName || !list.some((p) => p.name === selectedName)) {
+      const preferred =
+        list.find((p) => p.name === activeProfile)?.name ??
+        list.find((p) => p.name === defaultProfile)?.name ??
+        list[0]?.name ??
+        null
+      setSelectedName(preferred)
+    }
+  }, [list, activeProfile, defaultProfile, selectedName])
 
+  // 设为默认
   const handleSetDefault = (name: string) => {
     setRowBusy(name)
-    setActionError(null)
     api
       .setDefaultProfile(name)
       .then(() => {
-        setNotice({ kind: "ok", text: t.profiles.setDefaultDone(name) })
-        refresh()
+        showToast(t.profiles.setDefaultDone(name), "ok")
+        refreshAll()
       })
-      .catch((e) => setActionError(String(e)))
+      .catch((e) => showToast(String(e), "warn"))
       .finally(() => setRowBusy(null))
   }
 
-  // 切换入口（4.3⑥）：有活跃会话先确认（停 dsh 有中断代价），无会话直接切
+  // 启动 / 切换
   const handleLaunch = (name: string) => {
-    setActionError(null)
     if (activeProfile !== null) {
       setSwitchTarget(name)
       return
@@ -91,10 +112,8 @@ export function ProfileManager() {
     doSwitch(name)
   }
 
-  // 重启（4.4③）：同 profile 走切换链（teardown → 原样重起）；恒弹确认——
-  // 重启必杀运行中会话。弹窗文案按重启语义分叉（isRestart）。
+  // 重启
   const handleRestart = (name: string) => {
-    setActionError(null)
     setSwitchTarget(name)
   }
 
@@ -103,178 +122,248 @@ export function ProfileManager() {
     api
       .switchProfile(name)
       .then(() => {
-        setNotice({ kind: "ok", text: t.profiles.switchDone(name) })
-        refresh()
+        showToast(t.profiles.switchDone(name), "ok")
+        refreshAll()
       })
-      .catch((e) => setActionError(String(e)))
+      .catch((e) => showToast(String(e), "warn"))
       .finally(() => setRowBusy(null))
   }
 
+  // 过滤后的 Profile 列表
+  const filteredList = useMemo(() => {
+    if (!profileFilter.trim()) return list
+    const q = profileFilter.toLowerCase().trim()
+    return list.filter((p) => p.name.toLowerCase().includes(q))
+  }, [list, profileFilter])
+
+  const currentSelectedProfile = useMemo(() => {
+    return list.find((p) => p.name === selectedName) ?? null
+  }, [list, selectedName])
+
   return (
-    <PageShell width={620} align="top">
-      {/* 头部：徽章 + 标题 + 动作（新建 / 刷新） */}
-      <header className="mb-4 flex items-center gap-3">
-        <Emblem size={44} />
-        <div className="min-w-0 flex-1">
-          <div className="text-ink text-lg font-semibold tracking-tight">{t.profiles.title}</div>
-          <div className="text-faint truncate text-xs">{t.profiles.subtitle}</div>
+    <PageShell width={1000} align="top" className="px-4 py-4 sm:px-6">
+      {/* 顶部全局标题栏 */}
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Emblem size={40} />
+          <div>
+            <h1 className="text-ink text-base font-bold tracking-tight">
+              {t.profiles.title}
+            </h1>
+            <p className="text-faint text-xs">{t.profiles.subtitle}</p>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="border-line text-dim hover:border-brand hover:text-brand inline-flex items-center gap-1 rounded-lg border bg-white px-2.5 py-1.5 text-xs transition-colors"
-        >
-          <Plus className="size-3.5" />
-          {t.profiles.createBtn}
-        </button>
-        <button
-          type="button"
-          title={loading ? t.profiles.refreshing : t.profiles.refresh}
-          aria-label={t.profiles.refresh}
-          onClick={refresh}
-          className="border-line text-dim hover:text-ink inline-flex size-8 items-center justify-center rounded-lg border bg-white transition-colors"
-        >
-          <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </header>
 
-      {/* 视图切换（4.4④ 收口）：Profile 列表 | 插件总览——分段控件整宽铺陈 */}
-      <div
-        role="tablist"
-        aria-label={t.profiles.title}
-        className="border-line bg-line-soft mb-3 flex rounded-lg border p-0.5"
-      >
-        {(["list", "plugins"] as const).map((v) => (
-          <button
-            key={v}
-            type="button"
-            role="tab"
-            aria-selected={view === v}
-            onClick={() => setView(v)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-xs transition-all ${
-              view === v ? "bg-panel text-ink shadow-sm" : "text-dim hover:text-ink"
-            }`}
+        {/* 顶部右侧：视图分段切换 + 新建 + 刷新 */}
+        <div className="flex items-center gap-2">
+          <div
+            role="tablist"
+            className="flex rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs"
           >
-            {v === "list" ? t.profiles.viewProfiles : t.profiles.viewPlugins}
-          </button>
-        ))}
-      </div>
-
-      {/* 页面级提示（操作结果 / 操作错误），可关闭 */}
-      {notice && (
-        <div
-          className={`page-rise mb-3 flex items-start justify-between gap-2 rounded-lg px-3 py-2 text-xs ${
-            notice.kind === "ok" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"
-          }`}
-        >
-          <span>{notice.text}</span>
-          <button
-            type="button"
-            aria-label={t.profiles.detailClose}
-            onClick={() => setNotice(null)}
-            className="shrink-0 opacity-60 hover:opacity-100"
-          >
-            ×
-          </button>
-        </div>
-      )}
-      {actionError && (
-        <div className="bg-warn-soft text-warn page-rise mb-3 flex items-start justify-between gap-2 rounded-lg px-3 py-2 text-xs">
-          <span className="whitespace-pre-wrap">{actionError}</span>
-          <button
-            type="button"
-            aria-label={t.profiles.detailClose}
-            onClick={() => setActionError(null)}
-            className="shrink-0 opacity-60 hover:opacity-100"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {/* 两视图：插件总览（只读聚合）| 列表（已物化在前、模板名殿后，后端已排序） */}
-      {view === "plugins" ? (
-        <PluginOverview refreshKey={overviewTick} />
-      ) : (
-      <section aria-label={t.profiles.title} className="space-y-2">
-        {loadError && (
-          <div className="border-line bg-panel rounded-xl border border-dashed px-4 py-8 text-center">
-            <div className="text-dim mb-2 text-sm">{loadError}</div>
             <button
               type="button"
-              onClick={refresh}
-              className="border-line text-dim hover:text-ink inline-flex items-center gap-1 rounded-lg border bg-white px-2.5 py-1.5 text-xs transition-colors"
+              role="tab"
+              aria-selected={view === "list"}
+              onClick={() => setView("list")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                view === "list"
+                  ? "bg-panel text-ink shadow-xs"
+                  : "text-dim hover:text-ink"
+              }`}
             >
-              <RefreshCw className="size-3" />
-              {t.profiles.retryLoad}
+              <SlidersHorizontal className="size-3.5" />
+              <span>{t.profiles.viewProfiles}</span>
+            </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "plugins"}
+              onClick={() => setView("plugins")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                view === "plugins"
+                  ? "bg-panel text-ink shadow-xs"
+                  : "text-dim hover:text-ink"
+              }`}
+            >
+              <Layers className="size-3.5" />
+              <span>{t.profiles.viewPlugins}</span>
             </button>
           </div>
-        )}
-        {!loadError &&
-          list.map((p, i) => (
-            <ProfileRow
-              key={p.name}
-              profile={p}
-              index={i}
-              isDefault={defaultProfile === p.name}
-              isRunning={activeProfile === p.name}
-              busy={rowBusy === p.name}
-              onDetail={() => setDetailName(p.name)}
-              onSetDefault={() => handleSetDefault(p.name)}
-              onLaunch={() => handleLaunch(p.name)}
-              onRestart={() => handleRestart(p.name)}
-              onRename={() => setNameOp({ mode: "rename", source: p.name })}
-              onCopy={() => setNameOp({ mode: "copy", source: p.name })}
-              onDelete={() => setDeleteTarget(p.name)}
+
+          <Button
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            className="gap-1 text-xs"
+          >
+            <Plus className="size-3.5" />
+            <span>{t.profiles.createBtn}</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            title={loading ? t.profiles.refreshing : t.profiles.refresh}
+            aria-label={t.profiles.refresh}
+            onClick={refreshAll}
+            className="size-8 p-0"
+          >
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
+          </Button>
+        </div>
+      </header>
+
+      {/* 主视图区 */}
+      {view === "plugins" ? (
+        <PluginOverview
+          refreshKey={overviewTick}
+          onNotice={(msg, kind) => showToast(msg, kind)}
+        />
+      ) : (
+        /* Master-Detail 双栏工作台 */
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          {/* 左侧 Master：Profile 导航列表 */}
+          <section
+            aria-label="Profile 列表"
+            className="flex flex-col space-y-2.5 lg:col-span-4 xl:col-span-4"
+          >
+            {/* 快速搜索框 */}
+            <div className="relative">
+              <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+              <input
+                value={profileFilter}
+                onChange={(e) => setProfileFilter(e.target.value)}
+                placeholder={t.profiles.searchPlaceholder}
+                className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8 text-xs outline-none shadow-2xs transition-colors"
+              />
+            </div>
+
+            {loadError && (
+              <div className="rounded-xl border border-dashed border-line bg-panel p-6 text-center">
+                <p className="text-dim mb-2 text-xs">{loadError}</p>
+                <Button size="sm" variant="outline" onClick={refreshAll}>
+                  <RefreshCw className="mr-1 size-3" />
+                  {t.profiles.retryLoad}
+                </Button>
+              </div>
+            )}
+
+            {!loadError && (
+              <div className="space-y-2">
+                {filteredList.map((p, i) => (
+                  <ProfileRow
+                    key={p.name}
+                    profile={p}
+                    index={i}
+                    isSelected={selectedName === p.name}
+                    isDefault={defaultProfile === p.name}
+                    isRunning={activeProfile === p.name}
+                    busy={rowBusy === p.name}
+                    onSelect={() => setSelectedName(p.name)}
+                    onDetail={() => setSelectedName(p.name)}
+                    onSetDefault={() => handleSetDefault(p.name)}
+                    onLaunch={() => handleLaunch(p.name)}
+                    onRestart={() => handleRestart(p.name)}
+                    onRename={() => setNameOp({ mode: "rename", source: p.name })}
+                    onCopy={() => setNameOp({ mode: "copy", source: p.name })}
+                    onDelete={() => setDeleteTarget(p.name)}
+                  />
+                ))}
+                {filteredList.length === 0 && !loading && (
+                  <div className="rounded-xl border border-dashed border-line bg-panel/50 p-6 text-center text-xs text-faint">
+                    未找到匹配的 Profile
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* 右侧 Detail：选中的 Profile 工作台面板 */}
+          <section
+            aria-label="Profile 详情工作区"
+            className="min-h-[560px] lg:col-span-8 xl:col-span-8"
+          >
+            <ProfileDetailPane
+              name={currentSelectedProfile?.name ?? null}
+              isDefault={defaultProfile === currentSelectedProfile?.name}
+              isRunning={activeProfile === currentSelectedProfile?.name}
+              busy={rowBusy === currentSelectedProfile?.name}
+              onLaunch={() => currentSelectedProfile && handleLaunch(currentSelectedProfile.name)}
+              onRestart={() =>
+                currentSelectedProfile && handleRestart(currentSelectedProfile.name)
+              }
+              onSetDefault={() =>
+                currentSelectedProfile && handleSetDefault(currentSelectedProfile.name)
+              }
+              onCopy={() =>
+                currentSelectedProfile &&
+                setNameOp({ mode: "copy", source: currentSelectedProfile.name })
+              }
+              onRename={() =>
+                currentSelectedProfile &&
+                setNameOp({ mode: "rename", source: currentSelectedProfile.name })
+              }
+              onDelete={() =>
+                currentSelectedProfile && setDeleteTarget(currentSelectedProfile.name)
+              }
+              onNotice={(msg, kind) => showToast(msg, kind)}
             />
-          ))}
-      </section>
+          </section>
+        </div>
       )}
 
-      {/* 对话框群 */}
-      <ProfileDetailDialog name={detailName} onClose={() => setDetailName(null)} />
+      {/* 浮动 Toast 通知 */}
+      <FloatingToast toast={toast} onDismiss={() => setToast(null)} />
+
+      {/* 模态对话框群 */}
       <ProfileSwitchDialog
         target={switchTarget}
         active={activeProfile}
         restart={switchTarget !== null && switchTarget === activeProfile}
         onClose={() => setSwitchTarget(null)}
         onDone={() => {
-          setNotice({ kind: "ok", text: t.profiles.switchDone(switchTarget ?? "") })
-          refresh()
+          showToast(t.profiles.switchDone(switchTarget ?? ""), "ok")
+          refreshAll()
         }}
       />
+
       <ProfileCreateDialog
         open={createOpen}
         existing={list}
         onClose={() => setCreateOpen(false)}
-        onRefresh={refresh}
+        onRefresh={refreshAll}
       />
+
       <ProfileNameDialog
         mode={nameOp?.mode ?? "copy"}
         source={nameOp?.source ?? null}
         existing={list}
         onClose={() => setNameOp(null)}
-        onRefresh={refresh}
+        onRefresh={refreshAll}
         onDone={(newName, warnings) => {
           if (warnings.length > 0) {
-            setNotice({ kind: "warn", text: warnings.join(" ") })
+            showToast(warnings.join(" "), "warn")
           } else if (nameOp?.mode === "rename") {
-            setNotice({ kind: "ok", text: t.profiles.renameDone(newName) })
+            showToast(t.profiles.renameDone(newName), "ok")
           } else {
-            setNotice({ kind: "ok", text: t.profiles.copyDone(newName) })
+            showToast(t.profiles.copyDone(newName), "ok")
           }
         }}
       />
+
       <ProfileDeleteDialog
         name={deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        onRefresh={refresh}
-        onDone={(defaultCleared) =>
-          setNotice({
-            kind: defaultCleared ? "warn" : "ok",
-            text: defaultCleared ? t.profiles.deleteDoneCleared : t.profiles.deleteDone,
-          })
-        }
+        onRefresh={refreshAll}
+        onDone={(defaultCleared) => {
+          showToast(
+            defaultCleared ? t.profiles.deleteDoneCleared : t.profiles.deleteDone,
+            defaultCleared ? "warn" : "ok",
+          )
+          if (selectedName === deleteTarget) {
+            setSelectedName(null)
+          }
+        }}
       />
     </PageShell>
   )

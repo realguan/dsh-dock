@@ -9,20 +9,22 @@ export function PageShell({
   children,
   width = 560,
   align = "center",
+  className = "",
 }: {
   children: ReactNode
-  width?: number
+  width?: number | string
   align?: "top" | "center"
+  className?: string
 }) {
   return (
     <main
-      className={`bg-bg flex min-h-dvh justify-center px-8 ${
-        align === "top" ? "items-start py-10" : "items-center"
-      }`}
+      className={`bg-bg flex min-h-dvh justify-center px-4 sm:px-6 md:px-8 ${
+        align === "top" ? "items-start py-6 sm:py-8" : "items-center"
+      } ${className}`}
     >
       <div
         className="page-rise w-full"
-        style={{ maxWidth: width }}
+        style={{ maxWidth: typeof width === "number" ? `${width}px` : width }}
       >
         {children}
       </div>

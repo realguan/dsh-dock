@@ -1,67 +1,45 @@
-// Profile 列表行（4.3 前端刀）。两态视觉：已物化 = 实线卡 + 品牌左侧条；
-// 可首启（未物化内置模板名）= 虚线卡 + ok 色标签，仅暴露「设为默认」
-// （重命名/复制/删除对无目录的模板名在后端本就会被拒绝，前端不渲染）。
-// 4.3⑥ 切换：webUi 候选（profile.web_ui）额外暴露「启动」——主动词给带字
-// 按钮（与页头「新建 Profile」同一语言），图标动作保持静默次级；运行中行以
-// 心跳徽标标识且不重复给启动；非 webUi 的「无界面」是恒定属性，归 meta 行。
-import { Copy, Info, LoaderCircle, Pencil, Play, RotateCw, Star, Trash2 } from "lucide-react"
+// Profile 导航卡片（Master-Detail 架构重构）。
+// 视觉：选中态高亮 + 运行中翡翠绿心跳 + 默认金星 + 主次动词分流。
+import {
+  Copy,
+  Info,
+  LoaderCircle,
+  MoreHorizontal,
+  Pencil,
+  Play,
+  RotateCw,
+  Star,
+  Trash2,
+} from "lucide-react"
 import { t } from "@/content/zh-CN"
 import type { ProfileSummary } from "@/types/ipc"
+import { DropdownMenu } from "radix-ui"
 
 interface ProfileRowProps {
   profile: ProfileSummary
   isDefault: boolean
-  /** 该行是当前运行中的会话 profile（徽标；不给启动） */
+  isSelected: boolean
   isRunning: boolean
-  /** 该行有操作在途（设默认/切换）——动作按钮集体禁用 */
   busy: boolean
   index: number
+  onSelect: () => void
   onDetail: () => void
   onSetDefault: () => void
   onLaunch: () => void
-  /** 仅运行中行：以同 profile 重启（切换链路复用，见 ProfileManager） */
   onRestart: () => void
   onRename: () => void
   onCopy: () => void
   onDelete: () => void
 }
 
-/** 行内小图标按钮：透明底、faint 前景，hover 提亮；danger 变体 hover 警示色。 */
-function IconAction({
-  label,
-  danger,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string
-  danger?: boolean
-  onClick: () => void
-  disabled?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`text-faint hover:text-ink disabled:pointer-events-none disabled:opacity-40 inline-flex size-7 items-center justify-center rounded-md transition-colors ${
-        danger ? "hover:bg-warn-soft hover:text-warn" : "hover:bg-wash"
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
 export function ProfileRow({
   profile,
   isDefault,
+  isSelected,
   isRunning,
   busy,
   index,
+  onSelect,
   onDetail,
   onSetDefault,
   onLaunch,
@@ -71,8 +49,7 @@ export function ProfileRow({
   onDelete,
 }: ProfileRowProps) {
   const { name, materialized, bundles, dependencies, web_ui } = profile
-  // 两态元信息：已物化 = 插件数 · 依赖数（mono 展示；非 webUi 追加「无界面」
-  // 说明为何没有启动入口）；可首启 = 模板说明
+
   const metaLine = materialized
     ? [
         t.profiles.metaBundles(bundles.length),
@@ -83,106 +60,167 @@ export function ProfileRow({
 
   return (
     <div
-      className={`page-rise border-line bg-panel group relative rounded-xl border shadow-sm transition-shadow hover:shadow-md ${
-        materialized ? "" : "border-dashed"
-      }`}
-      style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
+      onClick={onSelect}
+      style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+      className={`page-rise group relative cursor-pointer rounded-xl border p-3 transition-all duration-200 ${
+        isSelected
+          ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
+          : "border-line bg-panel/80 hover:border-line hover:bg-panel hover:shadow-xs"
+      } ${materialized ? "" : "border-dashed"}`}
     >
-      {materialized && (
-        <span className="bg-brand absolute inset-y-3 left-0 w-[3px] rounded-r-full" />
-      )}
-      <div className="flex items-center gap-3 py-3 pr-3 pl-4">
-        {/* 主体：已物化点击看详情；模板行不接管点击（动作走右侧按钮） */}
-        <button
-          type="button"
-          onClick={materialized ? onDetail : undefined}
-          className="min-w-0 flex-1 text-left"
-          title={materialized ? name : undefined}
-        >
+      {/* 活跃指示条 */}
+      {isRunning ? (
+        <span className="bg-ok absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-emerald-500/50" />
+      ) : isSelected ? (
+        <span className="bg-brand absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" />
+      ) : null}
+
+      <div className="flex items-start justify-between gap-2 pl-1.5">
+        <div className="min-w-0 flex-1">
+          {/* 首行：Profile 名字 + 状态徽标 */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-ink truncate font-medium">{name}</span>
-            {materialized ? (
-              <span className="border-line text-dim rounded-full border px-1.5 text-[10px] leading-4">
-                {t.profiles.tagMaterialized}
-              </span>
-            ) : (
-              <span className="bg-ok-soft text-ok rounded-full px-1.5 text-[10px] leading-4">
-                {t.profiles.tagTemplate}
-              </span>
-            )}
-            {/* 非 webUi 的「无界面」是恒定属性 → meta 行（见 metaLine） */}
+            <span
+              className={`truncate text-sm font-semibold tracking-tight ${
+                isSelected ? "text-brand-deep font-bold" : "text-ink"
+              }`}
+              title={name}
+            >
+              {name}
+            </span>
+
+            {/* 运行中：翡翠绿脉动点 */}
             {isRunning && (
-              <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-1.5 text-[10px] leading-4">
-                {/* 心跳点：与「可首启」同绿但带脉动——活着的会话，一眼可辨 */}
+              <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none">
                 <span className="bg-ok size-1.5 animate-pulse rounded-full" aria-hidden />
                 {t.profiles.runningBadge}
               </span>
             )}
+
+            {/* 默认启动 */}
             {isDefault && (
-              <span className="bg-wash text-brand inline-flex items-center gap-0.5 rounded-full px-1.5 text-[10px] leading-4">
+              <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none">
                 <Star className="size-2.5 fill-current" />
                 {t.profiles.defaultBadge}
               </span>
             )}
-          </div>
-          <div className="text-faint mt-0.5 truncate font-mono text-xs">{metaLine}</div>
-        </button>
 
-        {/* 动作区：启动是主动词 → 带字按钮（与页头「新建 Profile」同配方）；
-            其余为静默图标动作 */}
-        <div className="flex items-center gap-2">
-          {web_ui && !isRunning && (
+            {/* 模板 / 已创建 */}
+            {!materialized && (
+              <span className="bg-line-soft text-dim rounded-full px-1.5 py-0.5 text-[10px] leading-none">
+                {t.profiles.tagTemplate}
+              </span>
+            )}
+          </div>
+
+          {/* 元信息行 */}
+          <div className="text-faint mt-1 truncate font-mono text-[11px]">
+            {metaLine}
+          </div>
+        </div>
+
+        {/* 动作区：启动主动作 + 更多菜单 */}
+        <div
+          className="flex shrink-0 items-center gap-1 pt-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 主动作：启动或重启 */}
+          {isRunning ? (
+            <button
+              type="button"
+              title={busy ? t.profiles.launchWorking : t.profiles.restart}
+              disabled={busy}
+              onClick={onRestart}
+              className="text-dim hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg border border-line bg-white transition-colors disabled:opacity-40"
+            >
+              <RotateCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
+            </button>
+          ) : web_ui ? (
             <button
               type="button"
               title={busy ? t.profiles.launchWorking : t.profiles.launch}
               disabled={busy}
               onClick={onLaunch}
-              className="border-line text-dim hover:border-brand hover:text-brand inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs transition-colors disabled:pointer-events-none disabled:opacity-40"
+              className="border-line/80 text-dim hover:border-brand hover:text-brand hover:bg-wash inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40"
             >
               {busy ? (
                 <LoaderCircle className="size-3 animate-spin" aria-hidden />
               ) : (
-                <Play className="size-3" aria-hidden />
+                <Play className="size-3 fill-current opacity-70" aria-hidden />
               )}
-              {busy ? t.profiles.launchWorking : t.profiles.launch}
+              <span>{t.profiles.launch}</span>
             </button>
+          ) : null}
+
+          {/* 更多管理操作下拉菜单 */}
+          {materialized && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  title="更多操作"
+                  aria-label="更多操作"
+                  disabled={busy}
+                  className="text-faint hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              </DropdownMenu.Trigger>
+
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={4}
+                  className="z-50 min-w-[150px] overflow-hidden rounded-xl border border-line bg-panel p-1 text-xs text-ink shadow-lg ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95"
+                >
+                  <DropdownMenu.Item
+                    onClick={onDetail}
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                  >
+                    <Info className="size-3.5 text-dim" />
+                    <span>查看详情</span>
+                  </DropdownMenu.Item>
+
+                  <DropdownMenu.Item
+                    onClick={onSetDefault}
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                  >
+                    <Star
+                      className={`size-3.5 ${
+                        isDefault ? "text-amber-500 fill-current" : "text-dim"
+                      }`}
+                    />
+                    <span>{isDefault ? t.profiles.defaultIs : t.profiles.setDefault}</span>
+                  </DropdownMenu.Item>
+
+                  <DropdownMenu.Item
+                    onClick={onCopy}
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                  >
+                    <Copy className="size-3.5 text-dim" />
+                    <span>{t.profiles.submitCopy}</span>
+                  </DropdownMenu.Item>
+
+                  <DropdownMenu.Item
+                    onClick={onRename}
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                  >
+                    <Pencil className="size-3.5 text-dim" />
+                    <span>{t.profiles.submitRename}</span>
+                  </DropdownMenu.Item>
+
+                  <DropdownMenu.Separator className="my-1 h-px bg-line" />
+
+                  <DropdownMenu.Item
+                    onClick={onDelete}
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-warn outline-none hover:bg-warn-soft"
+                  >
+                    <Trash2 className="size-3.5" />
+                    <span>{t.profiles.deleteConfirm(name)}</span>
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           )}
-          <div className="flex items-center gap-0.5">
-            {/* 运行中行：重启（同 profile 切换链路）；「运行中」行没有启动按钮，
-                重启是它的在场动作 */}
-            {isRunning && (
-              <IconAction
-                label={busy ? t.profiles.launchWorking : t.profiles.restart}
-                disabled={busy}
-                onClick={onRestart}
-              >
-                <RotateCw className="size-4" />
-              </IconAction>
-            )}
-            <IconAction
-              label={isDefault ? t.profiles.defaultIs : t.profiles.setDefault}
-              disabled={busy}
-              onClick={onSetDefault}
-            >
-              <Star className={`size-4 ${isDefault ? "text-brand fill-current" : ""}`} />
-            </IconAction>
-            {materialized && (
-              <>
-                <IconAction label={t.profiles.detailTitle(name)} disabled={busy} onClick={onDetail}>
-                  <Info className="size-4" />
-                </IconAction>
-                <IconAction label={t.profiles.submitCopy} disabled={busy} onClick={onCopy}>
-                  <Copy className="size-4" />
-                </IconAction>
-                <IconAction label={t.profiles.submitRename} disabled={busy} onClick={onRename}>
-                  <Pencil className="size-4" />
-                </IconAction>
-                <IconAction label={t.profiles.deleteTitle(name)} danger disabled={busy} onClick={onDelete}>
-                  <Trash2 className="size-4" />
-                </IconAction>
-              </>
-            )}
-          </div>
         </div>
       </div>
     </div>

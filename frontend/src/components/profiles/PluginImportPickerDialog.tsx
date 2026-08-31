@@ -204,41 +204,57 @@ export function PluginImportPickerDialog({
                 {t.profiles.importEmpty}
               </div>
             ) : (
-              <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
+              <div className="divide-y divide-line rounded-xl border border-line bg-bg shadow-2xs">
                 {candidates.map((c) => {
                   const key = keyOf(c)
                   const picked = selected.has(key)
                   return (
-                    <div key={key} className="flex items-center gap-2 px-3 py-2">
-                      {/* 主勾选：插件 + 来源（label 包裹保证点击区与可达性） */}
-                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                    <div
+                      key={key}
+                      className={`flex items-center justify-between gap-3 p-3 transition-colors ${
+                        picked ? "bg-wash/40" : "hover:bg-panel"
+                      }`}
+                    >
+                      {/* 主勾选：插件 + 来源 */}
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                         <input
                           type="checkbox"
                           checked={picked}
                           onChange={() => toggle(key)}
-                          className="accent-brand size-3.5 shrink-0"
+                          className="accent-brand size-4 shrink-0 rounded"
                         />
                         <span className="min-w-0">
-                          <span className="flex items-baseline gap-2">
-                            <span className="text-ink min-w-0 truncate font-mono text-xs" title={c.pkg}>
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span
+                              className="text-ink font-mono text-xs font-semibold"
+                              title={c.pkg}
+                            >
                               {c.pkg}
                             </span>
-                            <span className="text-faint shrink-0 font-mono text-xs">{c.version}</span>
-                            <span className="border-line text-dim shrink-0 rounded bg-white px-1 text-[10px] leading-4">
-                              {c.source}
+                            <span className="text-brand font-mono text-[11px] font-medium">
+                              v{c.version}
+                            </span>
+                            <span className="border border-line text-dim rounded-md bg-panel px-1.5 py-0.5 text-[10px] font-mono">
+                              来自 {c.source}
                             </span>
                           </span>
                           {c.description && (
-                            <span className="text-faint mt-0.5 block truncate text-[10px]" title={c.description}>
+                            <span
+                              className="text-faint mt-0.5 block truncate text-[11px]"
+                              title={c.description}
+                            >
                               {c.description}
                             </span>
                           )}
                         </span>
                       </label>
-                      {/* 连配置：逐行勾选，来源无条目置灰（patch_entries 预检） */}
+
+                      {/* 连配置：逐行勾选，来源无条目置灰 */}
                       <label
-                        className={`flex shrink-0 cursor-pointer items-center gap-1 text-[10px] ${
-                          c.hasConfig ? "text-dim" : "text-faint"
+                        className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs transition-opacity ${
+                          c.hasConfig
+                            ? "text-dim hover:text-ink"
+                            : "text-faint opacity-50 cursor-not-allowed"
                         }`}
                         title={c.hasConfig ? undefined : t.profiles.importNoConfig}
                       >
@@ -247,9 +263,9 @@ export function PluginImportPickerDialog({
                           checked={picked && withConfig.has(key)}
                           disabled={!picked || !c.hasConfig}
                           onChange={() => toggleConfig(key)}
-                          className="accent-brand size-3 shrink-0"
+                          className="accent-brand size-3.5"
                         />
-                        {t.profiles.importConfig}
+                        <span className="text-[11px]">{t.profiles.importConfig}</span>
                       </label>
                     </div>
                   )
