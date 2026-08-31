@@ -1,5 +1,5 @@
 // McpManager.tsx —— Profile 的 MCP 服务器可视化结构化管理工作台（4.7 完整版）。
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Boxes,
   Check,
@@ -104,7 +104,7 @@ export function McpManager({
   const [saving, setSaving] = useState(false)
   const [deletingName, setDeletingName] = useState<string | null>(null)
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const list = await api.listMcpServers(profileName)
@@ -116,11 +116,11 @@ export function McpManager({
     } finally {
       setLoading(false)
     }
-  }
+  }, [profileName, onNotice])
 
   useEffect(() => {
     void loadData()
-  }, [profileName])
+  }, [loadData])
 
   // 提取运行态导出的 MCP 工具列表（按 serverName 归类）
   const activeToolsByServer = useMemo(() => {

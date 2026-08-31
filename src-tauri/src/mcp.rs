@@ -30,7 +30,10 @@ pub struct McpServerConfig {
 /// 读取指定 profile 的全部 MCP 服务器配置
 pub fn list_mcp_servers(home: &Path, profile: &str) -> Result<Vec<McpServerConfig>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let patch_path = home.join("profiles").join(profile).join(PROFILE_PATCH_FILENAME);
+    let patch_path = home
+        .join("profiles")
+        .join(profile)
+        .join(PROFILE_PATCH_FILENAME);
     if !patch_path.is_file() {
         return Ok(Vec::new());
     }
@@ -94,17 +97,16 @@ pub fn list_mcp_servers(home: &Path, profile: &str) -> Result<Vec<McpServerConfi
 }
 
 /// 保存或更新单个 MCP 服务器配置（整体替换写回）
-pub fn save_mcp_server(
-    home: &Path,
-    profile: &str,
-    server: McpServerConfig,
-) -> Result<(), String> {
+pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
     if server.name.trim().is_empty() {
         return Err("MCP 服务器名称不能为空".to_string());
     }
     if server.name.contains('/') || server.name.contains('\\') || server.name.contains(' ') {
-        return Err(format!("MCP 服务器名称「{}」包含非法字符（禁空格/斜杠）", server.name));
+        return Err(format!(
+            "MCP 服务器名称「{}」包含非法字符（禁空格/斜杠）",
+            server.name
+        ));
     }
 
     let profile_dir = home.join("profiles").join(profile);
@@ -123,8 +125,7 @@ pub fn save_mcp_server(
     let mut entries: Vec<serde_json::Value> = if content.trim().is_empty() {
         Vec::new()
     } else {
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?
+        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?
     };
 
     // 查找已有的 MCP client entry
@@ -191,7 +192,10 @@ pub fn save_mcp_server(
     let serialized = serde_yaml::to_string(&entries)
         .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
 
-    let tmp = profile_dir.join(format!("{PROFILE_PATCH_FILENAME}.tmp.{}", std::process::id()));
+    let tmp = profile_dir.join(format!(
+        "{PROFILE_PATCH_FILENAME}.tmp.{}",
+        std::process::id()
+    ));
     std::fs::write(&tmp, serialized).map_err(|e| format!("写入临时 patch 失败：{e}"))?;
     std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
 
@@ -199,11 +203,7 @@ pub fn save_mcp_server(
 }
 
 /// 删除指定 MCP 服务器配置
-pub fn delete_mcp_server(
-    home: &Path,
-    profile: &str,
-    server_name: &str,
-) -> Result<(), String> {
+pub fn delete_mcp_server(home: &Path, profile: &str, server_name: &str) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
     let profile_dir = home.join("profiles").join(profile);
     let patch_path = profile_dir.join(PROFILE_PATCH_FILENAME);
@@ -217,13 +217,14 @@ pub fn delete_mcp_server(
         return Ok(());
     }
 
-    let mut entries: Vec<serde_json::Value> = serde_yaml::from_str(&content)
-        .map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?;
+    let mut entries: Vec<serde_json::Value> =
+        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?;
 
     for entry in entries.iter_mut() {
         if entry.get("package").and_then(|p| p.as_str()) == Some(MCP_CLIENT_PKG) {
             if let Some(config) = entry.get_mut("config") {
-                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut())
+                {
                     servers.remove(server_name);
                 }
             }
@@ -233,7 +234,10 @@ pub fn delete_mcp_server(
     let serialized = serde_yaml::to_string(&entries)
         .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
 
-    let tmp = profile_dir.join(format!("{PROFILE_PATCH_FILENAME}.tmp.{}", std::process::id()));
+    let tmp = profile_dir.join(format!(
+        "{PROFILE_PATCH_FILENAME}.tmp.{}",
+        std::process::id()
+    ));
     std::fs::write(&tmp, serialized).map_err(|e| format!("写入临时 patch 失败：{e}"))?;
     std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
 
@@ -261,7 +265,10 @@ mod tests {
         let srv = McpServerConfig {
             name: "github".to_string(),
             command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@modelcontextprotocol/server-github".to_string()],
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-github".to_string(),
+            ],
             env,
             disabled: false,
         };
@@ -278,7 +285,10 @@ mod tests {
         let srv2 = McpServerConfig {
             name: "postgres".to_string(),
             command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@modelcontextprotocol/server-postgres".to_string()],
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-postgres".to_string(),
+            ],
             env: BTreeMap::new(),
             disabled: true,
         };

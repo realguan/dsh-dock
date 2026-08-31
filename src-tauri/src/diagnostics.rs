@@ -192,7 +192,10 @@ pub fn read_app_logs(
     tail_lines: usize,
 ) -> Result<LogQueryResult, String> {
     let (file_path, display_name) = match source {
-        "shell" => (app_data.join("shell.log"), "DSH Dock 壳运行日志".to_string()),
+        "shell" => (
+            app_data.join("shell.log"),
+            "DSH Dock 壳运行日志".to_string(),
+        ),
         "dsh" => (app_data.join("dsh.log"), "DSH 服务运行时日志".to_string()),
         "session_repair" => (
             std::env::temp_dir().join("dsh-repair.log"),
@@ -204,7 +207,10 @@ pub fn read_app_logs(
             if candidate.is_file() {
                 (candidate, format!("Profile [{source}] 运行日志"))
             } else {
-                (app_data.join("shell.log"), "DSH Dock 壳运行日志".to_string())
+                (
+                    app_data.join("shell.log"),
+                    "DSH Dock 壳运行日志".to_string(),
+                )
             }
         }
     };
@@ -213,14 +219,16 @@ pub fn read_app_logs(
         return Ok(LogQueryResult {
             source: source.to_string(),
             path: file_path.to_string_lossy().to_string(),
-            lines: vec![format!("（日志文件暂未生成或不存在: {}）", file_path.display())],
+            lines: vec![format!(
+                "（日志文件暂未生成或不存在: {}）",
+                file_path.display()
+            )],
             total_lines: 0,
             truncated: false,
         });
     }
 
-    let raw = std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("读取日志文件失败：{e}"))?;
+    let raw = std::fs::read_to_string(&file_path).map_err(|e| format!("读取日志文件失败：{e}"))?;
 
     let all_lines: Vec<&str> = raw.lines().collect();
     let total_lines = all_lines.len();

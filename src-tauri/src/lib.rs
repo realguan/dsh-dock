@@ -338,7 +338,12 @@ fn guard_session(
                 drop(crashes);
 
                 tracing::info!("崩溃守护触发：正在自动拉起 DSH 会话...");
-                emit_step(app, 2, "running", "检测到会话异常退出，崩溃守护正在自动拉起...");
+                emit_step(
+                    app,
+                    2,
+                    "running",
+                    "检测到会话异常退出，崩溃守护正在自动拉起...",
+                );
 
                 let handle = app.clone();
                 let state_clone = Arc::clone(state);
@@ -1016,14 +1021,19 @@ fn get_shell_settings(app: tauri::AppHandle) -> Result<crate::settings::ShellSet
 
 /// 偏好与设置：保存壳设置
 #[tauri::command]
-fn set_shell_settings(app: tauri::AppHandle, settings: crate::settings::ShellSettings) -> Result<(), String> {
+fn set_shell_settings(
+    app: tauri::AppHandle,
+    settings: crate::settings::ShellSettings,
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::settings::save(&data_dir, &settings)
 }
 
 /// 环境健康体检：全量诊断大盘数据采集（4.11）
 #[tauri::command]
-async fn get_system_diagnostics(_app: tauri::AppHandle) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+async fn get_system_diagnostics(
+    _app: tauri::AppHandle,
+) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::diagnostics::collect_diagnostics(&home)
@@ -1072,7 +1082,8 @@ async fn save_credentials_raw(content: String) -> Result<(), String> {
 
 /// 凭据管理：获取脱敏后的凭据摘要列表（4.5）
 #[tauri::command]
-async fn get_credentials_summary() -> Result<Vec<crate::credentials::CredentialSummaryItem>, String> {
+async fn get_credentials_summary() -> Result<Vec<crate::credentials::CredentialSummaryItem>, String>
+{
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::credentials::get_credentials_summary(&home)
@@ -1127,7 +1138,10 @@ async fn list_mcp_servers(profile: String) -> Result<Vec<crate::mcp::McpServerCo
 
 /// MCP 管理：保存或更新单个 MCP 服务（4.7）
 #[tauri::command]
-async fn save_mcp_server(profile: String, server: crate::mcp::McpServerConfig) -> Result<(), String> {
+async fn save_mcp_server(
+    profile: String,
+    server: crate::mcp::McpServerConfig,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::mcp::save_mcp_server(&home, &profile, server)
@@ -2150,13 +2164,8 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tau
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let in_browser =
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
-    let profiles_manager = MenuItem::with_id(
-        app,
-        "profiles_manager",
-        "控制中心",
-        true,
-        None::<&str>,
-    )?;
+    let profiles_manager =
+        MenuItem::with_id(app, "profiles_manager", "控制中心", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 非 macOS 之外无「打开方式」子菜单（2026-08-26 裁定）：本函数仅 macOS
@@ -2259,13 +2268,8 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<ta
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let in_browser =
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
-    let profiles_manager = MenuItem::with_id(
-        app,
-        "profiles_manager",
-        "控制中心",
-        true,
-        None::<&str>,
-    )?;
+    let profiles_manager =
+        MenuItem::with_id(app, "profiles_manager", "控制中心", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 「打开方式」仅 Windows（WSL 只存在于 Windows，2026-08-26 裁定）：

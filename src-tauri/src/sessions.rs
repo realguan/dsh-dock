@@ -313,7 +313,10 @@ mod tests {
         let nested = temp.join("sub-project-a").join("deep-hub");
         fs::create_dir_all(&nested).unwrap();
 
-        let encoded = format!("--{}--", nested.to_string_lossy().trim_matches('/').replace('/', "-"));
+        let encoded = format!(
+            "--{}--",
+            nested.to_string_lossy().trim_matches('/').replace('/', "-")
+        );
         let decoded = decode_project_dir_to_path(&encoded);
         assert_eq!(decoded, nested.to_string_lossy().to_string());
         assert_eq!(decode_project_dir_name(&encoded), "deep-hub");
@@ -363,8 +366,14 @@ mod tests {
     fn decode_project_dir_to_path_edge_cases() {
         assert_eq!(decode_project_dir_to_path(""), "/");
         assert_eq!(decode_project_dir_to_path("---"), "/");
-        assert_eq!(decode_project_dir_to_path("-D:-workspace-app-"), "D:\\workspace\\app");
-        assert_eq!(decode_project_dir_to_path("--var-log-dsh--"), "/var/log/dsh");
+        assert_eq!(
+            decode_project_dir_to_path("-D:-workspace-app-"),
+            "D:\\workspace\\app"
+        );
+        assert_eq!(
+            decode_project_dir_to_path("--var-log-dsh--"),
+            "/var/log/dsh"
+        );
     }
 
     #[test]
@@ -372,10 +381,7 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("dsh-sess-repair-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
 
-        let sess_dir = temp
-            .join("sessions")
-            .join("--demo--")
-            .join("sess-fail");
+        let sess_dir = temp.join("sessions").join("--demo--").join("sess-fail");
         fs::create_dir_all(&sess_dir).unwrap();
         let target_file = sess_dir.join("session.jsonl");
 

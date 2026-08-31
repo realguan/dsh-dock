@@ -1,5 +1,4 @@
-// SessionManager.tsx —— 会话与工作区维护工作台（4.6 优化版：布局规整 + 正确 Icon + 智能项目名）。
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Archive,
@@ -69,7 +68,7 @@ export function SessionManager({
   const [viewMode, setViewMode] = useState<"grouped" | "flat">("grouped")
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -81,11 +80,11 @@ export function SessionManager({
     } finally {
       setLoading(false)
     }
-  }
+  }, [onNotice])
 
   useEffect(() => {
     void loadSessions()
-  }, [refreshKey])
+  }, [refreshKey, loadSessions])
 
   const stats = useMemo(() => {
     if (!sessions) return { total: 0, healthy: 0, needsRepair: 0, projectsCount: 0 }

@@ -88,13 +88,12 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
         let val = parsed.get(id);
         let key_str = match val {
             Some(serde_json::Value::String(s)) => s.as_str(),
-            Some(serde_json::Value::Object(obj)) => {
-                obj.get("apiKey")
-                    .or_else(|| obj.get("api_key"))
-                    .or_else(|| obj.get("key"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-            }
+            Some(serde_json::Value::Object(obj)) => obj
+                .get("apiKey")
+                .or_else(|| obj.get("api_key"))
+                .or_else(|| obj.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
             _ => "",
         };
 
@@ -103,7 +102,11 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
             provider: id.to_string(),
             label: label.to_string(),
             configured,
-            masked_key: if configured { mask_api_key(key_str) } else { String::new() },
+            masked_key: if configured {
+                mask_api_key(key_str)
+            } else {
+                String::new()
+            },
         });
     }
 
@@ -114,13 +117,12 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
         }
         let key_str = match v {
             serde_json::Value::String(s) => s.as_str(),
-            serde_json::Value::Object(obj) => {
-                obj.get("apiKey")
-                    .or_else(|| obj.get("api_key"))
-                    .or_else(|| obj.get("key"))
-                    .and_then(|val| val.as_str())
-                    .unwrap_or("")
-            }
+            serde_json::Value::Object(obj) => obj
+                .get("apiKey")
+                .or_else(|| obj.get("api_key"))
+                .or_else(|| obj.get("key"))
+                .and_then(|val| val.as_str())
+                .unwrap_or(""),
             _ => "",
         };
         let configured = !key_str.trim().is_empty();
@@ -128,7 +130,11 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
             provider: k.clone(),
             label: k.clone(),
             configured,
-            masked_key: if configured { mask_api_key(key_str) } else { String::new() },
+            masked_key: if configured {
+                mask_api_key(key_str)
+            } else {
+                String::new()
+            },
         });
     }
 
@@ -181,9 +187,15 @@ pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), St
     } else {
         // 如果原本是对象结构则更新其 apiKey，否则直接存字符串
         if let Some(serde_json::Value::Object(map)) = parsed.get_mut(provider) {
-            map.insert("apiKey".to_string(), serde_json::Value::String(key.trim().to_string()));
+            map.insert(
+                "apiKey".to_string(),
+                serde_json::Value::String(key.trim().to_string()),
+            );
         } else {
-            parsed.insert(provider.to_string(), serde_json::Value::String(key.trim().to_string()));
+            parsed.insert(
+                provider.to_string(),
+                serde_json::Value::String(key.trim().to_string()),
+            );
         }
     }
 
@@ -202,7 +214,10 @@ mod tests {
         assert_eq!(mask_api_key("12345678"), "••••••••");
         assert_eq!(mask_api_key("123456789"), "1234••••••••6789");
         assert_eq!(mask_api_key("sk-1234567890abcdef"), "sk-1••••••••cdef");
-        assert_eq!(mask_api_key("sk-ant-api03-abcdefghijklmn"), "sk-a••••••••klmn");
+        assert_eq!(
+            mask_api_key("sk-ant-api03-abcdefghijklmn"),
+            "sk-a••••••••klmn"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   Code2,
   Edit2,
@@ -39,7 +39,7 @@ export function CredentialsPane({
   const [inputKey, setInputKey] = useState("")
   const [savingKey, setSavingKey] = useState(false)
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const items = await api.getCredentialsSummary()
@@ -51,11 +51,11 @@ export function CredentialsPane({
     } finally {
       setLoading(false)
     }
-  }
+  }, [onNotice])
 
   useEffect(() => {
     void loadData()
-  }, [])
+  }, [loadData])
 
   const handleSaveKey = async () => {
     if (!editingProvider) return
@@ -90,8 +90,8 @@ export function CredentialsPane({
       await api.saveCredentialsRaw(rawContent)
       onNotice?.(t.console.credentialsSaved, "ok")
       await loadData()
-    } catch (e) {
-      onNotice?.(t.console.credentialsSaveFailed, "warn")
+    } catch (err) {
+      onNotice?.(`${t.console.credentialsSaveFailed}: ${err}`, "warn")
     } finally {
       setSavingRaw(false)
     }

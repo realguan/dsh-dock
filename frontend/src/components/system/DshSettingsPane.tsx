@@ -1,5 +1,5 @@
 // DshSettingsPane.tsx —— DSH 引擎全局配置文件管理（`$DSH_HOME/settings.yaml`，4.5）。
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   Check,
   Copy,
@@ -24,7 +24,7 @@ export function DshSettingsPane({
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const text = await api.getDshSettingsRaw()
@@ -34,11 +34,11 @@ export function DshSettingsPane({
     } finally {
       setLoading(false)
     }
-  }
+  }, [onNotice])
 
   useEffect(() => {
     void loadData()
-  }, [])
+  }, [loadData])
 
   const handleSave = async () => {
     setSaving(true)
