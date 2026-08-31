@@ -313,10 +313,7 @@ mod tests {
         let nested = temp.join("sub-project-a").join("deep-hub");
         fs::create_dir_all(&nested).unwrap();
 
-        let raw_str = nested
-            .to_string_lossy()
-            .replace('\\', "-")
-            .replace('/', "-");
+        let raw_str = nested.to_string_lossy().replace(['\\', '/'], "-");
         let encoded = format!("--{}--", raw_str.trim_matches('-'));
         let decoded = decode_project_dir_to_path(&encoded);
         assert_eq!(decoded, nested.to_string_lossy().to_string());
