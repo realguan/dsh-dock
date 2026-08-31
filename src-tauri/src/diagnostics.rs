@@ -123,17 +123,15 @@ pub fn collect_diagnostics(home: &Path) -> SystemDiagnosticsReport {
     // pnpm 探测
     let pnpm_detected = crate::updates::find_pnpm(&path_env);
     let pnpm = if let Some(p) = pnpm_detected {
-        let version = crate::child_cmd(&p)
-            .arg("-v")
-            .output()
-            .ok()
-            .and_then(|o| {
-                if o.status.success() {
-                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
-                } else {
-                    None
-                }
-            });
+        let version = crate::child_cmd(&p).arg("-v").output().ok().and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        });
 
         PnpmDiagnosticInfo {
             path: p.to_string_lossy().to_string(),
