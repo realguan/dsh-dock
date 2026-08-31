@@ -18,6 +18,8 @@ import type {
   PluginUpdateReport,
   ProfileDetail,
   ProfileSummary,
+  RepairOutcome,
+  SessionItem,
   TerminalAction,
   UpdateStatus,
 } from "@/types/ipc"
@@ -88,4 +90,9 @@ export const api = {
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
+  // 会话管理与自愈
+  listSessions: () => invoke<SessionItem[]>("list_sessions"),
+  repairSession: (sessionPath: string) =>
+    invoke<RepairOutcome>("repair_session", { sessionPath }),
+  repairAllSessions: () => invoke<RepairOutcome>("repair_all_sessions"),
 }

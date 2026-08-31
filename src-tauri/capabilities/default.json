@@ -46,6 +46,9 @@
     "allow-list-plugin-versions",
     "allow-get-plugin-runtime",
     "allow-list-all-plugins",
-    "allow-copy-plugin-config"
+    "allow-copy-plugin-config",
+    "allow-list-sessions",
+    "allow-repair-session",
+    "allow-repair-all-sessions"
   ]
 }

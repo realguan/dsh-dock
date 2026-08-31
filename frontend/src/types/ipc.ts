@@ -163,3 +163,24 @@ export interface DeleteOutcome {
   /** 该 profile 是默认启动 profile，引用已清除（读取侧兜底 web） */
   default_cleared: boolean
 }
+
+/// 会话简要信息
+export interface SessionItem {
+  id: string
+  projectName: string
+  projectDirRaw: string
+  filePath: string
+  updatedAt: number
+  sizeBytes: number
+  isCompressed: boolean
+  hasBackup: boolean
+  status: "healthy" | "needs_repair" | "unknown"
+}
+
+/// 会话修复结果
+export interface RepairOutcome {
+  sessionId: string
+  success: boolean
+  message: string
+}
+

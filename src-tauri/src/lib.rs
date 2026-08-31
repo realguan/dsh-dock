@@ -18,6 +18,7 @@ mod manifest;
 mod plugins;
 mod profiles;
 mod resolve;
+mod sessions;
 mod settings;
 mod shell;
 mod updater;
@@ -891,6 +892,36 @@ async fn copy_plugin_config(
     .map_err(|e| format!("配置复制任务异常终止：{e}"))?
 }
 
+/// 会话管理与自愈：扫描会话列表（只读文件扫描）
+#[tauri::command]
+async fn list_sessions() -> Result<Vec<crate::sessions::SessionItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::sessions::scan_sessions(&crate::resolve::user_dsh_home())
+    })
+    .await
+    .map_err(|e| format!("会话列表扫描任务异常终止：{e}"))?
+}
+
+/// 会话管理与自愈：修复单个指定会话
+#[tauri::command]
+async fn repair_session(session_path: String) -> Result<crate::sessions::RepairOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::sessions::run_repair(Some(&session_path), &crate::resolve::user_dsh_home())
+    })
+    .await
+    .map_err(|e| format!("单会话修复任务异常终止：{e}"))?
+}
+
+/// 会话管理与自愈：全量体检与自愈修复
+#[tauri::command]
+async fn repair_all_sessions() -> Result<crate::sessions::RepairOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::sessions::run_repair(None, &crate::resolve::user_dsh_home())
+    })
+    .await
+    .map_err(|e| format!("全量会话自愈任务异常终止：{e}"))?
+}
+
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
@@ -1575,7 +1606,10 @@ pub fn run() {
             list_plugin_versions,
             get_plugin_runtime,
             list_all_plugins,
-            copy_plugin_config
+            copy_plugin_config,
+            list_sessions,
+            repair_session,
+            repair_all_sessions
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

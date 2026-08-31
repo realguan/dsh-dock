@@ -6,6 +6,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
@@ -17,6 +18,7 @@ import { PageShell } from "@/components/layout/PageShell"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
+import { SessionManager } from "@/components/profiles/SessionManager"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
 import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
@@ -37,8 +39,8 @@ export function ProfileManager() {
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
 
-  // 视图切换（Profile 管理列表 vs 插件全景矩阵）
-  const [view, setView] = useState<"list" | "plugins">("list")
+  // 视图切换（Profile 管理列表 vs 插件全景矩阵 vs 会话维护与自愈）
+  const [view, setView] = useState<"list" | "plugins" | "sessions">("list")
   const [overviewTick, setOverviewTick] = useState(0)
 
   // Profile 搜索筛选
@@ -189,16 +191,33 @@ export function ProfileManager() {
               <Layers className="size-3.5" />
               <span>{t.profiles.viewPlugins}</span>
             </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "sessions"}
+              onClick={() => setView("sessions")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                view === "sessions"
+                  ? "bg-panel text-ink shadow-xs"
+                  : "text-dim hover:text-ink"
+              }`}
+            >
+              <ShieldCheck className="size-3.5" />
+              <span>{t.profiles.viewSessions}</span>
+            </button>
           </div>
 
-          <Button
-            size="sm"
-            onClick={() => setCreateOpen(true)}
-            className="gap-1 text-xs"
-          >
-            <Plus className="size-3.5" />
-            <span>{t.profiles.createBtn}</span>
-          </Button>
+          {view === "list" && (
+            <Button
+              size="sm"
+              onClick={() => setCreateOpen(true)}
+              className="gap-1 text-xs"
+            >
+              <Plus className="size-3.5" />
+              <span>{t.profiles.createBtn}</span>
+            </Button>
+          )}
 
           <Button
             size="sm"
@@ -214,7 +233,12 @@ export function ProfileManager() {
       </header>
 
       {/* 主视图区 */}
-      {view === "plugins" ? (
+      {view === "sessions" ? (
+        <SessionManager
+          refreshKey={overviewTick}
+          onNotice={(msg, kind) => showToast(msg, kind)}
+        />
+      ) : view === "plugins" ? (
         <PluginOverview
           refreshKey={overviewTick}
           onNotice={(msg, kind) => showToast(msg, kind)}
