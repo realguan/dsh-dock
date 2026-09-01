@@ -2,7 +2,7 @@
 // （排除目标已装 / 自身来源 / 声明未安装；连配置可用性预检）与批量结果汇总
 // （失败继续口径）。fixture 内联，不引 DOM。
 import { describe, expect, it } from "vitest"
-import { pickerCandidates, summarizeBatch, type BatchItemResult } from "@/lib/profiles"
+import { groupPickerCandidates, pickerCandidates, summarizeBatch, type BatchItemResult } from "@/lib/profiles"
 import type { AggregatePlugin, PluginRowState } from "@/types/ipc"
 
 const agg = (name: string, sources: { profile: string; version: string | null }[]): AggregatePlugin => ({
@@ -56,6 +56,46 @@ describe("pickerCandidates", () => {
 
   it("empty aggregate -> no candidates", () => {
     expect(pickerCandidates([], "prod", [], {})).toEqual([])
+  })
+})
+
+describe("groupPickerCandidates（去重折叠）", () => {
+  it("groups flat candidates by pkg and preserves all sources", () => {
+    const candidates = [
+      {
+        pkg: "dsh-better-sidebar",
+        source: "web",
+        version: "0.17.1",
+        description: "sidebar desc",
+        hasConfig: true,
+      },
+      {
+        pkg: "dsh-better-sidebar",
+        source: "test",
+        version: "0.17.1",
+        description: "sidebar desc",
+        hasConfig: false,
+      },
+      {
+        pkg: "dshmarket",
+        source: "web",
+        version: "1.38.1",
+        description: "market desc",
+        hasConfig: false,
+      },
+    ]
+
+    const grouped = groupPickerCandidates(candidates)
+    expect(grouped).toHaveLength(2)
+    expect(grouped[0].pkg).toBe("dsh-better-sidebar")
+    expect(grouped[0].sources).toHaveLength(2)
+    expect(grouped[0].sources[0].profile).toBe("web")
+    expect(grouped[0].sources[0].hasConfig).toBe(true)
+    expect(grouped[0].sources[1].profile).toBe("test")
+    expect(grouped[0].sources[1].hasConfig).toBe(false)
+
+    expect(grouped[1].pkg).toBe("dshmarket")
+    expect(grouped[1].sources).toHaveLength(1)
   })
 })
 

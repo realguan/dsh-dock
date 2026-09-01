@@ -1,16 +1,17 @@
-// 从其他 profile 安装（4.4④ 收口，ADR-0009 第五次修订）：多选批量选择器。
-// 候选 = 其他 profile 已安装（版本实读）且目标未装的第三方插件，一行 =
-// 插件 × 来源 profile（多来源成多行，版本无歧义）；「连配置」逐行勾选（默认
-// 不勾，仅来源 patch 有该插件条目时可选——patch_entries 预检，复制时后端
-// 权威复核，写入例外 #4 只追加不覆盖）。执行 = 串行队列（安装走既有转发链
-// pkg@version，规避裸名 dist-tag 坑），失败继续，末尾汇总成败与失败明细。
-// 行表（getPluginRows，dump-config spawn 秒级）只用于置灰预检；个别失败
-// 容忍（hasConfig 按无配置处理 + 提示行说明）。
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { LoaderCircle } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
-import { pickerCandidates, summarizeBatch, type BatchItemResult, type PickerCandidate } from "@/lib/profiles"
+import { useI18n } from "@/stores/i18nStore"
+import {
+  groupPickerCandidates,
+  pickerCandidates,
+  summarizeBatch,
+  type BatchItemResult,
+  type GroupedPickerCandidate,
+  type PickerCandidate,
+} from "@/lib/profiles"
+import { getPluginDisplayName } from "@/lib/market"
+import { getProfileColorClass } from "@/lib/format"
 import type { AggregatePlugin, PluginRowState } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,9 +29,6 @@ type Phase =
   | { kind: "running"; done: number; total: number; current: string }
   | { kind: "done"; results: BatchItemResult[] }
 
-/** 候选唯一键：插件 × 来源（同名多来源各行独立勾选）。 */
-const keyOf = (c: PickerCandidate) => `${c.pkg}\u0000${c.source}`
-
 export function PluginImportPickerDialog({
   target,
   open,
@@ -43,9 +41,11 @@ export function PluginImportPickerDialog({
   /** 全部队列结束后回调（父层刷新清单 + 页面级提示） */
   onDone: (okCount: number, failCount: number) => void
 }) {
+  const { t } = useI18n()
   const [phase, setPhase] = useState<Phase>({ kind: "loading" })
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [withConfig, setWithConfig] = useState<Set<string>>(new Set())
+  const [selectedPkgs, setSelectedPkgs] = useState<Set<string>>(new Set())
+  const [chosenSource, setChosenSource] = useState<Record<string, string>>({})
+  const [withConfigPkgs, setWithConfigPkgs] = useState<Set<string>>(new Set())
   // 播种失败（聚合/目标清单不可读）：错误卡 + 关闭按钮，不伪装成空候选
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -54,8 +54,9 @@ export function PluginImportPickerDialog({
     if (!open) return
     let alive = true
     setPhase({ kind: "loading" })
-    setSelected(new Set())
-    setWithConfig(new Set())
+    setSelectedPkgs(new Set())
+    setChosenSource({})
+    setWithConfigPkgs(new Set())
     setLoadError(null)
     void (async () => {
       try {
@@ -93,61 +94,71 @@ export function PluginImportPickerDialog({
     }
   }, [open, target])
 
-  const toggle = (key: string) => {
-    setSelected((s) => {
-      const next = new Set(s)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+  const groupedCandidates = useMemo(() => {
+    const raw = phase.kind === "picking" ? phase.candidates : []
+    return groupPickerCandidates(raw)
+  }, [phase])
+
+  const togglePkg = (pkg: string) => {
+    setSelectedPkgs((prev) => {
+      const next = new Set(prev)
+      if (next.has(pkg)) next.delete(pkg)
+      else next.add(pkg)
       return next
     })
-    // 取消勾选即撤回其连配置意图（保持两集合一致）
-    setWithConfig((s) => {
-      const next = new Set(s)
-      next.delete(key)
+    // 取消勾选时撤回连配置意图
+    setWithConfigPkgs((prev) => {
+      const next = new Set(prev)
+      next.delete(pkg)
       return next
     })
   }
 
-  const toggleConfig = (key: string) => {
-    setWithConfig((s) => {
-      const next = new Set(s)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+  const toggleConfig = (pkg: string) => {
+    setWithConfigPkgs((prev) => {
+      const next = new Set(prev)
+      if (next.has(pkg)) next.delete(pkg)
+      else next.add(pkg)
       return next
     })
   }
 
-  // 串行队列：失败继续（安装成功而配置复制失败按该项失败计——勾了连配置
-  // 就是一项完整工作），明细进汇总
-  const runQueue = async (candidates: PickerCandidate[]) => {
-    const queue = candidates.filter((c) => selected.has(keyOf(c)))
+  const setPkgSource = (pkg: string, sourceProfile: string) => {
+    setChosenSource((prev) => ({ ...prev, [pkg]: sourceProfile }))
+  }
+
+  // 串行队列：按已选插件依次安装
+  const runQueue = async (groups: GroupedPickerCandidate[]) => {
+    const queue = groups.filter((g) => selectedPkgs.has(g.pkg))
     if (queue.length === 0) return
     const results: BatchItemResult[] = []
     for (let i = 0; i < queue.length; i++) {
-      const c = queue[i]
-      setPhase({ kind: "running", done: i, total: queue.length, current: c.pkg })
+      const g = queue[i]
+      const activeSrcName = chosenSource[g.pkg] || g.sources[0]?.profile
+      const activeSrc = g.sources.find((s) => s.profile === activeSrcName) || g.sources[0]
+      setPhase({ kind: "running", done: i, total: queue.length, current: g.pkg })
       try {
-        const out = await api.installPlugin(target, `${c.pkg}@${c.version}`)
+        const out = await api.installPlugin(target, `${g.pkg}@${activeSrc.version}`)
         if (!out.ok) {
-          results.push({ pkg: c.pkg, ok: false, detail: out.detail })
+          results.push({ pkg: g.pkg, ok: false, detail: out.detail })
           continue
         }
-        if (withConfig.has(keyOf(c))) {
+        if (withConfigPkgs.has(g.pkg) && activeSrc.hasConfig) {
           try {
-            const cc = await api.copyPluginConfig(c.source, target, c.pkg)
-            results.push({ pkg: c.pkg, ok: true, detail: cc.detail })
+            const cc = await api.copyPluginConfig(activeSrc.profile, target, g.pkg)
+            results.push({ pkg: g.pkg, ok: true, detail: cc.detail })
           } catch (e) {
             results.push({
-              pkg: c.pkg,
+              pkg: g.pkg,
               ok: false,
               detail: `插件已安装，但配置行复制失败：${String(e)}`,
             })
           }
         } else {
-          results.push({ pkg: c.pkg, ok: true, detail: out.detail })
+          results.push({ pkg: g.pkg, ok: true, detail: out.detail })
         }
       } catch (e) {
-        results.push({ pkg: c.pkg, ok: false, detail: String(e) })
+        results.push({ pkg: g.pkg, ok: false, detail: String(e) })
       }
     }
     setPhase({ kind: "done", results })
@@ -162,16 +173,14 @@ export function PluginImportPickerDialog({
   }
 
   const close = () => {
-    if (phase.kind === "running") return // 队列进行中不可中断（无半途状态）
+    if (phase.kind === "running") return // 队列进行中不可中断
     setPhase({ kind: "loading" })
     onClose()
   }
 
-  const candidates = phase.kind === "picking" ? phase.candidates : []
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="flex max-h-[calc(100vh-4rem)] flex-col sm:max-w-[520px]">
+      <DialogContent className="flex max-h-[calc(100vh-4rem)] flex-col sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>{t.profiles.importTitle(target)}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -196,77 +205,114 @@ export function PluginImportPickerDialog({
 
         {phase.kind === "picking" && (
           <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto pr-1">
-            {phase.rowsFailed && candidates.length > 0 && (
+            {phase.rowsFailed && groupedCandidates.length > 0 && (
               <div className="text-faint text-[10px]">{t.profiles.importRowsFailedNote}</div>
             )}
-            {candidates.length === 0 ? (
+            {groupedCandidates.length === 0 ? (
               <div className="text-faint border-line bg-bg rounded-lg border border-dashed px-3 py-6 text-center text-xs">
                 {t.profiles.importEmpty}
               </div>
             ) : (
               <div className="divide-y divide-line rounded-xl border border-line bg-bg shadow-2xs">
-                {candidates.map((c) => {
-                  const key = keyOf(c)
-                  const picked = selected.has(key)
+                {groupedCandidates.map((g) => {
+                  const picked = selectedPkgs.has(g.pkg)
+                  const currentSrcName = chosenSource[g.pkg] || g.sources[0]?.profile
+                  const currentSrc =
+                    g.sources.find((s) => s.profile === currentSrcName) || g.sources[0]
+                  const hasConfig = currentSrc?.hasConfig ?? false
+                  const displayName = getPluginDisplayName(g.pkg)
+
                   return (
                     <div
-                      key={key}
-                      className={`flex items-center justify-between gap-3 p-3 transition-colors ${
+                      key={g.pkg}
+                      className={`flex flex-col gap-2 p-3 transition-colors ${
                         picked ? "bg-wash/40" : "hover:bg-panel"
                       }`}
                     >
-                      {/* 主勾选：插件 + 来源 */}
-                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={picked}
-                          onChange={() => toggle(key)}
-                          className="accent-brand size-4 shrink-0 rounded"
-                        />
-                        <span className="min-w-0">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <span
-                              className="text-ink font-mono text-xs font-semibold"
-                              title={c.pkg}
-                            >
-                              {c.pkg}
+                      <div className="flex items-start justify-between gap-3">
+                        {/* 主勾选：插件 + 名称 */}
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={picked}
+                            onChange={() => togglePkg(g.pkg)}
+                            className="accent-brand mt-0.5 size-4 shrink-0 rounded"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span
+                                className="text-ink font-mono text-xs font-semibold"
+                                title={g.pkg}
+                              >
+                                {displayName}
+                              </span>
+                              {displayName !== g.pkg && (
+                                <span className="text-faint font-mono text-[10px]" title={g.pkg}>
+                                  ({g.pkg})
+                                </span>
+                              )}
+                              <span className="text-brand font-mono text-[11px] font-medium">
+                                v{currentSrc?.version}
+                              </span>
                             </span>
-                            <span className="text-brand font-mono text-[11px] font-medium">
-                              v{c.version}
-                            </span>
-                            <span className="border border-line text-dim rounded-md bg-panel px-1.5 py-0.5 text-[10px] font-mono">
-                              来自 {c.source}
-                            </span>
+                            {g.description && (
+                              <span
+                                className="text-faint mt-0.5 block truncate text-[11px]"
+                                title={g.description}
+                              >
+                                {g.description}
+                              </span>
+                            )}
                           </span>
-                          {c.description && (
-                            <span
-                              className="text-faint mt-0.5 block truncate text-[11px]"
-                              title={c.description}
-                            >
-                              {c.description}
-                            </span>
-                          )}
-                        </span>
-                      </label>
+                        </label>
 
-                      {/* 连配置：逐行勾选，来源无条目置灰 */}
-                      <label
-                        className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs transition-opacity ${
-                          c.hasConfig
-                            ? "text-dim hover:text-ink"
-                            : "text-faint opacity-50 cursor-not-allowed"
-                        }`}
-                        title={c.hasConfig ? undefined : t.profiles.importNoConfig}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={picked && withConfig.has(key)}
-                          disabled={!picked || !c.hasConfig}
-                          onChange={() => toggleConfig(key)}
-                          className="accent-brand size-3.5"
-                        />
-                        <span className="text-[11px]">{t.profiles.importConfig}</span>
-                      </label>
+                        {/* 连配置：逐行勾选，来源无条目置灰 */}
+                        <label
+                          className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs transition-opacity ${
+                            hasConfig
+                              ? "text-dim hover:text-ink"
+                              : "text-faint opacity-50 cursor-not-allowed"
+                          }`}
+                          title={hasConfig ? undefined : t.profiles.importNoConfig}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={picked && withConfigPkgs.has(g.pkg)}
+                            disabled={!picked || !hasConfig}
+                            onChange={() => toggleConfig(g.pkg)}
+                            className="accent-brand size-3.5"
+                          />
+                          <span className="text-[11px]">{t.profiles.importConfig}</span>
+                        </label>
+                      </div>
+
+                      {/* 来源 Profile 切换器（折叠去重） */}
+                      <div className="ml-7 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="text-faint">来源：</span>
+                        {g.sources.map((src) => {
+                          const isSelectedSrc = src.profile === currentSrcName
+                          const colorCls = getProfileColorClass(src.profile)
+                          return (
+                            <button
+                              key={src.profile}
+                              type="button"
+                              onClick={() => setPkgSource(g.pkg, src.profile)}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-[10px] transition-all ${
+                                isSelectedSrc
+                                  ? `${colorCls} ring-1 ring-brand/40 font-semibold shadow-2xs`
+                                  : "bg-panel text-dim hover:bg-line-soft opacity-75"
+                              }`}
+                              title={`从 ${src.profile} (v${src.version}) 导入${src.hasConfig ? "，包含配置" : ""}`}
+                            >
+                              <span>{src.profile}</span>
+                              <span className="text-faint opacity-80">v{src.version}</span>
+                              {src.hasConfig && (
+                                <span className="text-brand text-[9px] font-bold">⚙</span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )
                 })}
@@ -312,31 +358,31 @@ export function PluginImportPickerDialog({
         })()}
 
         <DialogFooter>
-          {phase.kind === "picking" && candidates.length > 0 && (
+          {phase.kind === "picking" && groupedCandidates.length > 0 && (
             <>
               <span className="text-faint mr-auto self-center text-xs">
-                {t.profiles.importSelected(selected.size)}
+                {t.profiles.importSelected(selectedPkgs.size)}
               </span>
               <Button variant="outline" onClick={close}>
                 {t.profiles.pluginInstallCancel}
               </Button>
               <Button
-                disabled={selected.size === 0}
-                onClick={() => void runQueue(candidates)}
+                disabled={selectedPkgs.size === 0}
+                onClick={() => void runQueue(groupedCandidates)}
               >
-                {t.profiles.importStart(selected.size)}
+                {t.profiles.importStart(selectedPkgs.size)}
               </Button>
             </>
           )}
-          {(phase.kind === "picking" || phase.kind === "loading") && candidates.length === 0 && (
-            <Button variant="outline" onClick={close}>
-              {t.profiles.detailClose}
-            </Button>
-          )}
+          {(phase.kind === "picking" || phase.kind === "loading") &&
+            groupedCandidates.length === 0 && (
+              <Button variant="outline" onClick={close}>
+                {t.profiles.detailClose}
+              </Button>
+            )}
           {phase.kind === "done" && (
             <Button onClick={finish}>{t.profiles.importDoneBtn}</Button>
           )}
-          {/* running：无按钮——队列不可中断，footer 留空 */}
         </DialogFooter>
       </DialogContent>
     </Dialog>

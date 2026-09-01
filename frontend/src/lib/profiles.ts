@@ -158,6 +158,42 @@ export function pickerCandidates(
   return out
 }
 
+export interface PickerSourceOption {
+  profile: string
+  version: string
+  hasConfig: boolean
+}
+
+export interface GroupedPickerCandidate {
+  pkg: string
+  description: string | null
+  sources: PickerSourceOption[]
+}
+
+/** 将平铺的 candidate 按插件 pkg 聚合折叠（支持多来源选择与去重） */
+export function groupPickerCandidates(candidates: PickerCandidate[]): GroupedPickerCandidate[] {
+  const map = new Map<string, GroupedPickerCandidate>()
+  for (const c of candidates) {
+    let group = map.get(c.pkg)
+    if (!group) {
+      group = {
+        pkg: c.pkg,
+        description: c.description,
+        sources: [],
+      }
+      map.set(c.pkg, group)
+    }
+    if (!group.sources.some((s) => s.profile === c.source)) {
+      group.sources.push({
+        profile: c.source,
+        version: c.version,
+        hasConfig: c.hasConfig,
+      })
+    }
+  }
+  return Array.from(map.values())
+}
+
 export interface BatchItemResult {
   pkg: string
   ok: boolean
