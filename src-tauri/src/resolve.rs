@@ -832,18 +832,19 @@ fn probe_no_open_with(node: &Path, dsh_bin: &Path, timeout: std::time::Duration)
             return true;
         }
         if child.try_wait().ok().flatten().is_some() {
-            break;
+            // 子进程已自然退出：等待 reader 线程把管道残留数据完全读尽（防并发早退漏读）
+            for r in readers {
+                let _ = r.join();
+            }
+            let hit = shared.lock().unwrap().contains("--no-open");
+            return hit;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    // 进程退出或超时后，等待 reader 线程把管道残留数据完全读尽（防并发早退漏读）
+    // 超时分支（子进程卡死 hang 住）：强杀后立即返回 false，绝不死等 reader
     let _ = child.kill();
     let _ = child.wait();
-    for r in readers {
-        let _ = r.join();
-    }
-    let hit = shared.lock().unwrap().contains("--no-open");
-    hit
+    false
 }
 
 // ---------- 工具 ----------
