@@ -176,32 +176,18 @@ jobs:
             export APPLE_API_KEY="$APPLE_API_KEY_ID"
             export APPLE_API_KEY_PATH="$key_path"
 
-            # 动态推导证书 Common Name（避免与 tauri.conf.json 中的 "-" 或 secret 不匹配）
-            cert_cn=$(python3 -c '
-import base64, os, subprocess
-cert_b64 = os.environ.get("APPLE_CERTIFICATE", "")
-password = os.environ.get("APPLE_CERTIFICATE_PASSWORD", "")
-if cert_b64:
-    raw = base64.b64decode(cert_b64)
-    tmp_p12 = "/tmp/cert_detect.p12"
-    with open(tmp_p12, "wb") as f:
-        f.write(raw)
-    cmd = f"openssl pkcs12 -in {tmp_p12} -passin pass:\"{password}\" -nokeys 2>/dev/null || openssl pkcs12 -legacy -in {tmp_p12} -passin pass:\"{password}\" -nokeys 2>/dev/null"
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
-    out, _ = p.communicate()
-    p2 = subprocess.Popen("openssl x509 -noout -subject", shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    out2, _ = p2.communicate(out)
-    subj = out2.decode("utf-8", errors="ignore")
-    for part in subj.split("/"):
-        if part.strip().startswith("CN="):
-            print(part.strip()[3:].strip())
-            break
-        elif "CN = " in part:
-            print(part.split("CN = ")[1].strip())
-            break
-    try: os.remove(tmp_p12)
-    except: pass
-' 2>/dev/null || true)
+            # 动态推导证书 Common Name（优先从 APPLE_CERTIFICATE 提取，否则回退默认值）
+            cert_cn=""
+            if [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" ]]; then
+              echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert_detect.p12 2>/dev/null || echo "$APPLE_CERTIFICATE" | base64 -D > /tmp/cert_detect.p12 2>/dev/null || true
+              if [[ -f /tmp/cert_detect.p12 ]]; then
+                cert_cn=$(openssl pkcs12 -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | head -n1 || true)
+                if [[ -z "$cert_cn" ]]; then
+                  cert_cn=$(openssl pkcs12 -legacy -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | head -n1 || true)
+                fi
+                rm -f /tmp/cert_detect.p12
+              fi
+            fi
             if [[ -z "$cert_cn" ]]; then
               cert_cn="${APPLE_SIGNING_IDENTITY:-Apple Development: zgg1224@qq.com (65GDLKG7AH)}"
             fi
