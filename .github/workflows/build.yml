@@ -176,9 +176,37 @@ jobs:
             export APPLE_API_KEY="$APPLE_API_KEY_ID"
             export APPLE_API_KEY_PATH="$key_path"
 
-            # 始终 unset APPLE_SIGNING_IDENTITY，让 Tauri 自动识别并使用由
-            # APPLE_CERTIFICATE 导入的证书，避免 secret 中名称微小差异导致构建中断。
-            unset APPLE_SIGNING_IDENTITY
+            # 动态推导证书 Common Name（避免与 tauri.conf.json 中的 "-" 或 secret 不匹配）
+            cert_cn=$(python3 -c '
+import base64, os, subprocess
+cert_b64 = os.environ.get("APPLE_CERTIFICATE", "")
+password = os.environ.get("APPLE_CERTIFICATE_PASSWORD", "")
+if cert_b64:
+    raw = base64.b64decode(cert_b64)
+    tmp_p12 = "/tmp/cert_detect.p12"
+    with open(tmp_p12, "wb") as f:
+        f.write(raw)
+    cmd = f"openssl pkcs12 -in {tmp_p12} -passin pass:\"{password}\" -nokeys 2>/dev/null || openssl pkcs12 -legacy -in {tmp_p12} -passin pass:\"{password}\" -nokeys 2>/dev/null"
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    out, _ = p.communicate()
+    p2 = subprocess.Popen("openssl x509 -noout -subject", shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    out2, _ = p2.communicate(out)
+    subj = out2.decode("utf-8", errors="ignore")
+    for part in subj.split("/"):
+        if part.strip().startswith("CN="):
+            print(part.strip()[3:].strip())
+            break
+        elif "CN = " in part:
+            print(part.split("CN = ")[1].strip())
+            break
+    try: os.remove(tmp_p12)
+    except: pass
+' 2>/dev/null || true)
+            if [[ -z "$cert_cn" ]]; then
+              cert_cn="${APPLE_SIGNING_IDENTITY:-Apple Development: zgg1224@qq.com (65GDLKG7AH)}"
+            fi
+            echo "::notice::macOS 代码签名 Identity: $cert_cn"
+            export APPLE_SIGNING_IDENTITY="$cert_cn"
           else
             # 未配置的 GitHub secret 会以空字符串出现在 env；Tauri 将空值视为
             # 已设置，必须清掉才能按 tauri.conf 的 '-' 回退到 ad-hoc 签名。
@@ -187,7 +215,6 @@ jobs:
             unset APPLE_API_KEY APPLE_API_KEY_PATH
             echo "::warning::未配置 Apple 签名凭据，macOS 产物仅 ad-hoc 签名，不能作为公开分发包"
           fi
-          unset APPLE_SIGNING_IDENTITY
           cargo tauri build
 
           if [[ "$has_apple_credentials" == true ]]; then
