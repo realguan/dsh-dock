@@ -85,35 +85,35 @@ export function QuickDshSwitcher() {
       disabled={switching}
       title={t.profiles.switchToDshTip}
       aria-label={t.profiles.switchToDshTip}
-      className="group relative inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-panel/80 px-2.5 text-xs font-semibold text-ink shadow-2xs backdrop-blur-md transition-all duration-200 hover:border-brand/40 hover:bg-panel hover:shadow-xs active:scale-95 cursor-pointer disabled:opacity-70"
+      className="group relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line bg-panel/80 px-2.5 text-xs font-semibold text-ink shadow-2xs backdrop-blur-md transition-all duration-200 hover:border-brand/40 hover:bg-panel hover:shadow-xs active:scale-95 cursor-pointer disabled:opacity-70"
     >
       {/* 活跃状态微型呼吸指示灯 */}
-      <span className="relative flex size-2 items-center justify-center">
+      <span className="relative flex size-2 shrink-0 items-center justify-center">
         <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
         <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
       </span>
 
       {/* 文本主体 */}
-      <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand transition-colors">
+      <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand transition-colors whitespace-nowrap">
         {t.profiles.switchToDsh}
       </span>
 
       {/* 关联 Profile 简要标记（若存在） */}
       {activeProfile && (
-        <span className="hidden font-mono text-[10px] text-faint max-w-20 truncate sm:inline-block">
+        <span className="hidden font-mono text-[10px] text-faint max-w-14 truncate whitespace-nowrap sm:inline-block">
           ({activeProfile})
         </span>
       )}
 
       {/* 快捷键徽章：平时隐藏，Hover 时平滑展开（禁止折行，预留充裕宽度） */}
-      <span className="max-w-0 opacity-0 overflow-hidden group-hover:max-w-36 group-hover:opacity-100 transition-all duration-200 ease-out inline-flex items-center shrink-0">
+      <span className="max-w-0 opacity-0 overflow-hidden group-hover:max-w-32 group-hover:opacity-100 transition-all duration-200 ease-out inline-flex items-center shrink-0">
         <kbd className="ml-1 inline-flex items-center whitespace-nowrap rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-[9px] font-semibold text-dim border border-line/60 shadow-2xs leading-none">
           {shortcutDisplay}
         </kbd>
       </span>
 
       {/* 跳转微图标 */}
-      <ArrowUpRight className="size-3 text-faint group-hover:text-brand group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+      <ArrowUpRight className="size-3 shrink-0 text-faint group-hover:text-brand group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
     </button>
   )
 }

@@ -151,20 +151,20 @@ export function ProfileManager() {
 
   return (
     <PageShell width={1040} align="top" className="px-4 py-4 sm:px-6">
-      {/* 顶部全局标题栏 */}
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      {/* 顶部全局标题栏（单行弹性布局，右侧控制区 shrink-0 防止 Hover 展开时发生折行抖动） */}
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Emblem size={32} />
-          <div>
-            <h1 className="text-ink text-base font-bold tracking-tight">
+          <div className="min-w-0">
+            <h1 className="text-ink text-base font-bold tracking-tight truncate">
               {t.profiles.title}
             </h1>
-            <p className="text-faint text-xs">{t.profiles.subtitle}</p>
+            <p className="text-faint text-xs truncate">{t.profiles.subtitle}</p>
           </div>
         </div>
 
-        {/* 顶部右侧：视图分段切换 + 刷新 */}
-        <div className="flex items-center gap-2">
+        {/* 顶部右侧：视图分段切换 + 刷新 + 胶囊 */}
+        <div className="flex items-center gap-2 shrink-0">
           <div
             role="tablist"
             className="flex rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs"
