@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
-import { Layout, Sparkles, ChevronRight, Package, SlidersHorizontal } from "lucide-react"
+import { Layout, ChevronRight, Package, SlidersHorizontal } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
@@ -88,15 +88,8 @@ export function BootSelector() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
 
       {/* 顶栏：wordmark + 版本芯片 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md">
-        <div className="flex items-center gap-2">
-          <div className="flex size-5 items-center justify-center rounded bg-brand/10 text-brand">
-            <Sparkles className="size-3" />
-          </div>
-          <span className="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/90">
-            DSH DOCK
-          </span>
-        </div>
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
+        <div data-tauri-drag-region className="flex-1" />
         <div className="flex items-center gap-2.5">
           <button
             type="button"

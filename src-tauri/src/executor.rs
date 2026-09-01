@@ -218,7 +218,11 @@ impl Executor for LocalExecutor {
         progress: DownloadProgress<'_>,
     ) -> Result<ProbeOutcome, String> {
         sink(0, "running", "扫描用户环境（PATH · 版本闸）");
-        sink(1, "running", "解析宿主档位");
+        sink(
+            1,
+            "running",
+            "解析宿主档位（首次使用需下载运行时，请耐心等候）",
+        );
         let launch = crate::resolve::resolve_launch(
             &self.manifest,
             &self.resources_dir,
@@ -230,13 +234,14 @@ impl Executor for LocalExecutor {
             sink(1, "error", &e.to_string());
             e.to_string()
         })?;
+        sink(1, "running", "宿主解析完成，准备环境依赖");
         // pnpm 环境检查硬依赖（ADR-0009 红线 2 口径 2：保证 dsh 全部子命令
         // 可用——`dsh plugin` 硬编码 spawnSync("pnpm") 无回退）。缺失经
         // `npm install -g pnpm` 同步补齐，失败阻断 boot 出可行动错误卡。
         // 基准 = 注入 dsh 的 PATH（node 首位 + effective_path）。WSL 执行器
         // 不走本路径（客体内补齐链归 4.9，ADR-0004 §7）。
         let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
-        sink(1, "running", "检查 pnpm 环境（缺失将自动补齐）…");
+        sink(1, "running", "正在检查并补齐包管理器…");
         if let Err(e) = crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path) {
             sink(1, "error", &e);
             return Err(e);
@@ -494,9 +499,11 @@ const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
 #[cfg(any(windows, test))]
 macro_rules! guest_prep {
     () => {
+        // 2026-09-01 裁定：壳管理目录优先纳入 PATH（ADR-0004 §7 自动补齐落点）
         concat!(
             ". /etc/profile 2>/dev/null;",
             ". \"$HOME/.profile\" 2>/dev/null; . \"$HOME/.bashrc\" 2>/dev/null;",
+            "[ -x \"$HOME/.dsh-dock/node/bin/node\" ] && PATH=\"$HOME/.dsh-dock/node/bin:$PATH\";",
             "for d in \"$HOME\"/.nvm/versions/node/*/bin \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin",
             " \"$HOME\"/n/bin \"$HOME\"/.volta/bin",
             " \"${XDG_DATA_HOME:-$HOME/.local/share}\"/fnm/node-versions/*/installation/bin; do",
@@ -677,11 +684,51 @@ impl Executor for WslExecutor {
                 }
             }
             Ok(GuestProbeState::NodeMissing) => {
-                sink(1, "error", "发行版内缺少 node");
-                Err(format!(
-                    "{target} 内缺少 node（探测不到 node 命令）。请在 WSL 内安装 Node.js（如 nvm 或 \
-                     apt 的 nodejs 包）后重试；有 node 后 dsh 可由应用自动安装。"
-                ))
+                // 2026-09-01 裁定（ADR-0004 §7）：WSL 客体内与本地同口径，
+                // 缺 node 自动安装——tarball 落壳管理目录 ~/.dsh-dock/node。
+                sink(
+                    1,
+                    "running",
+                    &format!("{target} 内缺少 node，正在自动安装…"),
+                );
+                if let Err(e) = install_node_in_distro(&target, &self.data_dir) {
+                    sink(1, "error", &e);
+                    return Err(format!(
+                        "{target} 内自动安装 Node.js 失败：{e}\n\
+                         可手动在 WSL 内执行 `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs` 后重试。"
+                    ));
+                }
+                // Node 就绪后继续补齐 dsh（复用 DshMissing 已有逻辑）
+                sink(1, "running", "Node.js 已就绪，正在安装 DSH…");
+                if let Err(e) = install_dsh_in_distro(&target) {
+                    sink(1, "error", &e);
+                    return Err(format!(
+                        "{target} 内自动安装 dsh 失败：{e}\n\
+                         可手动在 WSL 内执行 `npm i -g @deepseek-ai/dsh` 后重试。"
+                    ));
+                }
+                // 全链安装后复查
+                sink(1, "running", "复查安装结果");
+                match probe_guest_in_distro(&target) {
+                    Ok(GuestProbeState::Ready) => {
+                        sink(0, "done", "WSL2 环境就绪");
+                        sink(1, "done", &format!("{target} 内 node + dsh 自动安装成功"));
+                        self.selected = Some(target);
+                        self.installed_dsh = true;
+                        Ok(ProbeOutcome::Ready)
+                    }
+                    Ok(_) => {
+                        sink(1, "error", "自动安装后仍未检测到完整环境");
+                        Err(format!(
+                            "{target} 内自动安装 node + dsh 后仍不可用。\n\
+                             请手动在 WSL 内安装 Node.js 和 DSH 后重试。"
+                        ))
+                    }
+                    Err(e) => {
+                        sink(1, "error", &e);
+                        Err(e)
+                    }
+                }
             }
             Err(e) => {
                 sink(1, "error", &e);
@@ -838,6 +885,59 @@ fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
         tracing::warn!("WSL 探测输出无法识别: {out}");
         format!("{target} 内探测输出无法识别（{}）", out.trim())
     })
+}
+
+/// WSL 客体内自动安装 Node.js（ADR-0004 §7，2026-09-01 落地）。
+/// 官方 tarball 解压至 `~/.dsh-dock/node/`，guest_prep! 已将其纳入 PATH。
+/// 镜像链：npmmirror 优先 → nodejs.org 兜底（ADR-0006）。
+#[cfg(windows)]
+fn install_node_in_distro(distro: &str, data_dir: &std::path::Path) -> Result<(), String> {
+    let plan = crate::updates::node_plan(data_dir);
+    let version = &plan.version;
+    // linux-x64 tarball（WSL 客体架构固定 x64）
+    let filename = format!("node-v{version}-linux-x64.tar.gz");
+    let mirrors = [
+        format!("https://npmmirror.com/mirrors/node/v{version}/{filename}"),
+        format!("https://nodejs.org/dist/v{version}/{filename}"),
+    ];
+    // 构造安装脚本：尝试镜像链下载 → 解压 → 验证
+    let script = format!(
+        concat!(
+            "set -e;",
+            "DSH_NODE_DIR=\"$HOME/.dsh-dock/node\";",
+            "mkdir -p \"$DSH_NODE_DIR\";",
+            "TMP_TAR=\"/tmp/dsh-dock-node.tar.gz\";",
+            "DL_OK=0;",
+            "for url in {mirror1} {mirror2}; do",
+            "  if curl -fSL --connect-timeout 15 --max-time 120 -o \"$TMP_TAR\" \"$url\"; then DL_OK=1; break; fi;",
+            "done;",
+            "if [ \"$DL_OK\" != 1 ]; then echo DOWNLOAD_FAILED; exit 0; fi;",
+            "tar xzf \"$TMP_TAR\" -C \"$DSH_NODE_DIR\" --strip-components=1;",
+            "rm -f \"$TMP_TAR\";",
+            "if \"$DSH_NODE_DIR/bin/node\" --version >/dev/null 2>&1; then echo NODE_OK; else echo NODE_VERIFY_FAILED; fi",
+        ),
+        mirror1 = mirrors[0],
+        mirror2 = mirrors[1],
+    );
+    let output = run_wsl_capture(
+        Some(distro),
+        &["--", "bash", "-c", &script],
+        Duration::from_secs(180),
+    );
+    match output.as_deref() {
+        Some(s) if s.contains("NODE_OK") => {
+            tracing::info!("WSL {distro} 内 Node.js v{version} 自动安装成功");
+            Ok(())
+        }
+        Some(s) if s.contains("DOWNLOAD_FAILED") => {
+            Err(format!("下载 Node.js v{version} 失败（镜像链均不可达）"))
+        }
+        Some(s) if s.contains("NODE_VERIFY_FAILED") => {
+            Err(format!("Node.js v{version} 解压后验证失败"))
+        }
+        Some(s) => Err(format!("安装 Node.js 异常：{s}")),
+        None => Err("WSL 命令超时或执行失败".to_string()),
+    }
 }
 
 /// 在指定发行版内自动安装 dsh（`npm i -g @deepseek-ai/dsh`；2026-08-26 登记网络面）。
@@ -1229,6 +1329,23 @@ mod guest_shell_tests {
         assert!(
             out.as_deref().unwrap_or("").contains("NODE_MISSING"),
             "无 node 应报 NODE_MISSING，得到：{out:?}"
+        );
+    }
+
+    #[test]
+    fn guest_probe_finds_dsh_dock_managed_node_without_rc() {
+        // 2026-09-01 落地 ADR-0004 §7：壳管理目录 ~/.dsh-dock/node/bin 优先于系统 PATH
+        let home = fake_home("docknode");
+        let dock_bin = home.join(".dsh-dock").join("node").join("bin");
+        std::fs::create_dir_all(&dock_bin).expect("mk dock bin");
+        write_fake_bin(&dock_bin, "node");
+        write_fake_bin(&dock_bin, "dsh");
+        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
+        std::fs::write(home.join(".profile"), "").expect("write profile");
+        let out = run_guest(&home, GUEST_PROBE, true);
+        assert!(
+            out.as_deref().unwrap_or("").contains("READY"),
+            "壳管理目录 ~/.dsh-dock/node/bin 应被 guest_prep! 命中并返回 READY，得到：{out:?}"
         );
     }
 }

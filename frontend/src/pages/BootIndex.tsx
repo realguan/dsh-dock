@@ -3,7 +3,7 @@
 // 下载主角位接管 → 「启动详情」控制台时间线卡（含内嵌错误区）。
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { TerminalSquare, Sparkles, SlidersHorizontal } from "lucide-react"
+import { TerminalSquare, SlidersHorizontal } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
@@ -40,6 +40,10 @@ export function BootIndex() {
   const clearError = useBootStore((s) => s.clearError)
 
   const shownError: BootErrorEvent | null = localError ?? error
+
+  // 当前模式感知（URL params 经 choose_mode 落地时携带 mode=local|wsl）
+  const currentMode = params.get("mode") || "local"
+  const isWsl = currentMode === "wsl"
 
   // 「最后运行步」记忆：activeStep 在 done 后归 -1，headline 不能随之跌回初始
   const [lastRunning, setLastRunning] = useState(0)
@@ -78,6 +82,14 @@ export function BootIndex() {
   useEffect(() => {
     if (progress) setHideDownload(false)
   }, [progress])
+  // 下载完成后延迟隐藏下载卡片，让 headline/subline 展示后续步骤详情
+  // 避免卡在 100% 进度条（后续解压/安装阶段无新 progress 事件）
+  useEffect(() => {
+    if (progress && progress.total != null && progress.total > 0 && progress.current >= progress.total) {
+      const timer = setTimeout(() => setHideDownload(true), 1500)
+      return () => clearTimeout(timer)
+    }
+  }, [progress])
   // 出错 → 全部进度让位 + WSL 按钮解锁（旧 renderError 语义）
   useEffect(() => {
     if (!error) return
@@ -107,41 +119,37 @@ export function BootIndex() {
       {/* 顶部环境渐变光晕 */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
 
-      {/* 顶栏 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md">
-        <div className="flex items-center gap-2">
-          <div className="flex size-5 items-center justify-center rounded bg-brand/10 text-brand">
-            <Sparkles className="size-3" />
-          </div>
-          <span className="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/90">
-            DSH DOCK
-          </span>
-        </div>
+      {/* 顶栏：准备阶段极简（方案 b），就绪后显示品牌与控制中心 */}
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
+        <div data-tauri-drag-region className="flex-1" />
 
         <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            title={t.boot.controlCenterTip}
-            onClick={() => api.openProfilesWindow().catch(() => {})}
-            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
-          >
-            <SlidersHorizontal className="size-3.5 text-brand" />
-            {t.boot.controlCenter}
-          </button>
+          {maxStepSeen >= 4 && (
+            <button
+              type="button"
+              title={t.boot.controlCenterTip}
+              onClick={() => api.openProfilesWindow().catch(() => {})}
+              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
+            >
+              <SlidersHorizontal className="size-3.5 text-brand" />
+              {t.boot.controlCenter}
+            </button>
+          )}
           <VersionChip />
-          {/* WSL 仅 Windows 渲染（2026-08-26 平台裁定，能力经 can.bootWsl） */}
+          {/* 模式切换：感知当前模式，双向切换（2026-09-01 修复硬编码） */}
           {can.bootWsl && (
             <button
               type="button"
-              title={t.boot.wslOpenTip}
+              title={isWsl ? t.boot.localOpenTip : t.boot.wslOpenTip}
               disabled={wslBusy}
               onClick={() => {
                 setWslBusy(true)
+                const target = isWsl ? "local" : "wsl"
                 api
-                  .bootInWsl()
+                  .chooseMode(target, false)
                   .catch((e) =>
                     setLocalError({
-                      title: t.boot.wslFailed,
+                      title: isWsl ? t.boot.localFailed : t.boot.wslFailed,
                       detail: String(e instanceof Error ? e.message : e),
                     }),
                   )
@@ -150,7 +158,7 @@ export function BootIndex() {
               className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs disabled:cursor-default disabled:opacity-50"
             >
               <TerminalSquare className="size-3.5 text-brand" />
-              {t.boot.wslOpen}
+              {isWsl ? t.boot.localOpen : t.boot.wslOpen}
             </button>
           )}
         </div>

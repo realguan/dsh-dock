@@ -2670,6 +2670,7 @@ fn open_profiles_window(app: tauri::AppHandle) {
         .min_inner_size(860.0, 600.0)
         .resizable(true)
         .center()
+        .background_color(tauri::utils::config::Color(249, 250, 251, 255))
         .initialization_script(&platform_script);
         match builder.build() {
             Ok(_) => tracing::info!("控制中心窗口已创建"),
