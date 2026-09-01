@@ -1236,6 +1236,7 @@ mod tests {
     }
 
     /// 测试用 dsh 假体路径（不存在也合法：脚本不真的读它）。
+    #[cfg(unix)]
     fn fake_dsh(dir: &Path) -> PathBuf {
         dir.join("fake-dsh.js")
     }
