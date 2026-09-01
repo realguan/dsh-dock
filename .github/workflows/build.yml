@@ -113,7 +113,7 @@ jobs:
       # 前端构建（2026-08-27 前端迁移，ADR-0008）：beforeBuildCommand 钩子会跑
       # npm ci && npm run build；锁文件 = frontend/package-lock.json（node 22 LTS）。
       - name: Setup node for frontend
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
