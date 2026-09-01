@@ -182,21 +182,23 @@ export function CredentialsPane({
               className="flex flex-col justify-between rounded-xl border border-line bg-panel p-3.5 shadow-2xs transition-colors hover:border-brand/30"
             >
               <div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-ink">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-xs font-bold text-ink truncate" title={item.label}>
                       {item.label}
                     </span>
-                    <span className="font-mono text-[10px] text-faint">
-                      ({item.provider})
-                    </span>
+                    {item.label.toLowerCase() !== item.provider.toLowerCase() && (
+                      <span className="font-mono text-[10px] text-faint truncate" title={item.provider}>
+                        ({item.provider})
+                      </span>
+                    )}
                   </div>
                   {item.configured ? (
-                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0 whitespace-nowrap shadow-2xs">
                       {t.console.configuredTag}
                     </span>
                   ) : (
-                    <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-[10px] text-faint">
+                    <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-[10px] text-faint shrink-0 whitespace-nowrap">
                       {t.console.notConfiguredTag}
                     </span>
                   )}

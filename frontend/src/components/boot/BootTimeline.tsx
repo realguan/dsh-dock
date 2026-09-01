@@ -1,38 +1,38 @@
-// 启动详情卡头（原 index.html .console 升级迁移）：五步时间线 + 仪表盘控制头。
-// 状态灯跟随全局：任一步 error=异常 > 任一 running=进行中 > 全 done=就绪。
 import { useBootStore } from "@/stores/bootStore"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { BootStep } from "./BootStep"
 import { Terminal, ShieldCheck, AlertTriangle, RefreshCw } from "lucide-react"
 
-function consoleState(steps: { status: string }[]): {
-  label: string
-  cls: string
-  icon: typeof Terminal
-} | null {
-  if (steps.some((s) => s.status === "error"))
-    return {
-      label: t.boot.stError,
-      cls: "bg-warn-soft text-warn border-warn/20",
-      icon: AlertTriangle,
-    }
-  if (steps.some((s) => s.status === "running"))
-    return {
-      label: t.boot.stRunning,
-      cls: "bg-wash text-brand-deep border-brand/20",
-      icon: RefreshCw,
-    }
-  if (steps.every((s) => s.status === "done"))
-    return {
-      label: t.boot.stReady,
-      cls: "bg-ok-soft text-ok border-ok/20",
-      icon: ShieldCheck,
-    }
-  return null
-}
-
 export function BootTimeline() {
+  const { t } = useI18n()
   const steps = useBootStore((s) => s.steps)
+
+  const consoleState = (stepsList: { status: string }[]): {
+    label: string
+    cls: string
+    icon: typeof Terminal
+  } | null => {
+    if (stepsList.some((s) => s.status === "error"))
+      return {
+        label: t.boot.stError,
+        cls: "bg-warn-soft text-warn border-warn/20",
+        icon: AlertTriangle,
+      }
+    if (stepsList.some((s) => s.status === "running"))
+      return {
+        label: t.boot.stRunning,
+        cls: "bg-wash text-brand-deep border-brand/20",
+        icon: RefreshCw,
+      }
+    if (stepsList.every((s) => s.status === "done"))
+      return {
+        label: t.boot.stReady,
+        cls: "bg-ok-soft text-ok border-ok/20",
+        icon: ShieldCheck,
+      }
+    return null
+  }
+
   const state = consoleState(steps)
   const doneCount = steps.filter((s) => s.status === "done").length
 

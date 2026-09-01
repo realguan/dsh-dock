@@ -8,7 +8,7 @@ import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
 import { resource } from "@/lib/resource"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import { useBootStore } from "@/stores/bootStore"
 import { Emblem } from "@/components/layout/Emblem"
@@ -22,6 +22,7 @@ import { ErrorCard } from "@/components/boot/ErrorCard"
 let lastHandoff = ""
 
 export function BootIndex() {
+  const { t } = useI18n()
   const [params] = useSearchParams()
   const { can } = usePlatform()
   const [wslBusy, setWslBusy] = useState(false)

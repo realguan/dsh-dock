@@ -4,7 +4,7 @@
 import { useState } from "react"
 import { validateProfileName } from "@/lib/profiles"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
@@ -35,6 +35,7 @@ export function ProfileNameDialog({
   /** 成功后的页面级提示（新名 + warnings 文本） */
   onDone: (newName: string, warnings: string[]) => void
 }) {
+  const { t } = useI18n()
   const [name, setName] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

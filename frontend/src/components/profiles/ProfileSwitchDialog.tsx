@@ -3,7 +3,7 @@
 // 无活跃会话时管理器不弹本窗（无损操作，直接切）。
 import { useState } from "react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -31,6 +31,7 @@ export function ProfileSwitchDialog({
   /** 切换指令已被壳受理后的页面级提示 */
   onDone: () => void
 }) {
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

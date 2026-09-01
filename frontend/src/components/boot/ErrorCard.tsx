@@ -15,14 +15,10 @@ import {
 import { api } from "@/lib/tauri"
 import type { TerminalAction } from "@/types/ipc"
 import type { BootErrorEvent } from "@/types/events"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 
 const INVOKABLE: ReadonlySet<string> = new Set(["retry", "upgrade", "upgrade_only"])
-
-function actionLabel(id: string): string {
-  return t.error.actions[id] ?? id
-}
 
 export function ErrorCard({
   payload,
@@ -38,11 +34,16 @@ export function ErrorCard({
   /** diag 头行右侧的 #NN 序号（多次错误自增，由父级计数） */
   index?: number
 }) {
+  const { t } = useI18n()
   const [pending, setPending] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const actions = payload.actions?.length ? payload.actions : ["retry"]
   const title = payload.title || t.error.fallbackTitle
+
+  const actionLabel = (id: string): string => {
+    return t.error.actions[id] ?? id
+  }
 
   const run = (id: string) => {
     if (pending) return

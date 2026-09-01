@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { ArrowUpCircle, Import, LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
 import type {
   PluginEntry,
@@ -34,6 +34,7 @@ export function ProfileDetailDialog({
   name: string | null
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const [detail, setDetail] = useState<ProfileDetail | null>(null)
   const [plugins, setPlugins] = useState<PluginEntry[] | null>(null)
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)

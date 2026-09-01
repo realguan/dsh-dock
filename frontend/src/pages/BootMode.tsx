@@ -5,7 +5,7 @@ import { useNavigate, Navigate } from "react-router-dom"
 import { motion } from "framer-motion"
 import { Laptop, TerminalSquare, ArrowRight, CheckCircle2 } from "lucide-react"
 import { usePlatform } from "@/hooks/usePlatform"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
 import { Switch } from "@/components/ui/switch"
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 type Mode = "local" | "wsl"
 
 export function BootMode() {
+  const { t } = useI18n()
   const { can } = usePlatform()
   const navigate = useNavigate()
   const [picked, setPicked] = useState<Mode>("local")

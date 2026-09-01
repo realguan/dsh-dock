@@ -4,7 +4,7 @@
 import { useState } from "react"
 import { summarizeCreateOutcome, TEMPLATE_BUNDLES, validateProfileName } from "@/lib/profiles"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { CreateProfileOutcome, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,6 +33,7 @@ export function ProfileCreateDialog({
   /** 创建落地（含 pending 中间态）后刷新列表 */
   onRefresh: () => void
 }) {
+  const { t } = useI18n()
   const [name, setName] = useState("")
   const [phase, setPhase] = useState<Phase>({ kind: "form" })
 

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
 import { Layout, Sparkles, ChevronRight, Package } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import { useBootStore } from "@/stores/bootStore"
 import { Emblem } from "@/components/layout/Emblem"
@@ -15,18 +15,19 @@ import { PulseBar } from "@/components/boot/PulseBar"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { ErrorCard } from "@/components/boot/ErrorCard"
 
-function profileMeta(name: string) {
-  return (
-    t.selector.items[name] ?? {
-      title: name,
-      desc: t.selector.customDesc,
-      tag: t.selector.customTag,
-    }
-  )
-}
-
 export function BootSelector() {
+  const { t } = useI18n()
   const [params] = useSearchParams()
+
+  const profileMeta = (name: string) => {
+    return (
+      t.selector.items[name] ?? {
+        title: name,
+        desc: t.selector.customDesc,
+        tag: t.selector.customTag,
+      }
+    )
+  }
   const profiles = (params.get("profiles") || "web")
     .split(",")
     .map((s) => s.trim())

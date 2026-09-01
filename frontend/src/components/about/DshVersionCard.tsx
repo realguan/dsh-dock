@@ -4,14 +4,15 @@ import { ArrowUpCircle, LoaderCircle, RefreshCw } from "lucide-react"
 import { listen } from "@tauri-apps/api/event"
 import { api } from "@/lib/tauri"
 import { useBootStore } from "@/stores/bootStore"
+import { useI18n } from "@/stores/i18nStore"
 import type { ComponentUpdate } from "@/types/ipc"
-import { t } from "@/content/zh-CN"
 import { Button } from "@/components/ui/button"
 import { DimRow as Row, DimNote as Note } from "./DimRow"
 
 const ACTION_BUSY_MS = 2000
 
 export function DshVersionCard() {
+  const { t } = useI18n()
   const dsh = useBootStore((s) => s.versions?.dsh ?? null)
   const [busy, setBusy] = useState<"none" | "check">("none")
   const [upgrading, setUpgrading] = useState(false)
@@ -104,6 +105,7 @@ export function DshVersionCard() {
 }
 
 function VersionView({ dim }: { dim: ComponentUpdate | null }) {
+  const { t } = useI18n()
   if (!dim)
     return (
       <span className="text-faint font-mono text-xs">

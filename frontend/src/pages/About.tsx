@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Copy, ExternalLink, Globe, Server } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { resource } from "@/lib/resource"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useClientUpdateStore } from "@/stores/clientUpdateStore"
 import { Emblem } from "@/components/layout/Emblem"
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button"
 let autoCheckedOnce = false
 
 export function About() {
+  const { t } = useI18n()
   const clientVersion = useBootStore((s) => s.versions?.client.current ?? null)
   const clientNewer = useBootStore((s) => s.versions?.client.newer ?? false)
   const dshVersion = useBootStore((s) => s.versions?.dsh.current ?? null)

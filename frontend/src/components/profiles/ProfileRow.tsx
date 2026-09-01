@@ -11,7 +11,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
 import { DropdownMenu } from "radix-ui"
 
@@ -48,6 +48,7 @@ export function ProfileRow({
   onCopy,
   onDelete,
 }: ProfileRowProps) {
+  const { t } = useI18n()
   const { name, materialized, bundles, dependencies, web_ui } = profile
 
   const metaLine = materialized
@@ -205,7 +206,7 @@ export function ProfileRow({
                     className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
                   >
                     <Pencil className="size-3.5 text-dim" />
-                    <span>{t.profiles.submitRename}</span>
+                    <span>{t.profiles.actionRename}</span>
                   </DropdownMenu.Item>
 
                   <DropdownMenu.Separator className="my-1 h-px bg-line" />
@@ -215,7 +216,7 @@ export function ProfileRow({
                     className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-warn outline-none hover:bg-warn-soft"
                   >
                     <Trash2 className="size-3.5" />
-                    <span>{t.profiles.deleteConfirm(name)}</span>
+                    <span>{t.profiles.actionDelete}</span>
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

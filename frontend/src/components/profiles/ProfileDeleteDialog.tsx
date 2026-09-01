@@ -3,7 +3,7 @@
 // 这是破坏性操作的最后一道闸，文案不得精简。
 import { useState } from "react"
 import { api } from "@/lib/tauri"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -26,6 +26,7 @@ export function ProfileDeleteDialog({
   /** 删除成功后的页面级提示（defaultCleared 时提示已回退 web） */
   onDone: (defaultCleared: boolean) => void
 }) {
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

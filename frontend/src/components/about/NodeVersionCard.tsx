@@ -1,9 +1,9 @@
-// Node 维度行（原 about.html render 的 node 段迁移）：纯只读——版本 + 来源。
 import { useBootStore } from "@/stores/bootStore"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { DimRow, DimNote } from "./DimRow"
 
 export function NodeVersionCard() {
+  const { t } = useI18n()
   const node = useBootStore((s) => s.versions?.node ?? null)
   return (
     <DimRow label={t.about.nodeLabel} badge="JavaScript VM">

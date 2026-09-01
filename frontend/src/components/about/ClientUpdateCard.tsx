@@ -13,7 +13,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion"
 import { api } from "@/lib/tauri"
 import { fmtBytes } from "@/lib/format"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 import { useClientUpdateStore } from "@/stores/clientUpdateStore"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -31,6 +31,7 @@ function phaseTone(phase: string): PhaseTone {
 }
 
 export function ClientUpdateCard() {
+  const { t } = useI18n()
   const snapshot = useClientUpdateStore((s) => s.snapshot)
   const phase = snapshot?.phase ?? "idle"
   const [expandNotes, setExpandNotes] = useState(false)

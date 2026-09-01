@@ -3,9 +3,10 @@
 // 本组件零监听、零 invoke。
 import { useBootStore } from "@/stores/bootStore"
 import { useClientUpdateStore } from "@/stores/clientUpdateStore"
-import { t } from "@/content/zh-CN"
+import { useI18n } from "@/stores/i18nStore"
 
 export function VersionChip() {
+  const { t } = useI18n()
   const dsh = useBootStore((s) => s.versions?.dsh ?? null)
   const phase = useClientUpdateStore((s) => s.snapshot?.phase ?? "idle")
   const downloading = useClientUpdateStore((s) =>
