@@ -32,7 +32,24 @@
 
 ## 三、记录
 
-### 2026-09-01 发版通知 · v0.9.2 插件中心一体化与凭据识别升级 —— guan（AI 协作）
+### 2026-09-01 发版通知 · v0.9.2 主工作台与控制中心双向快捷切换胶囊体系 —— guan（AI 协作）
+
+- 变更：
+  1. **双向快速切换入口（零遮挡架构）**：
+     - DSH 主工作台注入胶囊：`top: 8px; left: 50%` 居于顶部开阔空白区，支持鼠标自由拖拽；
+     - 控制中心顶栏胶囊：`QuickDshSwitcher` 内嵌于 Header 工具区，彻底移除底部悬浮层；
+     - 两端统一交互：平时仅展示极简文本，鼠标 Hover 时平滑单行展开（强制 nowrap）快捷键徽章。
+  2. **一键双向 Toggle 快捷键与跨窗口事件广播**：
+     - 共用一组快捷键 `⌘,`（macOS）/ `Ctrl+,`（Windows/Linux）在主工作台与控制中心之间来回 Toggle 切换；
+     - 新增 `app:settings-changed` 事件广播，工作台胶囊开关（即刻挂载/卸载）与快捷键风格切换实时响应；
+     - `AGENTS.md` §6、§7 规范登记 `open_profiles_window`、`focus_main_window`、`showFloatingSwitcher`、`switcherShortcut` 与 `app:settings-changed`。
+  3. **控制中心窗口与偏好设置升级**：
+     - 控制中心默认打开尺寸提升至 `1180x780`（开箱即为宽屏双栏工作台）；
+     - 「系统控制台 -> 偏好设置」增加工作台悬浮胶囊开关与快捷键风格偏好配置。
+  4. **跨平台原生适配加固**：
+     - `profiles` 独立窗口注入 `platform_script`，`host.ts` 增强平台 fallback 识别，确保快捷键准确匹配操作系统按键。
+- 影响：仅周知。v0.9.2 发版完成并打 tag。
+- 凭据：`cargo test` 175 个单测全绿 + `cargo fmt --check`；前端 `npm run typecheck` + Vitest 92 个单测全绿。
 
 - 变更：
   1. **插件中心统一视图**：Profile 管理器市场/总览两个 Tab 合并为「插件中心」单入口（`PluginHub.tsx` 子 Tab 承载），分类下拉改平铺标签矩阵（可展开收起），排序项矢量图标化。

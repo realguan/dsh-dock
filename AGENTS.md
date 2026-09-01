@@ -105,6 +105,7 @@
   已登记 `defaultMode`（2026-08-25）· `defaultProfile` 默认启动 profile
   （2026-08-28 落地；None/失效值读取侧兜底 `web`；删除时引用清除、重命名时引用同步）·
   `locale` 界面语言偏好（2026-08-31）· `autoRestart` 崩溃自动拉起守护（2026-08-31）·
+  `showFloatingSwitcher` 悬浮胶囊开关（2026-09-01）· `switcherShortcut` 切换快捷键偏好（2026-09-01）·
   `probe-cache.json` `--no-open` 探测缓存（2026-09-01；可丢失可重建的运行时缓存，
   损坏/缺失回退探测不阻断 boot）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
@@ -138,9 +139,10 @@
   `list_mcp_servers` `save_mcp_server` `delete_mcp_server`（MCP 服务器结构化管理，2026-08-31）。
   `delete_session`（会话删除，2026-08-31）。
   `fetch_market_registry`（社区插件市场 Registry 拉取，2026-08-31）。
+  `open_profiles_window` `focus_main_window`（控制中心与主工作台窗口双向切换，2026-09-01）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
-  事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
-  （仅 main/about，capability 授权）。
+  事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update` / `app:settings-changed`
+  （仅 main/about/profiles，capability 授权）。
 - **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`src/ipc.rs` COMMANDS 登记 →
   `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。

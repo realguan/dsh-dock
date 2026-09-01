@@ -53,6 +53,8 @@ export const api = {
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   openWorkbenchInBrowser: () => invoke<void>("open_workbench_in_browser"),
   getWorkbenchUrl: () => invoke<string | null>("get_workbench_url"),
+  openProfilesWindow: () => invoke<void>("open_profiles_window"),
+  focusMainWindow: () => invoke<void>("focus_main_window"),
 
   // Profile 管理器（4.3；Rust 侧 profiles.rs；「已创建未装插件」为合法中间态）
   listProfiles: () => invoke<ProfileSummary[]>("list_profiles"),

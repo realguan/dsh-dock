@@ -25,6 +25,8 @@ export const t = {
     wslOpen: "在 WSL 中打开",
     wslOpenTip: "在 WSL2 发行版内运行 DSH（需 Windows + WSL2）",
     wslFailed: "WSL 切换失败",
+    controlCenter: "控制中心",
+    controlCenterTip: "打开控制中心面板（管理 Profile / 插件 / 凭据 / 诊断）",
   },
   // 错误动作文案表：boot:error payload 的 actions[] 只给 id，文案在此映射；
   // 组件层以 t.error.actions[id] ?? id 兜底。
@@ -142,6 +144,8 @@ export const t = {
     subtitle: "多工作台管理、插件生态矩阵、会话自愈维护与系统控制台",
     refresh: "刷新",
     refreshing: "刷新中…",
+    switchToDsh: "返回工作台",
+    switchToDshTip: "快速切换至 DSH 主工作台（快捷键：⌘ + , / Ctrl + , 双向切换）",
     createBtn: "新建工作台",
     loadFailed: "profile 列表读取失败——请确认 dsh 环境后重试",
     retryLoad: "重试",
@@ -410,6 +414,16 @@ export const t = {
     autoRestartDesc: "当检测到 DSH 会话进程意外退出时，后台自动拉起恢复；60 秒内若连续崩溃达到 3 次将自动触发熔断保护，停止重试并弹出诊断错误卡。",
     autoRestartEnabled: "已开启守护（含 3次/60s 熔断保护）",
     autoRestartDisabled: "未开启（默认手动重试）",
+    // 悬浮胶囊与快捷键
+    switcherSection: "工作台快速切换与胶囊挂件",
+    floatingSwitcherLabel: "工作台悬浮胶囊",
+    floatingSwitcherDesc: "在 DSH 工作台顶部居中显示控制中心入口胶囊（支持鼠标自由拖拽移动；关闭后依然可通过快捷键呼出）",
+    floatingSwitcherEnabled: "已开启悬浮胶囊",
+    floatingSwitcherDisabled: "已关闭（仅使用快捷键）",
+    shortcutLabel: "控制中心呼出快捷键",
+    shortcutDesc: "在 DSH 主工作台与控制中心之间切换的全局快捷键",
+    shortcutDefault: "默认快捷键（⌘ + , / Ctrl + ,）",
+    shortcutShiftP: "命令面板风格（⌘ + ⇧ + P / Ctrl + ⇧ + P）",
     saveSuccess: "设置已保存",
     saveFailed: "设置保存失败",
     // 诊断大盘

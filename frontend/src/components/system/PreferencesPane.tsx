@@ -3,13 +3,16 @@ import { useEffect, useState } from "react"
 import {
   Check,
   Globe,
+  Keyboard,
   LoaderCircle,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n, type LocaleKey } from "@/stores/i18nStore"
 import { Switch } from "@/components/ui/switch"
 import type { ShellSettings } from "@/types/ipc"
@@ -20,6 +23,8 @@ export function PreferencesPane({
   onNotice: (msg: string, kind?: "ok" | "warn") => void
 }) {
   const { t, preference, setLocale } = useI18n()
+  const { platform } = usePlatform()
+  const isMac = platform.os === "macos"
   const [settings, setSettings] = useState<ShellSettings | null>(null)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -56,6 +61,42 @@ export function PreferencesPane({
     }
   }
 
+  const handleToggleFloatingSwitcher = async (checked: boolean) => {
+    if (!settings || saving) return
+    setSaving(true)
+    const next: ShellSettings = {
+      ...settings,
+      showFloatingSwitcher: checked,
+    }
+    try {
+      await api.setShellSettings(next)
+      setSettings(next)
+      onNotice(t.console.saveSuccess, "ok")
+    } catch (e) {
+      onNotice(`${t.console.saveFailed}: ${e}`, "warn")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleChangeShortcut = async (key: string) => {
+    if (!settings || saving) return
+    setSaving(true)
+    const next: ShellSettings = {
+      ...settings,
+      switcherShortcut: key,
+    }
+    try {
+      await api.setShellSettings(next)
+      setSettings(next)
+      onNotice(t.console.saveSuccess, "ok")
+    } catch (e) {
+      onNotice(`${t.console.saveFailed}: ${e}`, "warn")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center text-xs text-faint">
@@ -66,6 +107,8 @@ export function PreferencesPane({
   }
 
   const autoRestartActive = settings?.autoRestart ?? false
+  const floatingSwitcherActive = settings?.showFloatingSwitcher ?? true
+  const shortcutChoice = settings?.switcherShortcut ?? "default"
 
   return (
     <div className="space-y-6">
@@ -219,6 +262,114 @@ export function PreferencesPane({
               <span className="text-faint">熔断后动作：</span>
               <span className="text-ink font-semibold ml-1">停机并弹诊断卡</span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 模块 3：工作台快速切换与悬浮胶囊 */}
+      <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                floatingSwitcherActive
+                  ? "bg-brand/15 text-brand border border-brand/20"
+                  : "bg-line-soft text-faint"
+              }`}
+            >
+              <SlidersHorizontal className="size-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-ink">
+                  {t.console.floatingSwitcherLabel}
+                </h3>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                    floatingSwitcherActive
+                      ? "bg-brand/10 text-brand"
+                      : "bg-line-soft text-faint"
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      floatingSwitcherActive ? "bg-brand animate-pulse" : "bg-faint"
+                    }`}
+                  />
+                  {floatingSwitcherActive
+                    ? t.console.floatingSwitcherEnabled
+                    : t.console.floatingSwitcherDisabled}
+                </span>
+              </div>
+              <p className="mt-1 max-w-xl text-xs leading-relaxed text-dim">
+                {t.console.floatingSwitcherDesc}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={floatingSwitcherActive}
+              disabled={saving}
+              onCheckedChange={handleToggleFloatingSwitcher}
+            />
+          </div>
+        </div>
+
+        {/* 快捷键配置 */}
+        <div className="mt-5 border-t border-line/60 pt-4">
+          <div className="flex items-center gap-2 mb-2.5">
+            <Keyboard className="size-3.5 text-faint" />
+            <h4 className="text-xs font-semibold text-ink">
+              {t.console.shortcutLabel}
+            </h4>
+            <span className="text-[11px] text-faint">
+              ({t.console.shortcutDesc})
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {/* 默认快捷键 */}
+            <button
+              type="button"
+              onClick={() => handleChangeShortcut("default")}
+              className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
+                shortcutChoice === "default"
+                  ? "border-brand bg-brand/5 shadow-xs"
+                  : "border-line bg-bg hover:border-line-hover"
+              }`}
+            >
+              <div>
+                <span className="text-xs font-semibold text-ink">
+                  {t.console.shortcutDefault}
+                </span>
+                <p className="mt-1 font-mono text-[10px] text-faint">
+                  {isMac ? "⌘ + ," : "Ctrl + ,"}
+                </p>
+              </div>
+              {shortcutChoice === "default" && <Check className="size-4 text-brand" />}
+            </button>
+
+            {/* 命令面板风格 */}
+            <button
+              type="button"
+              onClick={() => handleChangeShortcut("shift_p")}
+              className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
+                shortcutChoice === "shift_p"
+                  ? "border-brand bg-brand/5 shadow-xs"
+                  : "border-line bg-bg hover:border-line-hover"
+              }`}
+            >
+              <div>
+                <span className="text-xs font-semibold text-ink">
+                  {t.console.shortcutShiftP}
+                </span>
+                <p className="mt-1 font-mono text-[10px] text-faint">
+                  {isMac ? "⌘ + ⇧ + P" : "Ctrl + ⇧ + P"}
+                </p>
+              </div>
+              {shortcutChoice === "shift_p" && <Check className="size-4 text-brand" />}
+            </button>
           </div>
         </div>
       </section>

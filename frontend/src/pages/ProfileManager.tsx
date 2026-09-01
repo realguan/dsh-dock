@@ -25,6 +25,7 @@ import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
 import { ProfileSwitchDialog } from "@/components/profiles/ProfileSwitchDialog"
 import { FloatingToast, type ToastMessage } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
+import { QuickDshSwitcher } from "@/components/layout/QuickDshSwitcher"
 
 export function ProfileManager() {
   const { t } = useI18n()
@@ -239,6 +240,9 @@ export function ProfileManager() {
           >
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
           </Button>
+
+          {/* 返回 DSH 主工作台操作入口 */}
+          <QuickDshSwitcher />
         </div>
       </header>
 

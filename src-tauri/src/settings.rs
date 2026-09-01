@@ -48,6 +48,10 @@ pub struct ShellSettings {
     pub locale: Option<String>,
     /// 崩溃自动拉起守护（4.12；None / false = 关闭；true = 启用，短时间多次崩溃自动熔断）。
     pub auto_restart: Option<bool>,
+    /// 是否在 DSH 工作台显示悬浮胶囊（2026-09-01；None / true = 开启；false = 关闭）。
+    pub show_floating_switcher: Option<bool>,
+    /// 呼出控制中心快捷键偏好（2026-09-01；None / "default" = Cmd/Ctrl+,；可选 "shift_p" = Cmd/Ctrl+Shift+P）。
+    pub switcher_shortcut: Option<String>,
 }
 
 fn settings_path(data_dir: &Path) -> std::path::PathBuf {
@@ -94,6 +98,8 @@ mod tests {
         assert_eq!(load(&dir).default_mode, None);
         assert_eq!(load(&dir).locale, None);
         assert_eq!(load(&dir).auto_restart, None);
+        assert_eq!(load(&dir).show_floating_switcher, None);
+        assert_eq!(load(&dir).switcher_shortcut, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -113,6 +119,8 @@ mod tests {
             default_profile: Some("custom-profile".to_string()),
             locale: Some("en-US".to_string()),
             auto_restart: Some(true),
+            show_floating_switcher: Some(false),
+            switcher_shortcut: Some("shift_p".to_string()),
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
@@ -127,6 +135,8 @@ mod tests {
             default_profile: Some("my-profile".to_string()),
             locale: None,
             auto_restart: None,
+            show_floating_switcher: None,
+            switcher_shortcut: None,
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);

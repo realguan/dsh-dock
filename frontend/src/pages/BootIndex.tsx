@@ -3,7 +3,7 @@
 // 下载主角位接管 → 「启动详情」控制台时间线卡（含内嵌错误区）。
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { TerminalSquare, Sparkles } from "lucide-react"
+import { TerminalSquare, Sparkles, SlidersHorizontal } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
@@ -119,6 +119,15 @@ export function BootIndex() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            title={t.boot.controlCenterTip}
+            onClick={() => api.openProfilesWindow().catch(() => {})}
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
+          >
+            <SlidersHorizontal className="size-3.5 text-brand" />
+            {t.boot.controlCenter}
+          </button>
           <VersionChip />
           {/* WSL 仅 Windows 渲染（2026-08-26 平台裁定，能力经 can.bootWsl） */}
           {can.bootWsl && (

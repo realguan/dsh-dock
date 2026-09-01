@@ -64,6 +64,8 @@
     "allow-save-mcp-server",
     "allow-delete-mcp-server",
     "allow-delete-session",
-    "allow-fetch-market-registry"
+    "allow-fetch-market-registry",
+    "allow-open-profiles-window",
+    "allow-focus-main-window"
   ]
 }

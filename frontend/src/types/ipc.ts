@@ -209,6 +209,8 @@ export interface ShellSettings {
   defaultProfile?: string | null
   locale?: string | null
   autoRestart?: boolean | null
+  showFloatingSwitcher?: boolean | null
+  switcherShortcut?: string | null
 }
 
 export interface NodeDiagnosticInfo {

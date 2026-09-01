@@ -1022,14 +1022,17 @@ fn get_shell_settings(app: tauri::AppHandle) -> Result<crate::settings::ShellSet
     Ok(crate::settings::load(&data_dir))
 }
 
-/// 偏好与设置：保存壳设置
+/// 偏好与设置：保存壳设置并跨窗口广播更新
 #[tauri::command]
 fn set_shell_settings(
     app: tauri::AppHandle,
     settings: crate::settings::ShellSettings,
 ) -> Result<(), String> {
+    use tauri::Emitter;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::settings::save(&data_dir, &settings)
+    crate::settings::save(&data_dir, &settings)?;
+    let _ = app.emit("app:settings-changed", &settings);
+    Ok(())
 }
 
 /// 环境健康体检：全量诊断大盘数据采集（4.11）
@@ -1551,6 +1554,226 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
     //    的有序/无序列表序号与圆点裁切掉（2026-08-31 修复）。
     let webview_memory_policy = WEBVIEW_MEMORY_POLICY_SCRIPT;
 
+    // DSH 工作台快捷切换悬浮胶囊与全局快捷键（2026-09-01 引入，零遮挡重构）：
+    // 1. 全局监听快捷键（默认 Cmd/Ctrl+, 或配置的快捷键）呼出控制中心；
+    // 2. 仅在进入 127.0.0.1 回环工作台后挂载独立 Shadow DOM 磨砂胶囊；
+    // 3. 默认位置：顶部水平正居中（Top-Center），处于 DSH 顶部天然空白留白区，完全避开 Logo 与按钮；
+    // 4. 胶囊文案平时仅展示「控制中心」，鼠标 hover 时平滑展开快捷键徽章（强制 nowrap）；
+    // 5. 动态监听 app:settings-changed 广播，实时响应开关（即刻消失/挂载）与快捷键切换；
+    // 6. 支持鼠标拖拽（Draggable）：用户可随心拖动到任意无遮挡位置。
+    let switcher_script = r#"(function () {
+      if (window.__dshDockSwitcherInjected) return;
+      window.__dshDockSwitcherInjected = true;
+
+      var currentSettings = null;
+
+      function isMacPlatform() {
+        return /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+      }
+
+      window.addEventListener('keydown', function (e) {
+        var isMac = isMacPlatform();
+        var modKey = isMac ? e.metaKey : (e.ctrlKey || e.metaKey);
+        var shortcutKey = currentSettings && currentSettings.switcherShortcut ? currentSettings.switcherShortcut : 'default';
+        var matchDefault = modKey && !e.shiftKey && (e.key === ',' || e.code === 'Comma');
+        var matchShiftP = modKey && e.shiftKey && (e.key === 'P' || e.key === 'p' || e.code === 'KeyP');
+        
+        var isMatch = false;
+        if (shortcutKey === 'shift_p') {
+          isMatch = matchShiftP || matchDefault;
+        } else {
+          isMatch = matchDefault || matchShiftP;
+        }
+
+        if (isMatch) {
+          e.preventDefault();
+          e.stopPropagation();
+          var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+          if (tauri) {
+            window.__TAURI__.core.invoke('open_profiles_window').catch(function () {});
+          }
+        }
+      }, true);
+
+      function getShortcutText(settings) {
+        var isMac = isMacPlatform();
+        var shortcutKey = settings && settings.switcherShortcut ? settings.switcherShortcut : 'default';
+        return shortcutKey === 'shift_p' ? (isMac ? '⌘ + ⇧ + P' : 'Ctrl + ⇧ + P') : (isMac ? '⌘ + ,' : 'Ctrl + ,');
+      }
+
+      function removeCapsule() {
+        var root = document.getElementById('dsh-dock-switcher-root');
+        if (root) root.remove();
+      }
+
+      function renderCapsule(settings) {
+        if (document.getElementById('dsh-dock-switcher-root')) return;
+        var isLoopback = location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '[::1]';
+        if (!isLoopback) return;
+
+        var isMac = isMacPlatform();
+        var host = document.createElement('div');
+        host.id = 'dsh-dock-switcher-root';
+        host.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:999999;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none;';
+
+        var shadow = host.attachShadow({ mode: 'open' });
+        var shortcutText = getShortcutText(settings);
+
+        var wrap = document.createElement('div');
+        wrap.innerHTML = '<style>' +
+          '.capsule{' +
+            'display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px 0 7px;' +
+            'border-radius:9999px;background:rgba(255,255,255,0.85);' +
+            'backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);' +
+            'border:1px solid rgba(0,0,0,0.08);' +
+            'box-shadow:0 2px 8px rgba(0,0,0,0.04),0 1px 2px rgba(0,0,0,0.02);' +
+            'color:#27272a;font-size:11px;font-weight:600;cursor:grab;' +
+            'transition:all 0.2s cubic-bezier(0.16,1,0.3,1);outline:none;' +
+          '}' +
+          '.capsule.dragging{cursor:grabbing;opacity:0.9;}' +
+          '@media(prefers-color-scheme:dark){' +
+            '.capsule{background:rgba(24,24,27,0.85);border-color:rgba(255,255,255,0.12);box-shadow:0 2px 10px rgba(0,0,0,0.35);color:#f4f4f5;}' +
+          '}' +
+          '.capsule:hover{' +
+            'background:rgba(255,255,255,0.98);border-color:rgba(59,130,246,0.45);' +
+            'box-shadow:0 4px 14px rgba(59,130,246,0.18),0 2px 4px rgba(0,0,0,0.04);' +
+          '}' +
+          '@media(prefers-color-scheme:dark){' +
+            '.capsule:hover{background:rgba(39,39,42,0.98);border-color:rgba(96,165,250,0.5);box-shadow:0 4px 16px rgba(96,165,250,0.25);}' +
+          '}' +
+          '.icon{display:flex;align-items:center;justify-content:center;width:13px;height:13px;color:#2563eb;}' +
+          '@media(prefers-color-scheme:dark){.icon{color:#60a5fa;}}' +
+          '.label{letter-spacing:-0.01em;line-height:1;}' +
+          '.badge{' +
+            'display:none;align-items:center;justify-content:center;' +
+            'padding:1px 4px;margin-left:2px;border-radius:4px;' +
+            'background:rgba(0,0,0,0.06);color:#71717a;' +
+            'font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;' +
+            'font-size:9px;font-weight:500;line-height:1;white-space:nowrap;flex-shrink:0;' +
+          '}' +
+          '.capsule:hover .badge{display:inline-flex;}' +
+          '@media(prefers-color-scheme:dark){' +
+            '.badge{background:rgba(255,255,255,0.08);color:#a1a1aa;}' +
+          '}' +
+        '</style>' +
+        '<div class="capsule" id="btn" title="控制中心 (' + shortcutText + ') · 可拖拽移动">' +
+          '<span class="icon">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+              '<line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>' +
+              '<line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>' +
+              '<line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>' +
+              '<line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line>' +
+            '</svg>' +
+          '</span>' +
+          '<span class="label">控制中心</span>' +
+          '<span class="badge" id="badge">' + shortcutText + '</span>' +
+        '</div>';
+
+        shadow.appendChild(wrap);
+        var btn = shadow.getElementById('btn');
+        if (btn) {
+          var isDragging = false;
+          var startX = 0, startY = 0;
+          var initialLeft = 0, initialTop = 0;
+          var hasMoved = false;
+
+          btn.addEventListener('pointerdown', function (e) {
+            isDragging = true;
+            hasMoved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            var rect = host.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+            btn.classList.add('dragging');
+            btn.setPointerCapture(e.pointerId);
+          });
+
+          btn.addEventListener('pointermove', function (e) {
+            if (!isDragging) return;
+            var dx = e.clientX - startX;
+            var dy = e.clientY - startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+              hasMoved = true;
+            }
+            host.style.transform = 'none';
+            host.style.left = Math.max(8, Math.min(window.innerWidth - 110, initialLeft + dx)) + 'px';
+            host.style.top = Math.max(8, Math.min(window.innerHeight - 36, initialTop + dy)) + 'px';
+          });
+
+          btn.addEventListener('pointerup', function (e) {
+            if (!isDragging) return;
+            isDragging = false;
+            btn.classList.remove('dragging');
+            btn.releasePointerCapture(e.pointerId);
+            if (!hasMoved) {
+              var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+              if (tauri) {
+                window.__TAURI__.core.invoke('open_profiles_window').catch(function (err) {
+                  console.error('[dsh-dock] 打开控制中心失败:', err);
+                });
+              }
+            }
+          });
+        }
+        document.body.appendChild(host);
+      }
+
+      function updateCapsuleBadge(settings) {
+        var host = document.getElementById('dsh-dock-switcher-root');
+        if (!host || !host.shadowRoot) return;
+        var badge = host.shadowRoot.getElementById('badge');
+        var btn = host.shadowRoot.getElementById('btn');
+        var shortcutText = getShortcutText(settings);
+        if (badge) badge.textContent = shortcutText;
+        if (btn) btn.setAttribute('title', '控制中心 (' + shortcutText + ') · 可拖拽移动');
+      }
+
+      function applySettings(settings) {
+        currentSettings = settings;
+        if (settings && settings.showFloatingSwitcher === false) {
+          removeCapsule();
+        } else {
+          if (!document.getElementById('dsh-dock-switcher-root')) {
+            renderCapsule(settings);
+          } else {
+            updateCapsuleBadge(settings);
+          }
+        }
+      }
+
+      function initSwitcher() {
+        var isLoopback = location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '[::1]';
+        if (!isLoopback) return;
+
+        var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+        if (tauri) {
+          window.__TAURI__.core.invoke('get_shell_settings').then(function (settings) {
+            applySettings(settings);
+          }).catch(function () {
+            applySettings(null);
+          });
+        } else {
+          applySettings(null);
+        }
+
+        // 监听来自控制中心保存的实时广播事件
+        if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen) {
+          window.__TAURI__.event.listen('app:settings-changed', function (ev) {
+            if (ev && ev.payload) {
+              applySettings(ev.payload);
+            }
+          });
+        }
+      }
+
+      if (document.body) {
+        initSwitcher();
+      } else {
+        document.addEventListener('DOMContentLoaded', initSwitcher);
+      }
+    })();"#;
+
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
     // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
@@ -1618,6 +1841,7 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         .initialization_script(&platform_script)
         .initialization_script(hook_script)
         .initialization_script(webview_memory_policy)
+        .initialization_script(switcher_script)
         .build()
 }
 
@@ -1807,7 +2031,7 @@ pub fn run() {
             let handle = app.clone();
             match event.id().as_ref() {
                 "about" => open_about_window(&handle),
-                "profiles_manager" => open_profiles_window(&handle),
+                "profiles_manager" => open_profiles_window(handle),
                 "open_in_browser" => {
                     let state = handle.state::<Arc<ShellState>>().inner().clone();
                     let url = state.workbench_url.lock().unwrap().clone();
@@ -1887,6 +2111,8 @@ pub fn run() {
             delete_mcp_server,
             delete_session,
             fetch_market_registry,
+            open_profiles_window,
+            focus_main_window,
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -2385,6 +2611,11 @@ fn open_about_window(app: &tauri::AppHandle) {
             let _ = win.set_focus();
             return;
         }
+        let platform_script = format!(
+            "window.__DSH_PLATFORM__ = {{ os: '{}', wsl: {} }};",
+            std::env::consts::OS,
+            if cfg!(windows) { "true" } else { "false" }
+        );
         let builder = tauri::WebviewWindowBuilder::new(
             &handle,
             "about",
@@ -2398,7 +2629,8 @@ fn open_about_window(app: &tauri::AppHandle) {
         .inner_size(480.0, 580.0)
         .min_inner_size(440.0, 480.0)
         .resizable(true)
-        .center();
+        .center()
+        .initialization_script(&platform_script);
         match builder.build() {
             Ok(_) => tracing::info!("关于窗口已创建"),
             Err(e) => tracing::error!("创建关于窗口失败：{e}"),
@@ -2408,34 +2640,57 @@ fn open_about_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Profile 管理器窗口（4.3）：独立小窗（label=profiles，React 渲染
+/// Profile 管理器窗口（控制中心）：独立窗口（label=profiles，React 渲染
 /// pages/ProfileManager.tsx）。独立窗口与 about 同理——主窗口 boot 后会
 /// 导航进 dsh 工作台（remote），壳页不可达；管理器要随时可达。
 /// 主线程创建约束同 open_about_window（WebView2 白板坑）。
-fn open_profiles_window(app: &tauri::AppHandle) {
+#[tauri::command]
+fn open_profiles_window(app: tauri::AppHandle) {
     let handle = app.clone();
     if let Err(e) = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("profiles") {
             let _ = win.show();
+            let _ = win.unminimize();
             let _ = win.set_focus();
             return;
         }
+        let platform_script = format!(
+            "window.__DSH_PLATFORM__ = {{ os: '{}', wsl: {} }};",
+            std::env::consts::OS,
+            if cfg!(windows) { "true" } else { "false" }
+        );
         let builder = tauri::WebviewWindowBuilder::new(
             &handle,
             "profiles",
             tauri::WebviewUrl::App("/".into()),
         )
         .title("控制中心")
-        // Master-Detail 双栏工作台：宽 960 + 高 680，自适应响应式伸缩
-        .inner_size(960.0, 680.0)
-        .min_inner_size(620.0, 540.0)
+        // Master-Detail 双栏工作台：宽 1180 + 高 780，开箱即得宽屏完整双栏布局
+        .inner_size(1180.0, 780.0)
+        .min_inner_size(860.0, 600.0)
         .resizable(true)
-        .center();
+        .center()
+        .initialization_script(&platform_script);
         match builder.build() {
             Ok(_) => tracing::info!("控制中心窗口已创建"),
             Err(e) => tracing::error!("创建控制中心窗口失败：{e}"),
         }
     }) {
         tracing::error!("调度控制中心窗口创建到主线程失败：{e}");
+    }
+}
+
+/// 聚焦主工作台窗口（label=main）。
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) {
+    let handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+        }
+    }) {
+        tracing::error!("调度主窗口聚焦到主线程失败：{e}");
     }
 }

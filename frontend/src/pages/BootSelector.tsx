@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
-import { Layout, Sparkles, ChevronRight, Package } from "lucide-react"
+import { Layout, Sparkles, ChevronRight, Package, SlidersHorizontal } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
@@ -97,7 +97,18 @@ export function BootSelector() {
             DSH DOCK
           </span>
         </div>
-        <VersionChip />
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            title={t.boot.controlCenterTip}
+            onClick={() => api.openProfilesWindow().catch(() => {})}
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
+          >
+            <SlidersHorizontal className="size-3.5 text-brand" />
+            {t.boot.controlCenter}
+          </button>
+          <VersionChip />
+        </div>
       </header>
 
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-20 pb-12">

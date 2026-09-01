@@ -19,7 +19,19 @@ declare global {
 
 function readPlatform(): PlatformInfo {
   const injected = typeof window !== "undefined" ? window.__DSH_PLATFORM__ : undefined
-  const os = injected?.os
+  let os = injected?.os
+  if (!os || (os !== "macos" && os !== "windows" && os !== "linux")) {
+    if (typeof navigator !== "undefined") {
+      const p = `${navigator.platform || ""} ${navigator.userAgent || ""}`.toLowerCase()
+      if (p.includes("mac") || p.includes("darwin")) {
+        os = "macos"
+      } else if (p.includes("win")) {
+        os = "windows"
+      } else if (p.includes("linux")) {
+        os = "linux"
+      }
+    }
+  }
   return {
     os:
       os === "macos" || os === "windows" || os === "linux"
