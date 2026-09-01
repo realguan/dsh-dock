@@ -44,32 +44,30 @@ Apple 现在推荐用 **API Key** 而非账户密码公证：
 | :--- | :--- |
 | `APPLE_CERTIFICATE` | 第 1 步复制的 base64（**不含换行**） |
 | `APPLE_CERTIFICATE_PASSWORD` | 第 1 步导出时设的密码 |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: 你的名字 (TEAMID)`（可选，不设则自动取 keychain 中第一个 Developer ID） |
-| `APPLE_API_KEY` | 第 2 步 .p8 文件内容（workflow 会自动写入临时文件并设 `APPLE_API_KEY_PATH`） |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: 你的名字 (TEAMID)`（必填；与导入证书完全一致） |
+| `APPLE_API_KEY` | 第 2 步 `.p8` 文件内容（workflow 仅在 tag 的 macOS 步骤写入临时文件） |
 | `APPLE_API_ISSUER` | 第 2 步 Issuer ID |
 | `APPLE_API_KEY_ID` | 第 2 步 Key ID |
-| `APPLE_TEAM_ID` | 你的 Team ID（登录 developer.apple.com → Membership 详情页可见） |
 
-> 不想用 API Key？可改用应用专用密码两件套：
-> `APPLE_ID`（Apple 账号邮箱）+ `APPLE_PASSWORD`（应用专用密码）+ `APPLE_TEAM_ID`。
-> 推荐 API Key：更安全、独立于账号密码。
+> 当前 workflow 只接入 API Key 路径；推荐保留这一组，避免把 Apple 账号密码放进 CI。
 
 ---
 
-## CI 怎么用它们（已配好，无需你改）
+## CI 怎么用它们
 
 `.github/workflows/build.yml`：
 
-1. **macOS job** 检测到 `APPLE_CERTIFICATE` → 导入 .p12 到临时 keychain（`security import`，只给 codesign/notarytool 权限）
-2. `cargo tauri build`：
-   - ta​​uri 用 `APPLE_SIGNING_IDENTITY`（或自动取）给 `.app` 签名（Hardened Runtime + `entitlements.plist`）
+1. **仅 tag 的 macOS 构建步骤**接收 Apple secrets；PR、分支构建和 Windows/Linux 步骤均不接收。检测到任一 Apple secret 后，会要求证书、identity 和 API Key 整组完整，避免静默退化为 ad-hoc。
+2. Tauri 读取 `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` 后自动导入临时 keychain；workflow 将 secret `APPLE_API_KEY` 的 `.p8` 内容短暂写入 runner 临时目录，并把 Tauri 所需的 `APPLE_API_KEY` 设为 `APPLE_API_KEY_ID`、`APPLE_API_KEY_PATH` 设为该临时路径。
+3. `cargo tauri build`：
+   - ta​​uri 用 `APPLE_SIGNING_IDENTITY` 给 `.app` 签名（Hardened Runtime + `entitlements.plist`）
    - 检测到 `APPLE_API_KEY` 组合 → 自动 **notarytool 公证 + staple**
-3. 验证步骤：`codesign --verify --deep --strict` 确认签名有效
-4. tag `v*` → release job 把带公证票的 .dmg / .zip 发到 GitHub Release
+4. 凭据完整时，workflow 以 `codesign --verify --deep --strict` 和 `spctl --assess` 作为签名/公证闸门。
+5. tag `v*` → release job 把带公证票的 `.dmg` / updater 资产发到 GitHub Release。
 
-**没配 secrets 时**：CI 用 tauri.conf 默认的 ad-hoc 身份（`signingIdentity: "-"`）签名，
-构建照常出包（CI 可用、本机可跑），但分发会被 Gatekeeper 拦（"无法验证开发者"）。
-配了 `APPLE_SIGNING_IDENTITY` 后自动升格为 Developer ID 真签名。
+**没配 Apple secrets 时**：tag 构建仍会以 `tauri.conf.json` 的 `signingIdentity: "-"`
+生成 ad-hoc 产物，以保留内部验证能力；日志会明确告警。这种包不能作为公开 macOS 分发包，
+Gatekeeper 会拦截。配置完整证书与 API Key 组合后才会升格为 Developer ID 签名并公证。
 
 ---
 
@@ -77,17 +75,17 @@ Apple 现在推荐用 **API Key** 而非账户密码公证：
 
 ```bash
 cd src-tauri
-cargo tauri build                     # signingIdentity 取本地 keychain 的 Developer ID
+export APPLE_SIGNING_IDENTITY='Developer ID Application: 你的名字 (TEAMID)'
+cargo tauri build
 ```
 
 公证（本地需要 API key 文件）：
 
 ```bash
-# tauri 读这些 env 自动公证 + staple
-export APPLE_API_KEY="$(cat ~/Downloads/AuthKey_XXXX.p8)"
+# Tauri 读这些 env 自动公证 + staple；APPLE_API_KEY 是 Key ID，不是 .p8 内容。
+export APPLE_API_KEY=XXXXYYYYZZ
 export APPLE_API_KEY_PATH=~/Downloads/AuthKey_XXXX.p8
 export APPLE_API_ISSUER=... # issuer UUID
-export APPLE_API_KEY_ID=... # 10 位 key id
 cargo tauri build
 ```
 
@@ -96,6 +94,6 @@ cargo tauri build
 ## 常见问题
 
 - **`codesign` 报 "no identity found"**：证书没导出成功 / keychain 里无 Developer ID Application。用 `security find-identity -v -p codesigning` 自查。
-- **公证失败 "invalid token"**：API Key 权限不足（要 Developer 角色）或 `.p8` 内容有换行（`APPLE_API_KEY` 需单行）。
-- **spctl --assess 不通过**：公证票没 staple 或验的是未公证的 intermediate build。正式发布以 tauri 自动 staple 为准，CI 里该步只记录不 gate。
+- **公证失败 "invalid token"**：API Key 权限不足（要 Developer 角色）、Key ID / Issuer ID 不匹配，或 `APPLE_API_KEY_PATH` 未指向正确的 `.p8` 文件。
+- **spctl --assess 不通过**：公证票没 staple 或验的是未公证的 intermediate build；CI 会将其视为 tag 发布失败。
 - **首次公证可能要几十分钟**：Apple 服务器排队；`--skip-stapling` 可跳过等待（CI 已用默认等待，稳定出票）。

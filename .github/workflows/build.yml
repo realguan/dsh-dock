@@ -15,15 +15,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# PR 或同一分支连续推送时，旧构建没有继续占用三平台 runner 的价值；tag 发布绝不
+# 自动取消，避免中断签名/上传中的正式发行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 env:
   # tauri-cli 必须与 tauri crate（2.11.x）同代：cli 2.8.4 的 bundler 对
   # createUpdaterArtifacts 的产物布局/二进制补丁与 2.11 不一致（CI 实测
   # __TAURI_BUNDLE_TYPE 补丁失败 + Linux updater 签名形态不同）。
   TAURI_CLI_VERSION: "2.11.4"
 
-# release job 需要创建 GitHub Release → GITHUB_TOKEN 显式授 contents: write
+# 默认只读；唯一需要写 Release 的 job 单独提升权限，PR 构建不持有写 token。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -34,14 +40,15 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      # 固定到完整 commit SHA，供应链更新由 Dependabot 提交可审查 PR。
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # 版本号一致性防呆闸门（2026-08-31）：
       # 当由 tag（如 v0.8.7）触发构建时，强制校验 git tag 剥除 'v' 前缀后必须与
       # Cargo.toml、tauri.conf.json、frontend/package.json 中的版本号完全一致！
       # 彻底杜绝「打了个新 tag 但源码版本号仍是旧版本」导致客户端内部版本漂移事故。
       - name: Verify tag version consistency
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'Linux'
         shell: bash
         run: |
           TAG_VER="${GITHUB_REF_NAME#v}"
@@ -59,7 +66,9 @@ jobs:
           echo "✅ Tag 版本与代码内所有版本定义完全一致"
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
 
       # Tauri v2 官方要求的系统依赖（Linux 构建安装包必需）
       - name: Ubuntu system deps
@@ -78,39 +87,18 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      # 客户端自更新签名（2026-08-25 接入）：
-      # 私钥在 GitHub secrets（TAURI_SIGNING_PRIVATE_KEY，空密码 minisign 密钥）。
-      # tauri-cli 在 plugins.updater.pubkey 配置存在时要求私钥签名 updater 产物
-      # （.app.tar.gz / *.nsis.zip / *.msi.zip / .AppImage.tar.gz 的 .sig 文件）。
-      # 无私钥（fork PR 场景）→ 构建会因缺私钥而失败，这是刻意行为：
-      # pubkey 配置存在即要求签名，宁可不发布也不出未签名产物。
-      - name: Set up updater signing key
-        # Windows runner 默认 shell 是 PowerShell：显式指定 bash（Git Bash 在
-        # GitHub Actions runner 上可用；macOS/Linux 默认 bash 一致）。
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY —— updater 产物将无法签名"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY=$TAURI_SIGNING_PRIVATE_KEY" >> "$GITHUB_ENV"
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
-          fi
-
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
 
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
 
-      # Rust 质量闸门（roadmap 4.1，2026-08-27 落地）：三平台同跑——fmt 是
-      # 全局一致的格式契约；clippy 各平台各编译一遍，恰好覆盖 #[cfg] 平台分叉
-      # 代码路径（如 Windows spawn / unix 信号）的 lint。
+      # Rust 质量闸门：fmt 是全局一致的格式契约，只需 Linux 一次；clippy/test
+      # 仍三平台执行，覆盖 #[cfg] 分叉（如 Windows spawn / unix 信号）。
       - name: Rust fmt gate
+        if: runner.os == 'Linux'
         working-directory: src-tauri
         run: cargo fmt --check
 
@@ -125,15 +113,16 @@ jobs:
       # 前端构建（2026-08-27 前端迁移，ADR-0008）：beforeBuildCommand 钩子会跑
       # npm ci && npm run build；锁文件 = frontend/package-lock.json（node 22 LTS）。
       - name: Setup node for frontend
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       # 前端质量闸门（typecheck/lint/vitest，frontend-migration §6）。
-      # Rust 侧 fmt/clippy 闸门已于上方接入（2026-08-27 存量归零后落地）。
+      # 它们是平台无关的纯逻辑检查，只在 Linux 跑一次；三平台仍保留 clippy/test/package。
       - name: Frontend gates
+        if: runner.os == 'Linux'
         working-directory: frontend
         run: |
           npm ci --no-audit --no-fund
@@ -141,25 +130,97 @@ jobs:
           npm run lint
           npm run test
 
-      # 注意：updater 签名需要 TAURI_SIGNING_PRIVATE_KEY（已在上一步设置到 env）。
-      # 有 key → 正常构建（含 .sig）；无 key（fork PR 无 secrets）→ `--no-sign`
-      # 跳过签名（tauri-cli 在 pubkey 配置存在且无私钥时会直接报错——刻意保护，
-      # 宁可不发布也不出未签名产物；`--no-sign` 只用于保持 fork PR 构建可跑）。
-      - name: Build installers
-        # Windows runner 默认 shell 是 PowerShell：显式 bash（与 key 检查一致）。
+      # 发布 feed 的资产映射是纯 Python 标准库逻辑；在普通 CI 提前回归，而不是等
+      # tag 构建走到发布阶段才发现某个平台无法自更新。
+      - name: Release helper tests
+        if: runner.os == 'Linux'
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      # 私钥只注入 tag 构建步骤，绝不写入 GITHUB_ENV；因此 PR 的 cargo/npm 命令
+      # 无法读取发布密钥。tag 必须签名，缺密钥直接失败而非发布不可更新的安装器。
+      - name: Build signed installers (macOS)
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'macOS'
         shell: bash
-        # 2026-08-27 前端迁移：tauri-cli 跑 hook 前会把进程 cwd 切到 src-tauri
-        # （build.rs set_current_dir），hook 的 script/cwd 均相对该目录——
-        # tauri.conf.json 已显式配置 cwd="../frontend"；自动发现 package.json
-        # 在 Linux 上可能先命中 node-map/（CI 实证失败），不再依赖。
+        working-directory: .
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || {
+            echo "::error::tag 发布必须配置 TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          }
+
+          has_apple_credentials=false
+          if [[ -n "$APPLE_CERTIFICATE" || -n "$APPLE_CERTIFICATE_PASSWORD" || -n "$APPLE_API_KEY_CONTENT" || -n "$APPLE_API_KEY_ID" || -n "$APPLE_API_ISSUER" ]]; then
+            has_apple_credentials=true
+            for required in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
+              test -n "${!required}" || {
+                echo "::error::macOS 签名/公证配置不完整：缺少 $required"
+                exit 1
+              }
+            done
+            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+            umask 077
+            printf '%s' "$APPLE_API_KEY_CONTENT" > "$key_path"
+            trap 'rm -f "$key_path"' EXIT
+            # Tauri 读取 APPLE_API_KEY 作为 key id，p8 内容仅短暂落入 runner 临时目录。
+            export APPLE_API_KEY="$APPLE_API_KEY_ID"
+            export APPLE_API_KEY_PATH="$key_path"
+          else
+            # 未配置的 GitHub secret 会以空字符串出现在 env；Tauri 将空值视为
+            # 已设置，必须清掉才能按 tauri.conf 的 '-' 回退到 ad-hoc 签名。
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+            unset APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER
+            unset APPLE_API_KEY APPLE_API_KEY_PATH
+            echo "::warning::未配置 Apple 签名凭据，macOS 产物仅 ad-hoc 签名，不能作为公开分发包"
+          fi
+          if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            unset APPLE_SIGNING_IDENTITY
+          fi
+          cargo tauri build
+
+          if [[ "$has_apple_credentials" == true ]]; then
+            app_path=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)
+            test -n "$app_path" || {
+              echo "::error::未找到 macOS .app 产物"
+              exit 1
+            }
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+          fi
+
+      - name: Build signed installers (Windows/Linux)
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os != 'macOS'
+        shell: bash
+        working-directory: .
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || {
+            echo "::error::tag 发布必须配置 TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          }
+          cargo tauri build
+
+      # 2026-08-27 前端迁移：tauri-cli 跑 hook 前会把进程 cwd 切到 src-tauri；
+      # tauri.conf.json 已显式配置 frontend cwd，不能依赖 package.json 自动发现。
+      - name: Build unsigned installers (PR/branch)
+        if: github.ref_type != 'tag' || startsWith(github.ref_name, 'v') == false
+        shell: bash
         working-directory: .
         run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            cargo tauri build
-          else
-            echo "::warning::无签名 key，以 --no-sign 构建（fork PR / 无 secrets 场景）"
-            cargo tauri build --no-sign
-          fi
+          cargo tauri build --no-sign
 
       # 诊断：打印 bundle 产物布局（updater 文件真实路径靠日志定，不靠猜）。
       - name: List bundle outputs
@@ -172,18 +233,19 @@ jobs:
       # macOS 的 tauri 产物 = .app 目录 + .dmg；只传 .dmg（双击安装）。
       - name: Upload installers (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-macOS
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
       # Windows: NSIS 自解压 .exe + MSI
       - name: Upload installers (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-Windows
           path: |
@@ -191,11 +253,12 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
       # Linux: .deb + .rpm + .AppImage
       - name: Upload installers (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-Linux
           path: |
@@ -204,56 +267,57 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
-      # 客户端自更新产物（签名包 + 配对 .sig）：
-      # 布局随 bundler 版本/平台变化（.app.tar.gz / .AppImage.sig / *.nsis.zip 等），
-      # 统一收「bundle 下全部 .sig + 其签名对象」，交给 release 的 latest.json 脚本
-      # 按文件名分类。无签名 key（--no-sign 构建）→ 无 .sig → 空 artifact（warn）。
+      # updater artifact 仅由 tag 签名构建产生，缺失即发行失败。Linux AppImage 已在
+      # installers artifact 中，无需再传一次大文件；feed 用签名关联该原始资产。
       - name: Upload updater artifacts (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-macOS-updater
           path: |
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/macos/*.app.tar.gz
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload updater artifacts (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-Windows-updater
           path: |
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/**/*.zip
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload updater artifacts (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DSH Dock-Linux-updater
           path: |
             src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
-            src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   # 覆盖率基线（roadmap 4.1，2026-08-27）：先出数不定阈值（宪法 §5 [待补充] 收口）。
   # 单 job ubuntu 即可——覆盖率反映测试对逻辑的覆盖，不随平台显著变化；
-  # 与 build 矩阵并行，不阻塞产物构建。
+  # 与 build 矩阵并行，不阻塞产物构建。tag 的 build 矩阵已执行测试；coverage 不作为
+  # 发布前置，避免再跑一份带插桩的相同测试集。
   coverage:
+    if: github.ref_type != 'tag'
     name: coverage (baseline)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
 
       # 与 build 矩阵相同的系统依赖（壳 lib 依赖 tauri，编译即需要 webkit2gtk）。
       - name: Ubuntu system deps
@@ -273,12 +337,12 @@ jobs:
             patchelf
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-llvm-cov
 
@@ -287,7 +351,7 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: src-tauri/lcov.info
@@ -298,50 +362,55 @@ jobs:
   # 多 job 并发对同一 tag create 会冲突（403/422）。
   release:
     name: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Download macOS installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-macOS
           path: installers/macos
 
       - name: Download Windows installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-Windows
           path: installers/windows
 
       - name: Download Linux installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-Linux
           path: installers/linux
 
       - name: Download macOS updater artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-macOS-updater
           path: updater/macos
 
       - name: Download Windows updater artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-Windows-updater
           path: updater/windows
 
       - name: Download Linux updater artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: DSH Dock-Linux-updater
           path: updater/linux
 
       - name: List installers
-        run: find installers -type f | sort; echo ---; find updater -type f | sort || true
+        shell: bash
+        run: |
+          find installers -type f | sort
+          find updater -type f | sort
 
       # 提取当前版本的详细发布日志（优先从 docs/broadcasts.md 提取权威变更小节，或回退到 git log）
       - name: Extract Release Notes
@@ -349,100 +418,84 @@ jobs:
         run: |
           python3 scripts/extract-release-notes.py "${{ github.ref_name }}" release_notes.md
 
-      # 先创建 Release 并上传安装器 + updater 产物（包含完整 Markdown 升级日志）
-      - name: Create GitHub Release (installers + updater)
-        uses: softprops/action-gh-release@v2
+      # 已公开的 Release 不允许被重跑任务替换资产；草稿可安全续跑，直到 feed 校验
+      # 完整后才发布。这样 /releases/latest 不会短暂指向一个没有 latest.json 的版本。
+      - name: Refuse to mutate a published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release-state.json 2> release-state.err; then
+            is_draft=$(python3 -c 'import json; print(json.load(open("release-state.json"))["draft"])')
+            if [ "$is_draft" != "True" ]; then
+              echo "::error::Release ${GITHUB_REF_NAME} 已公开；拒绝覆盖已发行资产"
+              exit 1
+            fi
+            echo "继续已有草稿 Release ${GITHUB_REF_NAME}"
+          elif rg -q '(HTTP 404|Not Found)' release-state.err; then
+            echo "尚无 Release，将创建草稿"
+          else
+            cat release-state.err
+            exit 1
+          fi
+
+      # 草稿先吸收安装器和签名，generator 可据 API 资产清单断言每个 updater 目标都
+      # 有对应二进制。draft 的临时 URL 不会写入 feed，脚本会构造正式 tag URL。
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           body_path: release_notes.md
-          fail_on_unmatched_files: false
+          draft: true
+          fail_on_unmatched_files: true
           files: |
             installers/**/*
             updater/**/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
-      # 生成 latest.json（桌面客户端自更新清单）：
-      # 从「签名过的 updater 产物」聚合 `platforms: {os-arch: {url, signature}}`。
-      # 并将详细升级日志注入到 notes 字段中，供桌面客户端「关于」窗口展示。
-      - name: Generate latest.json
+      - name: Fetch draft release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import json, os, urllib.request
-          from urllib.parse import quote
-          repo = "realguan/dsh-dock"
-          tag = os.environ.get("VERSION", "").lstrip("v")
-          # ① 列该 tag 的 Release assets（真实名 + 下载 URL）——Release 已创建
-          req = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/releases/tags/v{tag}",
-              headers={"Accept": "application/vnd.github+json"},
-          )
-          rel = json.load(urllib.request.urlopen(req))
-          assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
-          print("Release assets:", list(assets.keys()))
-          # ② 读签名文件（updater 产物目录）
-          root = "updater"
-          sigmap = {}  # 原始 basename(去.sig) -> sig content
-          for dp, dn, fn in os.walk(root):
-              for f in fn:
-                  if f.endswith(".sig"):
-                      sigmap[f[:-4]] = open(os.path.join(dp, f)).read().strip()
-          # ③ 平台键 → (签名内容, release asset 名)
-          #    用「签名对象的规范化名（空格→点号）」在 assets 里找真实名。
-          def norm(name):
-              return name.replace(" ", ".")
-          platforms = {}
-          for orig, sig in sigmap.items():
-              low = orig.lower()
-              if low.endswith(".app.tar.gz"):
-                  key = "darwin-aarch64" if "universal" not in low else "darwin-universal"
-              elif low.endswith(".appimage"):
-                  key = "linux-x86_64-appimage"
-              elif low.endswith(".msi"):
-                  key = "windows-x86_64-msi"
-              elif low.endswith(".setup.exe") or ("setup" in low and low.endswith(".exe")):
-                  key = "windows-x86_64-nsis"
-              else:
-                  continue
-              target = norm(orig)
-              url = assets.get(target)
-              if not url:
-                  print(f"  !! 找不到 release asset: {target}")
-                  continue
-              platforms[key] = {"url": url, "signature": sig}
-              print(f"  {key} <- {target}")
-          if not platforms:
-              print("NO UPDATER ASSETS FOUND — skipping latest.json")
-              raise SystemExit(0)
-          # 读取详细升级日志
-          notes_content = ""
-          if os.path.isfile("release_notes.md"):
-              notes_content = open("release_notes.md", encoding="utf-8").read().strip()
-          if not notes_content:
-              notes_content = "DSH Dock " + os.environ.get("VERSION", "")
-          # pub_date 必须是合法 RFC3339（插件解析失败会整个反序列化崩掉）。
-          from datetime import datetime, timezone
-          pub_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-          latest = {
-              "version": os.environ.get("VERSION", "0.0.0"),
-              "notes": notes_content,
-              "pub_date": pub_date,
-              "platforms": platforms,
-          }
-          with open("latest.json", "w") as fh:
-              json.dump(latest, fh, ensure_ascii=False, indent=2)
-          print("latest.json:")
-          print(open("latest.json").read())
-          PY
-        env:
-          VERSION: ${{ github.ref_name }}
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release-assets.json
 
-      # latest.json 生成后补传（保持 Release body 说明不变）
-      - name: Upload latest.json to release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          body_path: release_notes.md
-          files: latest.json
+      - name: Generate and validate latest.json
+        shell: bash
+        run: |
+          python3 scripts/generate-latest-json.py \
+            --version "${GITHUB_REF_NAME}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${GITHUB_REF_NAME}" \
+            --assets-json release-assets.json \
+            --updater-root updater \
+            --notes release_notes.md \
+            --output latest.json
+
+      - name: Upload latest.json to draft
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber
+
+      - name: Publish validated release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" > published-release.json
+          python3 - "${GITHUB_REF_NAME}" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open("published-release.json", encoding="utf-8"))
+          expected_tag = sys.argv[1]
+          if release["tag_name"] != expected_tag or release["draft"]:
+              raise SystemExit(f"发布状态不正确：{release['tag_name']} / draft={release['draft']}")
+          if "latest.json" not in {asset["name"] for asset in release["assets"]}:
+              raise SystemExit("已发布 Release 缺少 latest.json")
+          PY

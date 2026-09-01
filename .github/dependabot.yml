@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # 工作流 action 固定完整 SHA；由 Dependabot 生成可审查的更新 PR，避免手动追踪
+  # 上游 tag 漂移。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
