@@ -567,7 +567,7 @@ pub fn resolve_launch(
         match tier {
             TierKind::System => match probe_system(spec, path_env) {
                 SystemOutcome::Hit(hit) => {
-                    let no_open = system_no_open_supported(&hit);
+                    let no_open = system_no_open_supported(&hit, data_dir);
                     return Ok(LaunchSpec {
                         node_bin: hit.node.bin,
                         dsh_bin_js: hit.dsh.bin_js,
@@ -699,40 +699,149 @@ fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String
     }
 }
 
-/// system 档：探测该 dsh 版本是否支持 `--no-open`（`--profile web --help` 一次，进程内缓存）。
-/// 探测失败 → 不支持（宁可不传，避免旧版 dsh 秒退）。
-fn system_no_open_supported(hit: &SystemHit) -> bool {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, PathBuf, bool)>>> =
-        std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    if let Ok(mut guard) = cache.lock() {
-        if let Some((_, _, v)) = guard
-            .iter()
-            .find(|(n, b, _)| n == &hit.node.bin && b == &hit.dsh.bin_js)
-        {
-            return *v;
-        }
-        let v = probe_no_open(&hit.node.bin, &hit.dsh.bin_js);
-        guard.push((hit.node.bin.clone(), hit.dsh.bin_js.clone(), v));
-        return v;
-    }
-    false
+// ---------- --no-open 探测缓存（2026-09-01，AGENTS §6 例外册登记） ----------
+//
+// 语义：**可丢失、可重建的运行时缓存**——dsh 版本 → 该版本是否支持
+// `--no-open`。支持性是版本特性（旧版 dsh 收到未知参数会秒退），版本不变
+// 结果稳定；损坏 / 缺失 / 解析失败一律回退探测，绝不阻断启动。
+
+fn probe_cache_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("probe-cache.json")
 }
 
-fn probe_no_open(node: &Path, dsh_bin: &Path) -> bool {
-    let mut cmd = crate::child_cmd(node);
-    let out = cmd
-        .arg(dsh_bin)
-        .args(["--profile", "web", "--help"])
-        .output();
-    match out {
-        Ok(o) if o.status.success() => {
-            let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
-            text.push_str(&String::from_utf8_lossy(&o.stderr));
-            text.contains("--no-open")
-        }
-        _ => false,
+/// 读探测缓存：缺失 / 损坏 / 非对象 → 空表（回退探测路径）。
+fn load_probe_cache(data_dir: &Path) -> std::collections::HashMap<String, bool> {
+    std::fs::read_to_string(probe_cache_path(data_dir))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// 原子写探测缓存（tmp + rename，复用 settings 的模式）；失败静默——
+/// 缓存语义即可丢失，失败只是下次启动重新探测，不阻断 boot。
+fn save_probe_cache(
+    data_dir: &Path,
+    cache: &std::collections::HashMap<String, bool>,
+) -> Result<()> {
+    std::fs::create_dir_all(data_dir)?;
+    let path = probe_cache_path(data_dir);
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(cache)?;
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// system 档：探测该 dsh 版本是否支持 `--no-open`（`--profile web --help` 一次）。
+/// 结果跨启动持久化到 `<data_dir>/probe-cache.json`（dsh 版本 → bool）：
+/// `--no-open` 支持是版本特性，版本不变结果稳定——稳态启动零 spawn（2026-09-01
+/// 实测：spawn 一次耗时 8s+，其中帮助文本 1.4s 即出现；缓存命中后该部分 ≈0）。
+/// 探测失败 → 不支持（宁可不传，避免旧版 dsh 秒退）。
+fn system_no_open_supported(hit: &SystemHit, data_dir: &Path) -> bool {
+    let cache = load_probe_cache(data_dir);
+    if let Some(&v) = cache.get(&hit.dsh.version) {
+        return v;
     }
+    // 进程内缓存兜底（同一次运行多次解析命中）
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, PathBuf, bool)>>> =
+        std::sync::OnceLock::new();
+    let cache2 = CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let in_proc = {
+        let guard = cache2.lock().unwrap();
+        guard
+            .iter()
+            .find(|(n, b, _)| n == &hit.node.bin && b == &hit.dsh.bin_js)
+            .map(|(_, _, v)| *v)
+    };
+    if let Some(v) = in_proc {
+        return v;
+    }
+    let v = probe_no_open_with(&hit.node.bin, &hit.dsh.bin_js, PROBE_NO_OPEN_TIMEOUT);
+    cache2
+        .lock()
+        .unwrap()
+        .push((hit.node.bin.clone(), hit.dsh.bin_js.clone(), v));
+    let mut updated = cache;
+    updated.insert(hit.dsh.version.clone(), v);
+    let _ = save_probe_cache(data_dir, &updated);
+    v
+}
+
+/// 探测总超时：宽松于本机实测 8~11s（Windows 冷加载更慢），远小于
+/// BOOT_TIMEOUT 90s；超时按「不支持 --no-open」处理（宁可不传），
+/// 探测进程卡死不再永久阻塞 boot。
+const PROBE_NO_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 参数化探测（超时注入，供测试）：`child_cmd` 只做 Windows 批处理包装
+/// （cmd /C + CREATE_NO_WINDOW），跨平台可测。
+fn probe_no_open_with(node: &Path, dsh_bin: &Path, timeout: std::time::Duration) -> bool {
+    use std::io::{BufRead, BufReader};
+    let mut cmd = crate::child_cmd(node);
+    cmd.arg(dsh_bin)
+        .args(["--profile", "web", "--help"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    // stdout / stderr 各有独立线程读到共享 buffer：主循环只轮询 buffer，
+    // 避免 `read_line` 在子进程无输出时无限阻塞绕过 deadline（超时兜底
+    // 必须能真正打断）。rc 版本可能把 usage 打到 stderr，两路都查。
+    let shared: std::sync::Arc<std::sync::Mutex<String>> =
+        std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut readers = Vec::new();
+    let streams: [Option<Box<dyn std::io::Read + Send>>; 2] = [
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+    ];
+    for stream in streams {
+        let Some(stream) = stream else {
+            continue;
+        };
+        let shared2 = shared.clone();
+        readers.push(std::thread::spawn(move || {
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let mut g = shared2.lock().unwrap();
+                        g.push_str(&line);
+                    }
+                }
+            }
+        }));
+    }
+    loop {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        if shared.lock().unwrap().contains("--no-open") {
+            let _ = child.kill();
+            let _ = child.wait();
+            return true;
+        }
+        if child.try_wait().ok().flatten().is_some() {
+            // 进程先退出：结果是否命中看最后缓冲（已在上面的 contains 检查覆盖）。
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // 超时：强杀兜底，绝不无限阻塞 boot。宽容窗口内可能已被/将被 read 线程
+    // 释放的管道，kill 后管了就管了——查一次最终缓冲放弃精确命中（20s 已够）。
+    let _ = child.kill();
+    let _ = child.wait();
+    false
 }
 
 // ---------- 工具 ----------
@@ -1111,5 +1220,218 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("档序为空"));
+    }
+
+    // ---------- probe_no_open 探测（2026-09-01：流式早退 + 超时兜底） ----------
+
+    /// 造一个「假 node 执行器」：把 dsh 参数拼进一个可配置 shell 脚本。
+    /// `script` 内可用 `$1`（dsh bin 路径）。unix 下chmod +x。
+    #[cfg(unix)]
+    fn fake_node_executor(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("fake-node");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        bin
+    }
+
+    /// 测试用 dsh 假体路径（不存在也合法：脚本不真的读它）。
+    fn fake_dsh(dir: &Path) -> PathBuf {
+        dir.join("fake-dsh.js")
+    }
+
+    /// 命中 --no-open 立即早退：dsh 假体先打印 usage（含 --no-open）再 sleep 30。
+    /// 旧实现（output 等自然退出）要 30s+；流式读 stdout 应 <2s 返回 true。
+    #[cfg(unix)]
+    #[test]
+    fn probe_no_open_returns_early_on_hit() {
+        let dir = tmp();
+        let node = fake_node_executor(
+            &dir,
+            r#"#!/bin/sh
+echo "Usage: dsh --profile web [options]"
+echo "  --no-open    do not open the Web UI"
+sleep 30
+"#,
+        );
+        let t0 = std::time::Instant::now();
+        let hit = probe_no_open_with(&node, &fake_dsh(&dir), std::time::Duration::from_secs(60));
+        assert!(hit, "usage 含 --no-open 应判 true");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(5),
+            "命中后应 kill 早退，实测 {:?}",
+            t0.elapsed()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 无 --no-open 的 usage → false（宁可不传；旧防护语义回归）。
+    #[cfg(unix)]
+    #[test]
+    fn probe_no_open_missing_flag_is_false() {
+        let dir = tmp();
+        let node = fake_node_executor(
+            &dir,
+            r#"#!/bin/sh
+echo "Usage: dsh --profile web [options]"
+echo "  --port <port>  listen port"
+"#,
+        );
+        assert!(!probe_no_open_with(
+            &node,
+            &fake_dsh(&dir),
+            std::time::Duration::from_secs(10)
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 卡死（无输出不退出）→ 超时兜底 false，不无限阻塞（按 PROBE 语义兜底）。
+    #[cfg(unix)]
+    #[test]
+    fn probe_no_open_times_out_when_hung() {
+        let dir = tmp();
+        let node = fake_node_executor(&dir, "#!/bin/sh\nsleep 60\n");
+        let t0 = std::time::Instant::now();
+        let hit = probe_no_open_with(
+            &node,
+            &fake_dsh(&dir),
+            std::time::Duration::from_millis(300),
+        );
+        assert!(!hit, "卡死进程超时应判 false");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(3),
+            "超时应及时返回"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// stderr 上打印 usage 的版本也能命中（rc 常见形态）。
+    #[cfg(unix)]
+    #[test]
+    fn probe_no_open_finds_flag_on_stderr() {
+        let dir = tmp();
+        let node = fake_node_executor(
+            &dir,
+            r#"#!/bin/sh
+echo "Usage: dsh ... [options]" >&2
+echo "  --no-open    do not open" >&2
+sleep 30
+"#,
+        );
+        let t0 = std::time::Instant::now();
+        let hit = probe_no_open_with(&node, &fake_dsh(&dir), std::time::Duration::from_secs(60));
+        assert!(hit, "stderr 上的 --no-open 同样应命中");
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- 探测缓存（2026-09-01：跨启动持久化） ----------
+
+    #[test]
+    fn probe_cache_roundtrips() {
+        let dir = tmp();
+        let mut cache = std::collections::HashMap::new();
+        cache.insert("0.1.1-rc.2".to_string(), true);
+        save_probe_cache(&dir, &cache).unwrap();
+        let loaded = load_probe_cache(&dir);
+        assert_eq!(loaded.get("0.1.1-rc.2"), Some(&true));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn probe_cache_corrupted_falls_back_empty() {
+        let dir = tmp();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(probe_cache_path(&dir), "{ not json").unwrap();
+        let loaded = load_probe_cache(&dir);
+        assert!(loaded.is_empty(), "损坏缓存应回退空表，不 panic");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// system_no_open_supported 缓存命中零 spawn：直接 pre 写缓存后调用，
+    /// 断言命中且没有执行探测（用「会创建标记文件的 node」验证）。
+    #[cfg(unix)]
+    #[test]
+    fn system_no_open_uses_cache_without_spawn() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp();
+        let dsh_version = "0.1.1-rc.2";
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(dsh_version.to_string(), true);
+        save_probe_cache(&dir, &cache).unwrap();
+        // node 假体：被 spawn 即写标记文件
+        let node = dir.join("should-not-run");
+        std::fs::write(&node, "#!/bin/sh\ntouch spawned-marker\n").unwrap();
+        std::fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+        let hit = SystemHit {
+            node: SystemNode {
+                bin: node.clone(),
+                version: "v24.18.0".to_string(),
+            },
+            dsh: SystemDsh {
+                bin_js: dir.join("nope.js"),
+                version: dsh_version.to_string(),
+                engines_node: None,
+            },
+        };
+        let v = system_no_open_supported(&hit, &dir);
+        assert!(v, "缓存命中应直接返回 true");
+        assert!(
+            !dir.join("spawned-marker").exists(),
+            "缓存命中后不得 spawn 探测进程"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 缓存 miss → 探测 → 写回。
+    #[cfg(unix)]
+    #[test]
+    fn system_no_open_miss_probes_and_writes_back() {
+        let dir = tmp();
+        let node = fake_node_executor(&dir, "#!/bin/sh\necho \"  --no-open    do not open\"\n");
+        let hit = SystemHit {
+            node: SystemNode {
+                bin: node.clone(),
+                version: "v24.18.0".to_string(),
+            },
+            dsh: SystemDsh {
+                bin_js: dir.join("fake.js"),
+                version: "0.1.1-rc.2".to_string(),
+                engines_node: None,
+            },
+        };
+        let v = system_no_open_supported(&hit, &dir);
+        assert!(v);
+        let cache = load_probe_cache(&dir);
+        assert_eq!(cache.get("0.1.1-rc.2"), Some(&true), "探测后应写回缓存");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 版本变化失效：缓存 v1=true，新版本 → 重新探测（假体返回 false）。
+    #[cfg(unix)]
+    #[test]
+    fn system_no_open_cache_invalidates_on_version_change() {
+        let dir = tmp();
+        let mut cache = std::collections::HashMap::new();
+        cache.insert("0.1.0-rc.5".to_string(), true);
+        save_probe_cache(&dir, &cache).unwrap();
+        let node = fake_node_executor(&dir, "#!/bin/sh\necho \"Usage: plain\"\n");
+        let hit = SystemHit {
+            node: SystemNode {
+                bin: node.clone(),
+                version: "v24.18.0".to_string(),
+            },
+            dsh: SystemDsh {
+                bin_js: dir.join("fake.js"),
+                version: "0.1.1-rc.2".to_string(),
+                engines_node: None,
+            },
+        };
+        let v = system_no_open_supported(&hit, &dir);
+        assert!(!v, "新版本未命中缓存应重新探测（假体无 --no-open → false）");
+        let cache = load_probe_cache(&dir);
+        assert_eq!(cache.get("0.1.0-rc.5"), Some(&true), "旧版本缓存保留");
+        assert_eq!(cache.get("0.1.1-rc.2"), Some(&false), "新版本探测结果写回");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

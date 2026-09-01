@@ -32,6 +32,23 @@
 
 ## 三、记录
 
+### 2026-09-01 完成通知 · 启动环境检查提速（--no-open 探测缓存 + 流式早退 + 超时兜底） —— guan（AI 协作）
+
+- 变更：`src-tauri/src/resolve.rs` 环境检查链路优化 + `AGENTS.md` §6 例外册登记：
+  1. **跨启动持久化缓存**：`--no-open` 能力探测结果（dsh 版本 → bool）落 `<data_dir>/probe-cache.json`
+     （原子写、损坏/缺失回退探测、不阻断 boot），稳态启动零 spawn（实测原 8~11s → 缓存命中 ≈0）。
+  2. **流式读数早退**：`probe_no_open` 从 `output()` 等自然退出改为双线程读 stdout/stderr
+     （usage 可能打到任一流），命中 `--no-open` 即 kill 早退——缓存 miss 时 1.4s 返回（原 8~11s）。
+  3. **硬超时兜底**：20s 探测总超时（原无超时，探测进程卡死会永久阻塞 boot）；超时按
+     「不支持」处理（不传 `--no-open`，保持旧版 dsh 秒退防护默认值）。
+  4. 新增 8 个单测（缓存命中零 spawn / miss 写回 / 流式早退 / stderr 命中 / 卡死超时 /
+     版本变化失效 / 缓存损坏回退 / 往返），全仓 `cargo test` 175 passed，`clippy -D warnings` 通过。
+  5. `AGENTS.md` §6 运行时持久化例外册登记 `probe-cache.json`（可丢失可重建缓存）。
+- 影响：仅周知。日常启动环境检查从 ~8~11s 降至 ~0.3s（仅剩 PATH/node 探测子进程开销）；
+  探测进程卡死不再阻塞启动。
+- 凭据：本机实测（macOS + fnm node v24.18.0 / dsh 0.1.1-rc.2）：旧实现 `--help` 探测 7~11s、
+  新流式早退 1.3s；`cargo test` 175 全绿 + `cargo clippy --all-targets -- -D warnings` 零告警。
+
 ### 2026-08-31 发版通知 · v0.9.1 社区插件市场全量上线（awesome-dsh-plugin Registry 2700+ 插件发现与一键安装分发） —— guan（AI 协作）
 
 - 变更：
