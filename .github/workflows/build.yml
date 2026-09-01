@@ -233,7 +233,7 @@ jobs:
       # macOS 的 tauri 产物 = .app 目录 + .dmg；只传 .dmg（双击安装）。
       - name: Upload installers (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-macOS
           path: |
@@ -245,7 +245,7 @@ jobs:
       # Windows: NSIS 自解压 .exe + MSI
       - name: Upload installers (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-Windows
           path: |
@@ -258,7 +258,7 @@ jobs:
       # Linux: .deb + .rpm + .AppImage
       - name: Upload installers (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-Linux
           path: |
@@ -273,7 +273,7 @@ jobs:
       # installers artifact 中，无需再传一次大文件；feed 用签名关联该原始资产。
       - name: Upload updater artifacts (macOS)
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'macOS'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-macOS-updater
           path: |
@@ -284,7 +284,7 @@ jobs:
 
       - name: Upload updater artifacts (Windows)
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'Windows'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-Windows-updater
           path: |
@@ -295,7 +295,7 @@ jobs:
 
       - name: Upload updater artifacts (Linux)
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'Linux'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: DSH Dock-Linux-updater
           path: |
@@ -351,7 +351,7 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-lcov
           path: src-tauri/lcov.info
