@@ -832,16 +832,18 @@ fn probe_no_open_with(node: &Path, dsh_bin: &Path, timeout: std::time::Duration)
             return true;
         }
         if child.try_wait().ok().flatten().is_some() {
-            // 进程先退出：结果是否命中看最后缓冲（已在上面的 contains 检查覆盖）。
-            return false;
+            break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    // 超时：强杀兜底，绝不无限阻塞 boot。宽容窗口内可能已被/将被 read 线程
-    // 释放的管道，kill 后管了就管了——查一次最终缓冲放弃精确命中（20s 已够）。
+    // 进程退出或超时后，等待 reader 线程把管道残留数据完全读尽（防并发早退漏读）
     let _ = child.kill();
     let _ = child.wait();
-    false
+    for r in readers {
+        let _ = r.join();
+    }
+    let hit = shared.lock().unwrap().contains("--no-open");
+    hit
 }
 
 // ---------- 工具 ----------
