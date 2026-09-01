@@ -32,6 +32,18 @@
 
 ## 三、记录
 
+### 2026-09-01 发版通知 · v0.9.2 插件中心一体化与凭据识别升级 —— guan（AI 协作）
+
+- 变更：
+  1. **插件中心统一视图**：Profile 管理器市场/总览两个 Tab 合并为「插件中心」单入口（`PluginHub.tsx` 子 Tab 承载），分类下拉改平铺标签矩阵（可展开收起），排序项矢量图标化。
+  2. **跨 Profile 安装去重折叠**：导入弹窗同名插件按包名聚合 + 来源 Profile 标签切换器（`groupPickerCandidates`），独立绑定配置复制。
+  3. **模型凭据别名识别**：`credentials.rs` 支持 `refs.DEEPSEEK_API_KEY` 等大写环境变量与别名映射，修复「已配置仍提示未配置」。
+  4. **Release Notes 规范化体系**：新增模板与生成规范，构建期脚本优先读 `docs/RELEASE_NOTES.md`。
+  5. **下线 `reset_profile_dependencies`**：IPC 登记/capabilities/前端入口三处同步清理，依赖自愈回归 pnpm 自动补齐。
+  6. **i18n 与设计规范对齐**：组件全面切换 `useI18n()`；清理非标准 emoji 与冗余文案；悬浮提示补齐；Profile 彩色确定性标签。
+- 影响：仅周知。v0.9.2 已打 tag，进入冻结期（master 只收 fix）。
+- 凭据：`cargo test` 175 个单测全绿 + `clippy -D warnings` 零告警 + `cargo fmt --check`；前端 `typecheck`/`lint`/92 单测全绿。
+
 ### 2026-09-01 完成通知 · 启动环境检查提速（--no-open 探测缓存 + 流式早退 + 超时兜底） —— guan（AI 协作）
 
 - 变更：`src-tauri/src/resolve.rs` 环境检查链路优化 + `AGENTS.md` §6 例外册登记：

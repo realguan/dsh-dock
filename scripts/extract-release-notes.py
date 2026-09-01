@@ -77,7 +77,7 @@ def extract_from_git() -> str:
     return ""
 
 def main():
-    tag_name = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GITHUB_REF_NAME", "v0.9.1")
+    tag_name = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GITHUB_REF_NAME", "v0.9.2")
     output_path = sys.argv[2] if len(sys.argv) > 2 else "release_notes.md"
     
     docs_dir = os.path.join(os.path.dirname(__file__), "..", "docs")
