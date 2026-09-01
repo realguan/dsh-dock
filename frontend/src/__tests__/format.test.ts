@@ -1,6 +1,12 @@
 // 格式化纯函数测试（frontend-migration §8.1）。
 import { describe, expect, it } from "vitest"
-import { fmtBytes, fmtEta, fmtPercent, fmtSpeed } from "@/lib/format"
+import {
+  fmtBytes,
+  fmtEta,
+  fmtPercent,
+  fmtSpeed,
+  getProfileColorClass,
+} from "@/lib/format"
 
 describe("fmtBytes", () => {
   it("字节级按整数输出", () => {
@@ -52,5 +58,18 @@ describe("fmtPercent", () => {
     expect(fmtPercent(50, 200)).toBe(25)
     expect(fmtPercent(999, 100)).toBe(100)
     expect(fmtPercent(-1, 100)).toBe(0)
+  })
+})
+
+describe("getProfileColorClass", () => {
+  it("web profile 派发品牌色", () => {
+    expect(getProfileColorClass("web")).toContain("border-brand")
+  })
+
+  it("非 web profile 确定性派发非空样式类", () => {
+    const cls1 = getProfileColorClass("test")
+    const cls2 = getProfileColorClass("test")
+    expect(cls1).toBe(cls2)
+    expect(cls1).toMatch(/border-.* bg-.* text-.*/)
   })
 })

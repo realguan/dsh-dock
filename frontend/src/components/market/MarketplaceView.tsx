@@ -2,13 +2,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
-  CheckCircle2,
+  ArrowDownAZ,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  Download,
   Package,
   RefreshCw,
   Search,
-  Store,
+  Sparkles,
+  Star,
   X,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
@@ -32,6 +36,7 @@ import {
 } from "@/components/ui/select"
 
 const PAGE_SIZE_OPTIONS = [12, 24, 36, 48]
+const DEFAULT_CATEGORY_LIMIT = 10
 
 // 内存单例缓存，避免在同一个 session 内频繁切换 Tab 时重复拉取大 JSON
 let cachedRegistry: MarketRegistry | null = null
@@ -49,11 +54,11 @@ export function MarketplaceView({
   const [loading, setLoading] = useState(!cachedRegistry)
   const [error, setError] = useState<string | null>(null)
 
-  // 搜索、分类、排序与筛选
+  // 搜索、分类与排序
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
   const [sortOption, setSortOption] = useState<MarketSortOption>("stars")
-  const [onlyInstalled, setOnlyInstalled] = useState(false)
+  const [expandAllCategories, setExpandAllCategories] = useState(false)
 
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
@@ -122,7 +127,7 @@ export function MarketplaceView({
     return set
   }, [installedMap])
 
-  // 分类列表计算与对应数量统计
+  // 分类列表计算与对应数量统计（按数量降序）
   const categoriesWithCounts = useMemo(() => {
     if (!registry) return []
     const counts: Record<string, number> = {}
@@ -139,7 +144,6 @@ export function MarketplaceView({
       }
     })
 
-    // 按数量降序排序
     return items.sort((a, b) => b.count - a.count)
   }, [registry, activeLocale])
 
@@ -150,10 +154,10 @@ export function MarketplaceView({
       plugins: registry.plugins,
       query: searchQuery,
       category: selectedCategory,
-      onlyInstalled,
+      onlyInstalled: false,
       installedPluginNames,
     })
-  }, [registry, searchQuery, selectedCategory, onlyInstalled, installedPluginNames])
+  }, [registry, searchQuery, selectedCategory, installedPluginNames])
 
   // 排序后的插件列表
   const sortedPlugins = useMemo(() => {
@@ -167,7 +171,7 @@ export function MarketplaceView({
   // 搜索或筛选变化时重置页码到第 1 页
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery, selectedCategory, sortOption, onlyInstalled, pageSize])
+  }, [searchQuery, selectedCategory, sortOption, pageSize])
 
   const paginatedPlugins = useMemo(() => {
     const start = (currentPage - 1) * pageSize
@@ -188,50 +192,22 @@ export function MarketplaceView({
     void loadLocalData()
   }
 
+  // 显示的分类集合（支持展开/折叠）
+  const displayedCategories = useMemo(() => {
+    if (expandAllCategories || categoriesWithCounts.length <= DEFAULT_CATEGORY_LIMIT) {
+      return categoriesWithCounts
+    }
+    return categoriesWithCounts.slice(0, DEFAULT_CATEGORY_LIMIT)
+  }, [categoriesWithCounts, expandAllCategories])
+
   return (
     <div className="space-y-4">
       {/* 顶部控制舱 */}
       <section className="rounded-2xl border border-line bg-panel p-4 shadow-2xs space-y-3">
-        {/* 顶部标题与快速统计栏 */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-9 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand shadow-2xs">
-              <Store className="size-4.5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-ink tracking-tight">
-                  {t.market.title}
-                </h2>
-                {registry && (
-                  <span className="rounded-md border border-line bg-wash px-1.5 py-0.5 text-[10px] font-mono text-dim">
-                    {registry.count || registry.plugins?.length} 插件
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-faint">{t.market.subtitle}</p>
-            </div>
-          </div>
-
-          {/* 刷新与统计 */}
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void loadRegistry(true)}
-              disabled={loading}
-              className="h-8 gap-1.5 rounded-xl text-xs"
-            >
-              <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
-              <span>{loading ? "加载中…" : t.market.refreshRegistry}</span>
-            </Button>
-          </div>
-        </div>
-
-        {/* 搜索与多维度筛选栏 */}
-        <div className="flex flex-wrap items-center gap-2 pt-1">
+        {/* 顶部搜索、排序与刷新栏 */}
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* 搜索框 */}
-          <div className="relative min-w-[240px] flex-1">
+          <div className="relative min-w-[260px] flex-1">
             <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
             <input
               type="text"
@@ -251,33 +227,6 @@ export function MarketplaceView({
             )}
           </div>
 
-          {/* 分类下拉选择 */}
-          <div className="w-[180px]">
-            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-              <SelectTrigger className="h-8.5 rounded-xl border-line bg-wash text-xs text-ink font-medium">
-                <SelectValue placeholder={t.market.allCategories} />
-              </SelectTrigger>
-              <SelectContent className="max-h-[300px] rounded-xl border-line bg-panel text-xs text-ink">
-                <SelectItem value="all">
-                  <div className="flex items-center justify-between w-full gap-2">
-                    <span>{t.market.allCategories}</span>
-                    <span className="font-mono text-faint text-[10px]">
-                      ({registry?.plugins?.length || 0})
-                    </span>
-                  </div>
-                </SelectItem>
-                {categoriesWithCounts.map((cat) => (
-                  <SelectItem key={cat.key} value={cat.key}>
-                    <div className="flex items-center justify-between w-full gap-2">
-                      <span>{cat.label}</span>
-                      <span className="font-mono text-faint text-[10px]">({cat.count})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           {/* 排序方式 */}
           <div className="w-[150px]">
             <Select
@@ -288,61 +237,118 @@ export function MarketplaceView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
-                <SelectItem value="stars">{t.market.sortStars}</SelectItem>
-                <SelectItem value="downloads">{t.market.sortDownloads}</SelectItem>
-                <SelectItem value="newest">{t.market.sortNewest}</SelectItem>
-                <SelectItem value="name">{t.market.sortName}</SelectItem>
+                <SelectItem value="stars">
+                  <div className="flex items-center gap-2">
+                    <Star className="size-3.5 text-amber-500" />
+                    <span>{t.market.sortStars}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="downloads">
+                  <div className="flex items-center gap-2">
+                    <Download className="size-3.5 text-sky-500" />
+                    <span>{t.market.sortDownloads}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="newest">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="size-3.5 text-indigo-500" />
+                    <span>{t.market.sortNewest}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="name">
+                  <div className="flex items-center gap-2">
+                    <ArrowDownAZ className="size-3.5 text-violet-500" />
+                    <span>{t.market.sortName}</span>
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* 已装过滤器切换 */}
+          {/* 刷新 Registry */}
           <Button
             size="sm"
-            variant={onlyInstalled ? "default" : "outline"}
-            onClick={() => setOnlyInstalled(!onlyInstalled)}
-            className={`h-8.5 text-xs rounded-xl font-medium gap-1.5 ${
-              onlyInstalled
-                ? "bg-brand text-white hover:bg-brand/90"
-                : "border-line text-dim hover:text-ink hover:bg-wash"
-            }`}
+            variant="outline"
+            onClick={() => void loadRegistry(true)}
+            disabled={loading}
+            className="h-8.5 gap-1.5 rounded-xl text-xs"
           >
-            <CheckCircle2 className="size-3.5" />
-            <span>{t.market.filterInstalled}</span>
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
+            <span>{loading ? "加载中…" : t.market.refreshRegistry}</span>
           </Button>
         </div>
 
-        {/* 常用分类快速芯片 Pills (横向滚动) */}
+        {/* 平铺分类标签矩阵（无横向滚动条，自动换行，支持展开收起） */}
         {categoriesWithCounts.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-line/60">
-            <button
-              type="button"
-              onClick={() => setSelectedCategory("all")}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all shrink-0 ${
-                selectedCategory === "all"
-                  ? "bg-brand text-white shadow-2xs font-semibold"
-                  : "text-dim hover:bg-wash hover:text-ink"
-              }`}
-            >
-              {t.market.allCategories}
-            </button>
-            {categoriesWithCounts.slice(0, 10).map((cat) => (
+          <div className="space-y-1.5 pt-2 border-t border-line/60">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {/* 全部标签 */}
               <button
-                key={cat.key}
                 type="button"
-                onClick={() => setSelectedCategory(cat.key)}
-                className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-all shrink-0 flex items-center gap-1 ${
-                  selectedCategory === cat.key
-                    ? "bg-brand text-white shadow-2xs font-semibold"
-                    : "text-dim hover:bg-wash hover:text-ink"
+                onClick={() => setSelectedCategory("all")}
+                className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
+                  selectedCategory === "all"
+                    ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                    : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                 }`}
               >
-                <span>{cat.label}</span>
-                <span className={`text-[10px] font-mono ${selectedCategory === cat.key ? "text-white/80" : "text-faint"}`}>
-                  {cat.count}
+                <span>{t.market.allCategories}</span>
+                <span
+                  className={`text-[10px] font-mono rounded px-1 py-0.2 ${
+                    selectedCategory === "all"
+                      ? "bg-white/20 text-white"
+                      : "bg-panel text-faint"
+                  }`}
+                >
+                  {registry?.plugins?.length || 0}
                 </span>
               </button>
-            ))}
+
+              {/* 各个分类 Pill */}
+              {displayedCategories.map((cat) => (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat.key)}
+                  className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
+                    selectedCategory === cat.key
+                      ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                      : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
+                  }`}
+                >
+                  <span>{cat.label}</span>
+                  <span
+                    className={`text-[10px] font-mono rounded px-1 py-0.2 ${
+                      selectedCategory === cat.key
+                        ? "bg-white/20 text-white"
+                        : "bg-panel text-faint"
+                    }`}
+                  >
+                    {cat.count}
+                  </span>
+                </button>
+              ))}
+
+              {/* 展开全部 / 收起分类按钮 */}
+              {categoriesWithCounts.length > DEFAULT_CATEGORY_LIMIT && (
+                <button
+                  type="button"
+                  onClick={() => setExpandAllCategories(!expandAllCategories)}
+                  className="px-2.5 py-1 rounded-lg text-xs text-brand hover:bg-brand/10 transition-colors flex items-center gap-1 font-medium border border-transparent"
+                >
+                  <span>
+                    {expandAllCategories
+                      ? t.market.collapseCategories
+                      : t.market.expandCategories(categoriesWithCounts.length)}
+                  </span>
+                  {expandAllCategories ? (
+                    <ChevronUp className="size-3" />
+                  ) : (
+                    <ChevronDown className="size-3" />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </section>
@@ -420,14 +426,13 @@ export function MarketplaceView({
               <Package className="size-8 mx-auto text-faint opacity-60" />
               <p className="font-medium text-ink">{t.market.noResults}</p>
               <p className="text-dim text-[11px]">{t.market.noResultsHint}</p>
-              {(searchQuery || selectedCategory !== "all" || onlyInstalled) && (
+              {(searchQuery || selectedCategory !== "all") && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => {
                     setSearchQuery("")
                     setSelectedCategory("all")
-                    setOnlyInstalled(false)
                   }}
                   className="rounded-xl mt-3 text-xs"
                 >

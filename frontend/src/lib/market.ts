@@ -14,6 +14,55 @@ export function extractInstallSpec(installCmd: string): string {
 }
 
 /**
+ * 从可能包含 monorepo 或路径前缀的名称中提取最终展示名
+ * 例如: "dsh-web#packages/dsh-task-board" -> "dsh-task-board"
+ * 例如: "dsh-web-ui#dsh-task-board" -> "dsh-task-board"
+ * 例如: "dsh-trail#bundle" -> "bundle"
+ * 例如: "@deepseek-ai/dsh-base" -> "@deepseek-ai/dsh-base"
+ */
+export function getPluginDisplayName(name: string): string {
+  if (!name) return ""
+  if (name.includes("#")) {
+    const hashParts = name.split("#")
+    const sub = hashParts[hashParts.length - 1] || ""
+    if (sub.includes("/")) {
+      const slashParts = sub.split("/")
+      return slashParts[slashParts.length - 1] || sub
+    }
+    return sub
+  }
+  return name
+}
+
+export type InstallSourceType = "npm" | "github"
+
+export interface InstallSourceInfo {
+  type: InstallSourceType
+  spec: string
+  label: string
+}
+
+/**
+ * 自动识别插件安装 Spec 与来源类型 (NPM 还是 GitHub)
+ */
+export function detectInstallSource(plugin: MarketPlugin): InstallSourceInfo {
+  const extracted = extractInstallSpec(plugin.install)
+  const spec = extracted || plugin.npm || (plugin.url ? `github:${plugin.owner}/${plugin.name}` : plugin.name)
+
+  const isGitHub =
+    spec.startsWith("github:") ||
+    spec.startsWith("git+") ||
+    spec.startsWith("https://github.com") ||
+    (!plugin.npm && Boolean(plugin.url))
+
+  return {
+    type: isGitHub ? "github" : "npm",
+    spec,
+    label: isGitHub ? "GitHub 仓库" : "NPM 官方包",
+  }
+}
+
+/**
  * 提取多语言描述
  */
 export function getPluginDescription(

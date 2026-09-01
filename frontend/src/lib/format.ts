@@ -38,3 +38,27 @@ export function fmtPercent(current: number, total: number | null): number | null
   if (total === null || total <= 0) return null
   return Math.min(100, Math.max(0, Math.round((current / total) * 100)))
 }
+
+const PROFILE_COLOR_PALETTES = [
+  "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
+  "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
+]
+
+/** 根据 Profile 名称确定性派发彩色标签样式类（web 默认品牌蓝，其余名字哈希映射柔和色调）。 */
+export function getProfileColorClass(profileName: string): string {
+  if (profileName === "web") {
+    return "border-brand/30 bg-brand/10 text-brand font-medium"
+  }
+  let hash = 0
+  for (let i = 0; i < profileName.length; i++) {
+    hash = profileName.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const idx = Math.abs(hash) % PROFILE_COLOR_PALETTES.length
+  return PROFILE_COLOR_PALETTES[idx]
+}
+

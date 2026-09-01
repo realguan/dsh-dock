@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 import {
+  detectInstallSource,
   extractInstallSpec,
   filterMarketPlugins,
   getPluginDescription,
+  getPluginDisplayName,
   sortMarketPlugins,
 } from "@/lib/market"
 import type { MarketPlugin } from "@/types/market"
@@ -190,6 +192,59 @@ describe("lib/market.ts", () => {
       const sorted = sortMarketPlugins(mockPlugins, "name")
       expect(sorted[0].name).toBe("plugin-a")
       expect(sorted[1].name).toBe("plugin-b")
+    })
+  })
+
+  describe("getPluginDisplayName", () => {
+    it("extracts short name from monorepo path", () => {
+      expect(getPluginDisplayName("dsh-web#packages/dsh-task-board")).toBe("dsh-task-board")
+      expect(getPluginDisplayName("dsh-web-ui#dsh-task-board")).toBe("dsh-task-board")
+      expect(getPluginDisplayName("dsh-trail#bundle")).toBe("bundle")
+    })
+
+    it("preserves scoped and plain package names", () => {
+      expect(getPluginDisplayName("dsh-memory")).toBe("dsh-memory")
+      expect(getPluginDisplayName("@deepseek-ai/dsh-base")).toBe("@deepseek-ai/dsh-base")
+    })
+  })
+
+  describe("detectInstallSource", () => {
+    it("detects npm package when npm is specified or standard spec", () => {
+      const p: MarketPlugin = {
+        name: "dsh-task-board",
+        owner: "linxin",
+        url: "",
+        page: "",
+        category: "tool",
+        description: "Task board",
+        npm: "@linxin666/dsh-client-ui-task-board",
+        stars: 10,
+        downloads: 50,
+        install: "dsh plugin --profile web add @linxin666/dsh-client-ui-task-board",
+        added: "2025-01-01",
+      }
+      const info = detectInstallSource(p)
+      expect(info.type).toBe("npm")
+      expect(info.spec).toBe("@linxin666/dsh-client-ui-task-board")
+    })
+
+    it("detects github repo when install command is github:...", () => {
+      const p: MarketPlugin = {
+        name: "custom-plugin",
+        owner: "someuser",
+        url: "https://github.com/someuser/custom-plugin",
+        page: "",
+        category: "tool",
+        description: "Custom tool",
+        npm: null,
+        stars: 5,
+        downloads: 0,
+        install: "dsh plugin --profile web add github:someuser/custom-plugin",
+        added: "2025-01-01",
+      }
+      const info = detectInstallSource(p)
+      expect(info.type).toBe("github")
+      expect(info.spec).toBe("github:someuser/custom-plugin")
     })
   })
 })

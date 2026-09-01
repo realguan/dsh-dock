@@ -13,7 +13,8 @@ import {
 } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import type { MarketPlugin } from "@/types/market"
-import { getPluginDescription } from "@/lib/market"
+import { getProfileColorClass } from "@/lib/format"
+import { getPluginDescription, getPluginDisplayName } from "@/lib/market"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 
@@ -39,6 +40,7 @@ export function MarketPluginCard({
 
   const isInstalled = installedProfiles.length > 0
   const isOfficial = plugin.owner.toLowerCase().includes("deepseek") || plugin.name.startsWith("@deepseek-ai/")
+  const displayName = getPluginDisplayName(plugin.name)
   const desc = getPluginDescription(plugin.description, activeLocale)
 
   const handleCopyCmd = (e: React.MouseEvent) => {
@@ -66,7 +68,7 @@ export function MarketPluginCard({
                   title={plugin.name}
                   onClick={() => onOpenExternal(plugin.url || plugin.page)}
                 >
-                  {plugin.name}
+                  {displayName}
                 </h3>
                 {isOfficial && (
                   <Badge variant="outline" className="h-4 px-1 text-[9px] bg-brand/10 text-brand border-brand/30 font-mono">
@@ -92,7 +94,10 @@ export function MarketPluginCard({
         </div>
 
         {/* 描述文本 */}
-        <p className="mt-3 line-clamp-2 text-xs text-dim leading-relaxed min-h-[32px]">
+        <p
+          className="mt-3 line-clamp-2 text-xs text-dim leading-relaxed min-h-[32px]"
+          title={desc || undefined}
+        >
           {desc || "暂无描述"}
         </p>
 
@@ -124,16 +129,19 @@ export function MarketPluginCard({
         <div className="flex items-center justify-between gap-2 min-h-[22px]">
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 max-w-[200px]">
             {isInstalled ? (
-              installedProfiles.map((prof) => (
-                <span
-                  key={prof}
-                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-600 dark:text-emerald-400 shrink-0"
-                  title={`已安装在 ${prof}`}
-                >
-                  <span className="size-1 rounded-full bg-emerald-500 animate-pulse" />
-                  {prof}
-                </span>
-              ))
+              installedProfiles.map((prof) => {
+                const colorClass = getProfileColorClass(prof)
+                return (
+                  <span
+                    key={prof}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-mono font-medium shrink-0 shadow-2xs ${colorClass}`}
+                    title={`已安装在 ${prof}`}
+                  >
+                    <span className="size-1 rounded-full bg-current opacity-80" />
+                    {prof}
+                  </span>
+                )
+              })
             ) : (
               <span className="text-[10px] text-faint font-mono">
                 {t.market.notInstalled}

@@ -5,13 +5,13 @@ import {
   ChevronRight,
   Download,
   Filter,
-  Layers,
   LoaderCircle,
   Package,
   Search,
   Send,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { getProfileColorClass } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
@@ -288,7 +288,10 @@ export function PluginOverview({
                   </div>
 
                   {/* 描述信息 */}
-                  <p className="text-xs text-faint line-clamp-2 leading-relaxed min-h-[32px]">
+                  <p
+                    className="text-xs text-faint line-clamp-2 leading-relaxed min-h-[32px]"
+                    title={item.description || undefined}
+                  >
                     {item.description || "暂无插件描述说明"}
                   </p>
 
@@ -298,15 +301,22 @@ export function PluginOverview({
                       已安装到 ({item.sources.length}):
                     </span>
                     <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
-                      {item.sources.map((src) => (
-                        <span
-                          key={src.profile}
-                          className="inline-flex items-center gap-1 rounded-md bg-bg border border-line px-1.5 py-0.5 font-mono text-[10px] text-ink"
-                        >
-                          <Layers className="size-2.5 text-faint" />
-                          <span>{src.profile}</span>
-                        </span>
-                      ))}
+                      {item.sources.map((src) => {
+                        const colorClass = getProfileColorClass(src.profile)
+                        return (
+                          <span
+                            key={src.profile}
+                            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] shadow-2xs transition-all ${colorClass}`}
+                            title={src.version ? `${src.profile} (v${src.version})` : `已安装于 ${src.profile}`}
+                          >
+                            <span className="size-1 rounded-full bg-current opacity-80" />
+                            <span className="font-semibold">{src.profile}</span>
+                            {src.version && (
+                              <span className="opacity-75 text-[9px] font-normal">v{src.version}</span>
+                            )}
+                          </span>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
