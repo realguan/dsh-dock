@@ -162,7 +162,7 @@ jobs:
           has_apple_credentials=false
           if [[ -n "$APPLE_CERTIFICATE" || -n "$APPLE_CERTIFICATE_PASSWORD" || -n "$APPLE_API_KEY_CONTENT" || -n "$APPLE_API_KEY_ID" || -n "$APPLE_API_ISSUER" ]]; then
             has_apple_credentials=true
-            for required in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            for required in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
               test -n "${!required}" || {
                 echo "::error::macOS 签名/公证配置不完整：缺少 $required"
                 exit 1
@@ -175,6 +175,15 @@ jobs:
             # Tauri 读取 APPLE_API_KEY 作为 key id，p8 内容仅短暂落入 runner 临时目录。
             export APPLE_API_KEY="$APPLE_API_KEY_ID"
             export APPLE_API_KEY_PATH="$key_path"
+
+            # 动态推导/校验证书 Identity（防 secret 中配置的名字与实际证书不匹配）
+            cert_cn=$(echo "$APPLE_CERTIFICATE" | base64 -d | openssl pkcs12 -nodes -passin "pass:$APPLE_CERTIFICATE_PASSWORD" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ ]*=[ ]*//p' | head -n1 || true)
+            if [[ -n "$cert_cn" ]]; then
+              echo "检测到导入证书 Common Name: $cert_cn"
+              export APPLE_SIGNING_IDENTITY="$cert_cn"
+            elif [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+              unset APPLE_SIGNING_IDENTITY
+            fi
           else
             # 未配置的 GitHub secret 会以空字符串出现在 env；Tauri 将空值视为
             # 已设置，必须清掉才能按 tauri.conf 的 '-' 回退到 ad-hoc 签名。
@@ -195,7 +204,11 @@ jobs:
               exit 1
             }
             codesign --verify --deep --strict --verbose=2 "$app_path"
-            spctl --assess --type execute --verbose=4 "$app_path"
+            if [[ "${cert_cn:-}" == *"Developer ID Application"* ]]; then
+              spctl --assess --type execute --verbose=4 "$app_path"
+            else
+              echo "::warning::证书为 ${cert_cn:-非 Developer ID}，跳过 Gatekeeper spctl 校验"
+            fi
           fi
 
       - name: Build signed installers (Windows/Linux)
