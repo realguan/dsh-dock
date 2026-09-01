@@ -61,6 +61,102 @@ const RESERVED_METADATA_KEYS: &[&str] = &[
     "default_model",
 ];
 
+/// 获取 Provider 的别名/环境变量映射列表
+fn provider_aliases(id: &str) -> Vec<String> {
+    match id {
+        "deepseek" => vec![
+            "DEEPSEEK_API_KEY".into(),
+            "deepseek_api_key".into(),
+            "deepseek".into(),
+            "DEEPSEEK".into(),
+        ],
+        "openai" => vec![
+            "OPENAI_API_KEY".into(),
+            "openai_api_key".into(),
+            "openai".into(),
+            "OPENAI".into(),
+        ],
+        "anthropic" => vec![
+            "ANTHROPIC_API_KEY".into(),
+            "CLAUDE_API_KEY".into(),
+            "anthropic_api_key".into(),
+            "anthropic".into(),
+            "ANTHROPIC".into(),
+        ],
+        "google" => vec![
+            "GEMINI_API_KEY".into(),
+            "GOOGLE_API_KEY".into(),
+            "google_api_key".into(),
+            "gemini_api_key".into(),
+            "google".into(),
+            "gemini".into(),
+        ],
+        "moonshot" => vec![
+            "MOONSHOT_API_KEY".into(),
+            "KIMI_API_KEY".into(),
+            "moonshot_api_key".into(),
+            "kimi_api_key".into(),
+            "moonshot".into(),
+            "kimi".into(),
+        ],
+        "zhipu" => vec![
+            "ZHIPU_API_KEY".into(),
+            "ZHIPUAI_API_KEY".into(),
+            "GLM_API_KEY".into(),
+            "zhipu_api_key".into(),
+            "glm_api_key".into(),
+            "zhipu".into(),
+            "glm".into(),
+        ],
+        "groq" => vec![
+            "GROQ_API_KEY".into(),
+            "groq_api_key".into(),
+            "groq".into(),
+            "GROQ".into(),
+        ],
+        "openrouter" => vec![
+            "OPENROUTER_API_KEY".into(),
+            "openrouter_api_key".into(),
+            "openrouter".into(),
+            "OPENROUTER".into(),
+        ],
+        other => vec![
+            format!("{}_API_KEY", other.to_uppercase()),
+            other.to_lowercase(),
+            other.to_string(),
+        ],
+    }
+}
+
+/// 从 JSON/YAML Value 提取有效 API Key
+fn extract_key_from_val(val: Option<&serde_json::Value>) -> Option<String> {
+    match val {
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        Some(serde_json::Value::Object(obj)) => {
+            let k = obj
+                .get("apiKey")
+                .or_else(|| obj.get("api_key"))
+                .or_else(|| obj.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if k.is_empty() {
+                None
+            } else {
+                Some(k.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
 /// 读取凭据文件原文（不存在时返回空字符串）
 pub fn read_credentials(home: &Path) -> Result<String, String> {
     let file = home.join(".credentials.yaml");
@@ -80,62 +176,85 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
     };
 
     let mut result = Vec::new();
-    let mut seen_providers = std::collections::BTreeSet::new();
+    let mut claimed_top_keys = std::collections::BTreeSet::new();
+    let mut claimed_ref_keys = std::collections::BTreeSet::new();
+
+    let refs_map = match parsed.get("refs") {
+        Some(serde_json::Value::Object(map)) => Some(map),
+        _ => None,
+    };
 
     // 1. 先匹配知名 Provider
     for &(id, label) in KNOWN_PROVIDERS {
-        seen_providers.insert(id.to_string());
-        let val = parsed.get(id);
-        let key_str = match val {
-            Some(serde_json::Value::String(s)) => s.as_str(),
-            Some(serde_json::Value::Object(obj)) => obj
-                .get("apiKey")
-                .or_else(|| obj.get("api_key"))
-                .or_else(|| obj.get("key"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(""),
-            _ => "",
-        };
+        let aliases = provider_aliases(id);
+        let mut found_key = None;
 
-        let configured = !key_str.trim().is_empty();
+        // 1.1 先查 refs
+        if let Some(refs) = refs_map {
+            for alias in &aliases {
+                if let Some(val) = refs.get(alias) {
+                    if let Some(k) = extract_key_from_val(Some(val)) {
+                        found_key = Some(k);
+                        claimed_ref_keys.insert(alias.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 1.2 再查 top-level
+        if found_key.is_none() {
+            for alias in &aliases {
+                if let Some(val) = parsed.get(alias) {
+                    if let Some(k) = extract_key_from_val(Some(val)) {
+                        found_key = Some(k);
+                        claimed_top_keys.insert(alias.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let configured = found_key.is_some();
+        let masked_key = found_key.as_deref().map(mask_api_key).unwrap_or_default();
         result.push(CredentialSummaryItem {
             provider: id.to_string(),
             label: label.to_string(),
             configured,
-            masked_key: if configured {
-                mask_api_key(key_str)
-            } else {
-                String::new()
-            },
+            masked_key,
         });
     }
 
-    // 2. 补齐用户自定义的额外 Provider（过滤保留元数据键）
+    // 2. 补齐 refs 中用户自定义的额外 Provider
+    if let Some(refs) = refs_map {
+        for (k, v) in refs {
+            if claimed_ref_keys.contains(k) || RESERVED_METADATA_KEYS.contains(&k.as_str()) {
+                continue;
+            }
+            if let Some(key_str) = extract_key_from_val(Some(v)) {
+                result.push(CredentialSummaryItem {
+                    provider: k.clone(),
+                    label: k.clone(),
+                    configured: true,
+                    masked_key: mask_api_key(&key_str),
+                });
+            }
+        }
+    }
+
+    // 3. 补齐顶层用户自定义的额外 Provider（过滤保留元数据键与已认领键）
     for (k, v) in &parsed {
-        if seen_providers.contains(k) || RESERVED_METADATA_KEYS.contains(&k.as_str()) {
+        if claimed_top_keys.contains(k) || RESERVED_METADATA_KEYS.contains(&k.as_str()) {
             continue;
         }
-        let key_str = match v {
-            serde_json::Value::String(s) => s.as_str(),
-            serde_json::Value::Object(obj) => obj
-                .get("apiKey")
-                .or_else(|| obj.get("api_key"))
-                .or_else(|| obj.get("key"))
-                .and_then(|val| val.as_str())
-                .unwrap_or(""),
-            _ => "",
-        };
-        let configured = !key_str.trim().is_empty();
-        result.push(CredentialSummaryItem {
-            provider: k.clone(),
-            label: k.clone(),
-            configured,
-            masked_key: if configured {
-                mask_api_key(key_str)
-            } else {
-                String::new()
-            },
-        });
+        if let Some(key_str) = extract_key_from_val(Some(v)) {
+            result.push(CredentialSummaryItem {
+                provider: k.clone(),
+                label: k.clone(),
+                configured: true,
+                masked_key: mask_api_key(&key_str),
+            });
+        }
     }
 
     Ok(result)
@@ -182,19 +301,37 @@ pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), St
         serde_yaml::from_str(&raw).map_err(|e| format!("解析 .credentials.yaml 失败：{e}"))?
     };
 
-    if key.trim().is_empty() {
-        parsed.remove(provider);
+    let trimmed = key.trim();
+    let aliases = provider_aliases(provider);
+
+    // 如果包含 refs 对象：
+    if let Some(serde_json::Value::Object(refs)) = parsed.get_mut("refs") {
+        let existing_ref_key = aliases.iter().find(|a| refs.contains_key(*a)).cloned();
+        let target_key =
+            existing_ref_key.unwrap_or_else(|| format!("{}_API_KEY", provider.to_uppercase()));
+        if trimmed.is_empty() {
+            refs.remove(&target_key);
+            for alias in &aliases {
+                parsed.remove(alias);
+            }
+        } else {
+            refs.insert(target_key, serde_json::Value::String(trimmed.to_string()));
+        }
     } else {
-        // 如果原本是对象结构则更新其 apiKey，否则直接存字符串
-        if let Some(serde_json::Value::Object(map)) = parsed.get_mut(provider) {
+        // 无 refs 对象时维护顶层结构
+        if trimmed.is_empty() {
+            for alias in &aliases {
+                parsed.remove(alias);
+            }
+        } else if let Some(serde_json::Value::Object(map)) = parsed.get_mut(provider) {
             map.insert(
                 "apiKey".to_string(),
-                serde_json::Value::String(key.trim().to_string()),
+                serde_json::Value::String(trimmed.to_string()),
             );
         } else {
             parsed.insert(
                 provider.to_string(),
-                serde_json::Value::String(key.trim().to_string()),
+                serde_json::Value::String(trimmed.to_string()),
             );
         }
     }
@@ -316,6 +453,41 @@ custom_llm:
         assert!(!providers.contains(&"version"));
         assert!(!providers.contains(&"refs"));
         assert!(!providers.contains(&"defaultProvider"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn refs_env_key_parsing_and_setting_works() {
+        let tmp = std::env::temp_dir().join(format!("dsh-cred-test-refs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let raw = r#"version: 1
+refs:
+  DEEPSEEK_API_KEY: sk-3refsenvtestokeya2a6
+  COMMANDCODE_API_KEY: user_testtokenfaketokencdef
+"#;
+        std::fs::write(tmp.join(".credentials.yaml"), raw).unwrap();
+
+        let summary = get_credentials_summary(&tmp).unwrap();
+        let deepseek = summary.iter().find(|s| s.provider == "deepseek").unwrap();
+        assert!(deepseek.configured);
+        assert_eq!(deepseek.masked_key, "sk-3••••••••a2a6");
+
+        let cmdcode = summary
+            .iter()
+            .find(|s| s.provider == "COMMANDCODE_API_KEY")
+            .unwrap();
+        assert!(cmdcode.configured);
+        assert_eq!(cmdcode.masked_key, "user••••••••cdef");
+
+        // 设置/更新 deepseek key
+        set_provider_key(&tmp, "deepseek", "sk-newkey1234567890").unwrap();
+        let summary2 = get_credentials_summary(&tmp).unwrap();
+        let deepseek2 = summary2.iter().find(|s| s.provider == "deepseek").unwrap();
+        assert!(deepseek2.configured);
+        assert_eq!(deepseek2.masked_key, "sk-n••••••••7890");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
