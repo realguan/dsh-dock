@@ -10,6 +10,28 @@ import re
 import sys
 import subprocess
 
+def extract_from_release_notes(tag_name: str, release_notes_path: str) -> str:
+    if not os.path.isfile(release_notes_path):
+        return ""
+
+    with open(release_notes_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    clean_ver = tag_name.lstrip("v")
+    # 按照 '## ' 分割各个版本条目
+    sections = re.split(r'\n(?=## )', content)
+
+    for sec in sections:
+        if not sec.startswith("## "):
+            continue
+        header_line = sec.split("\n", 1)[0]
+        # 匹配标题中的版本号如 ## [v0.9.1] 或 ## [0.9.1]
+        if f"[{clean_ver}]" in header_line or f"[v{clean_ver}]" in header_line or clean_ver in header_line:
+            # 返回该版本的整节内容
+            return sec.strip()
+
+    return ""
+
 def extract_from_broadcasts(tag_name: str, broadcasts_path: str) -> str:
     if not os.path.isfile(broadcasts_path):
         return ""
@@ -17,10 +39,7 @@ def extract_from_broadcasts(tag_name: str, broadcasts_path: str) -> str:
     with open(broadcasts_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # 规范化版本号（如 v0.9.0 -> 0.9.0）
     clean_ver = tag_name.lstrip("v")
-    
-    # 按照 '### ' 分割各个条目
     sections = re.split(r'\n(?=### )', content)
     
     matched_section = None
@@ -28,12 +47,10 @@ def extract_from_broadcasts(tag_name: str, broadcasts_path: str) -> str:
         if not sec.startswith("### "):
             continue
         header_line = sec.split("\n", 1)[0]
-        # 匹配标题中是否包含该版本号（例如 v0.9.0 或 0.9.0）
         if f"v{clean_ver}" in header_line or f" {clean_ver} " in header_line or clean_ver in header_line:
             matched_section = sec
             break
 
-    # 如果没按版本号搜到特定标题，取最新的第一条完成通知/记录
     if not matched_section:
         for sec in sections:
             if sec.startswith("### ") and ("完成通知" in sec or "发布" in sec or "升级" in sec or "v0." in sec):
@@ -43,18 +60,14 @@ def extract_from_broadcasts(tag_name: str, broadcasts_path: str) -> str:
     if not matched_section:
         return ""
 
-    # 清理并规整为美观的 Release Notes
     lines = matched_section.strip().splitlines()
     title = lines[0].lstrip("#").strip()
     body_lines = lines[1:]
-
-    # 过滤「凭据：...」这种仅供内部审计的文本（可选保留），整理空行
     clean_body = "\n".join(body_lines).strip()
     return f"## {title}\n\n{clean_body}"
 
 def extract_from_git() -> str:
     try:
-        # 获取最近 10 条 commit
         cmd = ["git", "log", "-n", "10", "--pretty=format:- %s (%h)"]
         out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
         if out.strip():
@@ -64,11 +77,17 @@ def extract_from_git() -> str:
     return ""
 
 def main():
-    tag_name = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GITHUB_REF_NAME", "v0.9.0")
+    tag_name = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GITHUB_REF_NAME", "v0.9.1")
     output_path = sys.argv[2] if len(sys.argv) > 2 else "release_notes.md"
-    broadcasts_path = os.path.join(os.path.dirname(__file__), "..", "docs", "broadcasts.md")
+    
+    docs_dir = os.path.join(os.path.dirname(__file__), "..", "docs")
+    release_notes_path = os.path.join(docs_dir, "RELEASE_NOTES.md")
+    broadcasts_path = os.path.join(docs_dir, "broadcasts.md")
 
-    notes = extract_from_broadcasts(tag_name, broadcasts_path)
+    # 优先级：docs/RELEASE_NOTES.md -> docs/broadcasts.md -> git log
+    notes = extract_from_release_notes(tag_name, release_notes_path)
+    if not notes:
+        notes = extract_from_broadcasts(tag_name, broadcasts_path)
     if not notes:
         notes = extract_from_git()
     if not notes:
