@@ -1175,17 +1175,6 @@ async fn delete_session(session_path: String) -> Result<(), String> {
     .map_err(|e| format!("删除会话任务异常终止：{e}"))?
 }
 
-/// Profile 维护：重置依赖（清理 node_modules 并重新安装，4.11）
-#[tauri::command]
-async fn reset_profile_dependencies(profile: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::profiles::reset_dependencies(&home, &profile)
-    })
-    .await
-    .map_err(|e| format!("重置依赖任务异常终止：{e}"))?
-}
-
 /// 插件市场：拉取社区 Registry 静态 JSON 目录
 #[tauri::command]
 async fn fetch_market_registry() -> Result<String, String> {
@@ -1897,8 +1886,7 @@ pub fn run() {
             save_mcp_server,
             delete_mcp_server,
             delete_session,
-            reset_profile_dependencies,
-            fetch_market_registry
+            fetch_market_registry,
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

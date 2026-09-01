@@ -62,7 +62,6 @@ pub const COMMANDS: &[&str] = &[
     "save_mcp_server",
     "delete_mcp_server",
     "delete_session",
-    "reset_profile_dependencies",
     "fetch_market_registry",
 ];
 

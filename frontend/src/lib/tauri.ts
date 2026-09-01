@@ -65,8 +65,6 @@ export const api = {
   renameProfile: (oldName: string, newName: string) =>
     invoke<LifecycleOutcome>("rename_profile", { oldName, newName }),
   deleteProfile: (profile: string) => invoke<DeleteOutcome>("delete_profile", { profile }),
-  resetProfileDependencies: (profile: string) =>
-    invoke<string>("reset_profile_dependencies", { profile }),
   setDefaultProfile: (profile: string) => invoke<void>("set_default_profile", { profile }),
   getDefaultProfile: () => invoke<string | null>("get_default_profile"),
   // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）

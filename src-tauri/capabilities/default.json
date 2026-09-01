@@ -64,7 +64,6 @@
     "allow-save-mcp-server",
     "allow-delete-mcp-server",
     "allow-delete-session",
-    "allow-reset-profile-dependencies",
     "allow-fetch-market-registry"
   ]
 }

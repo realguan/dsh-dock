@@ -14,7 +14,6 @@ import {
   Search,
   Star,
   Trash2,
-  Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
@@ -263,23 +262,6 @@ export function ProfileDetailPane({
     })
   }
 
-  const handleResetDeps = async () => {
-    if (!name || opBusy) return
-    if (!window.confirm(t.profiles.resetDepsConfirm(name))) {
-      return
-    }
-    setOpBusy("resetDeps")
-    try {
-      const res = await api.resetProfileDependencies(name)
-      onNotice(t.profiles.resetDepsSuccess(res), "ok")
-      reload()
-    } catch (e) {
-      onNotice(String(e), "warn")
-    } finally {
-      setOpBusy(null)
-    }
-  }
-
   const liveEntries =
     runtime !== null && runtime.profile !== null && runtime.profile === name
       ? runtime.entries
@@ -342,22 +324,6 @@ export function ProfileDetailPane({
 
           {/* 顶栏快速操作 */}
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleResetDeps}
-              disabled={opBusy !== null}
-              title={t.profiles.resetDepsBtn}
-              className="gap-1 text-xs hover:border-brand"
-            >
-              {opBusy === "resetDeps" ? (
-                <LoaderCircle className="size-3.5 animate-spin text-brand" />
-              ) : (
-                <Wrench className="size-3.5 text-faint" />
-              )}
-              <span>{opBusy === "resetDeps" ? t.profiles.resettingDeps : t.profiles.resetDepsBtn}</span>
-            </Button>
-
             <Button
               size="sm"
               variant={isDefault ? "secondary" : "outline"}
@@ -637,7 +603,7 @@ export function ProfileDetailPane({
                               className="text-brand hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-[10px] font-medium transition-colors"
                             >
                               <ArrowUpCircle className="size-3" />
-                              <span>{latest} ▲</span>
+                              <span>{latest}</span>
                             </button>
                           )}
 

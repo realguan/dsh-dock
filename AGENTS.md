@@ -137,7 +137,6 @@
   `get_dsh_settings_raw` `save_dsh_settings_raw`（DSH 全局引擎设置，2026-08-31）。
   `list_mcp_servers` `save_mcp_server` `delete_mcp_server`（MCP 服务器结构化管理，2026-08-31）。
   `delete_session`（会话删除，2026-08-31）。
-  `reset_profile_dependencies`（Profile 依赖一键重置与修复，2026-08-31）。
   `fetch_market_registry`（社区插件市场 Registry 拉取，2026-08-31）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update`
