@@ -196,15 +196,20 @@ pub fn fetch_runtime_snapshot(base_origin: &str) -> Result<Vec<RuntimeEntry>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn tmp() -> std::path::PathBuf {
+        let seq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
-            "dsh-dock-plugins-test-{}-{}",
+            "dsh-dock-plugins-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            seq
         ));
         std::fs::create_dir_all(d.join("profiles")).unwrap();
         d
@@ -701,15 +706,20 @@ pub fn set_plugin_disabled(
 #[cfg(test)]
 mod patch_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn tmp() -> std::path::PathBuf {
+        let seq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
-            "dsh-dock-patch-test-{}-{}",
+            "dsh-dock-patch-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            seq
         ));
         std::fs::create_dir_all(d.join("profiles/p")).unwrap();
         d
@@ -1009,15 +1019,20 @@ fn copy_config_entries(
 #[cfg(test)]
 mod aggregate_copy_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn tmp() -> std::path::PathBuf {
+        let seq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
-            "dsh-dock-agg-test-{}-{}",
+            "dsh-dock-agg-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            seq
         ));
         std::fs::create_dir_all(d.join("profiles")).unwrap();
         d
