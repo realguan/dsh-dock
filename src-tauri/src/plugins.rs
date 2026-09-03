@@ -390,6 +390,7 @@ pub fn mutate_plugin_blocking(
     crate::updates::ensure_pnpm(
         &node.bin,
         &crate::resolve::path_with_bin(&node.bin, &path_env),
+        data_dir,
     )?;
     let run = crate::profiles::run_dsh_plugin(
         &node.bin,

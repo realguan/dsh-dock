@@ -242,7 +242,8 @@ impl Executor for LocalExecutor {
         // 不走本路径（客体内补齐链归 4.9，ADR-0004 §7）。
         let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
         sink(1, "running", "正在检查并补齐包管理器…");
-        if let Err(e) = crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path) {
+        if let Err(e) = crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path, &self.data_dir)
+        {
             sink(1, "error", &e);
             return Err(e);
         }

@@ -330,6 +330,44 @@ pub fn path_with_bin(bin: &Path, path_env: &str) -> String {
     }
 }
 
+// ---------- 引擎目录（ADR-0010 P2，2026-09-03） ----------
+
+/// 引擎目录：壳自管工具（pnpm 等）的私有落点，在数据目录下，不动用户世界。
+/// 单目录布局实测见 docs/spikes/0003 §2.3（PNPM_HOME 兼作 runtime 项目为 P3 形态）。
+pub fn engines_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("engines")
+}
+
+/// 引擎内 npm 全局 prefix（P2 过渡期 pnpm 补齐落点；P3 换 pnpm12 引导后回收）。
+pub fn engine_npm_prefix(data_dir: &Path) -> PathBuf {
+    engines_dir(data_dir).join("npm")
+}
+
+/// 引擎 bin 目录集合：Windows 的 npm 全局 shim 落 prefix 根，Unix 落
+/// prefix/bin——平台布局差异在此吸收，注入方不感知平台。
+pub fn engine_bin_dirs(data_dir: &Path) -> Vec<PathBuf> {
+    let prefix = engine_npm_prefix(data_dir);
+    if cfg!(windows) {
+        vec![prefix]
+    } else {
+        vec![prefix.join("bin")]
+    }
+}
+
+/// 引擎 bin 前置合并进既有 PATH：首位保证引擎工具恒优先于用户世界同名工具。
+pub fn path_with_engines(data_dir: &Path, path_env: &str) -> String {
+    let mut sources = vec![join_path_dirs(engine_bin_dirs(data_dir))];
+    sources.push(path_env.to_string());
+    merge_paths(&sources)
+}
+
+/// dsh 子进程环境自构第一步（ADR-0010 P2）：确定性构造 spawn PATH——
+/// 引擎 bin（dsh 内部 `spawnSync("pnpm")` 依赖它恒可达）→ node bin → 用户
+/// PATH。executor.probe 的 pnpm 可见性检查与 shell::spawn_dsh 必须同源于此。
+pub fn dsh_child_path(node_bin: &Path, data_dir: &Path) -> String {
+    path_with_engines(data_dir, &path_with_bin(node_bin, &effective_path()))
+}
+
 // ---------- system 探测 ----------
 
 pub struct SystemDsh {
@@ -1007,6 +1045,50 @@ mod tests {
             path.split(separator).next(),
             Some("/private/dsh-dock/node/bin")
         );
+    }
+
+    #[test]
+    fn engine_bin_dirs_absorb_platform_layout() {
+        let root = tmp();
+        let dirs = engine_bin_dirs(&root);
+        if cfg!(windows) {
+            // Windows npm 全局 shim 落 prefix 根
+            assert_eq!(dirs, vec![root.join("engines/npm")]);
+        } else {
+            assert_eq!(dirs, vec![root.join("engines/npm/bin")]);
+        }
+    }
+
+    #[test]
+    fn engine_bins_are_prepended_and_deduped() {
+        let root = tmp();
+        let engine = engine_bin_dirs(&root)[0].display().to_string();
+        let sep = path_separator_string();
+        let base = format!("{engine}{sep}/usr/bin{sep}{engine}");
+        let merged = path_with_engines(&root, &base);
+        let parts: Vec<&str> = merged.split(path_separator()).collect();
+        assert_eq!(parts[0], engine, "引擎 bin 必须在首位：{merged}");
+        assert_eq!(
+            parts.iter().filter(|p| **p == engine).count(),
+            1,
+            "引擎 bin 去重后仅保留一次：{merged}"
+        );
+        assert!(parts.contains(&"/usr/bin"), "用户 PATH 保留：{merged}");
+    }
+
+    #[test]
+    fn dsh_child_path_orders_engines_node_then_user() {
+        // 引擎 bin（pnpm 恒可达）→ node bin → 用户 PATH 的次序是
+        // spawnSync("pnpm") 与 helper 执行器两边的硬前提（ADR-0010 P2）。
+        let root = tmp();
+        let node = Path::new("/opt/node/bin/node");
+        let merged = dsh_child_path(node, &root);
+        let parts: Vec<&str> = merged.split(path_separator()).collect();
+        let engines = engine_bin_dirs(&root)[0].display().to_string();
+        let engine_pos = parts.iter().position(|p| *p == engines).unwrap();
+        let node_pos = parts.iter().position(|p| *p == "/opt/node/bin").unwrap();
+        assert!(engine_pos < node_pos, "引擎 bin 先于 node bin：{merged}");
+        assert!(node_pos < parts.len() - 1, "用户 PATH 在最后：{merged}");
     }
 
     #[cfg(unix)]

@@ -77,12 +77,10 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         cmd.arg("--no-open");
     }
     cmd.env("DSH_HOME", dsh_home)
-        // 用户环境感知：dsh 世界运行在用户 PATH 上；download 档还要把私有
-        // Node 放在首位，确保 dsh 拉起 helper 时不会找错执行器。
-        .env(
-            "PATH",
-            crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
-        )
+        // 子进程环境自构（ADR-0010 P2）：引擎 bin（pnpm 恒可达）→ 私有/选定
+        // Node 首位 → 用户 PATH；与 executor.probe 的 pnpm 可见性检查同源
+        // dsh_child_path，保证「检查时可见 = spawn 时可达」。
+        .env("PATH", crate::resolve::dsh_child_path(node_bin, data_dir))
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().context("克隆日志句柄")?))
         .stderr(Stdio::from(log));

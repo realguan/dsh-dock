@@ -32,6 +32,27 @@
 
 ## 三、记录
 
+### 2026-09-03 完成通知 · Spike 0003 实机闭环 + P2 引擎私有 pnpm 与子进程 PATH 自构 —— guan（AI 协作）
+
+- 变更：
+  1. **Spike 0003**（`docs/spikes/0003-pnpm12-engine-bootstrap.md`）：ADR-0010
+     Spike①② 的 macOS 侧实机闭环——镜像注入通道实锤（`PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS`，
+     JSON 键 = 发布通道 `release` 等，缺键静默回退默认源；SHASUMS256 强制且与镜像同源）、
+     `runtime set node` 非 TTY 全绿（字节进度行可解析、npm/npx/corepack 缺位、
+     单目录引擎布局成立）、引擎链 e2e（镜像装 node → 引擎 pnpm add -g dsh →
+     引擎 node 执行 dsh）。
+  2. **P2**：pnpm 补齐落 `<数据目录>/engines/npm`（替代用户 npm 全局；bundle 档
+     只读 resources 亦因此可补齐）+ 显式 pin `pnpm@12.3.1`（`latest` dist-tag 实测
+     仍指 v11）；子进程 PATH 自构第一步 `dsh_child_path`（引擎 bin → node bin →
+     用户 PATH），ensure_pnpm 可见性检查与 dsh spawn 同源。
+- 影响：boot 行为变化——pnpm 不再写用户 npm 全局（用户已装 pnpm 仍被复用，引擎 bin
+  恒优先）；dsh 子进程 PATH 前置引擎 bin。**两处待维护者裁定**（spike 0003 §4）：
+  pnpm 二进制解包 32MB 触发 ADR-0010 §6 体积复审线；musl node 下载源硬编码
+  unofficial-builds.nodejs.org 不可镜像注入（实测可达，暂接受）。
+- 凭据：`cargo test` 182 全绿（+4：引擎 bin 平台布局 / 前置去重 / dsh_child_path
+  次序 / pin 全 triplet）+ `cargo fmt --check` + `clippy -D warnings` 零告警；
+  Spike 决定性证据（本地 404 服务器路由实锤）见 spike 0003 §2.4。
+
 ### 2026-09-03 完成通知 · P1 TooOld 死局过渡修复（system dsh 过低不再拒绝启动） —— guan（AI 协作）
 
 - 变更：

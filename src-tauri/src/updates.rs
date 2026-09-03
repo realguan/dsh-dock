@@ -1234,48 +1234,72 @@ fn find_npm_cli(node_bin: &Path) -> Option<PathBuf> {
     .find(|cand| cand.is_file())
 }
 
-// ---------- pnpm 补齐（ADR-0009 红线 2 口径 2，2026-08-28） ----------
+// ---------- pnpm 补齐（ADR-0009 口径 2，2026-08-28；P2 修订 2026-09-03） ----------
 //
 // pnpm 与 node/dsh 同列 boot 硬依赖：dsh 自身的 `dsh plugin` 子命令硬编码
 // spawnSync("pnpm")（plugin-9h8shc4d.js @ 101，无任何回退参数），「dsh 可用」
-// 不蕴含「pnpm 在」。boot 期（executor probe）与创建时（profiles.rs）复用
-// 本函数；补齐链 = `npm install -g pnpm`（node 自带 npm，复用 ADR-0005 的
-// npm 全局安装链 + ADR-0006 镜像序，非新下载机制）。AGENTS §7 已登记该
-// 网络用途。WSL 客体内的 node → pnpm → dsh 补齐链归 4.9（ADR-0004 §7）。
+// 不蕴含「pnpm 在」。boot 期（executor probe）复用本函数；补齐链 =
+// `npm install -g pnpm@<pin> --prefix <数据目录>/engines/npm`（ADR-0010 P2：
+// 落引擎私有目录替代用户全局，bundle 档只读 resources 亦因此可补齐；版本
+// 显式 pin——`latest` dist-tag 实测仍指 v11，spike 0003 §2.1；镜像序沿
+// ADR-0006）。P3 起改由壳内置 pnpm12 引导，本链随探测层退役。AGENTS §7 已
+// 登记该网络用途。WSL 客体内的 node → pnpm → dsh 补齐链归 4.9（ADR-0004 §7）。
 
-/// pnpm 环境保障：PATH 上可见即返回；缺失经 npm 同步补齐；补齐后必须在
-/// 同一 PATH 上重新可见（ADR-0009 §5）——否则 dsh 的 spawnSync("pnpm")
-/// 同样找不到它，按失败处理并给可行动文案。
-pub(crate) fn ensure_pnpm(node_bin: &Path, path_env: &str) -> Result<PathBuf, String> {
-    if let Some(pnpm) = find_pnpm(path_env) {
+/// pnpm 显式 pin（ADR-0010：版本必须可 pin）。升级走壳发版节奏，随壳 bump
+/// 必过升级清单（runtime set / add -g / spawnSync 可达 / 三平台 boot 冒烟）。
+pub(crate) const PINNED_PNPM_VERSION: &str = "12.3.1";
+
+/// pnpm 环境保障：PATH 上可见即返回；缺失经 npm 同步补齐至引擎私有目录；
+/// 补齐后必须在同一 PATH 上重新可见（ADR-0009 §5）——否则 dsh 的
+/// spawnSync("pnpm") 同样找不到它，按失败处理并给可行动文案。
+/// 可见性基准 = 引擎 bin 前置后的 PATH（引擎 pnpm 不在用户 PATH 上；与
+/// shell::spawn_dsh 给 dsh 子进程的 PATH 同源 `dsh_child_path`）。
+pub(crate) fn ensure_pnpm(
+    node_bin: &Path,
+    path_env: &str,
+    data_dir: &Path,
+) -> Result<PathBuf, String> {
+    let scoped = crate::resolve::path_with_engines(data_dir, path_env);
+    if let Some(pnpm) = find_pnpm(&scoped) {
         return Ok(pnpm);
     }
-    tracing::info!("pnpm 不在 PATH，尝试 npm install -g pnpm 补齐…");
-    install_pnpm_via_npm(node_bin, path_env)?;
-    find_pnpm(path_env).ok_or_else(|| {
-        "pnpm 已安装但不在壳可见 PATH 上（全局 bin 目录未覆盖）——\
-         请检查 npm 全局 bin 配置后重启应用，或在终端手动运行 `npm install -g pnpm`"
+    tracing::info!(
+        "pnpm 不在 PATH，尝试 npm install -g pnpm@{PINNED_PNPM_VERSION} 至引擎私有目录…"
+    );
+    install_pnpm_via_npm(node_bin, &scoped, data_dir)?;
+    find_pnpm(&scoped).ok_or_else(|| {
+        "pnpm 已安装到引擎目录但不在壳可见 PATH 上——请重启应用后重试，\
+         或在终端手动运行 `npm install -g pnpm`"
             .to_string()
     })
 }
 
 /// 用执行器 node 跑官方 npm-cli 全局安装 pnpm：镜像序逐个尝试（npmjs →
 /// npmmirror），全败聚合报错。pnpm 是纯 JS 包（无 native 构建），不传
-/// allow-scripts 放行参数。
-fn install_pnpm_via_npm(node_bin: &Path, path_env: &str) -> Result<(), String> {
+/// allow-scripts 放行参数。落点 = 引擎私有 prefix（ADR-0010 P2），CLI 参数
+/// 优先级高于用户 .npmrc，避免旧 prefix 覆盖私有目录。
+fn install_pnpm_via_npm(node_bin: &Path, path_env: &str, data_dir: &Path) -> Result<(), String> {
     let npm_cli = find_npm_cli(node_bin).ok_or_else(|| {
         "执行器 node 未携带 npm（发行包异常），无法自动补齐 pnpm——\
          请在终端手动运行 `npm install -g pnpm` 后重启应用"
             .to_string()
     })?;
+    let prefix = crate::resolve::engine_npm_prefix(data_dir);
+    let spec = format!("pnpm@{PINNED_PNPM_VERSION}");
     let mut errors = Vec::new();
     for registry in package_registry_bases() {
-        tracing::info!("npm install -g pnpm（registry={registry}）…");
+        tracing::info!(
+            "npm install -g {spec}（registry={registry}，prefix={}）…",
+            prefix.display()
+        );
         let mut command = crate::child_cmd(node_bin);
         command
             .arg(&npm_cli)
-            .args(npm_install_args(registry, "pnpm", false))
+            .arg("--prefix")
+            .arg(&prefix)
+            .args(npm_install_args(registry, &spec, false))
             .env("PATH", path_env)
+            .env("NPM_CONFIG_PREFIX", &prefix)
             .env("NPM_CONFIG_IGNORE_SCRIPTS", "false");
         let out = match command.output() {
             Ok(o) => o,
@@ -1412,6 +1436,15 @@ mod tests {
     }
 
     #[test]
+    fn pnpm_pin_is_explicit_full_version() {
+        // ADR-0010：禁止追 dist-tag（`latest` 实测仍指 v11，spike 0003 §2.1）；
+        // pin 必须是 x.y.z 全数字 triplet，防止有人改回 "latest"/范围语义。
+        let parts: Vec<&str> = PINNED_PNPM_VERSION.split('.').collect();
+        assert_eq!(parts.len(), 3, "必须是 x.y.z 全 triplet");
+        assert!(parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())));
+    }
+
+    #[test]
     fn domestic_mirrors_are_first_with_official_fallbacks() {
         assert_eq!(
             package_registry_bases()[0],
@@ -1454,7 +1487,13 @@ mod tests {
         }
         #[cfg(not(unix))]
         std::fs::write(dir.join("pnpm.cmd"), "stub").unwrap();
-        let got = ensure_pnpm(Path::new("/nonexistent/node"), &dir.display().to_string()).unwrap();
+        let data = tmp("ensure-pnpm-hit-data");
+        let got = ensure_pnpm(
+            Path::new("/nonexistent/node"),
+            &dir.display().to_string(),
+            &data,
+        )
+        .unwrap();
         assert_eq!(got, dir.join(if cfg!(unix) { "pnpm" } else { "pnpm.cmd" }));
     }
 
@@ -1464,8 +1503,9 @@ mod tests {
         // 假 node 恒成功（npm 安装「成功」）但 PATH 上仍无 pnpm →
         // 可见性验证必须失败（ADR-0009 §5：补齐后须同 PATH 可见）
         let dir = tmp("ensure-pnpm-verify");
+        let data = tmp("ensure-pnpm-verify-data");
         let node = fake_executor_node(&dir, 0);
-        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin").unwrap_err();
+        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin", &data).unwrap_err();
         assert!(err.contains("不在"), "须点明可见性问题：{err}");
         assert!(
             err.contains("npm install -g pnpm"),
@@ -1478,8 +1518,9 @@ mod tests {
     fn ensure_pnpm_surfaces_install_failure_with_actionable_advice() {
         // 假 node 恒失败 → 两个镜像全败，聚合报错 + 可行动建议
         let dir = tmp("ensure-pnpm-fail");
+        let data = tmp("ensure-pnpm-fail-data");
         let node = fake_executor_node(&dir, 3);
-        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin").unwrap_err();
+        let err = ensure_pnpm(&node, "nonexistent-dir:/usr/bin:/bin", &data).unwrap_err();
         assert!(err.contains("pnpm 自动补齐失败"), "{err}");
         assert!(err.contains("镜像"), "须提示检查镜像配置：{err}");
     }

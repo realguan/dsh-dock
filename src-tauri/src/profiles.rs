@@ -532,7 +532,7 @@ pub fn create_profile_blocking(
     // pnpm 防御检测 + 同步补齐（ADR-0009 §4：复用 boot 期同一函数，防 boot
     // 后环境变化——卸载 pnpm / fnm 切 node 版本；可见即过（毫秒级），缺失
     // 才走 npm 安装）。补齐失败即本错误，文案含平台化手动安装建议。
-    crate::updates::ensure_pnpm(&node.bin, &runtime_path)?;
+    crate::updates::ensure_pnpm(&node.bin, &runtime_path, data_dir)?;
     let args = create_command_args(profile);
     let run = run_dsh_plugin(
         &node.bin,

@@ -123,20 +123,33 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
 - 新耦合面：pnpm runtime API 的 major 演进（缓解：pin 随壳 + 升级清单 + 方案 B 回退预案）。
 
 ### 行动项
-- [ ] **Spike（先于一切实现；① 案头已完成 2026-09-03）**：
-  ① ✅ 注入通道已核实（v12.3.1 源码）：node 镜像仅认 `PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS`
-  （env，值为 JSON 对象）/ `pnpm-workspace.yaml` / 全局 `config.yaml` 三条通道；
-  `.npmrc` 与 `--config.` 旗标**静默无效**；`--registry=` 旗标全命令有效。另核实：
-  子进程 env 设 `PNPM_HOME` 即满足 runtime 判定，但 `<PNPM_HOME>/bin` 必须同时在
-  子进程 PATH 里（否则 `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH`）。剩余：三平台实机复验。
-  ② `pnpm runtime set node` 三平台非 TTY（GUI 子进程）实机验证；
+- [ ] **Spike（先于一切实现；案头 + macOS 实机均已完成 2026-09-03，实证见
+  `docs/spikes/0003-pnpm12-engine-bootstrap.md`）**：
+  ① ✅ 注入通道核实（v12.3.1 源码 + macOS 实机）：node 镜像 env =
+  `PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS`，值为 JSON 对象、**键 = 发布通道
+  （release/nightly/rc/test/v8-canary）**，缺键**静默回退**默认源；`pnpm-workspace.yaml`
+  / 全局 `config.yaml` 亦可；`.npmrc` 与 `--config.` 旗标静默无效；`--registry=` 全命令
+  有效。决定性证据：本地 404 服务器收到 `index.json` 与 `v<ver>/SHASUMS256.txt` 请求
+  ——SHASUMS256 强制校验且与镜像同源。剩余：Windows/Linux 实机复验。
+  ② ✅ macOS 非 TTY 实机（GUI 子进程同态）：runtime set exit 0；字节进度行可解析映射
+  `boot:progress`；激活需 `pnpm shim add node`（PNPM_HOME/bin 硬链 node）；npm/npx/
+  corepack 缺位实证；**单目录引擎布局成立**（PNPM_HOME 兼作 runtime 项目，bin/global/
+  node_modules/package.json 共存）；引擎链全绿（镜像装 node → add -g dsh → 引擎 node
+  执行 dsh）。剩余：Windows/Linux 实机复验。
   ③ macOS 签名/公证包内 resources 二进制的执行许可实机验证；
   ④ WSL 客体二进制投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）。
+  ⚠ 实机新发现两处待裁定（spike §4）：pnpm 二进制解包 **32MB** 触发 §6 体积复审线；
+  musl node 下载源硬编码 unofficial-builds.nodejs.org、不可镜像注入（实测可达，暂接受）。
 - [x] P1（2026-09-03 落地，独立先行）：TooOld 不再 bail（旧实现直接终止启动 = 死局）
   ——记录后落后续档（bundle/download）继续 boot；档序耗尽才带版本信息报错。复现
   测试 ×2：`resolve.rs::tests::resolve_too_old_system_falls_to_next_tier` /
   `resolve_too_old_exhausted_reports_actionable_error`。
-- [ ] P2：子进程环境自构；pnpm 补齐落引擎私有目录（替代用户全局）。
+- [x] P2（2026-09-03 落地）：pnpm 补齐落 `<数据目录>/engines/npm`（`--prefix` +
+  `NPM_CONFIG_PREFIX` 双保险，替代用户全局；bundle 档只读 resources 亦因此可补齐）+
+  显式 pin `pnpm@12.3.1`（spike 0003 §2.1）；子进程环境自构第一步 = `dsh_child_path`
+  （引擎 bin → node bin → 用户 PATH），ensure_pnpm 可见性检查与 shell::spawn_dsh
+  同源，dsh 内部 spawnSync("pnpm") 恒可达。完整「PATH = 引擎 bin + 系统最小集」
+  （剥离用户 PATH）随 P3 引擎模式落地。
 - [ ] P3（本 ADR 主体）：引擎编排模块 → 检测层退役 → contract v3（resolution
   简化）→ AGENTS §0/§6/§7 同步 → `docs/broadcasts.md` 落档。
 - [x] 文档同步（2026-09-03 完成）：ADR-0010 定稿 + AGENTS 红线 2 / §6 例外册 /
@@ -152,6 +165,8 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   首选回退方案 B（自有下载器自 git 历史恢复）。
 - 发生 node 镜像 SHASUMS256 污染/投毒事件 → 重评信任模型（是否恢复签名哈希仲裁）。
 - 安装包体积劣化超预期（pnpm 二进制 >25MB/平台）→ 重评内置策略。
+  （2026-09-03 spike 0003 实测解包 32MB，**已越线**——待维护者在「接受 32MB / 安装包
+  内压缩存储 / 回退方案 B」间裁定，见 spike §4 边界 A。）
 - dsh 上游将 `spawnSync("pnpm")` 增加回退参数 → pnpm 降级为可选，本 ADR 重开。
 
 ## 7. 裁定台账（2026-09-03 全节点评审，grilling 三轮）
