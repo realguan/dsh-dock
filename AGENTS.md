@@ -20,8 +20,8 @@
 1. **不修改 dsh 源码**（不 fork / 不上游 patch）；允许读源码、调 CLI、文件系统层复现
    其行为（须锚定源码位置 + 日期，登记复现台账 `docs/contracts/dsh-behavior-ledger.md`，
    dsh 升级逐条复核）。
-2. **安装包不内置依赖**（Node / dsh / pnpm）：检测宿主，缺失经 system → bundle →
-   download 实时补齐。
+2. **安装包不内置依赖**（Node / dsh）：首次使用联网由引擎自补齐；**唯一例外 = pnpm
+   引导器随壳内置**（各平台一份，Windows 包另带 musl 份供 WSL 客体；ADR-0010）。
 
 **工程准则**：职责清晰、可测试、可维护，不破坏 dsh 文件系统不变量（§6；详见 ADR-0009）。
 
@@ -107,16 +107,17 @@
   `locale` 界面语言偏好（2026-08-31）· `autoRestart` 崩溃自动拉起守护（2026-08-31）·
   `showFloatingSwitcher` 悬浮胶囊开关（2026-09-01）· `switcherShortcut` 切换快捷键偏好（2026-09-01）·
   `probe-cache.json` `--no-open` 探测缓存（2026-09-01；可丢失可重建的运行时缓存，
-  损坏/缺失回退探测不阻断 boot）。
+  损坏/缺失回退探测不阻断 boot）· `engines/` 引擎目录（2026-09-03，ADR-0010：
+  `PNPM_HOME` 指向的壳管理运行时资产 node/pnpm/dsh；可丢失可重建，缺失走引导）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
   农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
-- **pnpm 为环境检查硬依赖**（2026-08-28，ADR-0009 口径 2）：缺失经 `npm i -g pnpm`
-  补齐（updates.rs）；WSL 客体内同口径——node/pnpm/dsh 缺失均自动补齐（同日修订原
-  4.9 用户主权裁定；node 与本地档同源、tarball 落壳管理目录，ADR-0004 §7）。
+- **pnpm 为环境检查硬依赖**（2026-08-28，ADR-0009 口径 2；2026-09-03 修订补齐方式，
+  ADR-0010）：pnpm 随壳内置恒在；node/pnpm/dsh 缺失一律走引擎引导补齐，WSL 客体
+  同口径（ADR-0004 §7 + ADR-0010；原 `npm i -g pnpm` / tarball 机制随探测层退役）。
 
 ## 7. IPC 与网络面（例外册，登记制）
 
@@ -153,7 +154,12 @@
   一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
   registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /
   同超时 / 同 packument 体积上限（2026-08-29，4.4④）；**社区插件市场 Registry 拉取**：
-  `updates.rs` `fetch_market_registry`，镜像链 `awesome-dsh-plugin.com` 与 GitHub raw（2026-08-31）。专项裁定见 §9 索引对应 ADR。
+  `updates.rs` `fetch_market_registry`，镜像链 `awesome-dsh-plugin.com` 与 GitHub raw（2026-08-31）；
+  **引擎引导**（2026-09-03，ADR-0010）：壳内置 pnpm12 经 `runtime set node` /
+  `pnpm add -g` 下载 node 与 dsh（`PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS` 注入
+  npmmirror → 官方镜像链），updates.rs 编排的子进程网络动作；WSL 客体同源
+  （投递 musl pnpm、网络在客体进程内、镜像链同注入——客体 pnpm 属壳资产）。
+  专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
 
@@ -186,6 +192,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0007](docs/adr/0007-update-entry-menu-vs-tray.md) | 更新入口 macOS=菜单 / 非 macOS=托盘 |
 | [0008](docs/adr/0008-frontend-framework.md) | React 生态白名单与前端三红线 |
 | [0009](docs/adr/0009-profile-manager.md) | Profile 生命周期：创建走 dsh plugin 转发链，其余文件层；pnpm boot 硬依赖 |
+| [0010](docs/adr/0010-engine-inversion.md) | 运行时归属倒置：引擎=壳资产（pnpm12 引导），探测层退役；升级全显式、离线可启动 |
 
 ## 10. 试验协议
 

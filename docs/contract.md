@@ -175,3 +175,39 @@ pnpm 的全局目录或安装动作失败时回退 npm；因此 pnpm 是优先�
   不设整体上限——慢网络下大包合法地超过一分钟，停滞连接由读超时兜底。
 - **单实例**：`tauri-plugin-single-instance`（OS 级原语），二次启动唤起主窗口，
   杜绝双进程 / 双下载 / 并发写私有 prefix。
+
+---
+
+# 运行时策略 v3：引擎倒置（ADR-0010，2026-09-03 已接受）
+
+> 本节废止上方 manifest v2 的 `resolution` / `fallback` 语义（v2 段落保留作历史档案）。
+> `format: 3` 随 ADR-0010 P3 落地同步升版（壳 `MANIFEST_FORMAT` 与打包侧三步同版发布）。
+
+## 形态
+
+- **引擎档（缺省）**：manifest 不声明 `snapshot` 三件套 → 引擎启动。运行时 = 壳引擎
+  （node + pnpm + dsh；pnpm12 引导器随壳内置），`PNPM_HOME` 指向壳引擎目录
+  `<数据目录>/engines/`。用户世界不变：`$DSH_HOME` / `~/.dsh`。
+- **快照档**：manifest 声明 `snapshot` 三件套（nodeBin / dshBinJs / dshHome / profile）
+  → 内置只读快照启动，离线可用（语义沿 v1 fallback，无 resolution）。
+
+```json
+{
+  "format": 3,
+  "productName": "DSH Dock",
+  "runtime": { "mode": "engine" },
+  "snapshot": { "nodeBin": "...", "dshBinJs": "...", "dshHome": "...", "profile": "..." }
+}
+```
+
+`runtime` 可省略（引擎档缺省）；`snapshot` 可省略（引擎档）。
+
+## 语义
+
+- **在线语义**：首启必须联网（引擎引导）；之后 registry 不可达 → 已装引擎直接启动。
+- **升级**：node 与 dsh 一律显式（更新入口提示 → 用户决定 → 下次启动生效）；
+  node 版本源 = `@dsh-dock/node-map`（验签定版本；SHA 字段保留不消费）；dsh 比对
+  排除预发布。
+- **WSL 客体**：musl pnpm 随 Windows 包 resources 内置，壳自动投递；客体 pnpm 属
+  壳资产，下载源走壳注入镜像链（npmmirror → 官方；ADR-0004 修订：用户镜像主权
+  条款只约束用户自身的 npm/pnpm 配置）。
