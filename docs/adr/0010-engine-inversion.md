@@ -132,7 +132,10 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   ② `pnpm runtime set node` 三平台非 TTY（GUI 子进程）实机验证；
   ③ macOS 签名/公证包内 resources 二进制的执行许可实机验证；
   ④ WSL 客体二进制投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）。
-- [ ] P1（独立先行，不依赖本 ADR）：TooOld 不再 bail，落 download 档继续 boot。
+- [x] P1（2026-09-03 落地，独立先行）：TooOld 不再 bail（旧实现直接终止启动 = 死局）
+  ——记录后落后续档（bundle/download）继续 boot；档序耗尽才带版本信息报错。复现
+  测试 ×2：`resolve.rs::tests::resolve_too_old_system_falls_to_next_tier` /
+  `resolve_too_old_exhausted_reports_actionable_error`。
 - [ ] P2：子进程环境自构；pnpm 补齐落引擎私有目录（替代用户全局）。
 - [ ] P3（本 ADR 主体）：引擎编排模块 → 检测层退役 → contract v3（resolution
   简化）→ AGENTS §0/§6/§7 同步 → `docs/broadcasts.md` 落档。

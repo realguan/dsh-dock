@@ -546,7 +546,8 @@ pub fn engines_satisfied(node_version: &str, engines_node: Option<&str>) -> bool
 enum SystemOutcome {
     Hit(SystemHit),
     Miss,
-    /// 用户已有 dsh 但低于下限：**不自动覆盖**（H：提示+经确认），携带版本信息出可行动文案。
+    /// 用户已有 dsh 但低于下限：**不自动覆盖**；2026-09-03 ADR-0010 P1 起
+    /// 不再终止启动（旧实现直接 bail = 死局），跳后续档继续 boot。
     TooOld {
         found: String,
         min: String,
@@ -563,6 +564,11 @@ pub fn resolve_launch(
 ) -> Result<LaunchSpec> {
     let spec = &manifest.terminal.resolution.dsh;
 
+    // 2026-09-03 ADR-0010 P1：system dsh 版本过低不再终止启动（旧实现直接
+    // bail，演变成「不可启动」死局）——记录后落后续档（bundle/download）继续
+    // boot，用户全局 dsh 仍不被触碰；仅当档序耗尽仍无宿主时才带版本信息报错。
+    let mut too_old: Option<(String, String)> = None;
+
     for tier in &spec.tiers {
         match tier {
             TierKind::System => match probe_system(spec, path_env) {
@@ -578,11 +584,10 @@ pub fn resolve_launch(
                     });
                 }
                 SystemOutcome::TooOld { found, min } => {
-                    anyhow::bail!(
-                        "您机器上的 DSH 版本过低（{found} < 终端要求 {min}）。\n\
-                         终端不会自动覆盖您的全局安装；请确认后执行 \
-                         `npm i -g @deepseek-ai/dsh` 升级，或安装内置档桌面版。"
+                    tracing::warn!(
+                        "system dsh 版本过低（{found} < 终端要求 {min}），跳过 system 档继续解析"
                     );
+                    too_old = Some((found, min));
                 }
                 SystemOutcome::Miss => {
                     tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
@@ -622,7 +627,14 @@ pub fn resolve_launch(
             }
         }
     }
-    anyhow::bail!("resolution 档序为空，无法解析宿主")
+    match too_old {
+        Some((found, min)) => anyhow::bail!(
+            "宿主解析失败：您机器上的 DSH 版本过低（{found} < 终端要求 {min}），\
+             且后续档均不可用。\n终端不会自动覆盖您的全局安装；\
+             请执行 `npm i -g @deepseek-ai/dsh` 升级后重试。"
+        ),
+        None => anyhow::bail!("resolution 档序为空，无法解析宿主"),
+    }
 }
 
 /// system 档三重闸：dsh 树存在 + 版本 ≥ 下限 + node 可用且 engines 通过。
@@ -1223,6 +1235,97 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("档序为空"));
+    }
+
+    /// 造一个低版本系统 dsh（npm 全局形态：bin 符号链接 → 包内入口），
+    /// 返回应注入 PATH 的 bin 目录。仅 Unix（Windows shim 形态另有专项测试）。
+    #[cfg(unix)]
+    fn fake_old_system_dsh(root: &Path, version: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bindir = root.join("bin");
+        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(&bindir).unwrap();
+        std::fs::create_dir_all(pkg.join("lib")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            format!(r#"{{"name": "@deepseek-ai/dsh", "version": "{version}"}}"#),
+        )
+        .unwrap();
+        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
+        std::fs::set_permissions(pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
+            .unwrap();
+        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
+        bindir
+    }
+
+    /// 复现先行（ADR-0010 P1，2026-09-03）：system dsh 低于 minVersion 时，
+    /// 旧实现直接 bail（死局）；修复后应跳过 system 档、落 bundle 档继续 boot。
+    #[cfg(unix)]
+    #[test]
+    fn resolve_too_old_system_falls_to_next_tier() {
+        let root = tmp();
+        let bindir = fake_old_system_dsh(&root, "0.0.9");
+        let res = root.join("resources");
+        std::fs::create_dir_all(&res).unwrap();
+        std::fs::create_dir_all(res.join("dsh-snapshot/home/profiles/desktop-demo")).unwrap();
+        std::fs::write(res.join("dsh-snapshot/home/settings.yaml"), "k: v\n").unwrap();
+        let json = r#"{
+          "format": 2,
+          "productName": "T",
+          "terminal": {
+            "resolution": {
+              "dsh": { "tiers": ["system", "bundle"], "minVersion": "0.1.0" }
+            }
+          },
+          "fallback": {
+            "nodeBin": "dsh-snapshot/node/bin/dsh-node",
+            "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
+            "dshHome": "dsh-snapshot/home",
+            "profile": "desktop-demo"
+          }
+        }"#;
+        let m: ProductManifest = serde_json::from_str(json).unwrap();
+        let spec = resolve_launch(
+            &m,
+            &res,
+            &bindir.display().to_string(),
+            &root,
+            &mut |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(spec.tier, TierKind::Bundle);
+        assert_eq!(spec.profile, "desktop-demo");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 档序耗尽且唯一线索是版本过低：报错必须保留可行动文案（实测版本不丢）。
+    #[cfg(unix)]
+    #[test]
+    fn resolve_too_old_exhausted_reports_actionable_error() {
+        let root = tmp();
+        let bindir = fake_old_system_dsh(&root, "0.0.9");
+        let json = r#"{
+          "format": 2,
+          "productName": "T",
+          "terminal": {
+            "resolution": {
+              "dsh": { "tiers": ["system"], "minVersion": "0.1.0" }
+            }
+          }
+        }"#;
+        let m: ProductManifest = serde_json::from_str(json).unwrap();
+        let err = resolve_launch(
+            &m,
+            Path::new("/res-none"),
+            &bindir.display().to_string(),
+            &root,
+            &mut |_, _| {},
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("版本过低"), "报错应含版本闸语义：{msg}");
+        assert!(msg.contains("0.0.9"), "报错应携带实测版本：{msg}");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // ---------- probe_no_open 探测（2026-09-01：流式早退 + 超时兜底） ----------

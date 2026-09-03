@@ -32,6 +32,19 @@
 
 ## 三、记录
 
+### 2026-09-03 完成通知 · P1 TooOld 死局过渡修复（system dsh 过低不再拒绝启动） —— guan（AI 协作）
+
+- 变更：
+  1. `resolve_launch`（ADR-0010 P1，独立先行）：system dsh 版本低于 `minVersion`
+     时不再直接 bail（旧实现整个应用拒绝启动 = 死局）——记 warn 后跳过 system 档、
+     按档序落 bundle/download 继续 boot，用户全局 dsh 仍不被触碰；仅当档序耗尽仍无
+     宿主时，报错保留可行动文案（含实测版本与升级命令）。
+- 影响：过渡期行为修复，不依赖引擎倒置落地；manifest v2 语义不变。LocalExecutor
+  与 WSL 客体探测的 `resolve_launch` 调用面随此自动受益，无接口变化。
+- 凭据：复现先行测试 `resolve_too_old_system_falls_to_next_tier`（过低 → 落 bundle
+  档）/ `resolve_too_old_exhausted_reports_actionable_error`（档序耗尽报错不丢版本
+  信息）；`cargo test` 178 全绿 + `cargo fmt --check` + `clippy -D warnings` 零告警。
+
 ### 2026-09-03 宪法级改动 · ADR-0010 引擎倒置：环境准备阶段重造（pnpm12 引导 / 探测层退役 / 升级全显式） —— guan（AI 协作）
 
 - 变更：
