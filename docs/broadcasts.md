@@ -32,6 +32,16 @@
 
 ## 三、记录
 
+### 2026-09-04 宪法级改动 · 前端工具链全面 Native 化（pnpm 12 + TypeScript 7 + Oxlint + Lucide 1.40） —— guan（AI 协作）
+
+- 变更：
+  1. **包管理器全面倒置对齐 pnpm 12**：前端包管理由 `npm` 切换至 `pnpm 12`（锁定 `pnpm@12.3.1`，与壳内置引擎引导器版本单一真相源严格对齐）；生成 `frontend/pnpm-lock.yaml`；配置 `shared-workspace-lockfile=false` 隔离父仓库 monorepo 漂移；移除旧 `package-lock.json`。
+  2. **TypeScript 7 + Oxlint 极速静态检查**：升级 TypeScript 至 `~7.0.2`（Go 原生编译器引擎）；废弃传统 ESLint 全家桶（移除 `eslint.config.js`），切换至 Rust 内核的 `oxlint`（`oxlint src` 耗时由 ~1.5s 骤降至 21ms，0 告警 0 错误）；`lucide-react` 平滑升级至 `^1.40.0`。
+  3. **Tauri 与 CI 流水线同步升级**：`src-tauri/tauri.conf.json` 的 `beforeDevCommand` 与 `beforeBuildCommand` 统一切换为 `pnpm`；`.github/workflows/build.yml` 引入 `pnpm/action-setup@v4`（三平台统一预装 pnpm 12.3.1，自动接入 pnpm store 依赖缓存，Linux/macOS/Windows 构建闸门全闭环）。
+  4. **宪法 AGENTS.md §1 对齐**：前端开发与质量闸门命令同步修订为 `cd frontend && pnpm install --frozen-lockfile && pnpm run typecheck/lint/test`。
+- 影响：**宪法级**——前端构建链、锁文件与 CI 闸门切换至 pnpm 12。协作者需使用 pnpm 12 执行前端依赖安装。
+- 凭据：全量质量闸门实测验证通过：`pnpm install --frozen-lockfile`（92ms）+ `pnpm run typecheck`（TS 7.0.2 绿）+ `pnpm run lint`（Oxlint 22ms 绿）+ `pnpm run test`（15 文件 100 单测全绿）+ `pnpm run build`（356ms 成功打包）+ Rust 侧 `cargo test` 148 单测全绿。
+
 ### 2026-09-04 完成通知 · P3-b boot 接线 + contract v3（MANIFEST_FORMAT=3，引擎档缺省） —— guan（AI 协作）
 
 - 占用声明：lib.rs（共享区）改动经维护者会话内指示「继续」视同声明（2026-09-04，本条目即落档）。

@@ -113,14 +113,19 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # 前端构建（2026-08-27 前端迁移，ADR-0008）：beforeBuildCommand 钩子会跑
-      # npm ci && npm run build；锁文件 = frontend/package-lock.json（node 22 LTS）。
+      # 前端构建（2026-08-27 前端迁移，ADR-0008；2026-09-04 切 pnpm 12）：beforeBuildCommand 钩子会跑
+      # pnpm install --frozen-lockfile && pnpm run build；锁文件 = frontend/pnpm-lock.yaml（node 22 LTS）。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a32e18c50435dda8651a2934a8a3a01662c146ec # v4.1.0
+        with:
+          version: "12.3.1"
+
       - name: Setup node for frontend
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # 前端质量闸门（typecheck/lint/vitest，frontend-migration §6）。
       # 它们是平台无关的纯逻辑检查，只在 Linux 跑一次；三平台仍保留 clippy/test/package。
@@ -128,10 +133,10 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: frontend
         run: |
-          npm ci --no-audit --no-fund
-          npm run typecheck
-          npm run lint
-          npm run test
+          pnpm install --frozen-lockfile
+          pnpm run typecheck
+          pnpm run lint
+          pnpm run test
 
       # 发布 feed 的资产映射是纯 Python 标准库逻辑；在普通 CI 提前回归，而不是等
       # tag 构建走到发布阶段才发现某个平台无法自更新。

@@ -35,7 +35,7 @@
 | 前端 | React 19 + TS strict + Tailwind v4 + shadcn/ui + React Router v7 + Zustand + Framer Motion（ADR-0008；node ≥20） |
 | 数据库 | 按需、仅限管理功能；壳运行时（启动/版本/宿主解析）保持无状态 |
 
-- 命令：Rust `cd src-tauri && cargo test`；前端 `cd frontend && npm ci && npm run
+- 命令：Rust `cd src-tauri && cargo test`；前端 `cd frontend && pnpm install --frozen-lockfile && pnpm run
   typecheck/lint/test`；CI 闸门 `cargo fmt --check` + `clippy -D warnings`（三平台）。
 - `src-tauri/rustfmt.toml` 仅锁 edition，改动 = 全仓 diff，改前须频道知会。
 

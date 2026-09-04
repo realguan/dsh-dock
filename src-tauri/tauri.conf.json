@@ -7,11 +7,11 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../frontend/dist",
     "beforeDevCommand": {
-      "script": "npm run dev",
+      "script": "pnpm run dev",
       "cwd": "../frontend"
     },
     "beforeBuildCommand": {
-      "script": "npm ci --no-audit --no-fund && npm run build",
+      "script": "pnpm install --frozen-lockfile && pnpm run build",
       "cwd": "../frontend"
     }
   },
