@@ -123,7 +123,7 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
 - 新耦合面：pnpm runtime API 的 major 演进（缓解：pin 随壳 + 升级清单 + 方案 B 回退预案）。
 
 ### 行动项
-- [ ] **Spike（先于一切实现；案头 + macOS 实机均已完成 2026-09-03，实证见
+- [x] **Spike（先于一切实现）——①②③④ 全部结案（2026-09-04，实证见
   `docs/spikes/0003-pnpm12-engine-bootstrap.md`）**：
   ① ✅ 注入通道核实（v12.3.1 源码 + macOS 实机）：node 镜像 env =
   `PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS`，值为 JSON 对象、**键 = 发布通道
