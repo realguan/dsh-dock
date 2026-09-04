@@ -43,6 +43,15 @@ pub(crate) fn package_registry_bases() -> [&'static str; 2] {
     ]
 }
 
+/// 随壳捆绑的 pnpm 版本（ADR-0010：resources/pnpm/<platform>.tgz 经
+/// scripts/fetch-pnpm-bundle.sh 打包期取得，该脚本从本常量推导版本，防两处
+/// 漂移）。升级必过 ADR-0010 升级清单（runtime set / add -g / spawnSync
+/// 可达 / 三平台 boot 冒烟）。
+/// Rust 侧无运行时消费（bundle 落地只解包不关版本）——唯一消费者是打包期
+/// 脚本，dead_code 豁免即此契约。
+#[allow(dead_code)]
+pub const PINNED_PNPM_VERSION: &str = "12.3.1";
+
 fn npm_registry_urls() -> [String; 2] {
     let bases = package_registry_bases();
     [
@@ -534,11 +543,7 @@ pub(crate) fn pnpm_install_args(registry: &str, spec: &str) -> Vec<String> {
         "--registry".to_string(),
         registry.to_string(),
     ];
-    args.extend(
-        PNPM_BUILD_PACKAGES
-            .iter()
-            .map(|package| format!("--allow-build={package}")),
-    );
+    args.extend(pnpm_allow_build_flags());
     args.push(spec.to_string());
     args
 }
@@ -566,6 +571,22 @@ pub fn engine_pnpm_bundle(resources_dir: &Path) -> PathBuf {
         "linux-x64"
     };
     resources_dir.join("pnpm").join(format!("{platform}.tgz"))
+}
+
+/// WSL 客体投递份（ADR-0010 台账「客体投递」）：Windows 包内置 linux-x64
+///（glibc）tgz，客体架构固定 x64；随 fetch-pnpm-bundle.sh 于 CI 取得。
+#[cfg_attr(not(windows), allow(dead_code))] // 消费点在 Windows 客体投递链
+pub fn guest_pnpm_bundle(resources_dir: &Path) -> PathBuf {
+    resources_dir.join("pnpm").join("linux-x64.tgz")
+}
+
+/// dsh 引导的 allow-build 放行旗标（pnpm v10 起构建脚本需显式放行；
+/// host `pnpm_install_args` 与 WSL 客体脚本单源共用）。
+pub(crate) fn pnpm_allow_build_flags() -> Vec<String> {
+    PNPM_BUILD_PACKAGES
+        .iter()
+        .map(|package| format!("--allow-build={package}"))
+        .collect()
 }
 
 /// dsh 引导目标版本：排序最高**稳定版**（排除预发布——ADR-0010 台账

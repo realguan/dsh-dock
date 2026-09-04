@@ -72,3 +72,22 @@ WSL 探测到「有 node 缺 dsh」→ 在客体内执行固定脚本模板 `GUE
 - **下载**：网络动作在客体内（本 ADR 原模式不变）；二进制源走 ADR-0006 镜像链，与「npm 镜像参数不注入」不冲突（后者管 npm 运行配置，这是壳下载自身资产）。
 - **补齐链**：客体内全自动 node → pnpm（`npm i -g pnpm`）→ dsh；任一环失败给可行动文案。
 - **实现**：executor.rs 的 `NODE_MISSING` 分支改为自动补齐（三态探测语义保留：`NODE_MISSING` 变为「补齐中/补齐失败」入口，不再是终点提示）；归 4.9 落地。
+
+## 8. 修订补录（2026-09-04：客体链整体改引擎档，ADR-0010 台账裁定）
+
+§7 的「curl 官方 tarball 装 node → `npm i -g pnpm` → `npm i -g dsh`」客体补齐链
+随 ADR-0010 引擎倒置整体退役，三个已知缺陷（客体 pnpm 缺口、tarball 无校验和、
+依赖 curl）一次闭合：
+
+- **pnpm**：Windows 包内置 linux-x64（glibc）份，壳经 `\\wsl$` 拷贝主通道 +
+  base64 stdin 兜底投递进客体（spike 0003 §2.7 选型），客体内解包落
+  `~/.dsh-dock/engines/bin`；客体 pnpm 属壳资产，下载源由壳注入镜像链——
+  「镜像配置由用户客体决定」的约束相应收窄为只约束**用户自身** npm/pnpm 配置。
+- **node/dsh**：客体内经引擎 pnpm 引导（`runtime set node` + `shim add node` /
+  `add -g @deepseek-ai/dsh`），镜像链由壳注入（同 host 口径）；网络动作仍发生
+  在客体进程内（本 ADR「壳不触网」模式不变）。
+- **glibc-only**：musl 系（Alpine）发行版不在支持范围（musl node 下载源不可
+  镜像注入，spike 0003 §4），探测识别后出可行动错误。
+- **旧落点**：`~/.dsh-dock/node` 弃用，不迁移不删除。
+- **实现**：executor.rs GUEST_PROBE 五态状态机 + `ensure_guest_engine`；
+  `install_node_in_distro` / `install_dsh_in_distro` 删除。

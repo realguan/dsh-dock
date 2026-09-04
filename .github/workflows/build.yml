@@ -142,10 +142,16 @@ jobs:
 
       # 引擎档依赖（ADR-0010 边界 A，contract v3）：pnpm 平台二进制压缩包入
       # resources/pnpm/，随安装包分发（engine_pnpm_bundle 契约）；镜像链 +
-      # shasum 完整性校验。三平台各自取本平台份。
+      # shasum 完整性校验。三平台各自取本平台份；Windows 另取 linux-x64 份
+      # （WSL 客体投递，guest_pnpm_bundle 契约，ADR-0010 台账）。
       - name: Fetch bundled pnpm binary (engine bootstrap)
         shell: bash
-        run: scripts/fetch-pnpm-bundle.sh
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            scripts/fetch-pnpm-bundle.sh win32-x64 linux-x64
+          else
+            scripts/fetch-pnpm-bundle.sh
+          fi
 
       # 私钥只注入 tag 构建步骤，绝不写入 GITHUB_ENV；因此 PR 的 cargo/npm 命令
       # 无法读取发布密钥。tag 必须签名，缺密钥直接失败而非发布不可更新的安装器。

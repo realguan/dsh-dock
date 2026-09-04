@@ -456,8 +456,8 @@ fn wsl_command(distro: Option<&str>) -> Command {
 /// 在 WSL 内执行并捕获 stdout（带超时）。
 /// 兼容 wsl.exe 的 UTF-16 重定向输出（老版本/非英语区域实测）：取原始字节后
 /// 探测 NUL（UTF-16LE 特征），命中就按 UTF-16LE 解码。
-/// 超时参数化：探测/teardown 用 5s；`npm i -g` 慢镜像可能 30s+（见
-/// `install_dsh_in_distro` 调用的 120s）。
+/// 超时参数化：探测/teardown 用 5s；客体内 pnpm 引导（node 下载 / dsh 安装）
+/// 可能数分钟（见 `ensure_guest_engine` 各环的 120s–600s）。
 #[cfg(windows)]
 fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Option<String> {
     let mut cmd = wsl_command(distro);
@@ -481,33 +481,28 @@ const GUEST_STOP_FILE: &str = "/tmp/dsh-dock-stop";
 #[cfg(windows)]
 const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
 
-/// 客体内「准备好 PATH + 工具链」的公共前缀（固定脚本，不插值用户输入）。
+/// 客体内「准备好 PATH + 引擎目录」的公共前缀（固定脚本，不插值用户输入）。
 ///
-/// 为什么这样补 PATH（2026-08-26 实机 bug 修复，nvm 用户探测失败）：
-///   1. `.bashrc` 开头有非交互守卫 `case $- in *i*) ;; *) return;; esac`——
-///      非交互登录壳（`bash -lc`）source 它时直接 return，nvm/fnm 段根本不执行。
-///      因此调用方一律用 **交互式登录壳 `bash -lic`**（$- 含 i，守卫放行；
-///      非 tty 下仅 stderr 打 job-control 警告，不影响 stdout/退出码）。
-///   2. 兜底扫描常见版本管理器安装位，**不依赖任何 rc 被执行**（用户在
-///      `.bashrc` `.profile` `/etc/profile` 里无论如何写 PATH 都生效）：
-///      nvm / fnm（含 XDG 变体）/ n / volta。命中 node 的 bin 目录即前置进 PATH。
-///   3. 仍显式 source 三个标准 rc（非 Ubuntu 发行版 .profile 可能不 source
-///      .bashrc；交互模式 shopt 差异也统一掉）。source 一律 2>/dev/null 静默。
+/// ADR-0010 客体同构（2026-09-04 收缩）：工具链 = 壳引擎目录
+/// `~/.dsh-dock/engines`（pnpm 投递落点 + node/dsh 引擎引导均在此），
+/// 版本管理器兜底扫描随探测层退役——系统 node 不再是任何环节的来源。
+/// 仍用**交互式登录壳 `bash -lic`**（rc 非交互守卫放行，2026-08-26 实机
+/// bug 教训，见 `rc_guard_blocks_non_interactive_login_shell`）；source
+/// 三个标准 rc 后**末尾**前置引擎 bin（盖掉 rc 里的任何 PATH 设置），
+/// 并导出 PNPM_HOME（pnpm 全局 bin 目录不在 PATH = ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH）。
 ///
 /// 模板为纯字符串 → 跨平台可测（macOS/Linux 测试直接以 bash 实跑验证）。
 #[cfg(any(windows, test))]
 macro_rules! guest_prep {
     () => {
-        // 2026-09-01 裁定：壳管理目录优先纳入 PATH（ADR-0004 §7 自动补齐落点）
         concat!(
+            "DSH_ENGINES=\"$HOME/.dsh-dock/engines\";",
             ". /etc/profile 2>/dev/null;",
             ". \"$HOME/.profile\" 2>/dev/null; . \"$HOME/.bashrc\" 2>/dev/null;",
-            "[ -x \"$HOME/.dsh-dock/node/bin/node\" ] && PATH=\"$HOME/.dsh-dock/node/bin:$PATH\";",
-            "for d in \"$HOME\"/.nvm/versions/node/*/bin \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin",
-            " \"$HOME\"/n/bin \"$HOME\"/.volta/bin",
-            " \"${XDG_DATA_HOME:-$HOME/.local/share}\"/fnm/node-versions/*/installation/bin; do",
-            " [ -x \"$d/node\" ] && PATH=\"$d:$PATH\";",
-            "done;",
+            "if [ -d \"$DSH_ENGINES/bin\" ]; then",
+            " PNPM_HOME=\"$DSH_ENGINES\"; export PNPM_HOME;",
+            " PATH=\"$DSH_ENGINES/bin:$PATH\"; export PATH;",
+            "fi;",
         )
     };
 }
@@ -542,40 +537,111 @@ fn guest_boot_script(profile: &str) -> String {
     )
 }
 
-/// 客体内探测工具链的固定脚本模板（先 guest_prep 补 PATH）。
-/// 三态输出：`READY`（node+dsh）/ `DSH_MISSING`（有 node 缺 dsh，可自动装）/
-/// `NODE_MISSING`（无 node，只能提示用户装）。
+/// 客体内引擎链探测的固定脚本模板（ADR-0010 客体同构，2026-09-04）：
+/// musl 识别 → pnpm → node → dsh 逐环报**第一缺口**。输出状态机：
+/// `GUEST_MUSL`（musl libc，不支持）/ `PNPM_MISSING`（引擎 pnpm 缺，待
+/// Windows 侧投递捆绑包）/ `NODE_MISSING`（待客体内 runtime set）/
+/// `DSH_MISSING`（待客体内 add -g）/ `READY`。
+/// 调用壳一律 `-e bash -lic`（rc 非交互守卫放行，同 guest_prep 约定）。
 #[cfg(any(windows, test))]
 const GUEST_PROBE: &str = concat!(
     guest_prep!(),
-    "if command -v node >/dev/null 2>&1; then",
-    " if command -v dsh >/dev/null 2>&1; then echo READY; else echo DSH_MISSING; fi;",
-    "else echo NODE_MISSING; fi",
+    "if ldd --version 2>/dev/null | head -1 | grep -qi musl; then echo GUEST_MUSL; exit 0; fi;",
+    "if [ ! -x \"$DSH_ENGINES/bin/pnpm\" ]; then echo PNPM_MISSING; exit 0; fi;",
+    "if [ ! -x \"$DSH_ENGINES/bin/node\" ]; then echo NODE_MISSING; exit 0; fi;",
+    "if [ ! -x \"$DSH_ENGINES/bin/dsh\" ]; then echo DSH_MISSING; exit 0; fi;",
+    "echo READY",
 );
 
-/// 客体内自动安装 dsh 的固定脚本模板（npm i -g；2026-08-26 登记网络面）。
-/// 总有输出且 `exit 0`（成败看输出里的 `RC=` 行 / `ERR_NPM_MISSING`），
-/// 规避 run_with_timeout_raw 的「非零退出=无输出」语义；npm 全量输出进
-/// /tmp/dsh-dock-npm.log（管道无死锁风险），只回传尾部 2KB 作诊断。
+/// 客体内落位投递的 pnpm 压缩包（`/tmp/dsh-dock-pnpm.tgz`，\wsl$ 或 base64
+/// stdin 投递）：解包 `package/pnpm` → 引擎 bin + 执行验证 + 清理暂存。
+/// 总有输出且 `exit 0`（成败看 `STAGE_OK` / `STAGE_TAR_FAILED` /
+/// `STAGE_VERIFY_FAILED` 行，规避 run_with_timeout_raw 的「非零退出=无输出」
+/// 语义）；诊断尾部就地输出（全量日志 /tmp/dsh-dock-stage.log）。
 #[cfg(any(windows, test))]
 #[allow(dead_code)] // 同 guest_boot_script：非 Windows 非 test 目标无引用，保跨平台可测性
-const GUEST_INSTALL_DSH: &str = concat!(
-    "rm -f /tmp/dsh-dock-npm.log;",
-    guest_prep!(),
-    "if ! command -v npm >/dev/null 2>&1; then echo ERR_NPM_MISSING; exit 0; fi;",
-    "npm i -g @deepseek-ai/dsh >/tmp/dsh-dock-npm.log 2>&1; RC=$?;",
-    "echo '--- npm tail ---'; tail -c 2000 /tmp/dsh-dock-npm.log; echo; echo \"RC=$RC\"; exit 0",
+const GUEST_STAGE_PNPM: &str = concat!(
+    "ENGINES=\"$HOME/.dsh-dock/engines\"; LOG=/tmp/dsh-dock-stage.log;",
+    "mkdir -p \"$ENGINES/bin\" \"$ENGINES/stage-tmp\";",
+    "if tar -xzf /tmp/dsh-dock-pnpm.tgz -C \"$ENGINES/stage-tmp\" package/pnpm >\"$LOG\" 2>&1 &&",
+    "   mv -f \"$ENGINES/stage-tmp/package/pnpm\" \"$ENGINES/bin/pnpm\" &&",
+    "   chmod 755 \"$ENGINES/bin/pnpm\"; then",
+    " rm -rf \"$ENGINES/stage-tmp\"; rm -f /tmp/dsh-dock-pnpm.tgz;",
+    " if \"$ENGINES/bin/pnpm\" --version >\"$LOG\" 2>&1; then echo STAGE_OK;",
+    " else echo STAGE_VERIFY_FAILED; tail -c 2000 \"$LOG\"; fi",
+    " else echo STAGE_TAR_FAILED; tail -c 2000 \"$LOG\"; fi; exit 0",
 );
+
+/// 客体内引擎引导 node 的脚本模板：`pnpm runtime set node`（cwd=引擎目录，
+/// 项目作用域——单目录方案把 node 装进引擎）+ `pnpm shim add node`（激活硬链，
+/// spike 0003 §2.2）。镜像链 shell 循环 = host `runtime_set_node` 的
+/// npmmirror → 官方两次尝试同口径。下载全量输出落 /tmp/dsh-dock-node.log，
+/// 只回传尾部诊断。输出 `NODE_OK` / `NODE_FAILED`。
+#[cfg(any(windows, test))]
+#[allow(dead_code)]
+fn guest_bootstrap_node_script(version: &str) -> String {
+    let m1 = format!(
+        "{{\"release\":\"{}\"}}",
+        crate::engines::NODE_MIRROR_PRIMARY
+    );
+    let m2 = format!(
+        "{{\"release\":\"{}\"}}",
+        crate::engines::NODE_MIRROR_FALLBACK
+    );
+    format!(
+        concat!(
+            "ENGINES=\"$HOME/.dsh-dock/engines\"; LOG=/tmp/dsh-dock-node.log;",
+            "cd \"$ENGINES\" || {{ echo NODE_FAILED; echo 引擎目录不存在; exit 0; }};",
+            "export PNPM_HOME=\"$ENGINES\" PATH=\"$ENGINES/bin:$PATH\";",
+            "for M in '{m1}' '{m2}'; do",
+            " if PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS=\"$M\" pnpm runtime set node {ver} >\"$LOG\" 2>&1 &&",
+            "    pnpm shim add node >>\"$LOG\" 2>&1; then echo NODE_OK; exit 0; fi;",
+            "done; echo NODE_FAILED; tail -c 2000 \"$LOG\"; exit 0",
+        ),
+        m1 = m1,
+        m2 = m2,
+        ver = sh_quote(version),
+    )
+}
+
+/// 客体内引擎引导 dsh 的脚本模板：`pnpm add --global`，registry 镜像链循环
+///（npmmirror → npmjs）+ allow-build 放行（host `install_dsh_global` 同口径，
+/// flags 由 updates::pnpm_allow_build_flags 单源提供）。全量输出落
+/// /tmp/dsh-dock-dsh.log，只回传尾部诊断。输出 `DSH_OK` / `DSH_FAILED`。
+#[cfg(any(windows, test))]
+#[allow(dead_code)]
+fn guest_install_dsh_script(version: &str, registries: &[&str], allow_flags: &str) -> String {
+    let regs = registries
+        .iter()
+        .map(|r| sh_quote(r))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        concat!(
+            "ENGINES=\"$HOME/.dsh-dock/engines\"; LOG=/tmp/dsh-dock-dsh.log;",
+            "export PNPM_HOME=\"$ENGINES\" PATH=\"$ENGINES/bin:$PATH\";",
+            "for R in {regs}; do",
+            " if pnpm add --global --registry=\"$R\" {allow} {spec} >\"$LOG\" 2>&1;",
+            "  then echo DSH_OK; exit 0; fi;",
+            "done; echo DSH_FAILED; tail -c 2000 \"$LOG\"; exit 0",
+        ),
+        regs = regs,
+        allow = allow_flags,
+        spec = sh_quote(&format!("@deepseek-ai/dsh@{version}")),
+    )
+}
 
 /// WSL2 执行器（迭代 v1：WSL2 发行版内跑 dsh，零配置）。Windows 专属。
 #[cfg(windows)]
 pub struct WslExecutor {
     cfg: WslConfig,
     data_dir: PathBuf,
+    /// resources 目录（投递捆绑 pnpm 的来源；ADR-0010 客体投递）。
+    resources_dir: PathBuf,
     selected: Option<String>, // probe 选定的发行版名
     child: Option<std::process::Child>,
     log_path: PathBuf,
-    installed_dsh: bool, // 本次 probe 是否自动装过 dsh（→ 壳刷新版本状态）
+    installed_dsh: bool, // 本次 probe 是否补装过 dsh（→ 壳刷新版本状态）
     /// guest 启动目标 profile（4.3⑥ 参数化，默认 web；切换/重试经 forced 覆写）
     profile: String,
     /// 强制目标注入（probe 消费，同 LocalExecutor 语义；guest 世界恒为用户
@@ -585,10 +651,11 @@ pub struct WslExecutor {
 
 #[cfg(windows)]
 impl WslExecutor {
-    pub fn new(cfg: WslConfig, data_dir: PathBuf) -> Self {
+    pub fn new(cfg: WslConfig, data_dir: PathBuf, resources_dir: PathBuf) -> Self {
         Self {
             cfg,
             data_dir: data_dir.clone(),
+            resources_dir,
             selected: None,
             child: None,
             log_path: data_dir.join("dsh-wsl.log"),
@@ -641,98 +708,120 @@ impl Executor for WslExecutor {
              请升级到 WSL2：`wsl --set-version <发行版> 2`。"
                 .to_string()
         })?;
-        sink(1, "running", &format!("探测 {target} 内的 node / dsh"));
+        sink(
+            1,
+            "running",
+            &format!("探测 {target} 内的壳引擎（pnpm / node / dsh）"),
+        );
         match probe_guest_in_distro(&target) {
-            Ok(GuestProbeState::Ready) => {
-                sink(0, "done", "WSL2 环境就绪");
-                sink(1, "done", &format!("{target} 内发现 dsh 与 node"));
+            Ok(first) => {
+                // 引擎链补齐（客体同构 ADR-0010）：逐环修复并复查直到 READY。
+                let installed = self.ensure_guest_engine(&target, first, sink)?;
+                self.installed_dsh = installed;
                 self.selected = Some(target);
                 Ok(ProbeOutcome::Ready)
-            }
-            Ok(GuestProbeState::DshMissing) => {
-                // 有 node 缺 dsh → 自动安装（2026-08-26 登记网络面；v1 曾只给提示）。
-                // 步骤归属：0=环境检测，1=发行版内工具链（探测/安装/复查同属此步）。
-                sink(1, "done", &format!("{target} 内 node 就绪，dsh 缺失"));
-                sink(1, "running", "自动安装 dsh（npm i -g @deepseek-ai/dsh）");
-                if let Err(e) = install_dsh_in_distro(&target) {
-                    sink(1, "error", &e);
-                    return Err(format!(
-                        "{target} 内自动安装 dsh 失败：{e}\n可手动在 WSL 内执行 `npm i -g @deepseek-ai/dsh` 后重试。"
-                    ));
-                }
-                // 安装后复查；失败一律报错（自动安装算探测定界：装不上就出错误卡）。
-                sink(1, "running", "复查安装结果");
-                match probe_guest_in_distro(&target) {
-                    Ok(GuestProbeState::Ready) => {
-                        sink(0, "done", "WSL2 环境就绪");
-                        sink(1, "done", &format!("{target} 内发现 dsh 与 node"));
-                        self.selected = Some(target);
-                        self.installed_dsh = true;
-                        Ok(ProbeOutcome::Ready)
-                    }
-                    Ok(_) => {
-                        sink(1, "error", "安装后仍未检测到 dsh");
-                        Err(format!(
-                            "{target} 内安装 dsh 后仍不可用。请手动在 WSL 内执行 `npm i -g @deepseek-ai/dsh` 后重试。"
-                        ))
-                    }
-                    Err(e) => {
-                        sink(1, "error", &e);
-                        Err(e)
-                    }
-                }
-            }
-            Ok(GuestProbeState::NodeMissing) => {
-                // 2026-09-01 裁定（ADR-0004 §7）：WSL 客体内与本地同口径，
-                // 缺 node 自动安装——tarball 落壳管理目录 ~/.dsh-dock/node。
-                sink(
-                    1,
-                    "running",
-                    &format!("{target} 内缺少 node，正在自动安装…"),
-                );
-                if let Err(e) = install_node_in_distro(&target, &self.data_dir) {
-                    sink(1, "error", &e);
-                    return Err(format!(
-                        "{target} 内自动安装 Node.js 失败：{e}\n\
-                         可手动在 WSL 内执行 `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs` 后重试。"
-                    ));
-                }
-                // Node 就绪后继续补齐 dsh（复用 DshMissing 已有逻辑）
-                sink(1, "running", "Node.js 已就绪，正在安装 DSH…");
-                if let Err(e) = install_dsh_in_distro(&target) {
-                    sink(1, "error", &e);
-                    return Err(format!(
-                        "{target} 内自动安装 dsh 失败：{e}\n\
-                         可手动在 WSL 内执行 `npm i -g @deepseek-ai/dsh` 后重试。"
-                    ));
-                }
-                // 全链安装后复查
-                sink(1, "running", "复查安装结果");
-                match probe_guest_in_distro(&target) {
-                    Ok(GuestProbeState::Ready) => {
-                        sink(0, "done", "WSL2 环境就绪");
-                        sink(1, "done", &format!("{target} 内 node + dsh 自动安装成功"));
-                        self.selected = Some(target);
-                        self.installed_dsh = true;
-                        Ok(ProbeOutcome::Ready)
-                    }
-                    Ok(_) => {
-                        sink(1, "error", "自动安装后仍未检测到完整环境");
-                        Err(format!(
-                            "{target} 内自动安装 node + dsh 后仍不可用。\n\
-                             请手动在 WSL 内安装 Node.js 和 DSH 后重试。"
-                        ))
-                    }
-                    Err(e) => {
-                        sink(1, "error", &e);
-                        Err(e)
-                    }
-                }
             }
             Err(e) => {
                 sink(1, "error", &e);
                 Err(e)
             }
+        }
+    }
+
+    /// 引擎链补齐（客体同构 ADR-0010，2026-09-04）：按探测到的第一缺口逐环
+    /// 修复并复查直到 READY——pnpm 缺 → Windows 侧投递捆绑包（\\wsl$ 主通道，
+    /// stdin base64 兜底）+ 客体内落位；node 缺 → 客体内 runtime set（镜像链
+    /// 同 host 口径）；dsh 缺 → 客体内 add -g。返回是否补装过 dsh（→ 壳刷新
+    /// 版本状态）。musl 发行版不支持，出可行动错误（ADR-0010 台账裁定）。
+    #[cfg(windows)]
+    fn ensure_guest_engine(
+        &mut self,
+        target: &str,
+        mut state: GuestProbeState,
+        sink: BootSink<'_>,
+    ) -> Result<bool, String> {
+        let mut installed_dsh = false;
+        loop {
+            match state {
+                GuestProbeState::Ready => {
+                    sink(0, "done", "WSL2 环境就绪");
+                    sink(1, "done", &format!("{target} 内引擎三件就绪"));
+                    return Ok(installed_dsh);
+                }
+                GuestProbeState::MuslUnsupported => {
+                    let msg = format!(
+                        "{target} 为 musl libc（Alpine 系）发行版——客体引擎仅支持 \
+                         glibc 发行版（Ubuntu/Debian 等）。请改用 glibc 发行版或本地模式。"
+                    );
+                    sink(1, "error", &msg);
+                    return Err(msg);
+                }
+                GuestProbeState::PnpmMissing => {
+                    sink(
+                        1,
+                        "running",
+                        "投递捆绑 pnpm（\\wsl$ 主通道，失败自动转 stdin 兜底）…",
+                    );
+                    let bundle = crate::updates::guest_pnpm_bundle(&self.resources_dir);
+                    deliver_pnpm_bundle(target, &bundle)?;
+                    sink(1, "running", "客体内落位 pnpm 到引擎目录…");
+                    let out = run_wsl_capture(
+                        Some(target),
+                        &["-e", "bash", "-c", GUEST_STAGE_PNPM],
+                        Duration::from_secs(120),
+                    )
+                    .ok_or_else(|| format!("{target} 内落位 pnpm 失败（wsl.exe 调用失败）"))?;
+                    if !out.contains("STAGE_OK") {
+                        return Err(format!("{target} 内落位 pnpm 失败：{}", out.trim()));
+                    }
+                }
+                GuestProbeState::NodeMissing => {
+                    let version = crate::updates::node_plan(&self.data_dir).version;
+                    sink(
+                        1,
+                        "running",
+                        &format!(
+                            "{target} 内下载并激活 node v{version}（客体内下载，可能需要几分钟）…"
+                        ),
+                    );
+                    let script = guest_bootstrap_node_script(&version);
+                    let out = run_wsl_capture(
+                        Some(target),
+                        &["-e", "bash", "-c", &script],
+                        Duration::from_secs(600),
+                    )
+                    .ok_or_else(|| {
+                        format!("{target} 内 node 引导失败（wsl.exe 调用失败或超时）")
+                    })?;
+                    if !out.contains("NODE_OK") {
+                        return Err(format!("{target} 内 node 引导失败：{}", out.trim()));
+                    }
+                }
+                GuestProbeState::DshMissing => {
+                    let version = crate::updates::latest_stable_dsh_version()
+                        .map_err(|e| format!("无法确定 dsh 引导目标版本：{e}"))?;
+                    sink(1, "running", &format!("{target} 内安装 dsh v{version}…"));
+                    let registries = crate::updates::package_registry_bases();
+                    let allow = crate::updates::pnpm_allow_build_flags()
+                        .iter()
+                        .map(|f| sh_quote(f))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let script = guest_install_dsh_script(&version, &registries, &allow);
+                    let out = run_wsl_capture(
+                        Some(target),
+                        &["-e", "bash", "-c", &script],
+                        Duration::from_secs(300),
+                    )
+                    .ok_or_else(|| format!("{target} 内 dsh 安装失败（wsl.exe 调用失败或超时）"))?;
+                    if !out.contains("DSH_OK") {
+                        return Err(format!("{target} 内 dsh 安装失败：{}", out.trim()));
+                    }
+                    installed_dsh = true;
+                }
+            }
+            // 复查 → 下一缺口 or READY（每次修复后重新探测，保持单一状态源）
+            state = probe_guest_in_distro(target)?;
         }
     }
 
@@ -844,32 +933,39 @@ impl Executor for WslExecutor {
     }
 }
 
-/// 客体内探测结果三态（2026-08-26 从布尔改为三态：区分"缺 node"与"缺 dsh"，后者可自动装）。
-/// 纯枚举 + 纯分类函数 → 全平台可测（Windows 运行时态见 `probe_guest_in_distro`）。
+/// 客体内引擎链探测结果（ADR-0010 客体同构；按链序 pnpm → node → dsh 报
+/// 第一缺口，musl 系不支持）。纯枚举 + 纯分类函数 → 全平台可测。
 #[cfg(any(windows, test))]
 enum GuestProbeState {
     Ready,
-    DshMissing,  // 有 node 缺 dsh → 可自动安装
-    NodeMissing, // 无 node → 只能提示用户先装 Node
+    MuslUnsupported, // musl libc（Alpine 系）→ 可行动错误，不在支持范围
+    PnpmMissing,     // 引擎 pnpm 缺 → Windows 侧投递捆绑包
+    NodeMissing,     // pnpm 在 node 缺 → 客体内 runtime set
+    DshMissing,      // node 在 dsh 缺 → 客体内 add -g
 }
 
-/// 探测输出分类（纯函数）：识别 READY / DSH_MISSING / NODE_MISSING，其余 → None。
+/// 探测输出分类（纯函数）：识别 GUEST_MUSL / PNPM_MISSING / NODE_MISSING /
+/// DSH_MISSING / READY（按 GUEST_PROBE 链序优先匹配），其余 → None。
 /// 全平台可测；Windows 运行时经 `probe_guest_in_distro` 调用。
 #[cfg(any(windows, test))]
 fn classify_guest_probe(out: &str) -> Option<GuestProbeState> {
     let t = out.trim();
-    if t.contains("READY") {
-        Some(GuestProbeState::Ready)
-    } else if t.contains("DSH_MISSING") {
-        Some(GuestProbeState::DshMissing)
+    if t.contains("GUEST_MUSL") {
+        Some(GuestProbeState::MuslUnsupported)
+    } else if t.contains("PNPM_MISSING") {
+        Some(GuestProbeState::PnpmMissing)
     } else if t.contains("NODE_MISSING") {
         Some(GuestProbeState::NodeMissing)
+    } else if t.contains("DSH_MISSING") {
+        Some(GuestProbeState::DshMissing)
+    } else if t.contains("READY") {
+        Some(GuestProbeState::Ready)
     } else {
         None
     }
 }
 
-/// 在指定发行版内探测 node+dsh（固定脚本模板；guest_prep 补 PATH，兼容 nvm/fnm）。
+/// 在指定发行版内探测壳引擎链（固定脚本模板；guest_prep 定位引擎目录）。
 /// Windows 专属。
 #[cfg(windows)]
 fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
@@ -886,96 +982,102 @@ fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
     })
 }
 
-/// WSL 客体内自动安装 Node.js（ADR-0004 §7，2026-09-01 落地）。
-/// 官方 tarball 解压至 `~/.dsh-dock/node/`，guest_prep! 已将其纳入 PATH。
-/// 镜像链：npmmirror 优先 → nodejs.org 兜底（ADR-0006）。
-#[cfg(windows)]
-fn install_node_in_distro(distro: &str, data_dir: &std::path::Path) -> Result<(), String> {
-    let plan = crate::updates::node_plan(data_dir);
-    let version = &plan.version;
-    // linux-x64 tarball（WSL 客体架构固定 x64）
-    let filename = format!("node-v{version}-linux-x64.tar.gz");
-    let mirrors = [
-        format!("https://npmmirror.com/mirrors/node/v{version}/{filename}"),
-        format!("https://nodejs.org/dist/v{version}/{filename}"),
-    ];
-    // 构造安装脚本：尝试镜像链下载 → 解压 → 验证
-    let script = format!(
-        concat!(
-            "set -e;",
-            "DSH_NODE_DIR=\"$HOME/.dsh-dock/node\";",
-            "mkdir -p \"$DSH_NODE_DIR\";",
-            "TMP_TAR=\"/tmp/dsh-dock-node.tar.gz\";",
-            "DL_OK=0;",
-            "for url in {mirror1} {mirror2}; do",
-            "  if curl -fSL --connect-timeout 15 --max-time 120 -o \"$TMP_TAR\" \"$url\"; then DL_OK=1; break; fi;",
-            "done;",
-            "if [ \"$DL_OK\" != 1 ]; then echo DOWNLOAD_FAILED; exit 0; fi;",
-            "tar xzf \"$TMP_TAR\" -C \"$DSH_NODE_DIR\" --strip-components=1;",
-            "rm -f \"$TMP_TAR\";",
-            "if \"$DSH_NODE_DIR/bin/node\" --version >/dev/null 2>&1; then echo NODE_OK; else echo NODE_VERIFY_FAILED; fi",
-        ),
-        mirror1 = mirrors[0],
-        mirror2 = mirrors[1],
-    );
-    let output = run_wsl_capture(
-        Some(distro),
-        &["--", "bash", "-c", &script],
-        Duration::from_secs(180),
-    );
-    match output.as_deref() {
-        Some(s) if s.contains("NODE_OK") => {
-            tracing::info!("WSL {distro} 内 Node.js v{version} 自动安装成功");
-            Ok(())
-        }
-        Some(s) if s.contains("DOWNLOAD_FAILED") => {
-            Err(format!("下载 Node.js v{version} 失败（镜像链均不可达）"))
-        }
-        Some(s) if s.contains("NODE_VERIFY_FAILED") => {
-            Err(format!("Node.js v{version} 解压后验证失败"))
-        }
-        Some(s) => Err(format!("安装 Node.js 异常：{s}")),
-        None => Err("WSL 命令超时或执行失败".to_string()),
-    }
+/// 客体内投递暂存路径（/tmp；投递后由 GUEST_STAGE_PNPM 解包落引擎并清理）。
+#[cfg(any(windows, test))]
+const GUEST_PNPM_STAGING: &str = "/tmp/dsh-dock-pnpm.tgz";
+
+/// guest 目标路径 → Windows UNC 路径（`\\wsl$` 主通道，spike 0003 §2.7 实测
+/// 32MB 探针 0.3s 完整）。guest_path 为客体内绝对路径（/tmp/...）。
+#[cfg(any(windows, test))]
+fn wsl_unc_path(distro: &str, guest_path: &str) -> String {
+    format!(r"\\wsl$\{distro}{guest_path}")
 }
 
-/// 在指定发行版内自动安装 dsh（`npm i -g @deepseek-ai/dsh`；2026-08-26 登记网络面）。
-/// 失败经 Err 带诊断尾部（run_wsl_capture 非零退出的输出不可用，模板里刻意 exit 0
-/// 让输出总能回传；npm 全量输出落 /tmp/dsh-dock-npm.log 避免管道死锁）。
-/// Windows 专属。
+/// 标准 base64 编码（投递兜底通道用——不为此引第三方依赖，AGENTS §4.2）。
+#[cfg(any(windows, test))]
+fn base64_encode(data: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TBL[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// 投递捆绑 pnpm 到客体内暂存路径：`\\wsl$` 文件拷贝为主通道（带体积复核），
+/// 失败转 base64 stdin 兜底（spike ④ 两通道均实测 32MB 完整）。
 #[cfg(windows)]
-fn install_dsh_in_distro(target: &str) -> Result<(), String> {
-    let out = run_wsl_capture(
-        Some(target),
-        &["-e", "bash", "-lic", GUEST_INSTALL_DSH],
-        Duration::from_secs(120),
-    )
-    .ok_or_else(|| format!("{target} 内执行 npm 安装失败（wsl.exe 调用失败）"))?;
-    if out.contains("ERR_NPM_MISSING") {
-        return Err(
-            "发行版内没有 npm（装的是精简 Node 或未含 npm）。请安装 Node.js（含 npm）后重试。"
-                .to_string(),
-        );
+fn deliver_pnpm_bundle(distro: &str, bundle: &Path) -> Result<(), String> {
+    let expect = std::fs::metadata(bundle)
+        .map_err(|e| format!("读取捆绑 pnpm 失败（{}）：{e}", bundle.display()))?
+        .len();
+    let dest = wsl_unc_path(distro, GUEST_PNPM_STAGING);
+    match std::fs::copy(bundle, &dest) {
+        Ok(n) if n == expect => {
+            tracing::info!(distro = %distro, bytes = n, "pnpm 投递完成（\\\\wsl$ 主通道）");
+            return Ok(());
+        }
+        Ok(n) => {
+            tracing::warn!(
+                copied = n,
+                expected = expect,
+                "\\wsl$ 拷贝不完整，转 stdin 兜底"
+            )
+        }
+        Err(e) => tracing::warn!(err = %e, "\\wsl$ 拷贝失败，转 stdin 兜底"),
     }
-    if !out.contains("RC=0") {
-        let tail = out
-            .lines()
-            .rev()
-            .take(12)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-        return Err(format!(
-            "npm i -g @deepseek-ai/dsh 失败（尾部诊断）：\n{tail}"
-        ));
+    deliver_via_stdin(distro, bundle, expect)
+}
+
+/// base64 stdin 兜底投递：字节经管道进客体内 `base64 -d`（wsl.exe 转发 stdin，
+/// spike ④ 实测 32MB 0.4s）。
+#[cfg(windows)]
+fn deliver_via_stdin(distro: &str, bundle: &Path, expect: u64) -> Result<(), String> {
+    use std::io::Write;
+    let bytes = std::fs::read(bundle).map_err(|e| format!("读取捆绑 pnpm 失败：{e}"))?;
+    if bytes.len() as u64 != expect {
+        return Err("捆绑 pnpm 体积异常（读取不完整）".to_string());
     }
+    let mut cmd = wsl_command(Some(distro));
+    cmd.args([
+        "-e",
+        "sh",
+        "-c",
+        &format!("base64 -d > {GUEST_PNPM_STAGING}"),
+    ])
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| format!("wsl.exe 启动失败：{e}"))?;
+    {
+        let mut sin = child.stdin.take().ok_or("wsl.exe stdin 不可用")?;
+        sin.write_all(base64_encode(&bytes).as_bytes())
+            .map_err(|e| format!("stdin 写入失败：{e}"))?;
+    }
+    let status = child.wait().map_err(|e| format!("wsl.exe 等待失败：{e}"))?;
+    if !status.success() {
+        return Err("base64 投递失败（wsl.exe 非零退出）".to_string());
+    }
+    tracing::info!(distro = %distro, bytes = bytes.len(), "pnpm 投递完成（base64 stdin 兜底通道）");
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1143,8 +1245,8 @@ Windows Subsystem for Linux Distributions:
     }
 
     #[test]
-    fn classifies_guest_probe_three_states() {
-        // 三态：READY / DSH_MISSING（有 node 缺 dsh，可自动装）/ NODE_MISSING
+    fn classifies_guest_probe_engine_chain_states() {
+        // 引擎链五态：READY / GUEST_MUSL / PNPM_MISSING / NODE_MISSING / DSH_MISSING
         assert!(matches!(
             classify_guest_probe("READY\n"),
             Some(GuestProbeState::Ready)
@@ -1154,17 +1256,79 @@ Windows Subsystem for Linux Distributions:
             Some(GuestProbeState::Ready)
         ));
         assert!(matches!(
-            classify_guest_probe("DSH_MISSING"),
-            Some(GuestProbeState::DshMissing)
+            classify_guest_probe("GUEST_MUSL"),
+            Some(GuestProbeState::MuslUnsupported)
+        ));
+        assert!(matches!(
+            classify_guest_probe("PNPM_MISSING"),
+            Some(GuestProbeState::PnpmMissing)
         ));
         assert!(matches!(
             classify_guest_probe("NODE_MISSING"),
             Some(GuestProbeState::NodeMissing)
         ));
+        assert!(matches!(
+            classify_guest_probe("DSH_MISSING"),
+            Some(GuestProbeState::DshMissing)
+        ));
         // 无法识别（横幅/警报/杂讯）→ None（运行时视作异常）
         assert!(classify_guest_probe("").is_none());
         assert!(classify_guest_probe("bash: warning: ...\n").is_none());
         assert!(classify_guest_probe("     ").is_none());
+    }
+
+    #[test]
+    fn base64_encode_matches_rfc4648_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn wsl_unc_path_formats_distro_and_guest_path() {
+        assert_eq!(
+            wsl_unc_path("Ubuntu-24.04", "/tmp/dsh-dock-pnpm.tgz"),
+            r"\\wsl$\Ubuntu-24.04/tmp/dsh-dock-pnpm.tgz"
+        );
+    }
+
+    #[test]
+    fn guest_scripts_carry_version_mirrors_and_allow_build() {
+        // node 引导：版本经 sh_quote、双镜像 JSON、shim 激活、失败总有输出
+        let node = guest_bootstrap_node_script("22.23.2");
+        assert!(node.contains("runtime set node '22.23.2'"), "{node}");
+        assert!(node.contains("PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS"), "{node}");
+        assert!(node.contains("shim add node"), "{node}");
+        assert!(node.contains("npmmirror.com/mirrors/node/"), "{node}");
+        assert!(node.contains("nodejs.org/download/release/"), "{node}");
+        assert!(
+            node.contains("NODE_OK") && node.contains("NODE_FAILED"),
+            "{node}"
+        );
+        // dsh 引导：registry 链 + allow-build + 版本 spec
+        let dsh = guest_install_dsh_script(
+            "1.2.3",
+            &[
+                "https://registry.npmmirror.com",
+                "https://registry.npmjs.org",
+            ],
+            "--allow-build=koffi",
+        );
+        assert!(dsh.contains("'@deepseek-ai/dsh@1.2.3'"), "{dsh}");
+        assert!(dsh.contains("--registry=\"$R\""), "{dsh}");
+        assert!(dsh.contains("--allow-build=koffi"), "{dsh}");
+        assert!(
+            dsh.contains("registry.npmmirror.com") && dsh.contains("registry.npmjs.org"),
+            "{dsh}"
+        );
+        assert!(
+            dsh.contains("DSH_OK") && dsh.contains("DSH_FAILED"),
+            "{dsh}"
+        );
     }
 }
 
@@ -1217,147 +1381,125 @@ mod guest_shell_tests {
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     }
 
-    /// 模拟 nvm 安装位：`~/.nvm/versions/node/<ver>/bin/{node,dsh}`
-    fn nvm_install_bin(home: &Path, ver: &str) -> std::path::PathBuf {
-        let bin = home
-            .join(".nvm")
-            .join("versions")
-            .join("node")
-            .join(ver)
-            .join("bin");
-        std::fs::create_dir_all(&bin).expect("mk nvm bin");
-        bin
-    }
-
-    /// 模拟 fnm 默认安装位：`~/.local/share/fnm/node-versions/<ver>/installation/bin`
-    fn fnm_install_bin(home: &Path, ver: &str) -> std::path::PathBuf {
-        let bin = home
-            .join(".local")
-            .join("share")
-            .join("fnm")
-            .join("node-versions")
-            .join(ver)
-            .join("installation")
-            .join("bin");
-        std::fs::create_dir_all(&bin).expect("mk fnm bin");
+    /// 引擎目录造具：`~/.dsh-dock/engines/bin/{tools}`（ADR-0010 客体布局）
+    fn engine_bin(home: &Path, tools: &[&str]) -> std::path::PathBuf {
+        let bin = home.join(".dsh-dock").join("engines").join("bin");
+        std::fs::create_dir_all(&bin).expect("mk engines bin");
+        for t in tools {
+            write_fake_bin(&bin, t);
+        }
         bin
     }
 
     #[test]
-    fn rc_guard_blocks_non_interactive_login_shell() {
-        // Ubuntu 默认 .bashrc 守卫：非交互登录壳 source 时直接 return（本次实机 bug 根因）。
-        let home = fake_home("guard");
-        std::fs::write(
-            home.join(".bashrc"),
-            "case $- in *i*) ;; *) return;; esac\necho BASHRC_SOURCED\n",
-        )
-        .expect("write bashrc");
-        // 交互式登录壳（-lic）：守卫放行 → .bashrc 完整执行
-        let lic = run_guest(&home, ". \"$HOME/.bashrc\"", true);
-        assert!(
-            lic.as_deref().unwrap_or("").contains("BASHRC_SOURCED"),
-            "-lic 应完整执行 .bashrc，得到：{lic:?}"
-        );
-        // 非交互登录壳（-lc，旧方案）：守卫早退 → .bashrc 未执行
-        let lc = run_guest(&home, ". \"$HOME/.bashrc\"", false);
-        assert!(
-            lc.as_deref().is_none_or(|s| !s.contains("BASHRC_SOURCED")),
-            "-lc 应被守卫拦截（旧 bug 形态），得到：{lc:?}"
-        );
-    }
-
-    #[test]
-    fn guest_probe_finds_nvm_node_via_rc() {
-        // 用户经 nvm 安装（朋友实机形态）：.bashrc 有守卫 + nvm 段 → -lic 下 READY。
-        let home = fake_home("nvmrc");
-        let bin = nvm_install_bin(&home, "v22.23.2");
-        write_fake_bin(&bin, "node");
-        write_fake_bin(&bin, "dsh");
-        std::fs::write(
-            home.join(".bashrc"),
-            concat!(
-                "case $- in *i*) ;; *) return;; esac\n",
-                "export PATH=\"$HOME/.nvm/versions/node/v22.23.2/bin:$PATH\"\n"
-            ),
-        )
-        .expect("write bashrc");
-        std::fs::write(home.join(".profile"), "").expect("write profile");
+    fn guest_probe_reports_pnpm_missing_in_clean_home() {
+        // 引擎目录缺位 → 链首缺口 = PNPM_MISSING；系统/版本管理器 node 不再
+        // 参与判定（探测层退役，ADR-0010 客体同构）
+        let home = fake_home("pnpmmiss");
+        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
         let out = run_guest(&home, GUEST_PROBE, true);
         assert!(
-            out.as_deref().unwrap_or("").contains("READY"),
-            "nvm + 守卫版 .bashrc 在 -lic 下应探测 READY，得到：{out:?}"
+            out.as_deref().unwrap_or("").contains("PNPM_MISSING"),
+            "干净 home 应报 PNPM_MISSING，得到：{out:?}"
         );
     }
 
     #[test]
-    fn guest_probe_fallback_scan_finds_nvm_without_any_rc() {
-        // 兜底扫描：rc 完全没配 PATH（.bashrc/.profile 全空）也要命中 nvm 安装位。
-        let home = fake_home("nvmscan");
-        let bin = nvm_install_bin(&home, "v22.23.2");
-        write_fake_bin(&bin, "node");
-        write_fake_bin(&bin, "dsh");
+    fn guest_probe_walks_engine_chain_in_order() {
+        // 链序逐环：只投 pnpm → NODE_MISSING；+node → DSH_MISSING；+dsh → READY
+        let home = fake_home("chain");
         std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
-        std::fs::write(home.join(".profile"), "").expect("write profile");
+        let bin = engine_bin(&home, &["pnpm"]);
         let out = run_guest(&home, GUEST_PROBE, true);
         assert!(
-            out.as_deref().unwrap_or("").contains("READY"),
-            "空 rc 下兜底扫描应命中 nvm，得到：{out:?}"
+            out.as_deref().unwrap_or("").contains("NODE_MISSING"),
+            "只有 pnpm 应报 NODE_MISSING，得到：{out:?}"
         );
-    }
-
-    #[test]
-    fn guest_probe_fallback_scan_finds_fnm_default_install() {
-        // fnm 默认安装位（.local/share/fnm/...，非 XDG 变体）也要命中。
-        let home = fake_home("fnmscan");
-        let bin = fnm_install_bin(&home, "v22.23.2");
         write_fake_bin(&bin, "node");
-        write_fake_bin(&bin, "dsh");
-        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
-        std::fs::write(home.join(".profile"), "").expect("write profile");
-        let out = run_guest(&home, GUEST_PROBE, true);
-        assert!(
-            out.as_deref().unwrap_or("").contains("READY"),
-            "空 rc 下兜底扫描应命中 fnm，得到：{out:?}"
-        );
-    }
-
-    #[test]
-    fn guest_probe_distinguishes_dsh_missing_from_node_missing() {
-        // 只有 node（无 dsh）→ DSH_MISSING（可自动装）；啥都没有 → NODE_MISSING。
-        let home = fake_home("states");
-        let bin = nvm_install_bin(&home, "v22.23.2");
-        write_fake_bin(&bin, "node");
-        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
-        std::fs::write(home.join(".profile"), "").expect("write profile");
         let out = run_guest(&home, GUEST_PROBE, true);
         assert!(
             out.as_deref().unwrap_or("").contains("DSH_MISSING"),
-            "有 node 无 dsh 应报 DSH_MISSING，得到：{out:?}"
+            "pnpm+node 应报 DSH_MISSING，得到：{out:?}"
         );
-        let empty = fake_home("states2");
-        std::fs::write(empty.join(".bashrc"), "").expect("write bashrc");
-        std::fs::write(empty.join(".profile"), "").expect("write profile");
-        let out = run_guest(&empty, GUEST_PROBE, true);
+        write_fake_bin(&bin, "dsh");
+        let out = run_guest(&home, GUEST_PROBE, true);
         assert!(
-            out.as_deref().unwrap_or("").contains("NODE_MISSING"),
-            "无 node 应报 NODE_MISSING，得到：{out:?}"
+            out.as_deref().unwrap_or("").contains("READY"),
+            "引擎三件齐应报 READY，得到：{out:?}"
         );
     }
 
     #[test]
-    fn guest_probe_finds_dsh_dock_managed_node_without_rc() {
-        // 2026-09-01 落地 ADR-0004 §7：壳管理目录 ~/.dsh-dock/node/bin 优先于系统 PATH
-        let home = fake_home("docknode");
-        let dock_bin = home.join(".dsh-dock").join("node").join("bin");
-        std::fs::create_dir_all(&dock_bin).expect("mk dock bin");
-        write_fake_bin(&dock_bin, "node");
-        write_fake_bin(&dock_bin, "dsh");
-        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
-        std::fs::write(home.join(".profile"), "").expect("write profile");
-        let out = run_guest(&home, GUEST_PROBE, true);
+    fn guest_prep_exports_pnpm_home_and_engine_bin_beats_rc() {
+        // rc（.bashrc）里把 decoy 目录放进 PATH，guest_prep 的引擎 bin 前置
+        // 在 source rc **之后**执行 → 必须胜出；PNPM_HOME 指向引擎目录。
+        let home = fake_home("prep");
+        let engine = engine_bin(&home, &["node"]);
+        let decoy = home.join("decoy");
+        std::fs::create_dir_all(&decoy).expect("mk decoy");
+        write_fake_bin(&decoy, "node");
+        std::fs::write(
+            home.join(".bashrc"),
+            format!("export PATH=\"{}:$PATH\"\n", decoy.display()),
+        )
+        .expect("write bashrc");
+        let script = format!("{} echo \"$PNPM_HOME\"; command -v node", guest_prep!());
+        let out = run_guest(&home, &script, true);
+        let text = out.as_deref().unwrap_or("");
+        let engines_root = engine.parent().unwrap();
         assert!(
-            out.as_deref().unwrap_or("").contains("READY"),
-            "壳管理目录 ~/.dsh-dock/node/bin 应被 guest_prep! 命中并返回 READY，得到：{out:?}"
+            text.contains(engines_root.to_str().unwrap()),
+            "PNPM_HOME 应指向引擎目录，得到：{text:?}"
         );
+        let resolved = text.lines().last().unwrap_or("");
+        assert_eq!(
+            std::path::Path::new(resolved).parent(),
+            Some(engine.as_path()),
+            "引擎 bin 应盖过 rc PATH（decoy），得到：{text:?}"
+        );
+    }
+
+    #[test]
+    fn guest_stage_pnpm_script_lands_bundle_in_engine_bin() {
+        // 真实 tar 解包链：造含 package/pnpm 的 mini tgz → 模拟投递到暂存位 →
+        // GUEST_STAGE_PNPM 落位引擎 bin 并验证（staging tgz 随即清理）。
+        let home = fake_home("stage");
+        std::fs::write(home.join(".bashrc"), "").expect("write bashrc");
+        let pkg = home.join("pkg-src").join("package");
+        std::fs::create_dir_all(&pkg).expect("mk pkg");
+        let pnpm = pkg.join("pnpm");
+        std::fs::write(&pnpm, "#!/bin/sh\necho 12.3.1\n").expect("write pnpm");
+        std::fs::set_permissions(&pnpm, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let tgz = home.join("bundle.tgz");
+        assert!(
+            std::process::Command::new("tar")
+                .arg("-czf")
+                .arg(&tgz)
+                .arg("-C")
+                .arg(home.join("pkg-src"))
+                .arg("package")
+                .status()
+                .expect("tar 可用")
+                .success(),
+            "tar 打包失败"
+        );
+        // 模拟 deliver_pnpm_bundle 的产物：模板读字面 /tmp 路径（unix 测试平台
+        // 语义一致，test 前后都清理，避免残留影响并行/复跑）
+        let staging = std::path::Path::new(GUEST_PNPM_STAGING);
+        let _ = std::fs::remove_file(staging);
+        std::fs::copy(&tgz, staging).expect("stage copy");
+        // run_guest 的隔离 PATH（empty-bin）里没有 tar——模板在真实 WSL 里
+        // 跑在正常 PATH 下，测试侧恢复 coreutils 路径后再执行。
+        let script = format!("PATH=/usr/bin:/bin; export PATH; {GUEST_STAGE_PNPM}");
+        let out = run_guest(&home, &script, true);
+        let text = out.as_deref().unwrap_or("");
+        assert!(text.contains("STAGE_OK"), "落位应成功，得到：{text:?}");
+        let landed = home.join(".dsh-dock/engines/bin/pnpm");
+        assert!(landed.is_file(), "pnpm 应落位引擎 bin");
+        assert!(
+            !staging.exists(),
+            "暂存 tgz 应被模板清理（投递物不残留 /tmp）"
+        );
+        let _ = std::fs::remove_file(staging);
     }
 }

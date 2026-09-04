@@ -156,7 +156,7 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   同源，dsh 内部 spawnSync("pnpm") 恒可达。完整「PATH = 引擎 bin + 系统最小集」
   （剥离用户 PATH）随 P3 引擎模式落地。
 - [ ] P3（本 ADR 主体）：引擎编排模块 ✓ → boot 接线 ✓ → contract v3 ✓ →
-  检测层退役（待）→ AGENTS §0/§6/§7 同步（待）→ `docs/broadcasts.md` 落档 ✓。
+  检测层退役 ✓（0dae87c）→ AGENTS §6/§7 同步 ✓（同提交）→ `docs/broadcasts.md` 落档 ✓。
   （**engines.rs 编排模块 + updates 引导入口 2026-09-04 先行落地**——布局/就绪
   判定/镜像注入/进度解析/四步幂等引导纯新增零接线，190 测试全绿；boot 接线、
   探测层退役、contract v3 待续。）
@@ -174,10 +174,25 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   （scripts/fetch-pnpm-bundle.sh + build.yml 步骤 + resources/pnpm/.gitignore）、
   render-product.sh 升 v3 snapshot。197 测试全绿。探测层退役/WSL 客体投递/
   升级呈现随后续刀。）
+  （**探测层退役 2026-09-04 落地（0dae87c）**——resolve.rs 系统探测全系删除
+  （login shell / 固定目录 / fnm·nvm / pnpm global 3..=10 / detect_system_*，
+  -2799 行）；DshToolchain 仅剩 Engine 档；executor 删 ensure_pnpm 分支、
+  选择器仅引擎档；diagnostics 改引擎四件套（结构体形状不变，前端零改动）；
+  AGENTS §2 resources/pnpm/ 永不入库、§7 boot 期 pnpm 补齐条目标注退役。
+  测试 198 → 147。）
+  （**WSL 客体投递 + 客体引擎链 2026-09-04 落地**——GUEST_PROBE 改引擎链
+  五态（GUEST_MUSL/PNPM_MISSING/NODE_MISSING/DSH_MISSING/READY；musl 系出
+  可行动错误，glibc-only 按台账裁定）；pnpm 投递 = `\\wsl$` 拷贝主通道 +
+  base64 stdin 兜底（spike ④ 选型），GUEST_STAGE_PNPM 客体内 tar 解包落
+  `~/.dsh-dock/engines/bin`；node/dsh 引导在客体进程内（runtime set +
+  shim add / add -g，镜像链与 host 同口径，网络沿 ADR-0004 模式发生在客体）；
+  guest_prep 收缩为 source rc + 引擎目录前置（版本管理器 glob 随探测层退役）；
+  旧 curl-tarball node 链（无校验和、依赖 curl）与 `npm i -g dsh` 链整体删除；
+  build.yml Windows runner 增取 linux-x64 tgz。模板全量 bash 实跑测试。）
 - [x] 文档同步（2026-09-03 完成）：ADR-0010 定稿 + AGENTS 红线 2 / §6 例外册 /
   §7 登记 / §9 索引 + contract v3 章节落稿（`format: 3` 随 P3 实现升版）+
   broadcasts 落档 + CONTEXT.md 术语表建立。
-- [ ] 插件/创建操作改用引擎 node/dsh（插件操作已落地 2026-09-04；创建链随 P3-b）。
+- [x] 插件/创建操作改用引擎 node/dsh（插件操作 c7d5bb6；创建链/修复链 f19af4e，2026-09-04）。
 - [ ] 升级清单（随壳 bump pnpm 必过）：runtime set 可用、`pnpm add -g` 可用、
   spawnSync("pnpm") 可达、三平台 boot 冒烟。
 

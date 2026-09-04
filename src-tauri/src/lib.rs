@@ -1343,6 +1343,7 @@ fn executor_for_mode(
                 Ok(Box::new(crate::executor::WslExecutor::new(
                     crate::executor::WslConfig { distro: None },
                     data_dir,
+                    resolve_resources_dir(app),
                 )))
             }
             #[cfg(not(windows))]
