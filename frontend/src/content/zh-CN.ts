@@ -6,7 +6,7 @@ export const t = {
   boot: {
     steps: [
       { no: "01", name: "环境检测", hint: "PATH · 版本闸 · 平台" },
-      { no: "02", name: "宿主解析", hint: "local：system → bundle → download" },
+      { no: "02", name: "宿主解析", hint: "local：引擎引导（首启在线补齐 node/dsh）" },
       { no: "03", name: "启动 DSH", hint: "--port 0" },
       { no: "04", name: "等待就绪", hint: "解析访问地址（慢速冷启动可稍候）" },
       { no: "05", name: "进入工作台", hint: "WebView 导航" },

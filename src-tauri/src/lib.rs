@@ -1886,9 +1886,63 @@ fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
     runtime
 }
 
+/// dev 双写 MakeWriter：日志同落文件与 stdout（`cargo tauri dev` 终端实时可见）。
+/// 文件写入失败不阻断（追加语义尽力而为），stdout 失败忽略（GUI 无控制台）。
+struct TeeWriter {
+    file: std::sync::Arc<std::fs::File>,
+}
+
+struct TeeWriterGuard {
+    file: std::sync::Arc<std::fs::File>,
+}
+
+impl std::io::Write for TeeWriterGuard {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = self.file.write_all(buf);
+        let _ = std::io::stdout().write_all(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let _ = self.file.flush();
+        let _ = std::io::stdout().flush();
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TeeWriter {
+    type Writer = TeeWriterGuard;
+    fn make_writer(&'a self) -> Self::Writer {
+        TeeWriterGuard {
+            file: self.file.clone(),
+        }
+    }
+}
+
+/// 日志初始化（幂等）：release 纯文件；debug 构建双写 stdout——dev 终端是
+/// 第一现场（boot 步骤 / 引擎引导 / 网络各阶段全量可见），release 行为不变。
+fn init_tracing(file: std::fs::File) {
+    let file = std::sync::Arc::new(file);
+    #[cfg(debug_assertions)]
+    {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(TeeWriter { file })
+            .with_target(false)
+            .try_init();
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(file)
+            .with_target(false)
+            .try_init();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 日志初始化移入 setup（落 shell.log；GUI 下 stdout 不可见）。
+    // 日志初始化移入 setup（落 shell.log；dev 另双写 stdout，见 init_tracing）。
     // 测试/外部如需独立日志可自行 try_init（幂等）。
     tauri::Builder::default()
         // 单实例锁：必须最先注册。OS 级原语随进程消亡自动释放，无残留锁文件；
@@ -1907,7 +1961,9 @@ pub fn run() {
         // 同时作用于 check 与 download，见 updater.rs blocked_check）。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            // 壳侧诊断日志落 `<数据目录>/shell.log`（GUI 下 stderr 不可见）。
+            // 壳侧诊断日志落 `<数据目录>/shell.log`；dev（debug 构建）双写
+            // stdout——`cargo tauri dev` 终端实时可见 boot/引擎引导/网络各阶段
+            // （release 纯文件：GUI 下 stdout 无处可去，Windows 无控制台）。
             // 子进程输出在 dsh-shell.log（shell.rs）；两者分离。
             if let Ok(data_dir) = app.path().app_data_dir() {
                 if let Ok(file) = std::fs::OpenOptions::new()
@@ -1915,10 +1971,7 @@ pub fn run() {
                     .append(true)
                     .open(data_dir.join("shell.log"))
                 {
-                    let _ = tracing_subscriber::fmt()
-                        .with_max_level(tracing::Level::INFO)
-                        .with_writer(std::sync::Arc::new(file))
-                        .try_init();
+                    init_tracing(file);
                 }
             }
             // 资源根解析（dev/prod 差异）已由 executor_for_mode（Local 档）内部处理：
@@ -2134,6 +2187,7 @@ pub fn run() {
 /// 发射 boot:step 事件（state: pending|running|done|error）。
 fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
     use tauri::Emitter;
+    tracing::info!("boot:step step={step} state={state} {detail}");
     let _ = app.emit(
         "boot:step",
         serde_json::json!({

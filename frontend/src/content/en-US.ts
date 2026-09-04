@@ -5,7 +5,7 @@ export const enUS: AppCopy = {
   boot: {
     steps: [
       { no: "01", name: "Environment Check", hint: "PATH · Version Gates · Platform" },
-      { no: "02", name: "Host Resolution", hint: "local: system → bundle → download" },
+      { no: "02", name: "Host Resolution", hint: "local: engine bootstrap (first run fetches node/dsh)" },
       { no: "03", name: "Launch DSH", hint: "--port 0" },
       { no: "04", name: "Awaiting Ready", hint: "Resolving access URL" },
       { no: "05", name: "Enter Workbench", hint: "WebView Navigation" },

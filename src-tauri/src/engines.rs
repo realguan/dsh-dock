@@ -259,6 +259,7 @@ pub fn runtime_set_node(
 ) -> Result<()> {
     let mut errors = Vec::new();
     for base in [NODE_MIRROR_PRIMARY, NODE_MIRROR_FALLBACK] {
+        tracing::info!("runtime set node {version}（镜像 {base}）…");
         let pnpm = engine_pnpm_bin(data_dir);
         let mut cmd = crate::child_cmd(&pnpm);
         cmd.args(["runtime", "set", "node", version])
@@ -277,18 +278,56 @@ pub fn runtime_set_node(
                 continue;
             }
         };
+        // stderr 并发排水：管道塞满（64KB）会让子进程写阻塞、stdout 永不 EOF，
+        // 与「先排干 stdout 再 wait」互锁成死等（无超时）。行进 debug 日志，
+        // 失败时取尾部并入错误详情。
+        let stderr = child.stderr.take();
+        let stderr_thread = std::thread::spawn(move || {
+            let mut all = String::new();
+            if let Some(s) = stderr {
+                for line in BufReader::new(s).lines().map_while(Result::ok) {
+                    tracing::debug!("[pnpm-runtime] {line}");
+                    all.push_str(&line);
+                    all.push('\n');
+                }
+            }
+            all
+        });
+        let mut progress_lines = 0usize;
         if let Some(stdout) = child.stdout.take() {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if let Some(p) = parse_download_progress(&line) {
-                    progress(p.downloaded, Some(p.total));
+                match parse_download_progress(&line) {
+                    Some(p) => {
+                        if progress_lines == 0 {
+                            tracing::info!(
+                                "node v{} 下载中（进度经 boot:progress 实时推进）",
+                                p.node_version
+                            );
+                        }
+                        progress_lines += 1;
+                        progress(p.downloaded, Some(p.total));
+                    }
+                    None => tracing::debug!("[pnpm-runtime] {line}"),
                 }
             }
         }
-        let output = child.wait_with_output()?;
-        if output.status.success() {
+        let status = child.wait().context("等待 runtime set node 退出失败")?;
+        let stderr_tail: String = stderr_thread
+            .join()
+            .unwrap_or_default()
+            .lines()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if status.success() {
+            tracing::info!("node v{version} 就位（{progress_lines} 行下载进度）");
             return Ok(());
         }
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = stderr_tail.trim().to_string();
         errors.push(format!("{base}: {detail}"));
         tracing::warn!("runtime set node（{base}）失败：{detail}");
     }
@@ -315,6 +354,7 @@ pub fn install_dsh_global(data_dir: &Path, version: &str, path_env: &str) -> Res
     for registry in crate::updates::package_registry_bases() {
         let args =
             crate::updates::pnpm_install_args(registry, &format!("@deepseek-ai/dsh@{version}"));
+        tracing::info!("pnpm add -g @deepseek-ai/dsh@{version}（registry {registry}）…");
         match run_engine_pnpm(data_dir, path_env, &args, &[]) {
             Ok(()) => return Ok(()),
             Err(e) => {
@@ -354,8 +394,15 @@ pub fn bootstrap(
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<BootstrapOutcome> {
     // ① pnpm 随壳 pin：每次 boot 重铺（幂等覆盖，版本不再参与判定）
+    tracing::info!("引擎引导：重铺捆绑 pnpm…");
     stage_pnpm_from_bundle(pnpm_bundle, data_dir)?;
     let mut status = probe_engine(data_dir, path_env);
+    tracing::info!(
+        "引擎引导：三件探测 pnpm={:?} node={:?} dsh={:?}",
+        status.pnpm,
+        status.node,
+        status.dsh
+    );
     let mut node_switched = false;
     let mut dsh_installed = false;
 
@@ -368,7 +415,10 @@ pub fn bootstrap(
     // 失败（离线且无缓存）→ 带警告用已装版本继续（boot 恒用已装引擎，ADR-0010）；
     // 缺失且解析失败 → 硬错误（无从引导）。版本不符 = 在线幂等切换（升级承接）。
     let node_expected = match node_resolve() {
-        Ok(v) => Some(v),
+        Ok(v) => {
+            tracing::info!("node 期望版本（node-map）：{v}");
+            Some(v)
+        }
         Err(e) if status.node.is_some() => {
             tracing::warn!("node 期望版本解析失败，用已装引擎 node 继续启动：{e}");
             None
@@ -382,12 +432,14 @@ pub fn bootstrap(
                 .any(|g| matches!(g, EngineGap::Node { .. }))
         };
         if node_gap(&status) {
+            tracing::info!("node 缺失或版本不符，开始 runtime set node…");
             runtime_set_node(data_dir, expected, path_env, progress).map_err(|e| {
                 anyhow!(
                     "node 引导失败（{}，期望 {expected}）：{e}",
                     describe_found(&status.node)
                 )
             })?;
+            tracing::info!("激活 node shim（shim add node）…");
             shim_add_node(data_dir, path_env)?;
             node_switched = true;
             status = probe_engine(data_dir, path_env);
@@ -397,8 +449,10 @@ pub fn bootstrap(
     // ④ dsh：缺失才补；目标版本（最新稳定版，dist-tags）惰性解析——已装永不
     // 调用，就绪引擎离线 boot 零网络（contract v3 在线语义）。
     if status.dsh.is_none() {
+        tracing::info!("dsh 缺失，解析目标版本（registry dist-tags）…");
         let dsh_version =
             dsh_resolve().map_err(|e| anyhow!("dsh 引导失败（缺失）：目标版本解析失败：{e}"))?;
+        tracing::info!("dsh 目标版本：{dsh_version}，开始全局安装…");
         install_dsh_global(data_dir, &dsh_version, path_env)?;
         dsh_installed = true;
         status = probe_engine(data_dir, path_env);
