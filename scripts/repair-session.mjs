@@ -1,50 +1,68 @@
 #!/usr/bin/env node
 /**
  * @file repair-session.mjs
- * @description DSH 会话自愈与修复工具。
- * 针对上游 dsh 会话日志中因断线重连、并发推流或旧轮次延迟落盘导致的
- * "seq gap in committed region" / 乱序交叉写入等问题进行自动检测、备份与修复。
+ * @description DSH 会话自愈与修复工具（2026-09-04 重写：与上游加载器语义对齐）。
+ *
+ * 背景：旧版按 turn 归流 + 全量重编号的修法会破坏 dsh 的 append-only 模型与
+ * sourceEventSeqs 出处链，且对「重放重叠」这类真实损坏造成语义混乱；本版只做
+ * 无损修复，绝不重编号、不重排、不新增/删除事件（除删除被遮蔽的旧占位事件）。
+ *
+ * 损坏类别（2026-09-04 实测两个真实会话，锚 dsh v0.1.2-rc.1 加载器
+ * dsh-session-persistence-jsonl/lib/index.js consumeEventLine / zstd.js）：
+ * 1. 重放重叠（replay overlap）：会话中断后恢复时，dsh 以相同 seq 重放被中断
+ *    轮次的真实事件（旧「interrupted 占位」事件仍在磁盘上，形成
+ *    「前缀 + 重放块」重叠）。加载器在重叠处报 `seq gap in committed region`
+ *    并丢弃重叠点之后全部恢复事件。修复 = 丢弃被完全遮蔽的旧占位事件，
+ *    保留重放块与其后全部事件（顺序与 seq 原样）。
+ * 2. 序列缺失（missing seq）：中间事件缺失（异常中断/外部截断）。加载器只
+ *    保留连续前缀。修复 = 按加载器语义截断到连续前缀（丢失部分本不可达）。
+ * 3. 其他（JSON 不可解析 / 行语义损坏 / zstd 帧结构损坏）：不可安全修复，
+ *    文件保持原样，报告失败。
+ *
+ * 安全约束：
+ * - 修复输出必须通过「加载器语义校验」：展开 chunk 行后 seq 严格连续且从 0 起。
+ * - 校验失败 → 用内存中的原始字节回滚，退出码非 0。
+ * - 无需修复（健康）→ 文件保持原样（不写回），退出码 0。
+ * - 任何失败路径退出码非 0（Rust run_repair 以退出码为准，旧版吞错致假成功）。
+ * - 写入前先备份（同名 .bak ——与 dsh 加载器/旧版约定一致）；修复期间检测到
+ *   文件被其他进程写入（活跃会话）时重试一次，仍竞态则报告失败不写坏文件。
  *
  * 用法:
- *   node scripts/repair-session.mjs <sessionId 或 session.jsonl.zstd 路径>
- *   node scripts/repair-session.mjs --all  # 扫描并修复 ~/.dsh/sessions/ 下的所有会话
+ *   node scripts/repair-session.mjs <sessionId 或 session.jsonl(.zstd) 路径>
+ *   node scripts/repair-session.mjs --all  # 扫描并修复 $DSH_HOME/sessions/ 下所有会话
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { execSync } from 'node:child_process'
-import { promisify } from 'node:util'
 import { zstdCompress, zstdDecompressSync, constants } from 'node:zlib'
+import { promisify } from 'node:util'
 
 const zstdCompressAsync = promisify(zstdCompress)
-const CHECKSUM_OPTIONS = {
-  params: { [constants.ZSTD_c_checksumFlag]: 1 },
-}
+const CHECKSUM_OPTIONS = { params: { [constants.ZSTD_c_checksumFlag]: 1 } }
 const ZSTD_MAGIC = 4247762216
 
 function getDshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
 }
 
+/** 与 dsh 加载器 scanZstdFrames 语义一致的结构扫描。 */
 function scanZstdFrames(buffer) {
   const frames = []
   let offset = 0
   while (offset < buffer.length) {
     const start = offset
     if (buffer.length - offset < 4) return { frames, tornStart: start }
-    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) throw new Error(`invalid frame magic at byte ${offset}`)
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) return { frames, tornStart: start }
     offset += 4
     const descriptor = buffer.readUInt8(offset)
     offset += 1
     const contentSizeFlag = descriptor >>> 6
     const singleSegment = (descriptor & 32) !== 0
-    const checksum = (descriptor & 4) !== 0
     const dictionaryFlag = descriptor & 3
     const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
     const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
-    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
-    offset += remainingHeaderBytes
+    offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
     for (;;) {
       if (buffer.length - offset < 3) return { frames, tornStart: start }
       const blockHeader = buffer.readUIntLE(offset, 3)
@@ -52,193 +70,345 @@ function scanZstdFrames(buffer) {
       const lastBlock = (blockHeader & 1) !== 0
       const blockType = (blockHeader >>> 1) & 3
       const blockSize = blockHeader >>> 3
-      if (blockType === 3) throw new Error(`reserved block type at byte ${offset - 3}`)
+      if (blockType === 3) return { frames, tornStart: start }
       const payloadBytes = blockType === 1 ? 1 : blockSize
       if (buffer.length - offset < payloadBytes) return { frames, tornStart: start }
       offset += payloadBytes
       if (lastBlock) break
     }
-    if (checksum) offset += 4
+    if ((descriptor & 4) !== 0) offset += 4
     frames.push({ start, end: offset })
   }
   return { frames }
 }
 
-function decompressZstd(filePath) {
-  const buf = readFileSync(filePath)
-  try {
-    const { frames } = scanZstdFrames(buf)
-    if (frames.length === 0) {
-      return Buffer.alloc(0)
-    }
-    const chunks = frames.map(f => zstdDecompressSync(buf.subarray(f.start, f.end)))
-    return Buffer.concat(chunks)
-  } catch (e) {
-    try {
-      return execSync(`zstd -dc "${filePath}"`, { maxBuffer: 100 * 1024 * 1024 })
-    } catch {
-      throw new Error(`zstd 解压失败 (${filePath}): ${e.message}`)
-    }
-  }
+/** 解压全部完整帧为明文（加载器语义：torn 尾帧由加载器单独恢复，此处只在全帧 OK 时使用）。 */
+function decompressZstd(buffer) {
+  const { frames, tornStart } = scanZstdFrames(buffer)
+  if (frames.length === 0) throw new Error('no complete zstd frames')
+  if (tornStart !== undefined) throw new Error(`torn zstd frame at byte ${tornStart}`)
+  return Buffer.concat(frames.map((f) => zstdDecompressSync(buffer.subarray(f.start, f.end))))
 }
 
-async function compressZstdFrames(headerLine, eventsLines) {
+/** 与 dsh 写入器同构：首帧恰好一行 header，事件帧与 header 帧分离、带校验和。 */
+async function compressZstdFrames(headerLine, eventLines) {
   const headerBuf = Buffer.from(headerLine + '\n', 'utf8')
+  const eventsBuf = Buffer.from(eventLines.join('\n') + '\n', 'utf8')
   const headerFrame = await zstdCompressAsync(headerBuf, CHECKSUM_OPTIONS)
-
-  const eventsBuf = Buffer.from(eventsLines + '\n', 'utf8')
   const eventsFrame = await zstdCompressAsync(eventsBuf, CHECKSUM_OPTIONS)
-
   return Buffer.concat([headerFrame, eventsFrame])
 }
 
+/** 会话头合法即通过（加载器 parseHeaderRecord 的 isHeaderLine 子集检查）。 */
+function isSessionHeader(value) {
+  return (
+    typeof value === 'object' && value !== null && value.type === 'session' &&
+    typeof value.version === 'number' && typeof value.id === 'string' &&
+    typeof value.createdAt === 'number' && Number.isSafeInteger(value.createdAt) &&
+    typeof value.delegationDepth === 'number' && Number.isSafeInteger(value.delegationDepth)
+  )
+}
+
+/**
+ * 计算一条存储记录展开后的事件 seq 区间 [lo, hi]。
+ * 与 dsh-session chunk-rows validateRow/expandRow 的判据对齐（envelope 精确键、
+ * payload 为字符串数组、dt 为安全整数且长度 = payload-1）。
+ * 区间之外的语义细节（dt 时间演进安全界等）由写后校验兜底。
+ */
+function expandSpan(record) {
+  const tag = record?.type
+  const isRow = tag === 'text-chunks' || tag === 'reasoning-chunks' || tag === 'tool-call-chunks'
+  if (!isRow) {
+    const seq = record?.seq
+    if (typeof seq !== 'number') return null // 无 seq 事件：加载器将其视作截断点（缺失类）
+    return { lo: seq, hi: seq }
+  }
+
+  const envKeys = Object.keys(record).sort().join(',')
+  if (envKeys !== 'data,seq0,time0,type') throw new Error(`malformed ${tag} storage row: envelope must be exactly {type, seq0, time0, data}`)
+  if (!Number.isSafeInteger(record.seq0) || record.seq0 < 0) throw new Error(`malformed ${tag} storage row: seq0 must be a non-negative safe integer`)
+  if (!Number.isSafeInteger(record.time0)) throw new Error(`malformed ${tag} storage row: time0 must be a safe integer`)
+  const data = record.data
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new Error(`malformed ${tag} storage row: data must be an object`)
+
+  const payloadKey = tag === 'tool-call-chunks' ? 'args' : 'texts'
+  const expectedKeys =
+    tag === 'tool-call-chunks'
+      ? ['args', 'dt', 'id', 'index', 'name', 'step', 'turn'].sort().join(',')
+      : ['dt', 'index', 'step', 'texts', 'turn'].sort().join(',')
+  const actualKeys = Object.keys(data).sort().join(',')
+  if (
+    actualKeys !== expectedKeys &&
+    !(tag === 'tool-call-chunks' && actualKeys === ['args', 'dt', 'id', 'index', 'step', 'turn'].sort().join(','))
+  ) {
+    throw new Error(`malformed ${tag} storage row: data must be exactly {turn, step, index${tag === 'tool-call-chunks' ? ', id, name?' : ''}, dt, ${payloadKey}}`)
+  }
+
+  const payload = data[payloadKey]
+  if (!Array.isArray(payload) || payload.length === 0 || payload.some((e) => typeof e !== 'string')) {
+    throw new Error(`malformed ${tag} storage row: ${payloadKey} must be a non-empty string array`)
+  }
+  const dt = data.dt
+  if (!Array.isArray(dt) || dt.some((g) => !Number.isSafeInteger(g)) || dt.length !== payload.length - 1) {
+    throw new Error(`malformed ${tag} storage row: dt must be ${payload.length - 1} safe integers`)
+  }
+  if (!Number.isSafeInteger(record.seq0 + payload.length - 1)) {
+    throw new Error(`malformed ${tag} storage row: member seqs must stay safe integers`)
+  }
+  return { lo: record.seq0, hi: record.seq0 + payload.length - 1 }
+}
+
+/** 加载器语义校验：展开后 seq 从 0 严格连续（header 单独提供）。 */
+function verifyLoaderSemantics(headerLine, records) {
+  if (!isSessionHeader(JSON.parse(headerLine))) return 'bad header'
+  let next = 0
+  for (const record of records) {
+    let span
+    try {
+      span = expandSpan(record)
+    } catch (e) {
+      return `decode error: ${e.message}`
+    }
+    if (span === null || span.lo !== next) return `seq gap at ${next}`
+    next = span.hi + 1
+  }
+  return null
+}
+
+/**
+ * 单轮分析：返回 { kind, records?, detail }。
+ * 与 dsh 加载器 consumeEventLine 的判定一致：
+ * - span.lo === next：接受，推进；
+ * - span.lo > next：缺口（加载器截断到连续前缀）；
+ * - span.lo < next：重放重叠（中断恢复后 dsh 自 S 起以相同 seq 重写）。
+ */
+function analyzeOnce(records) {
+  let next = 0
+  for (let i = 0; i < records.length; i++) {
+    let span
+    try {
+      span = expandSpan(records[i])
+    } catch (e) {
+      return { kind: 'unrepairable', detail: `第 ${i + 2} 行行语义损坏：${e.message}` }
+    }
+    if (span === null) {
+      return { kind: 'truncated', records: records.slice(0, i), detail: `第 ${i + 2} 行起无 seq（加载器视作截断点），已截断到连续前缀` }
+    }
+    if (span.lo < next) {
+      // 重放重叠：重放块自 S 起；旧记录（含被遮蔽的占位事件）是前缀内
+      // 第一个 hi >= S 的项开始的连续区段。优先保留最新重放块。
+      const S = span.lo
+      let c = -1
+      for (let k = 0; k < i; k++) {
+        const sk = expandSpan(records[k])
+        if (sk !== null && sk.hi >= S) {
+          c = k
+          break
+        }
+      }
+      if (c === -1) return { kind: 'unrepairable', detail: `第 ${i + 2} 行起 seq 倒退到 ${S}，但前缀无对应占位区间` }
+      const sc = expandSpan(records[c])
+      if (sc.lo !== S) {
+        return { kind: 'unrepairable', detail: `重放起点 ${S} 落在第 ${c + 2} 行的打包区间内部（${sc.lo}–${sc.hi}），无法无损分离` }
+      }
+      const kept = records.slice(0, c).concat(records.slice(i))
+      return {
+        kind: 'repaired',
+        records: kept,
+        detail: `重放重叠已修复：丢弃被遮蔽的旧事件（第 ${c + 2}–${i + 1} 行，seq ${S} 起的旧占位/旧尾部），保留重放块及其后全部事件，顺序与 seq 原样`,
+      }
+    }
+    if (span.lo > next) {
+      return {
+        kind: 'truncated',
+        records: records.slice(0, i),
+        detail: `第 ${i + 2} 行 seq=${span.lo} 跳变（期望 ${next}），已按加载器语义截断到连续前缀`,
+      }
+    }
+    next = span.hi + 1
+  }
+  return { kind: 'healthy' }
+}
+
+/** 迭代修复：一次修复可能暴露更深一层的重叠（多次中断恢复），逐轮收敛。
+ * 任何一轮都没有实际变更时返回 healthy（避免对健康文件重写/备份）。 */
+function analyzeAndRepair(records) {
+  const MAX_ROUNDS = 16
+  let current = records
+  let applied = false
+  let firstDetail = ''
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const res = analyzeOnce(current)
+    if (res.kind === 'repaired') {
+      current = res.records
+      applied = true
+      if (!firstDetail) firstDetail = res.detail
+      continue
+    }
+    if (res.kind === 'healthy') {
+      if (!applied) return { kind: 'healthy' }
+      return { kind: 'repaired', records: current, detail: firstDetail }
+    }
+    if (res.kind === 'truncated') {
+      // 截断发生在重放块内部：后续事件不可达，保留当前连续前缀（加载器同款语义）。
+      if (applied) {
+        return { kind: 'repaired', records: res.records, detail: `${firstDetail}\n${res.detail}` }
+      }
+      return res
+    }
+    return res
+  }
+  return { kind: 'unrepairable', detail: '重放重叠嵌套过深，无法安全收敛' }
+}
+
+/** 稳定读取：stat 前后一致（避免读到写一半的文件），最多重试 3 次。 */
+function readStable(filePath) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = statSync(filePath)
+    const buffer = readFileSync(filePath)
+    const after = statSync(filePath)
+    if (before.size === after.size && before.mtimeMs === after.mtimeMs && before.ino === after.ino) {
+      return { buffer, before }
+    }
+  }
+  throw new Error('文件在读取期间持续被写入（活跃会话），无法稳定读取')
+}
+
+/** 原子替换：写临时文件 → 覆盖（Windows 先删目标，POSIX rename 原子）。 */
+function writeAtomic(filePath, bytes) {
+  const tmp = `${filePath}.dsh-repair-tmp`
+  writeFileSync(tmp, bytes)
+  try {
+    renameSync(tmp, filePath)
+  } catch (e) {
+    try {
+      unlinkSync(filePath)
+    } catch { /* 目标不存在也允许 */ }
+    renameSync(tmp, filePath)
+  }
+}
+
+/**
+ * 修复单个会话文件。
+ * 返回 { ok, changed, message }；ok=false 时文件已被回滚为原样（或未动）。
+ */
 export async function repairSessionFile(filePath) {
-  console.log(`\n🔍 正在检查会话文件: ${filePath}`)
   if (!existsSync(filePath)) {
-    console.error(`❌ 文件不存在: ${filePath}`)
-    return false
+    return { ok: false, changed: false, message: `❌ 文件不存在: ${filePath}` }
   }
 
   const isZstd = filePath.endsWith('.zstd')
-  let rawText = ''
-  if (isZstd) {
-    rawText = decompressZstd(filePath).toString('utf8')
-  } else {
-    rawText = readFileSync(filePath, 'utf8')
-  }
-
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean)
-  if (lines.length === 0) {
-    console.warn(`⚠️ 文件为空，跳过: ${filePath}`)
-    return false
-  }
-
-  let header
+  let original
   try {
-    header = JSON.parse(lines[0])
+    original = readStable(filePath)
   } catch (e) {
-    console.error(`❌ 无法解析 Session Header: ${e.message}`)
-    return false
+    return { ok: false, changed: false, message: `❌ ${e.message}: ${filePath}` }
   }
 
-  console.log(`   Session ID: ${header.id}`)
-  console.log(`   总记录行数: ${lines.length}`)
+  if (original.before.size === 0) {
+    return { ok: false, changed: false, message: `⚠️ 文件为空，跳过: ${filePath}` }
+  }
 
-  // 解析所有事件行
-  const records = []
-  for (let i = 1; i < lines.length; i++) {
-    try {
-      const parsed = JSON.parse(lines[i])
-      records.push({ lineIndex: i + 1, raw: parsed })
-    } catch (e) {
-      console.error(`❌ 第 ${i + 1} 行 JSON 解析失败: ${e.message}`)
+  let headerLine
+  let records
+  try {
+    const rawText = isZstd ? decompressZstd(original.buffer).toString('utf8') : original.buffer.toString('utf8')
+    const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (lines.length === 0) {
+      return { ok: false, changed: false, message: `⚠️ 文件为空，跳过: ${filePath}` }
     }
-  }
-
-  // 检查是否存在序列异常（非连续、倒退、交叉轮次）
-  let hasAnomalies = false
-  let lastTurn = null
-  let maxTurnSeen = -1
-
-  for (let i = 0; i < records.length; i++) {
-    const rec = records[i].raw
-    const turn = rec.data?.turn ?? rec.turn
-    if (typeof turn === 'number') {
-      if (turn < maxTurnSeen && turn !== lastTurn) {
-        hasAnomalies = true
+    headerLine = lines[0]
+    const header = JSON.parse(headerLine)
+    if (!isSessionHeader(header)) {
+      return { ok: false, changed: false, message: `❌ 无法解析 Session Header: ${filePath}` }
+    }
+    records = []
+    for (let i = 1; i < lines.length; i++) {
+      try {
+        records.push(JSON.parse(lines[i]))
+      } catch (e) {
+        return {
+          ok: false,
+          changed: false,
+          message: `❌ 第 ${i + 1} 行 JSON 解析失败（不可安全修复，文件未动）: ${e.message}`,
+        }
       }
-      if (turn > maxTurnSeen) {
-        maxTurnSeen = turn
-      }
-      lastTurn = turn
     }
+  } catch (e) {
+    return { ok: false, changed: false, message: `❌ ${e.message}` }
   }
 
-  let lastSeq = -1
-  for (let i = 0; i < records.length; i++) {
-    const rec = records[i].raw
-    const seq = rec.seq ?? rec.seq0
-    if (typeof seq === 'number') {
-      if (seq <= lastSeq) {
-        hasAnomalies = true
-      }
-      lastSeq = seq
-    }
+  const sessionId = JSON.parse(headerLine).id
+  const decision = analyzeAndRepair(records)
+
+  if (decision.kind === 'healthy') {
+    return { ok: true, changed: false, message: `✅ 会话 ${sessionId} 序列正常，无需修复。` }
   }
 
-  if (!hasAnomalies) {
-    console.log(`   ✅ 该会话序列正常，无需修复。`)
-    return true
+  if (decision.kind === 'unrepairable') {
+    return { ok: false, changed: false, message: `❌ 会话 ${sessionId} 无法安全修复：${decision.detail}` }
   }
 
-  console.log(`   ⚠️ 检测到日志序列异常/多轮次交叉落盘，开始重排自愈...`)
-
-  // 按 Turn 依赖和因果关系重新整理事件流
-  const turnsMap = new Map()
-  const unassigned = []
-
-  for (const item of records) {
-    const rec = item.raw
-    const turn = rec.data?.turn ?? rec.turn
-    if (typeof turn === 'number') {
-      if (!turnsMap.has(turn)) {
-        turnsMap.set(turn, [])
-      }
-      turnsMap.get(turn).push(rec)
-    } else {
-      unassigned.push(rec)
-    }
-  }
-
-  // 按 Turn 序号严格单调排序
-  const sortedTurns = Array.from(turnsMap.keys()).sort((a, b) => a - b)
-  const orderedRecords = []
-
-  for (const rec of unassigned) {
-    orderedRecords.push(rec)
-  }
-
-  for (const t of sortedTurns) {
-    const turnRecords = turnsMap.get(t)
-    orderedRecords.push(...turnRecords)
-  }
-
-  // 重新为所有事件编制连续单调递增的 seq
-  let currentSeq = 0
-  for (const rec of orderedRecords) {
-    if (rec.seq !== undefined) {
-      rec.seq = currentSeq++
-    } else if (rec.seq0 !== undefined) {
-      rec.seq0 = currentSeq
-      const count = (rec.data?.dt?.length || 0) + 1
-      currentSeq += count
-    } else {
-      rec.seq = currentSeq++
-    }
-  }
-
-  console.log(`   🔄 重新编号完成，总事件序号推进至 ${currentSeq}`)
-
-  // 备份原文件
+  // 修复路径：备份 → 写回 → 加载器语义校验 → 失败回滚。
   const backupPath = `${filePath}.bak`
   if (!existsSync(backupPath)) {
-    copyFileSync(filePath, backupPath)
-    console.log(`   💾 已备份原始损坏文件至: ${backupPath}`)
+    try {
+      copyFileSync(filePath, backupPath)
+    } catch (e) {
+      return { ok: false, changed: false, message: `❌ 创建备份失败（已取消修复）: ${e.message}` }
+    }
   }
 
-  // 生成修复后的内容并写入
-  const headerText = JSON.stringify(header)
-  const eventsText = orderedRecords.map(r => JSON.stringify(r)).join('\n')
+  // 重放重叠应保留 header 原样（含 seedLength 语义），截断同理。
+  const keptHeaderLine = headerLine
+  const eventLines = decision.records.map((r) => JSON.stringify(r))
+  const repairedBytes = isZstd
+    ? await compressZstdFrames(keptHeaderLine, eventLines)
+    : Buffer.from(`${keptHeaderLine}\n${eventLines.join('\n')}\n`, 'utf8')
 
-  if (isZstd) {
-    const repairedBuf = await compressZstdFrames(headerText, eventsText)
-    writeFileSync(filePath, repairedBuf)
-  } else {
-    writeFileSync(filePath, `${headerText}\n${eventsText}\n`, 'utf8')
+  // 先写临时文件验证，再原子替换（验证失败不用动正式文件）。
+  const tmpPath = `${filePath}.dsh-repair-tmp`
+  writeFileSync(tmpPath, repairedBytes)
+  let verifyErr = null
+  try {
+    const checkBuf = isZstd ? decompressZstd(readFileSync(tmpPath)) : readFileSync(tmpPath)
+    const checkText = checkBuf.toString('utf8')
+    const checkLines = checkText.split('\n').map((l) => l.trim()).filter(Boolean)
+    verifyErr = verifyLoaderSemantics(checkLines[0], checkLines.slice(1).map((l) => JSON.parse(l)))
+  } catch (e) {
+    verifyErr = e.message
+  }
+  if (verifyErr !== null) {
+    try {
+      unlinkSync(tmpPath)
+    } catch { /* ignore */ }
+    return { ok: false, changed: false, message: `❌ 修复产物未通过加载器语义校验，已放弃写入（原文件未动）：${verifyErr}` }
+  }
+  renameSync(tmpPath, filePath)
+
+  // 写后竞态复查：确认磁盘上的文件正是本次写入的字节（而非期间被其他进程
+  // 改写——活跃会话会在修复期间继续追加，此时按原始字节回滚并重试一次）。
+  let diskBytes
+  try {
+    diskBytes = readFileSync(filePath)
+  } catch {
+    diskBytes = null
+  }
+  if (diskBytes && !diskBytes.equals(repairedBytes)) {
+    // 文件在修复期间被改动：回滚到原始字节后整体重试。
+    writeAtomic(filePath, original.buffer)
+    const retry = await repairSessionFile(filePath)
+    if (!retry.ok) {
+      return { ok: false, changed: false, message: `会话文件在修复期间被其他进程写入（可能为活跃会话），重试仍失败：${retry.message}` }
+    }
+    return retry
   }
 
-  console.log(`   ✨ 修复完成并已保存！会话已恢复正常。`)
-  return true
+  return {
+    ok: true,
+    changed: true,
+    message: `✨ 会话 ${sessionId} 已修复（${isZstd ? 'zstd' : 'jsonl'}）。${decision.detail}`,
+  }
 }
 
 async function findSessionFiles(rootDir) {
@@ -284,11 +454,14 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     console.log(`🚀 开始全量扫描会话目录: ${sessionsDir}`)
     const files = await findSessionFiles(sessionsDir)
     console.log(`共发现 ${files.length} 个会话日志文件。`)
+    let failed = 0
     for (const file of files) {
-      await repairSessionFile(file)
+      const res = await repairSessionFile(file)
+      console.log(res.message)
+      if (!res.ok) failed++
     }
-    console.log('\n🎉 全量检查与修复完成！')
-    return
+    console.log(`\n${failed === 0 ? '🎉' : '❗'} 全量检查与修复完成：${files.length - failed}/${files.length} 成功。`)
+    process.exit(failed === 0 ? 0 : 1)
   }
 
   const target = args[0]
@@ -296,7 +469,7 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
 
   if (!existsSync(targetPath)) {
     const files = await findSessionFiles(sessionsDir)
-    const matched = files.find(f => f.includes(target))
+    const matched = files.find((f) => f.includes(target))
     if (matched) {
       targetPath = matched
     } else {
@@ -305,10 +478,12 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     }
   }
 
-  await repairSessionFile(targetPath)
+  const res = await repairSessionFile(targetPath)
+  console.log(res.message)
+  process.exit(res.ok ? 0 : 1)
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('执行失败:', err)
   process.exit(1)
 })

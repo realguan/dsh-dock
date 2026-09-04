@@ -223,6 +223,13 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
 /// 执行单会话或全量会话修复（通过内置修复脚本）。node 来源引擎档优先
 ///（ADR-0010：不依赖用户环境），引擎未就绪回退系统探测，双缺给可行动错误
 ///（不再裸调 PATH 上的 `node`——存在性未知必败且不可诊断）。
+///
+/// 脚本契约（2026-09-04 重写，与上游 dsh 加载器语义对齐）：
+/// - 健康的文件不写回、不备份，退出码 0（幂等 no-op）；
+/// - 可安全修复（重放重叠去重 / 连续前缀截断）→ 备份 + 原子写回 + 写后
+///   加载器语义校验，成功退出码 0；
+/// - 任何失败（无法解析、无法安全修复、校验不过）→ 文件保持原样，退出码非 0，
+///   错误信息在 stdout（stderr 仅留给进程级异常）。
 pub fn run_repair(
     target: Option<&str>,
     home: &Path,
@@ -230,7 +237,16 @@ pub fn run_repair(
 ) -> Result<RepairOutcome, String> {
     let script_content = include_str!("../../scripts/repair-session.mjs");
     let temp_dir = std::env::temp_dir();
-    let script_path = temp_dir.join("dsh-dock-repair-session.mjs");
+    // 脚本路径含 PID + 时间戳：并发修复（多窗口/并行单测）互不踩踏，
+    // 且与「脚本执行中删除自身」的竞态彻底隔离。
+    let script_path = temp_dir.join(format!(
+        "dsh-dock-repair-session-{}-{}.mjs",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
 
     fs::write(&script_path, script_content).map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
 
@@ -261,6 +277,8 @@ pub fn run_repair(
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+    // 全量模式：脚本对每个失败文件打印错误并继续，最终以聚合退出码汇报；
+    // 单文件模式：失败即非 0 退出码。两种情况都应以退出码为准。
     if !output.status.success() {
         return Err(format!("修复失败：\n{stderr}\n{stdout}"));
     }
@@ -268,7 +286,7 @@ pub fn run_repair(
     Ok(RepairOutcome {
         session_id: target.unwrap_or("all").to_string(),
         success: true,
-        message: stdout,
+        message: stdout.trim_end().to_string(),
     })
 }
 
@@ -384,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_session_cleans_corrupt_jsonl_and_creates_backup() {
+    fn repair_session_cleans_replay_overlap_and_creates_backup() {
         // CI 单元测试阶段若尚未安装 Node.js 则优雅跳过外部进程执行
         let node_available = crate::child_cmd(Path::new("node"))
             .arg("-v")
@@ -402,10 +420,21 @@ mod tests {
         fs::create_dir_all(&sess_dir).unwrap();
         let target_file = sess_dir.join("session.jsonl");
 
-        // 写入含有 header 和乱序/倒退事件的数据
-        let corrupt_data = r#"{"id":"sess-fail","type":"session_header"}
-{"seq":5,"turn":2,"msg":"later"}
-{"seq":1,"turn":1,"msg":"earlier"}
+        // 复现真实损坏类别（2026-09-04，锚 dsh v0.1.2-rc.1 加载器语义）：
+        // 会话中断恢复后，dsh 以相同 seq 重放被中断轮次的真实事件，
+        // 磁盘上残留旧占位事件，形成「连续前缀 + 重放块」重叠。
+        // 加载器在重叠处报 seq gap 并丢弃重叠点之后全部恢复事件。
+        let corrupt_data = r#"{"type":"session","version":0,"id":"sess-fail","createdAt":1,"cwd":"/tmp","delegationDepth":0}
+{"type":"tool/call","seq":0,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
+{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"placeholder"}]}]}}}
+{"type":"step/end","seq":2,"time":1,"data":{"turn":1,"step":1}}
+{"type":"turn/end","seq":3,"time":1,"data":{"turn":1,"reason":{"kind":"interrupted"}}}
+{"type":"session/end-seed","seq":4,"time":2,"data":{}}
+{"type":"tool/result","seq":1,"time":3,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"real result"}]}]}}}
+{"type":"step/end","seq":2,"time":3,"data":{"turn":1,"step":1}}
+{"type":"step/start","seq":3,"time":4,"data":{"turn":1,"step":2}}
+{"type":"assistant/chunk","seq":4,"time":5,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"hi"}}}
+{"type":"turn/end","seq":5,"time":6,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
 
@@ -423,19 +452,103 @@ mod tests {
         std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
-        assert!(outcome.success);
+        assert!(outcome.success, "修复应成功：{}", outcome.message);
 
         // 验证备份文件已创建
         let backup_file = sess_dir.join("session.jsonl.bak");
         assert!(backup_file.is_file());
 
-        // 验证修复后的文件内容按 turn/seq 重排
+        // 验证修复后的内容：旧占位事件（tool/result 占位 + step/end + turn/end +
+        // session/end-seed，seq 1–4 的旧尾部）被丢弃，重放块保留。
         let repaired_content = fs::read_to_string(&target_file).unwrap();
-        let valid_lines: Vec<&str> = repaired_content.lines().collect();
-        assert_eq!(valid_lines.len(), 3);
-        assert!(valid_lines[0].contains("\"id\":\"sess-fail\""));
-        assert!(valid_lines[1].contains("\"turn\":1"));
-        assert!(valid_lines[2].contains("\"turn\":2"));
+        let valid_lines: Vec<&str> = repaired_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        // header + 6 条保留记录（未被遮蔽的 tool/call + 重放块 5 条）
+        assert_eq!(valid_lines.len(), 7, "预期保留 header + 6 条记录");
+        // 保留块内容：真实 result（非 placeholder）
+        assert!(
+            repaired_content.contains("\"text\":\"real result\""),
+            "应保留重放块的真实结果"
+        );
+        assert!(
+            !repaired_content.contains("placeholder"),
+            "不应保留被遮蔽的旧占位内容"
+        );
+        assert!(
+            repaired_content.contains("\"type\":\"turn/end\""),
+            "应保留重放块尾部的 turn/end"
+        );
+        // 顺序与 seq 原样（不重编号、不重排）：seq 0..5 严格递增
+        let seqs: Vec<i64> = valid_lines
+            .iter()
+            .skip(1)
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["seq"].as_i64().or(v["seq0"].as_i64()).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            seqs,
+            vec![0, 1, 2, 3, 4, 5],
+            "重放块 seq 应原样保留（不重编号）"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn repair_session_healthy_file_stays_untouched() {
+        // 健康文件 = 修复是幂等 no-op：不写回、不创建备份、退出码 0。
+        let node_available = crate::child_cmd(Path::new("node"))
+            .arg("-v")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !node_available {
+            return;
+        }
+
+        let temp =
+            std::env::temp_dir().join(format!("dsh-sess-repair-healthy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let sess_dir = temp.join("sessions").join("--demo--").join("sess-ok");
+        fs::create_dir_all(&sess_dir).unwrap();
+        let target_file = sess_dir.join("session.jsonl");
+        let healthy_data = r#"{"type":"session","version":0,"id":"sess-ok","createdAt":1,"cwd":"/tmp","delegationDepth":0}
+{"type":"tool/call","seq":0,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
+{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}}}
+{"type":"turn/end","seq":2,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}
+"#;
+        fs::write(&target_file, healthy_data).unwrap();
+
+        let engine_bin = temp.join("engines/bin");
+        std::fs::create_dir_all(&engine_bin).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = engine_bin.join("node");
+            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
+        assert!(outcome.success);
+
+        // 文件未被改写（无备份、内容字节一致）
+        assert!(
+            !sess_dir.join("session.jsonl.bak").is_file(),
+            "健康文件不应创建备份"
+        );
+        assert_eq!(
+            fs::read_to_string(&target_file).unwrap(),
+            healthy_data,
+            "健康文件不应被写回"
+        );
 
         let _ = fs::remove_dir_all(&temp);
     }
