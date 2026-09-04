@@ -14,7 +14,7 @@
 //!   **id 空间**：entryId（`include:*` 树路径）≠ patch/配置行 id——4.4 后续
 //!   禁用写入的 id 以 `--dump-config` 行 id 为准，本模块不提供写入。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 清单条目：官方内置 bundle 或第三方依赖插件。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -297,7 +297,7 @@ mod tests {
 
 // ---------- 插件安装 / 卸载 / 更新（4.4②）：dsh plugin 转发链换动词 ----------
 //
-// 与创建刀同链（profiles.rs run_dsh_plugin）：`dsh plugin --profile <名>
+// 与创建刀同链（profiles.rs run_toolchain_forward）：`dsh plugin --profile <名>
 // add/remove/update <spec>` 原样转发 pnpm；pnpm 防御补齐复用创建同一函数。
 // add 裸包名 dist-tag 坑（ledger 复现点 7）由 UI 引导带版本段规避；reconcile
 // 会把声明 dsh.bundle 的新装依赖回写进 bundles（同复现点 7），装完刷新即见。
@@ -361,72 +361,6 @@ pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 插件操作工具链（ADR-0010）：引擎档优先（engines/bin 的 node shim + dsh
-/// 全局启动器，boot 引导产物），引擎未就绪回退系统探测。引擎就绪后系统
-/// 安装不再是前置条件；P3-b boot 接线落地前引擎恒空，行为等价于旧系统档。
-#[derive(Debug)]
-enum DshToolchain {
-    /// 引擎档：dsh 启动器直接执行（node/pnpm 经 PATH 解析，engines/bin 前置）。
-    Engine { node_bin: PathBuf, dsh_bin: PathBuf },
-    /// 系统档：node 前缀执行 dsh 的 lib/bin.js。
-    System { node_bin: PathBuf, bin_js: PathBuf },
-}
-
-fn resolve_toolchain(data_dir: &Path, path_env: &str) -> Result<DshToolchain, String> {
-    // 引擎档要求 node 与 dsh 双全：半就绪（boot 中断）不做混搭，整体走回退。
-    if let (Some(node_bin), Some(dsh_bin)) = (
-        crate::engines::engine_node_bin(data_dir),
-        crate::engines::engine_dsh_bin(data_dir),
-    ) {
-        return Ok(DshToolchain::Engine { node_bin, dsh_bin });
-    }
-    let node = crate::resolve::detect_system_node(path_env).ok_or(
-        "未检出可用 node（引擎未就绪且系统无 Node）——请先启动应用完成引擎引导，或安装 Node.js 后重试",
-    )?;
-    let dsh = crate::resolve::detect_system_dsh(path_env).ok_or(
-        "未检出可用 dsh（引擎未就绪且系统无 dsh）——请先启动应用完成引擎引导，或安装 dsh 后重试",
-    )?;
-    Ok(DshToolchain::System {
-        node_bin: node.bin,
-        bin_js: dsh.bin_js,
-    })
-}
-
-/// 按工具链档执行一次 dsh 转发。系统档先做 pnpm 防御检测（ensure_pnpm），
-/// 可见性基准与本次 spawn 的 PATH 严格同源（dsh_child_path）——否则补齐到
-/// 引擎目录的 pnpm 在 spawn 时不可见，dsh 内部 spawnSync("pnpm") 必败。
-/// 引擎档不再检测：捆绑 pnpm 由 boot 每次重铺，随 engines/bin 前置恒可见。
-fn run_toolchain_forward(
-    toolchain: &DshToolchain,
-    args: &[String],
-    dsh_home: &Path,
-    log_path: &Path,
-    data_dir: &Path,
-) -> Result<crate::profiles::ForwardRun, String> {
-    match toolchain {
-        DshToolchain::Engine { node_bin, dsh_bin } => crate::profiles::run_dsh_forward(
-            dsh_bin,
-            &[],
-            args,
-            dsh_home,
-            log_path,
-            &crate::resolve::dsh_child_path(node_bin, data_dir),
-        ),
-        DshToolchain::System { node_bin, bin_js } => {
-            let child_path = crate::resolve::dsh_child_path(node_bin, data_dir);
-            crate::updates::ensure_pnpm(node_bin, &child_path, data_dir)?;
-            crate::profiles::run_dsh_forward(
-                node_bin,
-                &[bin_js.as_path()],
-                args,
-                dsh_home,
-                log_path,
-                &child_path,
-            )
-        }
-    }
-}
-
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
 pub fn mutate_plugin_blocking(
@@ -449,8 +383,8 @@ pub fn mutate_plugin_blocking(
         ));
     }
     let path_env = crate::resolve::effective_path();
-    let run = run_toolchain_forward(
-        &resolve_toolchain(data_dir, &path_env)?,
+    let run = crate::profiles::run_toolchain_forward(
+        &crate::engines::resolve_toolchain(data_dir, &path_env)?,
         &[
             "plugin".to_string(),
             "--profile".to_string(),
@@ -557,12 +491,12 @@ mod op_tests {
         for name in ["node", "node.exe", "dsh", "dsh.cmd", "dsh.exe"] {
             std::fs::write(bin.join(name), "").unwrap();
         }
-        match resolve_toolchain(&data_dir, "/nonexistent").unwrap() {
-            DshToolchain::Engine { node_bin, dsh_bin } => {
+        match crate::engines::resolve_toolchain(&data_dir, "/nonexistent").unwrap() {
+            crate::engines::DshToolchain::Engine { node_bin, dsh_bin } => {
                 assert_eq!(node_bin.parent(), Some(bin.as_path()));
                 assert_eq!(dsh_bin.parent(), Some(bin.as_path()));
             }
-            DshToolchain::System { .. } => panic!("引擎就绪应选引擎档"),
+            crate::engines::DshToolchain::System { .. } => panic!("引擎就绪应选引擎档"),
         }
         std::fs::remove_dir_all(&data_dir).ok();
     }
@@ -597,9 +531,11 @@ mod op_tests {
         std::fs::write(&node, "#!/bin/sh\necho v24.18.0\n").unwrap();
         std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        match resolve_toolchain(&data_dir, &bindir.display().to_string()).unwrap() {
-            DshToolchain::System { bin_js, .. } => assert!(bin_js.ends_with("lib/bin.js")),
-            DshToolchain::Engine { .. } => panic!("引擎缺席应回退系统档"),
+        match crate::engines::resolve_toolchain(&data_dir, &bindir.display().to_string()).unwrap() {
+            crate::engines::DshToolchain::System { bin_js, .. } => {
+                assert!(bin_js.ends_with("lib/bin.js"))
+            }
+            crate::engines::DshToolchain::Engine { .. } => panic!("引擎缺席应回退系统档"),
         }
         std::fs::remove_dir_all(&data_dir).ok();
     }
@@ -609,7 +545,8 @@ mod op_tests {
         // 双缺（引擎未就绪 + PATH 无 node/dsh）：错误文案必须指向引擎引导
         let data_dir = std::env::temp_dir().join("dsh-dock-noengine-toolchain-test");
         let _ = std::fs::remove_dir_all(&data_dir);
-        let err = resolve_toolchain(&data_dir, &data_dir.display().to_string()).unwrap_err();
+        let err = crate::engines::resolve_toolchain(&data_dir, &data_dir.display().to_string())
+            .unwrap_err();
         assert!(err.contains("引擎未就绪"), "{err}");
     }
 }
@@ -697,8 +634,8 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
         return Err(format!("profile「{profile}」尚未初始化"));
     }
     let path_env = crate::resolve::effective_path();
-    let run = run_toolchain_forward(
-        &resolve_toolchain(data_dir, &path_env)?,
+    let run = crate::profiles::run_toolchain_forward(
+        &crate::engines::resolve_toolchain(data_dir, &path_env)?,
         &[
             "--profile".to_string(),
             profile.to_string(),

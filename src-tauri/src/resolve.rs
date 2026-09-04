@@ -40,6 +40,9 @@ pub struct LaunchSpec {
     /// dsh 是否支持 `--no-open`（system 档按版本探测；旧版不支持时不得传，
     /// 否则 dsh 秒退——rc.5 实测）。False 时 dsh 会自开浏览器（妥协但能启动）。
     pub no_open: bool,
+    /// 本次 boot 引导是否补装了 dsh（引擎档首启）：驱动版本状态即时刷新
+    ///（否则关于页/菜单停留在安装前的「未检出」）。
+    pub first_bootstrap: bool,
 }
 
 // ---------- 用户 home ----------
@@ -631,6 +634,7 @@ pub fn resolve_launch(
                         profile: manifest.terminal.default_profile.clone(),
                         tier: TierKind::System,
                         no_open,
+                        first_bootstrap: false,
                     });
                 }
                 SystemOutcome::TooOld { found, min } => {
@@ -665,6 +669,7 @@ pub fn resolve_launch(
                 return engine_launch_spec(
                     data_dir,
                     outcome.status.dsh.as_deref(),
+                    outcome.dsh_installed,
                     manifest.terminal.default_profile.clone(),
                 );
             }
@@ -700,6 +705,7 @@ pub fn resolve_launch(
                     profile: manifest.terminal.default_profile.clone(),
                     tier: TierKind::Download,
                     no_open: true,
+                    first_bootstrap: false,
                 });
             }
         }
@@ -782,6 +788,7 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
 fn engine_launch_spec(
     data_dir: &Path,
     dsh_version: Option<&str>,
+    first_bootstrap: bool,
     default_profile: String,
 ) -> Result<LaunchSpec> {
     let node_bin = crate::engines::engine_node_bin(data_dir).ok_or_else(|| {
@@ -802,6 +809,7 @@ fn engine_launch_spec(
         profile: default_profile,
         tier: TierKind::Engine,
         no_open,
+        first_bootstrap,
     })
 }
 
@@ -816,6 +824,7 @@ fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String
         profile,
         tier: TierKind::Bundle,
         no_open: true,
+        first_bootstrap: false,
     }
 }
 
@@ -1333,7 +1342,7 @@ mod tests {
             "#!/bin/sh\necho \"  --no-open             do not open browser\"\n",
         );
 
-        let spec = engine_launch_spec(&data_dir, Some("0.9.0"), "web".to_string()).unwrap();
+        let spec = engine_launch_spec(&data_dir, Some("0.9.0"), false, "web".to_string()).unwrap();
         assert_eq!(spec.tier, TierKind::Engine);
         assert_eq!(spec.node_bin.parent(), Some(bin.as_path()));
         assert!(spec.no_open, "启动器 --help 含 --no-open 应判支持");

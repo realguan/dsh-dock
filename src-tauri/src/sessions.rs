@@ -220,18 +220,35 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
     Ok(items)
 }
 
-/// 执行单会话或全量会话修复（通过内置修复脚本）
-pub fn run_repair(target: Option<&str>, home: &Path) -> Result<RepairOutcome, String> {
+/// 执行单会话或全量会话修复（通过内置修复脚本）。node 来源引擎档优先
+///（ADR-0010：不依赖用户环境），引擎未就绪回退系统探测，双缺给可行动错误
+///（不再裸调 PATH 上的 `node`——存在性未知必败且不可诊断）。
+pub fn run_repair(
+    target: Option<&str>,
+    home: &Path,
+    data_dir: &Path,
+) -> Result<RepairOutcome, String> {
     let script_content = include_str!("../../scripts/repair-session.mjs");
     let temp_dir = std::env::temp_dir();
     let script_path = temp_dir.join("dsh-dock-repair-session.mjs");
 
     fs::write(&script_path, script_content).map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
 
-    let path_env = std::env::var("PATH").unwrap_or_default();
-    let node_bin = crate::resolve::detect_system_node(&path_env)
-        .map(|n| n.bin)
-        .unwrap_or_else(|| PathBuf::from("node"));
+    let path_env = crate::resolve::effective_path();
+    let node_bin = match crate::engines::engine_node_bin(data_dir) {
+        Some(bin) => bin,
+        None => crate::resolve::detect_system_node(&path_env)
+            .map(|n| n.bin)
+            .ok_or_else(|| {
+                "未检出可用 node（引擎未就绪且系统无 Node）——请先启动应用完成引擎引导后重试"
+                    .to_string()
+            })?,
+    };
+    tracing::info!(
+        target = ?target,
+        node = %node_bin.display(),
+        "会话修复开始"
+    );
 
     let mut cmd = crate::child_cmd(&node_bin);
     cmd.arg(&script_path);
@@ -400,7 +417,7 @@ mod tests {
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
 
-        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp).unwrap();
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
         assert!(outcome.success);
 
         // 验证备份文件已创建

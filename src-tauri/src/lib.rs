@@ -998,9 +998,17 @@ async fn list_sessions() -> Result<Vec<crate::sessions::SessionItem>, String> {
 
 /// 会话管理与自愈：修复单个指定会话
 #[tauri::command]
-async fn repair_session(session_path: String) -> Result<crate::sessions::RepairOutcome, String> {
+async fn repair_session(
+    app: tauri::AppHandle,
+    session_path: String,
+) -> Result<crate::sessions::RepairOutcome, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(Some(&session_path), &crate::resolve::user_dsh_home())
+        crate::sessions::run_repair(
+            Some(&session_path),
+            &crate::resolve::user_dsh_home(),
+            &data_dir,
+        )
     })
     .await
     .map_err(|e| format!("单会话修复任务异常终止：{e}"))?
@@ -1008,9 +1016,12 @@ async fn repair_session(session_path: String) -> Result<crate::sessions::RepairO
 
 /// 会话管理与自愈：全量体检与自愈修复
 #[tauri::command]
-async fn repair_all_sessions() -> Result<crate::sessions::RepairOutcome, String> {
+async fn repair_all_sessions(
+    app: tauri::AppHandle,
+) -> Result<crate::sessions::RepairOutcome, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(None, &crate::resolve::user_dsh_home())
+        crate::sessions::run_repair(None, &crate::resolve::user_dsh_home(), &data_dir)
     })
     .await
     .map_err(|e| format!("全量会话自愈任务异常终止：{e}"))?

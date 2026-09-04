@@ -182,6 +182,22 @@ fn effective_forced_profile(forced: Option<String>, dsh_home_is_user_home: bool)
     }
 }
 
+/// 选择器决策（纯函数，F-b + ADR-0010）：用户世界档（system/引擎）且无直接
+/// 目标且 webUi 候选多于一个 → 出选择器。引擎档 dsh_home = 用户 home，与
+/// system 档同语义（快照档是独立世界，不消费选择器/默认值/强制目标）。
+fn needs_profile_selector(
+    tier: crate::manifest::TierKind,
+    direct_hit: bool,
+    profile_count: usize,
+) -> bool {
+    !direct_hit
+        && matches!(
+            tier,
+            crate::manifest::TierKind::System | crate::manifest::TierKind::Engine
+        )
+        && profile_count > 1
+}
+
 pub struct LocalExecutor {
     manifest: ProductManifest,
     resources_dir: PathBuf,
@@ -283,10 +299,9 @@ impl Executor for LocalExecutor {
             },
             None => launch,
         };
-        // F-b：system 档且用户世界有多个 webUi profile → 由壳出选择器；
-        // defaultProfile 已命中时跳过——默认值语义即「下次自动使用」。
-        let needs_selector =
-            !direct_hit && tier == crate::manifest::TierKind::System && profiles.len() > 1;
+        // F-b：用户世界档（system/引擎）且 webUi profile 多于一个 → 由壳出
+        // 选择器；defaultProfile 已命中时跳过——默认值语义即「下次自动使用」。
+        let needs_selector = needs_profile_selector(tier, direct_hit, profiles.len());
         self.launch = Some(launch);
         Ok(if needs_selector {
             ProbeOutcome::NeedsProfile(profiles)
@@ -343,7 +358,7 @@ impl Executor for LocalExecutor {
     fn just_installed(&self) -> bool {
         self.launch
             .as_ref()
-            .map(|l| l.tier == crate::manifest::TierKind::Download)
+            .map(|l| l.tier == crate::manifest::TierKind::Download || l.first_bootstrap)
             .unwrap_or(false)
     }
 
@@ -985,6 +1000,20 @@ fn install_dsh_in_distro(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selector_shown_for_user_world_tiers_with_multiple_profiles() {
+        use crate::manifest::TierKind;
+        // 引擎档与 system 档同语义：多候选且无直接目标 → 选择器（P3-b 修复：
+        // 引擎档原被漏判，多 profile 用户永远进不了选择器）
+        assert!(needs_profile_selector(TierKind::Engine, false, 2));
+        assert!(needs_profile_selector(TierKind::System, false, 2));
+        // 直接目标（defaultProfile 命中/强制目标）→ 跳过
+        assert!(!needs_profile_selector(TierKind::Engine, true, 2));
+        // 单候选 / 快照档 → 不出选择器
+        assert!(!needs_profile_selector(TierKind::Engine, false, 1));
+        assert!(!needs_profile_selector(TierKind::Bundle, false, 2));
+    }
 
     #[test]
     fn parses_wsl_list_v_with_default_marker() {

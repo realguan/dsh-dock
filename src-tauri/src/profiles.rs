@@ -346,33 +346,50 @@ pub fn creation_blocker(home: &Path, profile: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// dsh plugin 转发链单次执行结果（run_dsh_plugin 产出，供纯函数分类）。
+/// dsh plugin 转发链单次执行结果（run_dsh_forward / run_toolchain_forward 产出）。
 #[derive(Debug, Clone)]
 pub struct ForwardRun {
     /// dsh 进程退出码（超时/被信号杀死 = None）。
     pub code: Option<i32>,
     pub timed_out: bool,
-    /// dsh 输出全文（stdout+stderr 合流，见 run_dsh_plugin 的文件中转）。
+    /// dsh 输出全文（stdout+stderr 合流，见 run_dsh_forward 的文件中转）。
     pub output: String,
 }
 
-/// 执行一次 dsh plugin 转发链（阻塞，调用方负责放后台线程）——系统档便捷
-/// 封装：node 前缀执行 lib/bin.js，PATH = node 首位 + effective_path。
-pub fn run_dsh_plugin(
-    node_bin: &Path,
-    dsh_bin_js: &Path,
+/// 按工具链档执行一次 dsh 转发（插件操作与创建链共用入口）。系统档先做
+/// pnpm 防御检测（ensure_pnpm），可见性基准与本次 spawn 的 PATH 严格同源
+///（dsh_child_path）——否则补齐到引擎目录的 pnpm 在 spawn 时不可见，dsh 内部
+/// spawnSync("pnpm") 必败。引擎档不再检测：捆绑 pnpm 由 boot 每次重铺，
+/// 随 engines/bin 前置恒可见。
+pub fn run_toolchain_forward(
+    toolchain: &crate::engines::DshToolchain,
     args: &[String],
     dsh_home: &Path,
     log_path: &Path,
+    data_dir: &Path,
 ) -> Result<ForwardRun, String> {
-    run_dsh_forward(
-        node_bin,
-        &[dsh_bin_js],
-        args,
-        dsh_home,
-        log_path,
-        &crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
-    )
+    match toolchain {
+        crate::engines::DshToolchain::Engine { node_bin, dsh_bin } => run_dsh_forward(
+            dsh_bin,
+            &[],
+            args,
+            dsh_home,
+            log_path,
+            &crate::resolve::dsh_child_path(node_bin, data_dir),
+        ),
+        crate::engines::DshToolchain::System { node_bin, bin_js } => {
+            let child_path = crate::resolve::dsh_child_path(node_bin, data_dir);
+            crate::updates::ensure_pnpm(node_bin, &child_path, data_dir)?;
+            run_dsh_forward(
+                node_bin,
+                &[bin_js.as_path()],
+                args,
+                dsh_home,
+                log_path,
+                &child_path,
+            )
+        }
+    }
 }
 
 /// dsh 转发链统一内核（ADR-0010）：`program` + `prepend` 前置参数拼装命令行。
@@ -528,12 +545,10 @@ fn output_tail(text: &str) -> String {
 }
 
 /// 创建 profile 的完整阻塞流程（调用方负责放后台线程，不冻结主线程）：
-/// 前置校验 -> 定位系统 node/dsh -> pnpm 防御检测 -> spawn 转发链 -> 分类。
-/// 定位仅走系统探测（detect_system_*，与扫描器面向的 system 档用户一致；
-/// 离线档/未装用户得到可行动错误，复用运行会话解析结果留待后续刀评估）。
-/// pnpm 防御检测（ADR-0009 §4：基准 = 注入后的 PATH）：缺失直接给可行动
-/// 错误而不 spawn——dsh 会先 init 再失败，留下半初始化目录（虽可重试，
-/// 失败前置更干净）；补齐（npm i -g pnpm，复用 boot 同一函数）属后续刀。
+/// 前置校验 -> 工具链解析（引擎档优先，engines::resolve_toolchain；系统探测
+/// 仅作引擎未就绪时的回退）-> spawn 转发链 -> 分类。pnpm 防御检测随工具链
+/// 档内聚在 run_toolchain_forward（系统档可见性与 spawn 同源 dsh_child_path；
+/// 引擎档捆绑 pnpm 恒在，免检测）。
 pub fn create_profile_blocking(
     profile: &str,
     data_dir: &Path,
@@ -541,23 +556,14 @@ pub fn create_profile_blocking(
     let home = crate::resolve::user_dsh_home();
     creation_blocker(&home, profile)?;
     let path_env = crate::resolve::effective_path();
-    let node = crate::resolve::detect_system_node(&path_env)
-        .ok_or("未检出系统 Node（PATH 上无 node）——创建 profile 需要系统 Node 与 dsh")?;
-    let dsh = crate::resolve::detect_system_dsh(&path_env).ok_or(
-        "未检出系统 dsh（PATH 上无官方安装）——profile 创建经 dsh CLI 完成，需要系统安装的 dsh",
-    )?;
-    let runtime_path = crate::resolve::path_with_bin(&node.bin, &path_env);
-    // pnpm 防御检测 + 同步补齐（ADR-0009 §4：复用 boot 期同一函数，防 boot
-    // 后环境变化——卸载 pnpm / fnm 切 node 版本；可见即过（毫秒级），缺失
-    // 才走 npm 安装）。补齐失败即本错误，文案含平台化手动安装建议。
-    crate::updates::ensure_pnpm(&node.bin, &runtime_path, data_dir)?;
+    let toolchain = crate::engines::resolve_toolchain(data_dir, &path_env)?;
     let args = create_command_args(profile);
-    let run = run_dsh_plugin(
-        &node.bin,
-        &dsh.bin_js,
+    let run = run_toolchain_forward(
+        &toolchain,
         &args,
         &home,
         &data_dir.join("profile-create.log"),
+        data_dir,
     )?;
     let materialized = home
         .join("profiles")
