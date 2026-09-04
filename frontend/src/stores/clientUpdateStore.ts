@@ -1,9 +1,10 @@
 // 客户端自更新状态机（About 页消费）。Rust（updater.rs）是唯一写者，
 // 前端经 app:update 事件 + get_client_update 播种只读推进。
-// applyUpdateEvent / TRANSITIONS 为纯函数：非法迁移丢弃并 console.warn。
+// applyUpdateEvent / TRANSITIONS 为纯函数：非法迁移丢弃并经 logger 告警。
 import { create } from "zustand"
 import type { ClientUpdate } from "@/types/ipc"
 import type { AppUpdateEvent } from "@/types/events"
+import { logger } from "@/lib/logger"
 
 export type UpdatePhase = ClientUpdate["phase"]
 
@@ -55,7 +56,10 @@ export const useClientUpdateStore = create<ClientUpdateState>((set, get) => ({
     const next = applyUpdateEvent(cur, e)
     if (next === null) {
       // 非法迁移：丢事件不崩 UI（对 Rust 先行升级新增迁移路径保持可见性）
-      console.warn("[client-update] 非法状态迁移已忽略", cur.phase, "→", e.phase)
+      logger.warn("client-update", "非法状态迁移已忽略", {
+        from: cur.phase,
+        to: e.phase,
+      })
       return
     }
     set({ snapshot: next })

@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n } from "@/stores/i18nStore"
 import { useProfilesStore } from "@/stores/profilesStore"
+import { logger } from "@/lib/logger"
 import type { ShellSettings } from "@/types/ipc"
 
 export function QuickDshSwitcher() {
@@ -51,7 +52,7 @@ export function QuickDshSwitcher() {
     setSwitching(true)
     api.focusMainWindow()
       .catch((e) => {
-        console.error("[dsh-dock] 聚焦主窗口失败:", e)
+        logger.error("quick-switcher", "聚焦主窗口失败", { error: String(e) })
       })
       .finally(() => {
         setTimeout(() => setSwitching(false), 300)

@@ -79,6 +79,9 @@
 - 事件总线 `lib/events.ts` **模块加载期**装配——React 子 effect 先于父执行，晚挂监听
   会吞掉首发遥测（boot:step 等），这是踩过的坑；组件只消费 store。
 - 样式走 `@theme` token 禁硬编码 hex；文案集中 `content/zh-CN.ts`。
+- 日志统一 `lib/logger.ts`（格式 `[模块] 描述 {ctx}`，2026-09-04）：禁直呼
+  `console.*`；绝不打密钥/PII；禁紧密循环/高频事件内打点（Rust 侧同口径：
+  禁 `println!`，结构化字段，`error/warn/info/debug` 分级）。
 
 ### 4.4 前端三红线
 
