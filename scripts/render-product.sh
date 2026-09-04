@@ -64,20 +64,17 @@ cp -fR "$DSH_HOME"/. "$snap/home/"
   echo "警告：快照 home 下找不到 profile '$PROFILE'，请核对 --profile" >&2
 }
 
-# ---- 2) product.manifest.json ----
-MIN_VERSION="${MIN_VERSION:-0.1.0-rc.6}"
+# ---- 2) product.manifest.json（contract v3：snapshot 三件套 = 快照档，离线可用；
+# resolution/fallback 语义已废止——见 docs/contract.md「运行时策略 v3」。打包侧
+# 须与本壳 MANIFEST_FORMAT=3 同步升版，旧 format 由壳兼容迁移。） ----
 cat > "$SRC_TAURI/resources/product.manifest.json" <<JSON
 {
-  "format": 2,
+  "format": 3,
   "productName": "$NAME",
   "terminal": {
-    "defaultProfile": "$PROFILE",
-    "resolution": {
-      "node": { "tiers": ["bundle", "system", "download"], "requireEngines": true },
-      "dsh": { "tiers": ["bundle", "system", "download"], "minVersion": "$MIN_VERSION", "requireEngines": true }
-    }
+    "defaultProfile": "$PROFILE"
   },
-  "fallback": {
+  "snapshot": {
     "nodeBin": "dsh-snapshot/node/bin/dsh-node",
     "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",

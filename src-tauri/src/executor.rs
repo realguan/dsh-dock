@@ -238,14 +238,18 @@ impl Executor for LocalExecutor {
         // pnpm 环境检查硬依赖（ADR-0009 红线 2 口径 2：保证 dsh 全部子命令
         // 可用——`dsh plugin` 硬编码 spawnSync("pnpm") 无回退）。缺失经
         // `npm install -g pnpm` 同步补齐，失败阻断 boot 出可行动错误卡。
-        // 基准 = 注入 dsh 的 PATH（node 首位 + effective_path）。WSL 执行器
+        // 基准 = 注入 dsh 的 PATH（node 首位 + effective_path）。引擎档跳过：
+        // 捆绑 pnpm 随 boot 每次重铺、恒在（ADR-0010）。WSL 执行器
         // 不走本路径（客体内补齐链归 4.9，ADR-0004 §7）。
-        let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
-        sink(1, "running", "正在检查并补齐包管理器…");
-        if let Err(e) = crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path, &self.data_dir)
-        {
-            sink(1, "error", &e);
-            return Err(e);
+        if launch.tier != crate::manifest::TierKind::Engine {
+            let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
+            sink(1, "running", "正在检查并补齐包管理器…");
+            if let Err(e) =
+                crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path, &self.data_dir)
+            {
+                sink(1, "error", &e);
+                return Err(e);
+            }
         }
         sink(0, "done", "环境扫描完成");
         sink(1, "done", &format!("命中档位：{:?}", launch.tier));

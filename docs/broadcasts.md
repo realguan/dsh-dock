@@ -32,6 +32,36 @@
 
 ## 三、记录
 
+### 2026-09-04 完成通知 · P3-b boot 接线 + contract v3（MANIFEST_FORMAT=3，引擎档缺省） —— guan（AI 协作）
+
+- 占用声明：lib.rs（共享区）改动经维护者会话内指示「继续」视同声明（2026-09-04，本条目即落档）。
+- 变更：
+  1. **contract v3 落地**（docs/contract.md「运行时策略 v3」同日实现）：壳
+     `MANIFEST_FORMAT=3`，`TierKind::Engine` 新档位；manifest 加载统一规范化为
+     `tiers ∈ {[Engine], [Bundle]}` + fallback——v3 快照档（snapshot 三件套）与
+     v1/v2 兼容迁移（fallback→快照档、极简在线档→引擎档；resolution 档序语义废止）。
+  2. **boot 接线**：resolve_launch 引擎档臂 = ensure_engine_bootstrapped → 引擎
+     LaunchSpec；executor 引擎档跳过 pnpm 补齐（捆绑 pnpm 随 boot 重铺恒在）；
+     lib.rs 去 engines 模块 allow(dead_code)。
+  3. **离线语义收口**：engines::bootstrap 版本解析改**惰性闭包**——node 已装但
+     解析失败（离线且无缓存）→ 警告后用已装版本继续；dsh 已装永不查 dist-tags
+     → 就绪引擎离线 boot 零网络（契约「之后 registry 不可达 → 已装引擎直接启动」）。
+  4. **执行形态**：LaunchSpec.dsh_entry = DshEntry（NodeScript | Launcher）——
+     引擎档 dsh 启动器直接执行（spawn_dsh / no-open 探测共用，探测缓存机制不变）。
+  5. **打包内置 pnpm**（边界 A）：新增 scripts/fetch-pnpm-bundle.sh（版本从
+     updates.rs PINNED_PNPM_VERSION 推导防漂移；npmmirror→npmjs 镜像链 +
+     packument dist.shasum 完整性校验；实测 darwin-arm64 16.8MB 落位）+
+     build.yml 三平台构建前取件步骤 + resources/pnpm/ 入 .gitignore（永不入库）+
+     render-product.sh 升 v3（snapshot 三件套，打包侧同步完成）+ 本仓 manifest
+     升 v3 引擎档缺省。
+- 影响：**引擎档自此为产品缺省形态**——下一发版起 boot 走壳引擎引导（首启需
+  联网），用户全局 dsh/node 与启动解耦（TooOld 死局消失）。本仓 dev/CI 即时生效
+  （resources manifest 已 v3）；本机冒烟 = `tauri dev` 走引擎档全链路。
+  探测层退役、创建链切引擎档、WSL 客体投递、升级呈现为后续刀。
+- 凭据：`cargo test` 197 全绿（+4：manifest v3 迁移×2/未知 mode 拒绝/引擎档
+  LaunchSpec 离线构造/bootstrap 离线降级）+ fmt + clippy -D warnings 零告警；
+  fetch 脚本本机实测通过（npmmirror 命中 + sha1 比对）。
+
 ### 2026-09-04 完成通知 · P3 插件操作改引擎档（工具链解析引擎优先 + 转发链统一内核） —— guan（AI 协作）
 
 - 变更：

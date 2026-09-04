@@ -341,46 +341,75 @@ pub struct BootstrapOutcome {
 
 /// 引导 = 就绪判定驱动的幂等补缺。失败语义：已装件不回滚不阻塞（离线语义）；
 /// 补缺后仍真缺件才 Err（首启必须联网，之后离线可启动）。
+/// node / dsh 的期望版本经**惰性闭包**提供（解析本身可能触网）：
+/// - node：缺失必须解析成功（无从引导即 Err）；已装但解析失败（离线且无缓存）
+///   → 带警告用已装版本继续（boot 恒用已装引擎，ADR-0010）；
+/// - dsh：缺失才调用（dist-tags 查询）；已装永不调用 → 就绪引擎离线零网络。
 pub fn bootstrap(
     data_dir: &Path,
     path_env: &str,
     pnpm_bundle: &Path,
-    node_version: &str,
-    dsh_version: &str,
+    node_resolve: &mut dyn FnMut() -> Result<String>,
+    dsh_resolve: &mut dyn FnMut() -> Result<String>,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<BootstrapOutcome> {
     // ① pnpm 随壳 pin：每次 boot 重铺（幂等覆盖，版本不再参与判定）
     stage_pnpm_from_bundle(pnpm_bundle, data_dir)?;
-
-    // ② 就绪判定 → 逐项补缺 → 重探
     let mut status = probe_engine(data_dir, path_env);
     let mut node_switched = false;
     let mut dsh_installed = false;
-    for gap in readiness_gaps(&status, node_version) {
-        match gap {
-            EngineGap::Pnpm => unreachable!("staging 已覆盖 pnpm 落位"),
-            EngineGap::Node { found } => {
-                runtime_set_node(data_dir, node_version, path_env, progress).map_err(|e| {
-                    anyhow!(
-                        "node 引导失败（{}）：{e}",
-                        found
-                            .map(|v| format!("现 {v}"))
-                            .unwrap_or_else(|| "缺失".to_string())
-                    )
-                })?;
-                shim_add_node(data_dir, path_env)?;
-                node_switched = true;
-            }
-            EngineGap::Dsh => {
-                install_dsh_global(data_dir, dsh_version, path_env)?;
-                dsh_installed = true;
-            }
+
+    // ② pnpm：staging 后仍缺失 = 捆绑包损坏（bin 未落地），硬错误。
+    if status.pnpm.is_none() {
+        bail!("捆绑 pnpm 落位后仍不可执行（引擎目录异常）——删除 engines 目录后重启应用可重建");
+    }
+
+    // ③ node：期望版本惰性解析（node-map，fail-closed 基线兜底）。已装但解析
+    // 失败（离线且无缓存）→ 带警告用已装版本继续（boot 恒用已装引擎，ADR-0010）；
+    // 缺失且解析失败 → 硬错误（无从引导）。版本不符 = 在线幂等切换（升级承接）。
+    let node_expected = match node_resolve() {
+        Ok(v) => Some(v),
+        Err(e) if status.node.is_some() => {
+            tracing::warn!("node 期望版本解析失败，用已装引擎 node 继续启动：{e}");
+            None
         }
+        Err(e) => return Err(anyhow!("node 引导失败（缺失）：期望版本解析失败：{e}")),
+    };
+    if let Some(expected) = &node_expected {
+        let node_gap = |s: &EngineStatus| {
+            readiness_gaps(s, expected)
+                .iter()
+                .any(|g| matches!(g, EngineGap::Node { .. }))
+        };
+        if node_gap(&status) {
+            runtime_set_node(data_dir, expected, path_env, progress).map_err(|e| {
+                anyhow!(
+                    "node 引导失败（{}，期望 {expected}）：{e}",
+                    describe_found(&status.node)
+                )
+            })?;
+            shim_add_node(data_dir, path_env)?;
+            node_switched = true;
+            status = probe_engine(data_dir, path_env);
+        }
+    }
+
+    // ④ dsh：缺失才补；目标版本（最新稳定版，dist-tags）惰性解析——已装永不
+    // 调用，就绪引擎离线 boot 零网络（contract v3 在线语义）。
+    if status.dsh.is_none() {
+        let dsh_version =
+            dsh_resolve().map_err(|e| anyhow!("dsh 引导失败（缺失）：目标版本解析失败：{e}"))?;
+        install_dsh_global(data_dir, &dsh_version, path_env)?;
+        dsh_installed = true;
         status = probe_engine(data_dir, path_env);
     }
 
-    // ③ 终验：三件缺一不可（首启必须联网；之后离线可启动）
-    let gaps = readiness_gaps(&status, node_version);
+    // ⑤ 终验：三件缺一不可（期望版本未知 = 离线降级时，node 只验存在）。
+    let expected = node_expected
+        .as_deref()
+        .or(status.node.as_deref())
+        .unwrap_or("");
+    let gaps = readiness_gaps(&status, expected);
     if !gaps.is_empty() {
         bail!("引擎就绪判定未通过（{gaps:?}）——首启需联网完成引导，之后可离线启动");
     }
@@ -389,6 +418,14 @@ pub fn bootstrap(
         node_switched,
         dsh_installed,
     })
+}
+
+/// gap 展示用：引擎现装版本或「缺失」。
+fn describe_found(found: &Option<String>) -> String {
+    found
+        .as_deref()
+        .map(|v| format!("现 {v}"))
+        .unwrap_or_else(|| "缺失".to_string())
 }
 
 #[cfg(test)]
@@ -572,12 +609,66 @@ mod tests {
             .output()
             .unwrap();
 
-        let outcome =
-            bootstrap(&data_dir, "", &bundle, "24.18.0", "0.1.1", &mut |_, _| {}).unwrap();
+        let mut dsh_called = false;
+        let outcome = bootstrap(
+            &data_dir,
+            "",
+            &bundle,
+            &mut || Ok("24.18.0".to_string()),
+            &mut || {
+                dsh_called = true;
+                Ok("0.1.1".to_string())
+            },
+            &mut |_, _| {},
+        )
+        .unwrap();
         assert_eq!(outcome.status.pnpm.as_deref(), Some("12.3.1"));
         assert!(!outcome.node_switched);
         assert!(!outcome.dsh_installed);
+        assert!(!dsh_called, "引擎就绪时不应解析 dsh 版本（离线零网络语义）");
         assert!(readiness_gaps(&outcome.status, "24.18.0").is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_continues_with_installed_node_when_resolve_fails() {
+        // node 已装但期望版本解析失败（离线且无缓存）→ 降级用已装版本继续
+        //（离线不阻塞，ADR-0010）；dsh 已装同样不触网。
+        let root = engine_root("offline");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        fake_tool(&engine_bin_dir(&data_dir), "pnpm", "12.3.1");
+        fake_tool(&engine_bin_dir(&data_dir), "node", "v24.18.0");
+        fake_tool(&engine_bin_dir(&data_dir), "dsh", "0.1.1");
+        let work = root.join("bundle-src");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(work.join("package")).unwrap();
+        let script = work.join("package/pnpm");
+        std::fs::write(&script, "#!/bin/sh\necho 12.3.1\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let bundle = root.join("pnpm-bundle.tgz");
+        crate::child_cmd(Path::new("tar"))
+            .arg("-czf")
+            .arg(&bundle)
+            .arg("-C")
+            .arg(&work)
+            .arg("package/pnpm")
+            .output()
+            .unwrap();
+
+        let outcome = bootstrap(
+            &data_dir,
+            "",
+            &bundle,
+            &mut || Err(anyhow!("registry 不可达")),
+            &mut || panic!("dsh 已装时不应解析目标版本"),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        assert!(!outcome.node_switched);
+        assert!(!outcome.dsh_installed);
+        assert_eq!(outcome.status.node.as_deref(), Some("v24.18.0"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

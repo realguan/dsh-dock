@@ -4,8 +4,8 @@
 # 1) push / PR / 手动 → 三平台矩阵构建验证 + artifact 上传（开发态）
 # 2) tag v* → 同一矩阵构建 + 聚合为 GitHub Release（发布态）
 #
-# 默认壳：本仓库 resources/product.manifest.json（极简档：system → download，
-# 不携带快照；见 docs/contract.md）。产物为自解压安装包 / .app / .dmg / .deb。
+# 默认壳：本仓库 resources/product.manifest.json（v3 引擎档缺省：壳自管
+# node/pnpm/dsh，不携带快照；见 docs/contract.md）。产物为自解压安装包 / .app / .dmg / .deb。
 name: build
 
 on:
@@ -139,6 +139,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      # 引擎档依赖（ADR-0010 边界 A，contract v3）：pnpm 平台二进制压缩包入
+      # resources/pnpm/，随安装包分发（engine_pnpm_bundle 契约）；镜像链 +
+      # shasum 完整性校验。三平台各自取本平台份。
+      - name: Fetch bundled pnpm binary (engine bootstrap)
+        shell: bash
+        run: scripts/fetch-pnpm-bundle.sh
 
       # 私钥只注入 tag 构建步骤，绝不写入 GITHUB_ENV；因此 PR 的 cargo/npm 命令
       # 无法读取发布密钥。tag 必须签名，缺密钥直接失败而非发布不可更新的安装器。

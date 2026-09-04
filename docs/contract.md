@@ -181,7 +181,8 @@ pnpm 的全局目录或安装动作失败时回退 npm；因此 pnpm 是优先�
 # 运行时策略 v3：引擎倒置（ADR-0010，2026-09-03 已接受）
 
 > 本节废止上方 manifest v2 的 `resolution` / `fallback` 语义（v2 段落保留作历史档案）。
-> `format: 3` 随 ADR-0010 P3 落地同步升版（壳 `MANIFEST_FORMAT` 与打包侧三步同版发布）。
+> `format: 3` 已随 ADR-0010 P3-b 落地升版（2026-09-04：壳 `MANIFEST_FORMAT=3`，
+> render-product.sh 快照档产物同步 v3，兼容读取迁移 v1/v2——fallback→快照档、极简在线档→引擎档）。
 
 ## 形态
 

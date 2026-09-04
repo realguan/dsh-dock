@@ -1,24 +1,7 @@
 {
-  "format": 2,
+  "format": 3,
   "productName": "DSH Dock",
   "terminal": {
-    "defaultProfile": "web",
-    "resolution": {
-      "node": {
-        "tiers": [
-          "system",
-          "download"
-        ],
-        "requireEngines": true
-      },
-      "dsh": {
-        "tiers": [
-          "system",
-          "download"
-        ],
-        "minVersion": "0.1.0-rc.4",
-        "requireEngines": true
-      }
-    }
+    "defaultProfile": "web"
   }
 }

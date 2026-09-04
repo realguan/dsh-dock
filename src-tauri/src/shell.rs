@@ -38,21 +38,34 @@ fn ensure_dsh_home(dsh_home: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 启动 dsh：`<node> <dsh-bin.js> --profile <p> --port 0`，`DSH_HOME` 来自
-/// LaunchSpec（system=用户 home；bundle=兜底副本 home）。stdout/stderr
-/// 进数据目录日志文件（可排查故障）。
+/// 启动 dsh：system/download/快照档 = `<node> <dsh-bin.js> --profile <p> --port 0`；
+/// 引擎档（ADR-0010）= dsh 启动器直接执行（node/pnpm 经 PATH 解析）。
+/// `DSH_HOME` 来自 LaunchSpec（system/引擎=用户 home；bundle=兜底副本 home）。
+/// stdout/stderr 进数据目录日志文件（可排查故障）。
 pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     let node_bin = &launch.node_bin;
-    let dsh_bin = &launch.dsh_bin_js;
     let dsh_home = &launch.dsh_home;
 
     // 解析出的宿主零部件缺一不可：慢一点把错误讲清楚，别让 node 裸奔报「command not found」。
     if !node_bin.is_file() {
         anyhow::bail!("Node 可执行文件不存在: {}", node_bin.display());
     }
-    if !dsh_bin.is_file() {
-        anyhow::bail!("dsh 入口不存在: {}", dsh_bin.display());
-    }
+    let mut cmd = match &launch.dsh_entry {
+        crate::resolve::DshEntry::NodeScript { bin_js } => {
+            if !bin_js.is_file() {
+                anyhow::bail!("dsh 入口不存在: {}", bin_js.display());
+            }
+            let mut c = crate::child_cmd(node_bin);
+            c.arg(bin_js);
+            c
+        }
+        crate::resolve::DshEntry::Launcher { bin } => {
+            if !bin.is_file() {
+                anyhow::bail!("dsh 启动器不存在: {}", bin.display());
+            }
+            crate::child_cmd(bin)
+        }
+    };
     ensure_dsh_home(dsh_home)?;
 
     std::fs::create_dir_all(data_dir).context("创建数据目录")?;
@@ -65,9 +78,7 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         .open(&log_path)
         .with_context(|| format!("打开日志 {}", log_path.display()))?;
 
-    let mut cmd = crate::child_cmd(node_bin);
-    cmd.arg(dsh_bin)
-        .arg("--profile")
+    cmd.arg("--profile")
         .arg(&launch.profile)
         .arg("--port")
         .arg("0");

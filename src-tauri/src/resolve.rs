@@ -19,11 +19,21 @@ use anyhow::{Context, Result};
 
 use crate::manifest::{FallbackSpec, ProductManifest, TierKind, TierSpec};
 
+/// dsh 执行形态（ADR-0010 引擎档引入）：解析器产出、spawn_dsh / no-open 探测消费。
+#[derive(Debug, Clone)]
+pub enum DshEntry {
+    /// node 前缀执行包入口 lib/bin.js（system / download / 快照档）。
+    NodeScript { bin_js: PathBuf },
+    /// 引擎 dsh 启动器直接执行（pnpm 全局 shim：Unix shebang 脚本 / Windows
+    /// .cmd，child_cmd 吸收差异；node/pnpm 经 PATH 解析）。
+    Launcher { bin: PathBuf },
+}
+
 /// 解析后的启动规格：一次具体 spawn 的全部决定。
 #[derive(Debug, Clone)]
 pub struct LaunchSpec {
     pub node_bin: PathBuf,
-    pub dsh_bin_js: PathBuf,
+    pub dsh_entry: DshEntry,
     pub dsh_home: PathBuf,
     pub profile: String,
     pub tier: TierKind,
@@ -614,7 +624,9 @@ pub fn resolve_launch(
                     let no_open = system_no_open_supported(&hit, data_dir);
                     return Ok(LaunchSpec {
                         node_bin: hit.node.bin,
-                        dsh_bin_js: hit.dsh.bin_js,
+                        dsh_entry: DshEntry::NodeScript {
+                            bin_js: hit.dsh.bin_js,
+                        },
                         dsh_home: user_dsh_home(),
                         profile: manifest.terminal.default_profile.clone(),
                         tier: TierKind::System,
@@ -631,6 +643,31 @@ pub fn resolve_launch(
                     tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
                 }
             },
+            TierKind::Engine => {
+                // 引擎档（ADR-0010，v3 缺省）：壳引擎三件幂等引导——pnpm 随壳
+                // 重铺、node=node-map（缺失必补/不符切换/离线降级）、dsh=最新
+                // 稳定版（缺失才装，dist-tags 惰性解析保离线零网络）。
+                let outcome = crate::updates::ensure_engine_bootstrapped(
+                    data_dir,
+                    resources_dir,
+                    path_env,
+                    progress,
+                )
+                .map_err(|e| anyhow::anyhow!("引擎引导失败：{e}"))?;
+                tracing::info!(
+                    "引擎引导完成：pnpm={:?} node={:?} dsh={:?}（node 切换={}，dsh 补装={}）",
+                    outcome.status.pnpm,
+                    outcome.status.node,
+                    outcome.status.dsh,
+                    outcome.node_switched,
+                    outcome.dsh_installed,
+                );
+                return engine_launch_spec(
+                    data_dir,
+                    outcome.status.dsh.as_deref(),
+                    manifest.terminal.default_profile.clone(),
+                );
+            }
             TierKind::Bundle => {
                 let fb = manifest.fallback.clone().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -656,7 +693,9 @@ pub fn resolve_launch(
                     .map_err(|e| anyhow::anyhow!("实时下载档失败：{e}"))?;
                 return Ok(LaunchSpec {
                     node_bin: node,
-                    dsh_bin_js: tree.join("lib").join("bin.js"),
+                    dsh_entry: DshEntry::NodeScript {
+                        bin_js: tree.join("lib").join("bin.js"),
+                    },
                     dsh_home: user_dsh_home(),
                     profile: manifest.terminal.default_profile.clone(),
                     tier: TierKind::Download,
@@ -737,11 +776,42 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 引擎档 LaunchSpec 构造（引导完成后）：引擎目录定位 node + dsh 启动器 +
+/// no-open 探测。独立成函数供离线单测（引导本身的网络动作归
+/// ensure_engine_bootstrapped，见其测试）。
+fn engine_launch_spec(
+    data_dir: &Path,
+    dsh_version: Option<&str>,
+    default_profile: String,
+) -> Result<LaunchSpec> {
+    let node_bin = crate::engines::engine_node_bin(data_dir).ok_or_else(|| {
+        anyhow::anyhow!(
+            "引擎引导完成但未定位到 node（引擎目录异常）——删除 engines 目录后重启应用可重建"
+        )
+    })?;
+    let launcher = crate::engines::engine_dsh_bin(data_dir).ok_or_else(|| {
+        anyhow::anyhow!(
+            "引擎引导完成但未定位到 dsh 启动器（引擎目录异常）——删除 engines 目录后重启应用可重建"
+        )
+    })?;
+    let no_open = engine_no_open_supported(dsh_version.unwrap_or(""), &launcher, data_dir);
+    Ok(LaunchSpec {
+        node_bin,
+        dsh_entry: DshEntry::Launcher { bin: launcher },
+        dsh_home: user_dsh_home(),
+        profile: default_profile,
+        tier: TierKind::Engine,
+        no_open,
+    })
+}
+
 /// bundle 档：fallback 三件套（相对 resources 根）。
 fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String) -> LaunchSpec {
     LaunchSpec {
         node_bin: fb.resolve_path(resources_dir, &fb.node_bin),
-        dsh_bin_js: fb.resolve_path(resources_dir, &fb.dsh_bin_js),
+        dsh_entry: DshEntry::NodeScript {
+            bin_js: fb.resolve_path(resources_dir, &fb.dsh_bin_js),
+        },
         dsh_home: fb.resolve_path(resources_dir, &fb.dsh_home),
         profile,
         tier: TierKind::Bundle,
@@ -788,8 +858,36 @@ fn save_probe_cache(
 /// 实测：spawn 一次耗时 8s+，其中帮助文本 1.4s 即出现；缓存命中后该部分 ≈0）。
 /// 探测失败 → 不支持（宁可不传，避免旧版 dsh 秒退）。
 fn system_no_open_supported(hit: &SystemHit, data_dir: &Path) -> bool {
+    no_open_supported(
+        &hit.dsh.version,
+        (hit.node.bin.clone(), hit.dsh.bin_js.clone()),
+        || probe_no_open_with(&hit.node.bin, &hit.dsh.bin_js, PROBE_NO_OPEN_TIMEOUT),
+        data_dir,
+    )
+}
+
+/// 引擎档 no-open 支持性：dsh 启动器直接探测（node 经 PATH 解析），
+/// 版本 = 引导终态版本（缓存键与 system 档同机制）。
+fn engine_no_open_supported(version: &str, launcher: &Path, data_dir: &Path) -> bool {
+    let key = launcher.to_path_buf();
+    no_open_supported(
+        version,
+        (key.clone(), key),
+        || probe_no_open_launcher(launcher, PROBE_NO_OPEN_TIMEOUT),
+        data_dir,
+    )
+}
+
+/// no-open 支持性判定（system / 引擎档共用）：磁盘缓存按版本（版本特性，
+/// 结果稳定）→ 进程内缓存按探测键（同一次运行多次解析）→ 实测兜底并回写。
+fn no_open_supported(
+    version: &str,
+    probe_key: (PathBuf, PathBuf),
+    probe: impl FnOnce() -> bool,
+    data_dir: &Path,
+) -> bool {
     let cache = load_probe_cache(data_dir);
-    if let Some(&v) = cache.get(&hit.dsh.version) {
+    if let Some(&v) = cache.get(version) {
         return v;
     }
     // 进程内缓存兜底（同一次运行多次解析命中）
@@ -800,19 +898,16 @@ fn system_no_open_supported(hit: &SystemHit, data_dir: &Path) -> bool {
         let guard = cache2.lock().unwrap();
         guard
             .iter()
-            .find(|(n, b, _)| n == &hit.node.bin && b == &hit.dsh.bin_js)
+            .find(|(n, b, _)| n == &probe_key.0 && b == &probe_key.1)
             .map(|(_, _, v)| *v)
     };
     if let Some(v) = in_proc {
         return v;
     }
-    let v = probe_no_open_with(&hit.node.bin, &hit.dsh.bin_js, PROBE_NO_OPEN_TIMEOUT);
-    cache2
-        .lock()
-        .unwrap()
-        .push((hit.node.bin.clone(), hit.dsh.bin_js.clone(), v));
+    let v = probe();
+    cache2.lock().unwrap().push((probe_key.0, probe_key.1, v));
     let mut updated = cache;
-    updated.insert(hit.dsh.version.clone(), v);
+    updated.insert(version.to_string(), v);
     let _ = save_probe_cache(data_dir, &updated);
     v
 }
@@ -825,11 +920,23 @@ const PROBE_NO_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// 参数化探测（超时注入，供测试）：`child_cmd` 只做 Windows 批处理包装
 /// （cmd /C + CREATE_NO_WINDOW），跨平台可测。
 fn probe_no_open_with(node: &Path, dsh_bin: &Path, timeout: std::time::Duration) -> bool {
-    use std::io::{BufRead, BufReader};
     let mut cmd = crate::child_cmd(node);
-    cmd.arg(dsh_bin)
-        .args(["--profile", "web", "--help"])
-        .stdout(std::process::Stdio::piped())
+    cmd.arg(dsh_bin).args(["--profile", "web", "--help"]);
+    probe_no_open_cmd(cmd, timeout)
+}
+
+/// 引擎档探测：dsh 启动器直接执行（shebang 脚本 / .cmd shim 经 child_cmd
+/// 分发，node 经 PATH 解析），参数与 system 档探测同款。
+fn probe_no_open_launcher(launcher: &Path, timeout: std::time::Duration) -> bool {
+    let mut cmd = crate::child_cmd(launcher);
+    cmd.args(["--profile", "web", "--help"]);
+    probe_no_open_cmd(cmd, timeout)
+}
+
+/// no-open 探测公共体：构造好的命令 + 总超时；输出含 `--no-open` 判支持。
+fn probe_no_open_cmd(mut cmd: std::process::Command, timeout: std::time::Duration) -> bool {
+    use std::io::{BufRead, BufReader};
+    cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -1203,6 +1310,40 @@ mod tests {
         let empty = tmp();
         assert!(detect_system_dsh(&empty.display().to_string()).is_none());
         std::fs::remove_dir_all(&empty).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn engine_launch_spec_builds_launcher_entry_and_probes_no_open() {
+        // 引擎档 LaunchSpec 构造（离线）：启动器形态 + no-open 实测（假 dsh
+        // 的 --help 输出含 --no-open）。引导网络动作不在此函数（见 engines.rs）。
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp();
+        let data_dir = root.join("data");
+        let bin = data_dir.join("engines/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let make = |name: &str, body: &str| {
+            let p = bin.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        make("node", "#!/bin/sh\necho v24.18.0\n");
+        make(
+            "dsh",
+            "#!/bin/sh\necho \"  --no-open             do not open browser\"\n",
+        );
+
+        let spec = engine_launch_spec(&data_dir, Some("0.9.0"), "web".to_string()).unwrap();
+        assert_eq!(spec.tier, TierKind::Engine);
+        assert_eq!(spec.node_bin.parent(), Some(bin.as_path()));
+        assert!(spec.no_open, "启动器 --help 含 --no-open 应判支持");
+        match &spec.dsh_entry {
+            DshEntry::Launcher { bin: launcher } => {
+                assert_eq!(launcher.parent(), Some(bin.as_path()))
+            }
+            DshEntry::NodeScript { .. } => panic!("引擎档应为启动器执行形态"),
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

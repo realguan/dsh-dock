@@ -1,12 +1,13 @@
 //! product.manifest.json —— 壳与「产品配置/宿主解析」之间的**唯一运行时契约**。
 //!
-//! v2（2026-08-21，grill 定稿，见 docs/contract.md「运行时策略」章）：
-//! 本产物是 **dsh 的桌面终端**。契约从「快照三件套」扩展为
-//! **终端 + 宿主解析策略**：
-//!   - `terminal.resolution`：node / dsh 各自的解析档序（system → bundle → download）
-//!     与版本下限；极简档无 bundle tier（随包不内置），内置档 bundle 优先（装配方产物）。
-//!   - `fallback`：离线兜底副本（内置档才有），相对 resources 根。
-//!   - v1（format=1）兼容读取：snapshot 三件套迁移为 bundle-only 解析 + fallback。
+//! v3（2026-09-04，ADR-0010 引擎倒置落地，见 docs/contract.md「运行时策略 v3」）：
+//! 引擎档**缺省**——manifest 不声明 snapshot 三件套即引擎启动（壳自管
+//! node/pnpm/dsh，pnpm12 引导器随壳内置）；声明 snapshot 三件套则快照档
+//! （内置只读快照，离线可用，语义沿 v1 fallback）。v2 的 resolution/fallback
+//! 语义废止（兼容读取迁移：fallback → 快照档；极简在线档 → 引擎档）。
+//!
+//! 加载后规范化为统一形态：`tiers ∈ {[Engine], [Bundle]}` + 可选 fallback——
+//! 解析器（resolve_launch）只消费规范化形态，不感知来源版本。
 //!
 //! 产品名称 / 图标 / 标识符是**构建期身份**（render-product.sh 注入 tauri.conf.json），
 //! 不在本契约里。路径解析：开发态 = `src-tauri/resources/`，发布态 = bundle 资源目录。
@@ -17,20 +18,22 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// 当前契约版本（v2）。
-pub const MANIFEST_FORMAT: u32 = 2;
-/// 兼容读取的下限：v1 文件将被迁移加载（文档：docs/contract.md 契约改动流程）。
+/// 当前契约版本（v3：引擎档缺省）。
+pub const MANIFEST_FORMAT: u32 = 3;
+/// 兼容读取的下限：v1 / v2 文件将被迁移加载（文档：docs/contract.md 契约改动流程）。
 pub const MANIFEST_MIN_COMPAT: u32 = 1;
 
 /// 解析档位：宿主解析链的一级（docs/contract.md「运行时策略」）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TierKind {
-    /// 用户环境复用（官方安装，过三重校验闸才成立）。
+    /// 引擎档（v3 缺省）：壳自管 node/pnpm/dsh，boot 期幂等引导（ADR-0010）。
+    Engine,
+    /// 用户环境复用（官方安装，过三重校验闸才成立）。v3 废止（探测层退役前保留）。
     System,
     /// 内置兜底（bundle 内 offline 副本；存在即优先——内置档语义）。
     Bundle,
-    /// 实时下载（国内镜像优先，pnpm/npm 官方包管理通道；网络动作）。
+    /// 实时下载（国内镜像优先，pnpm/npm 官方包管理通道；网络动作）。v3 废止。
     Download,
 }
 
@@ -123,21 +126,33 @@ impl FallbackSpec {
     }
 }
 
+/// v3 runtime 区块：引擎档缺省。目前仅定义 mode = "engine"（省略同义）——
+/// 预留前向字段，未知值拒绝（不静默吞）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSpec {
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
 /// product.manifest.json 根结构。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductManifest {
-    /// 契约版本（1 = v1 兼容，2 = 当前）。
+    /// 契约版本（1 = v1 兼容，2 = v2 兼容，3 = 当前引擎档缺省）。
     pub format: u32,
     /// 人类可读产品名（展示用）。
     pub product_name: String,
-    /// 终端行为与宿主解析策略（v2）。
+    /// 终端行为与宿主解析策略（v2；v3 仅消费 default_profile）。
     #[serde(default)]
     pub terminal: TerminalSpec,
-    /// 离线兜底副本（内置档）。
+    /// v3 运行时区块（引擎档缺省）。
+    #[serde(default)]
+    pub runtime: Option<RuntimeSpec>,
+    /// 离线兜底副本（内置档）。v3 由 snapshot 三件套规范化而来。
     #[serde(default)]
     pub fallback: Option<FallbackSpec>,
-    /// v1 遗留字段：snapshot 三件套（format=1 文件）；v2 下应为空。
+    /// v1 遗留 / v3 快照档：snapshot 三件套。加载时规范化为 fallback。
     #[serde(default)]
     pub snapshot: Option<SnapshotSpec>,
 }
@@ -153,17 +168,29 @@ pub struct SnapshotSpec {
 }
 
 impl ProductManifest {
-    /// 从 JSON 加载并规范化（v1 迁移 / v2 校验）。
+    /// 从 JSON 加载并规范化到统一形态（tiers ∈ {[Engine], [Bundle]} + fallback），
+    /// 解析器不感知来源版本。
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)?;
         let mut manifest: Self = serde_json::from_str(&text)?;
         match manifest.format {
             MANIFEST_FORMAT => {
-                manifest.validate_v2()?;
+                manifest.normalize_v3()?;
+                Ok(manifest)
+            }
+            2 => {
+                // v2 兼容迁移：fallback（内置档）→ 快照档；极简在线档 → 引擎档
+                //（resolution 档序语义废止——在线补齐由引擎引导承接，ADR-0010）。
+                if manifest.fallback.is_some() {
+                    manifest.set_bundle_tiers();
+                } else {
+                    manifest.set_engine_tiers();
+                }
+                tracing::warn!("product.manifest v2 已迁移加载（v3 引擎档语义）");
                 Ok(manifest)
             }
             1 => {
-                // v1 迁移：snapshot 三件套 → fallback + bundle-only 解析（v1 语义=固定内置）。
+                // v1 迁移：snapshot 三件套 → fallback + 快照档（v1 语义=固定内置）。
                 let snap = manifest.snapshot.take().ok_or_else(|| {
                     anyhow::anyhow!("v1 契约缺失 snapshot 字段，无法迁移")
                 })?;
@@ -173,10 +200,8 @@ impl ProductManifest {
                     dsh_home: snap.dsh_home,
                     profile: snap.profile,
                 });
-                for spec in [&mut manifest.terminal.resolution.node, &mut manifest.terminal.resolution.dsh] {
-                    spec.tiers = vec![TierKind::Bundle];
-                }
-                tracing::warn!("product.manifest v1 已迁移加载（bundle-only 语义）");
+                manifest.set_bundle_tiers();
+                tracing::warn!("product.manifest v1 已迁移加载（快照档语义）");
                 Ok(manifest)
             }
             other => anyhow::bail!(
@@ -186,8 +211,51 @@ impl ProductManifest {
         }
     }
 
-    /// v2 自洽性校验：声明 bundle 档必须有 fallback。
-    fn validate_v2(&self) -> Result<()> {
+    /// v3 规范化：快照档（snapshot 三件套）→ fallback + Bundle 档；否则引擎档。
+    fn normalize_v3(&mut self) -> Result<()> {
+        if let Some(rt) = &self.runtime {
+            if let Some(mode) = &rt.mode {
+                if mode != "engine" {
+                    anyhow::bail!("runtime.mode 不支持：{mode}（当前仅 engine，引擎档为缺省）");
+                }
+            }
+        }
+        if let Some(snap) = self.snapshot.take() {
+            self.fallback = Some(FallbackSpec {
+                node_bin: snap.node_bin,
+                dsh_bin_js: snap.dsh_bin_js,
+                dsh_home: snap.dsh_home,
+                profile: snap.profile,
+            });
+            self.set_bundle_tiers();
+        } else {
+            self.set_engine_tiers();
+        }
+        self.validate_fallback_consistency()
+    }
+
+    /// 快照档统一形态：node/dsh 档序 = [Bundle]（fallback 必在，由迁移保证）。
+    fn set_bundle_tiers(&mut self) {
+        for spec in [
+            &mut self.terminal.resolution.node,
+            &mut self.terminal.resolution.dsh,
+        ] {
+            spec.tiers = vec![TierKind::Bundle];
+        }
+    }
+
+    /// 引擎档统一形态：node/dsh 档序 = [Engine]（v3 缺省）。
+    fn set_engine_tiers(&mut self) {
+        for spec in [
+            &mut self.terminal.resolution.node,
+            &mut self.terminal.resolution.dsh,
+        ] {
+            spec.tiers = vec![TierKind::Engine];
+        }
+    }
+
+    /// 自洽性校验：解析档含 bundle 必须有 fallback 副本。
+    fn validate_fallback_consistency(&self) -> Result<()> {
         let dsh_tiers = &self.terminal.resolution.dsh.tiers;
         if dsh_tiers.contains(&TierKind::Bundle) && self.fallback.is_none() {
             anyhow::bail!(
@@ -222,7 +290,57 @@ mod tests {
     }
 
     #[test]
-    fn loads_v2_terminal_manifest() {
+    fn loads_v3_engine_minimal() {
+        // 引擎档缺省：不声明 snapshot 三件套 → [Engine]，无 fallback。
+        let (path, _g) = write_temp(r#"{"format": 3, "productName": "T"}"#);
+        let m = ProductManifest::load(&path).unwrap();
+        assert_eq!(m.format, 3);
+        assert_eq!(m.terminal.default_profile, "web");
+        assert_eq!(m.terminal.resolution.dsh.tiers, vec![TierKind::Engine]);
+        assert_eq!(m.terminal.resolution.node.tiers, vec![TierKind::Engine]);
+        assert!(m.fallback.is_none());
+        // runtime.mode 显式声明 engine 与省略同义
+        let (path, _g) =
+            write_temp(r#"{"format": 3, "productName": "T", "runtime": {"mode": "engine"}}"#);
+        let m = ProductManifest::load(&path).unwrap();
+        assert_eq!(m.terminal.resolution.dsh.tiers, vec![TierKind::Engine]);
+    }
+
+    #[test]
+    fn loads_v3_snapshot_as_bundle_tier() {
+        // 快照档：snapshot 三件套 → 规范化为 fallback + [Bundle]（离线快照语义）。
+        let json = r#"{
+          "format": 3,
+          "productName": "Bundled",
+          "snapshot": {
+            "nodeBin": "dsh-snapshot/node/bin/dsh-node",
+            "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
+            "dshHome": "dsh-snapshot/home",
+            "profile": "desktop-demo"
+          }
+        }"#;
+        let (path, _g) = write_temp(json);
+        let m = ProductManifest::load(&path).unwrap();
+        assert_eq!(m.terminal.resolution.dsh.tiers, vec![TierKind::Bundle]);
+        assert_eq!(m.terminal.resolution.node.tiers, vec![TierKind::Bundle]);
+        let fb = m.fallback.expect("snapshot 应规范化为 fallback");
+        assert_eq!(fb.profile, "desktop-demo");
+        let expected = Path::new("/res").join("dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js");
+        assert_eq!(fb.resolve_path(Path::new("/res"), &fb.dsh_bin_js), expected);
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_mode() {
+        // 未知 runtime.mode 拒绝（不静默吞前向字段）
+        let (path, _g) =
+            write_temp(r#"{"format": 3, "productName": "T", "runtime": {"mode": "ghost"}}"#);
+        let err = ProductManifest::load(&path).unwrap_err().to_string();
+        assert!(err.contains("runtime.mode"), "{err}");
+    }
+
+    #[test]
+    fn legacy_v2_fallback_migrates_to_snapshot_tier() {
+        // v2 内置档（bundle tier + fallback）→ 快照档；声明 resolution 被忽略
         let json = r#"{
           "format": 2,
           "productName": "DSH Dock",
@@ -242,33 +360,22 @@ mod tests {
         }"#;
         let (path, _g) = write_temp(json);
         let m = ProductManifest::load(&path).unwrap();
-        assert_eq!(m.format, 2);
-        assert_eq!(m.terminal.default_profile, "web");
-        assert_eq!(
-            m.terminal.resolution.node.tiers,
-            vec![TierKind::Bundle, TierKind::System, TierKind::Download]
-        );
-        assert_eq!(
-            m.terminal.resolution.dsh.min_version.as_deref(),
-            Some("0.1.0-rc.6")
-        );
-        let fb = m.fallback.unwrap();
-        assert_eq!(fb.profile, "desktop-demo");
-        // 平台无关路径断言：期望值同样经 Path::join 构造（Windows 分隔符为 \）
-        let expected = Path::new("/res").join("dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js");
-        assert_eq!(fb.resolve_path(Path::new("/res"), &fb.dsh_bin_js), expected);
-    }
-
-    #[test]
-    fn minimal_v2_defaults_to_minimal_tier() {
-        // 极简档：不写 terminal/fallback 也能加载，默认 system→download、defaultProfile=web。
-        let (path, _g) = write_temp(r#"{"format": 2, "productName": "T"}"#);
-        let m = ProductManifest::load(&path).unwrap();
         assert_eq!(m.terminal.default_profile, "web");
         assert_eq!(
             m.terminal.resolution.dsh.tiers,
-            vec![TierKind::System, TierKind::Download]
+            vec![TierKind::Bundle],
+            "v2 内置档迁移为快照档（resolution 档序语义废止）"
         );
+        assert_eq!(m.fallback.unwrap().profile, "desktop-demo");
+    }
+
+    #[test]
+    fn legacy_v2_minimal_migrates_to_engine_tier() {
+        // v2 极简在线档（system→download）→ 引擎档（在线补齐由引擎引导承接）
+        let (path, _g) = write_temp(r#"{"format": 2, "productName": "T"}"#);
+        let m = ProductManifest::load(&path).unwrap();
+        assert_eq!(m.terminal.default_profile, "web");
+        assert_eq!(m.terminal.resolution.dsh.tiers, vec![TierKind::Engine]);
         assert!(m.fallback.is_none());
     }
 
@@ -294,17 +401,6 @@ mod tests {
     #[test]
     fn rejects_unknown_format() {
         let (path, _g) = write_temp(r#"{"format": 99, "productName": "x"}"#);
-        assert!(ProductManifest::load(&path).is_err());
-    }
-
-    #[test]
-    fn rejects_bundle_tier_without_fallback() {
-        let json = r#"{
-          "format": 2,
-          "productName": "x",
-          "terminal": { "resolution": { "dsh": { "tiers": ["bundle"] } } }
-        }"#;
-        let (path, _g) = write_temp(json);
         assert!(ProductManifest::load(&path).is_err());
     }
 }

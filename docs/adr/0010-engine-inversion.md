@@ -155,8 +155,8 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   （引擎 bin → node bin → 用户 PATH），ensure_pnpm 可见性检查与 shell::spawn_dsh
   同源，dsh 内部 spawnSync("pnpm") 恒可达。完整「PATH = 引擎 bin + 系统最小集」
   （剥离用户 PATH）随 P3 引擎模式落地。
-- [ ] P3（本 ADR 主体）：引擎编排模块 → 检测层退役 → contract v3（resolution
-  简化）→ AGENTS §0/§6/§7 同步 → `docs/broadcasts.md` 落档。
+- [ ] P3（本 ADR 主体）：引擎编排模块 ✓ → boot 接线 ✓ → contract v3 ✓ →
+  检测层退役（待）→ AGENTS §0/§6/§7 同步（待）→ `docs/broadcasts.md` 落档 ✓。
   （**engines.rs 编排模块 + updates 引导入口 2026-09-04 先行落地**——布局/就绪
   判定/镜像注入/进度解析/四步幂等引导纯新增零接线，190 测试全绿；boot 接线、
   探测层退役、contract v3 待续。）
@@ -165,6 +165,15 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   直接执行（pnpm 全局 shim，child_cmd 吸收 .cmd 差异），不再深挖全局树取 bin.js；
   顺带闭合系统档隐患：spawn PATH 与 ensure_pnpm 可见性基准同源 `dsh_child_path`。
   创建链暂留系统档（`run_dsh_plugin` 保持原行为成为薄封装），随 P3-b 一并切。）
+  （**boot 接线 + contract v3 2026-09-04 落地（P3-b）**——manifest `MANIFEST_FORMAT=3`
+  （TierKind::Engine；加载规范化 tiers∈{[Engine],[Bundle]}，v1/v2 兼容迁移）、
+  resolve_launch 引擎档臂（ensure_engine_bootstrapped → 启动器形态 LaunchSpec）、
+  bootstrap 版本惰性闭包（node 已装解析失败→离线降级用已装版；dsh 缺失才查
+  dist-tags→就绪引擎离线零网络）、LaunchSpec 执行形态 DshEntry（引擎档=dsh
+  启动器直接执行）、no-open 探测泛化（启动器形态同缓存机制）、打包内置 pnpm
+  （scripts/fetch-pnpm-bundle.sh + build.yml 步骤 + resources/pnpm/.gitignore）、
+  render-product.sh 升 v3 snapshot。197 测试全绿。探测层退役/WSL 客体投递/
+  升级呈现随后续刀。）
 - [x] 文档同步（2026-09-03 完成）：ADR-0010 定稿 + AGENTS 红线 2 / §6 例外册 /
   §7 登记 / §9 索引 + contract v3 章节落稿（`format: 3` 随 P3 实现升版）+
   broadcasts 落档 + CONTEXT.md 术语表建立。
