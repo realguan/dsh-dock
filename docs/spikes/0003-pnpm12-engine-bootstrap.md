@@ -105,7 +105,9 @@ engines/
 
 - **边界 A（触发 ADR §6 复审条件）**：`@pnpm/exe.darwin-arm64@12.3.1` 解包后 **32MB**，超过
   ADR §6 写定的「>25MB/平台 → 重评内置策略」线（ADR 草案期 17–19MB 是压缩包估算，安装态实为 32MB）。
-  备选：接受 32MB / 安装包内压缩存储解压落 engines / 回退方案 B。**待裁定，未擅动**。
+  备选：接受 32MB / 安装包内压缩存储解压落 engines / 回退方案 B。
+  **2026-09-04 裁定：安装包内压缩存储**（bundle 带压缩 blob，首启解压落 `<数据目录>/engines/bin/`；
+  磁盘解包 32MB 不变，收益在安装包/分发体积）——结案。
 - **边界 B（WSL 客体镜像主权缺口）**：musl node 变体的资产列举在 pnpm 源码中**硬编码**
   `unofficial-builds.nodejs.org`（`get_node_mirror` 映射只覆盖 release/nightly/… 官方通道）——
   WSL 客体内经 pnpm 装 musl node 的下载源**不可镜像注入**。实测本网络可达（HTTP 200），
@@ -115,4 +117,5 @@ engines/
 
 - [ ] Spike①② Windows / Linux 实机复验（同清单：镜像 env、非 TTY runtime set、签名包 resources 执行许可）
 - [ ] Spike④ WSL 客体投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）
-- [ ] 边界 A / B 的维护者裁定
+- [x] 边界 A 裁定（2026-09-04：安装包内压缩存储）
+- [ ] 边界 B 裁定（客体 musl node 源：暂接受 + 复审条件 vs P3 加壳投递兜底）
