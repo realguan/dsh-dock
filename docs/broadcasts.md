@@ -32,6 +32,27 @@
 
 ## 三、记录
 
+### 2026-09-04 完成通知 · Apple 凭据全量轮换与分发链路验收（CI 四处修复 + rc.4 试发回退） —— guan（AI 协作）
+
+- 变更：
+  1. **凭据轮换**：Developer ID Application 证书重签（openssl CSR 路线——旧证书私钥卡在
+     数据保护钥匙串无法导出 p12，新路线私钥文件化、p12 由 key+cer 直接合成）；
+     App Store Connect API Key 换新（`925T697654`）；GitHub 六个 `APPLE_*` secrets 同步
+     更新（gh 客户端加密直传，密钥不落会话）。
+  2. **CI 四处修复**（build.yml）：证书 CN 推导截断逗号尾巴（原实现连带 OU/O/C，与
+     Tauri 的 p12 裸 CN 严格比对必挂）；tag 版本校验放行 `-rc.N` 预发布后缀；release
+     守卫 `rg`→`grep`（runner 镜像无 ripgrep）；草稿识别改走 releases 列表过滤
+     （`/releases/tags/{tag}` 对 draft 恒 404）。
+  3. **rc.4 试发与回退**：v0.9.4-rc.4 全绿发布并完成验收（公证 Accepted id 994e99ee，
+     CI runner Gatekeeper 实测 `source=Notarized Developer ID`），验收后按裁定删除
+     release 与 tag，`/releases/latest` 回落 v0.9.3，更新链路恢复原状。
+- 影响：分发链路（签名+公证）恢复健康；Spike ③ 挂账的「公证链路权威验证」正式闭环。
+  本机 Gatekeeper 处于关闭态（`spctl` accepted 不算数），验收以 CI runner 为准。
+  遗留优化：dmg/app staple 票据缺失（v0.9.3 起既有行为，在线校验不受影响，仅离线
+  首启需要）。v0.9.4 正式版待发。
+- 凭据：run 33835515772 全绿（三平台 build + release）；notarytool history 两条
+  Accepted 可查；下载产物 codesign 有效、公证记录在案。
+
 ### 2026-09-04 完成通知 · P3-a 引擎编排模块落地（engines.rs + updates 引导入口） —— guan（AI 协作）
 
 - 变更：
