@@ -451,7 +451,7 @@ jobs:
               exit 1
             fi
             echo "继续已有草稿 Release ${GITHUB_REF_NAME}"
-          elif rg -q '(HTTP 404|Not Found)' release-state.err; then
+          elif grep -qE 'HTTP 404|Not Found' release-state.err; then
             echo "尚无 Release，将创建草稿"
           else
             cat release-state.err
