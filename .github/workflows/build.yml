@@ -52,14 +52,17 @@ jobs:
         shell: bash
         run: |
           TAG_VER="${GITHUB_REF_NAME#v}"
-          echo "Checking tag version: $TAG_VER"
+          # 预发布 tag（v0.9.4-rc.1 等）允许试构建：取主版本段比对（2026-09-04，
+          # 证书轮换试跑引入）；正式发版 tag 无连字符，行为与原先完全一致。
+          BASE_VER="${TAG_VER%%-*}"
+          echo "Checking tag version: $TAG_VER (base: $BASE_VER)"
           CARGO_VER=$(grep -E '^version = ' src-tauri/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
           TAURI_VER=$(grep -E '"version": ' src-tauri/tauri.conf.json | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
           PKG_VER=$(grep -E '"version": ' frontend/package.json | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
           echo "Cargo.toml:        $CARGO_VER"
           echo "tauri.conf.json:   $TAURI_VER"
           echo "package.json:      $PKG_VER"
-          if [ "$TAG_VER" != "$CARGO_VER" ] || [ "$TAG_VER" != "$TAURI_VER" ] || [ "$TAG_VER" != "$PKG_VER" ]; then
+          if [ "$BASE_VER" != "$CARGO_VER" ] || [ "$BASE_VER" != "$TAURI_VER" ] || [ "$BASE_VER" != "$PKG_VER" ]; then
             echo "::error::Tag 版本 ($TAG_VER) 与代码内版本号不匹配！(Cargo: $CARGO_VER, Tauri: $TAURI_VER, Pkg: $PKG_VER)"
             exit 1
           fi
@@ -181,10 +184,10 @@ jobs:
             if [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" ]]; then
               echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert_detect.p12 2>/dev/null || echo "$APPLE_CERTIFICATE" | base64 -D > /tmp/cert_detect.p12 2>/dev/null || true
               if [[ -f /tmp/cert_detect.p12 ]]; then
-                cert_cn=$(openssl pkcs12 -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | head -n1 || true)
-                if [[ -z "$cert_cn" ]]; then
-                  cert_cn=$(openssl pkcs12 -legacy -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | head -n1 || true)
-                fi
+                cert_cn=$(openssl pkcs12 -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | cut -d',' -f1 | head -n1 || true)
+              if [[ -z "$cert_cn" ]]; then
+                cert_cn=$(openssl pkcs12 -legacy -in /tmp/cert_detect.p12 -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*CN[ =]*//p' | cut -d',' -f1 | head -n1 || true)
+              fi
                 rm -f /tmp/cert_detect.p12
               fi
             fi
