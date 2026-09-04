@@ -184,7 +184,7 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
 | 版本保留 | node 当前 + 上一成功版，更老 GC；dsh 单份覆盖（pnpm 两段式安装兜底） |
 | 离线语义 | 首启必须联网；之后 registry 不可达 → 已装引擎直接启动 |
 | 引擎目录 | `PNPM_HOME = <数据目录>/engines/`；`<engines>/bin` 必须入子进程 PATH |
-| 客体投递 | musl pnpm 随 Windows 包 resources 内置（win + musl 两份），壳自动投递，用户零安装；客体 node/dsh 引导**仅支持 glibc 发行版**（Ubuntu/Debian 等，2026-09-04 裁定；Alpine/musl 不在范围，客体探测识别 musl 时出可行动提示，随 P3 落地） |
+| 客体投递 | Windows 包 resources 内置两份 pnpm：win-x64（壳/宿主用）+ **linux-x64（glibc，客体用）**；壳自动投递，用户零安装。客体 node/dsh 引导**仅支持 glibc 发行版**（Ubuntu/Debian 等）：2026-09-04 裁定统一不考虑 Alpine 后，原 musl 静态份取消（其存在理由即全发行版兼容）；glibc 底线由 node 官方构建的 2.28 决定（pnpm glibc 构建更宽松）。客体探测识别 musl 系时出可行动提示，随 P3 落地 |
 | 客体镜像主权 | 客体 pnpm 属壳资产，下载源壳注入镜像链；「用户镜像主权」只约束用户自身 npm/pnpm 配置（ADR-0004 据此补修订记录） |
 | 客体旧目录 | `~/.dsh-dock/node` 弃用不迁移不删除 |
 | 存量兼容 | 旧 `tools/node` 弃用不迁移；首次启动走一次完整引导 |
