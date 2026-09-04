@@ -32,6 +32,27 @@
 
 ## 三、记录
 
+### 2026-09-04 会话自愈重写 · 与 dsh 加载器语义对齐的重放重叠去重修复 —— guan（AI 协作）
+
+- 触发：会话 `session-1214c12f`（用户会话）损坏，一键全量体检与自愈、单会话一键修复均无效（假成功）。
+- 根因：dsh 0.1.2-rc.1 中断恢复后以相同 seq 重放被中断轮次真实事件，磁盘残留旧占位（`turn/end` / `session/end-seed` 等），形成「连续前缀 + 重放块」重叠；加载器 `dsh-session-persistence-jsonl` 在重叠处报 `seq gap in committed region` 并丢弃重叠点之后全部恢复事件。旧版自愈按 turn 重排 + 全量重编号 → 破坏 append-only 模型与 `sourceEventSeqs` 出处链，且失败一律 exit 0（假成功）。
+- 变更（commit 2676ec4）：
+  1. `scripts/repair-session.mjs` 重写：重放重叠检测与去重（丢弃被遮蔽旧事件，保留重放块，顺序与 seq 原样）；序列缺失按加载器语义截断；不可安全修复明确报错；写前备份 + 临时文件加载器语义校验 + 原子替换 + 写后竞态复查；健康文件幂等 no-op；失败退出码非 0。
+  2. `src-tauri/src/sessions.rs`：临时脚本路径含 PID + 时间戳（并发不踩踏）；以脚本退出码为准；单测重写复现真实重放重叠（复现先行）+ 健康幂等测试。
+- 实测：修复 session-1214c12f（11965 事件）与 session-8650d6f2（6171 事件），dsh v0.1.2-rc.1 真实 loader 语义校验通过，全量 8 会话扫描全部 OK。
+- 凭据：`cargo test` 151 单测全绿 + `cargo fmt --check` + `clippy -D warnings` 零告警。
+
+### 2026-09-04 宪法级改动 · 引擎引导链路与工作台 Token 跨源认证闭环 —— guan（AI 协作）
+
+- 变更：
+  1. **工作台 Token 认证与 Cookie 跨源直通**：针对 dsh 0.1.2-rc.1 引入的 URL `?token=...` 与 303 重定向设置 `SameSite=Strict` Cookie，在 WebKit/WKWebView 从 `tauri://localhost` 跨源导航时丢弃 Cookie 导致 401（`dsh web authentication required`）的问题，在 `src-tauri/src/lib.rs` 落地 `authenticate_workbench_session`：壳侧先经本地 HTTP 兑换 token 并将 `SameSite=Lax` Cookie 直接注入 WebView 原生 CookieStore，直达无参工作台根路径。
+  2. **pnpm shim 调度器脱落修复**：pnpm v12 `shim add node` 生成的调度器硬链接在无 `devEngines` 依赖子目录（如 protobufjs/koffi postinstall）报错 `ERR_PNPM_SHIM_NO_TARGET`；在 `src-tauri/src/engines.rs` 与 `src-tauri/src/executor.rs` 增加真实 Node 二进制链接，确保生命周期脚本与客体引导平滑执行。
+  3. **DSH 目标版本过滤放宽**：在 `src-tauri/src/updates.rs` 实现 `is_acceptable_dsh_version`，严格放行稳定版与 `-rc` 候选版本（排除 `alpha`），解决官方 registry 仅含 rc 版本时报无可用稳定版的阻塞。
+  4. **启动初期事件竞态兜底（触 AGENTS §7）**：新增 `get_boot_status` IPC 命令并在 `ShellState` 缓存 step/error；前端 `BootIndex.tsx` 挂载时水合播种，根治早期错误卡无法呈现的竞态。
+  5. **资源打包配置补齐**：`src-tauri/tauri.conf.json` 补齐 `resources/pnpm/**/*`，`lib.rs` 的 dev 模式解析优先回退源码树。
+- 影响：**触宪法级**——`AGENTS.md` §7 增加 `get_boot_status` IPC 登记；全平台本地与 WSL 工作台启动认证与安装全链路畅通。
+- 凭据：Rust 侧 `cargo test` 150 单测全绿（+2：`acceptable_dsh_version_accepts_stable_and_rc_rejects_alpha` / `cookie_parsing_adjusts_samesite_and_domain`）+ `cargo fmt --check` + `clippy -D warnings` 零告警；前端 `tsc` + `oxlint` + 15 文件 100 题全绿。
+
 ### 2026-09-04 完成通知 · 任务 G 启动页重构（对齐引擎倒置叙事 + 仪表盘级控制台视觉） —— guan（AI 协作）
 
 - 占用声明：前端启动页组件与文案改动经维护者会话内指示（沿 P3-b 先例）。
