@@ -32,6 +32,61 @@
 
 ## 三、记录
 
+### 2026-09-04 完成通知 · 任务 G 启动页重构（对齐引擎倒置叙事 + 仪表盘级控制台视觉） —— guan（AI 协作）
+
+- 占用声明：前端启动页组件与文案改动经维护者会话内指示（沿 P3-b 先例）。
+- 变更：
+  1. **文案全面对齐 ADR-0010 引擎倒置契约**：`zh-CN.ts` 与 `en-US.ts` 双语同步。启动步骤锚定后端实际序号（步骤 0 环境检测 / 步骤 1 准备引擎 / 步骤 2 启动工作台 / 步骤 3 等待就绪 / 步骤 4 进入工作台），剔除旧系统探测与 TooOld 叙事，模式说明全面更新为「基于应用内置引擎，首启自动引导 Node 与 DSH；就绪后完全离线运行」。
+  2. **启动控制台流水线视觉（BootTimeline & BootStep）**：引入竖向一体化流水线导轨，5 步骤状态高保真渲染（Check/Spinner/Alert/Mono 数字），后端遥测 detail 升格为等宽代码徽标，进度芯片与状态点实时动态感知。
+  3. **引擎引导专属卡片（DownloadProgress）**：下载主角位升级为自包含引擎引导面板，呈现实时传输速率与动态 ETA，结合两段式渐变进度条、SHA-256 完整性校验与离线直通提示。
+  4. **顶栏与环境光晕质感精修（BootIndex & BootSelector & VersionChip）**：微光环境渐变光晕配合浮动 Emblem，顶栏统一轻量级品牌标识与精细化版本芯片，保留拖拽区与非阻断更新条能力。
+- 影响：普通区前端组件与文案，后端契约与 IPC 零改动。
+- 凭据：前端全量闸门通过：`pnpm run typecheck`（TS 7.0.2 绿）+ `pnpm run lint`（Oxlint 20ms 绿）+ `pnpm run test`（15 文件 100 单测全绿）+ Rust 侧 `cargo test` 148 单测全绿。
+
+### 2026-09-04 宪法级改动 · 统一日志封装 lib/logger 与 console.* 全量收口（触 AGENTS §4.3） —— guan（AI 协作）
+
+- 占用声明：经维护者会话内指示「统一日志封装标准」视同声明。
+- 变更：
+  1. **前端统一日志封装**：落地 `frontend/src/lib/logger.ts`，规范格式为 `[模块名] 行为描述 { 上下文参数 }`；debug 仅在 dev 构建输出，warn/error 全环境保留；明确保密合规（绝不打印密钥/Token/密码/PII）与防循环轰炸纪律。
+  2. **console.* 全量收口**：存量 `console.*` 调用（clientUpdateStore 状态迁移告警、QuickDshSwitcher 聚焦失败）全部收拢至 logger。
+  3. **单测覆盖**：`logger.test.ts` 落地（级别路由、空上下文省略、debug 门控三例）。
+  4. **宪法 AGENTS.md §4.3 同步**：登记前端统一日志规范与口径。
+  5. **Rust 侧审计**：`src-tauri/src/` 零残留 `println!`/`eprintln!`/`dbg!`，已全面落地 tracing 分级与结构化字段。
+- 影响：**触宪法级 AGENTS.md §4.3**（日志统一 lib/logger，禁止直接调用 console.*）。
+- 凭据：前端 typecheck + lint + 100 测试通过，Rust cargo clippy + cargo test 148 通过。
+
+### 2026-09-04 宪法级改动 · 升级呈现与忽略版本记忆（触 AGENTS §6 持久化例外册） —— guan（AI 协作）
+
+- 占用声明：经维护者会话内指示完成 ADR-0010 台账「升级呈现」增量。
+- 变更：
+  1. **窗口内非阻断升级提示条**：新增 `UpdateBanner` 组件（挂载于启动页 header 下方浮层），当 dsh 或桌面客户端有新版本时提示版本信息与升级后果文案，引导进入更新中心。
+  2. **忽略版本偏好持久化**：新增 `settings.dismissedUpdate`（形如 `dsh@1.6.0`），点击「忽略此版本」后原子写回 `settings.json`，同一版本不再弹窗，新版本发布时自动恢复提示。
+  3. **判定逻辑纯函数测试**：`updateBanner.ts` 抽离纯函数，Vitest 5 个测试覆盖全部状态分支。
+- 影响：**触宪法级 AGENTS.md §6**（持久化例外册新增 `dismissedUpdate` 字段）。
+- 凭据：Rust 148 测试 + 前端 97 测试通过，双侧闸门全绿。
+
+### 2026-09-04 完成通知 · WSL 客体 glibc pnpm 投递与客体引擎链（ADR-0010 台账） —— guan（AI 协作）
+
+- 占用声明：经维护者会话内指示完成客体投递增量。
+- 变更：
+  1. **客体引擎链五态探测**：GUEST_PROBE 升级为 `GUEST_MUSL / PNPM_MISSING / NODE_MISSING / DSH_MISSING / READY`，musl 系（Alpine）明确报出可行动错误。
+  2. **glibc pnpm 投递**：Windows 宿主内置打包 `pnpm-linux-x64.tgz`，通过 `\\wsl$` 拷贝为主通道（体积复核），base64 stdin 为兜底通道，客体内 tar 解包落位至 `~/.dsh-dock/engines/bin`。
+  3. **客体网络与执行**：在客体进程内通过 pnpm 执行 `runtime set node` 与 `pnpm add -g dsh`，网络发生在客体环境内，镜像链保持注入。旧 curl-tarball node 链路退役。
+  4. **构建流水线支持**：Windows runner 构建前同时拉取 linux-x64 离线捆绑包。
+- 影响：Windows 平台 WSL2 模式引擎自动化闭环，客体与宿主同享自包含引擎策略。
+- 凭据：模板全量 bash 实跑测试（五态链序/prep前置/stage落位/RFC向量/UNC路径），Rust 148 测试全绿。
+
+### 2026-09-04 宪法级改动 · 探测层退役与引擎档唯一来源（触 AGENTS §2、§7） —— guan（AI 协作）
+
+- 占用声明：经维护者会话内指示完成 ADR-0010 核心重构（探测层退役）。
+- 变更：
+  1. **系统探测全量删除（-2799 行）**：删除 `login_shell_path`、固定目录扫描、fnm/nvm 查找、pnpm global 扫描等历史探测代码；`effective_path` 收缩为纯环境变量 PATH；`resolve_launch` 仅认 Engine/Bundle 档。
+  2. **工具链收敛**：`engines.rs` 与 `plugins.rs` 仅保留引擎档，双缺直接出可行动错误，不再混搭系统环境。
+  3. **诊断与更新收拢**：系统诊断返回引擎四件套状态，更新升级链路完全限定在引擎目录内。
+  4. **宪法条款修订**：AGENTS.md §2 明确 `resources/pnpm/` 永不入库；§7 boot 期 `npm i -g pnpm` 条目标注退役。
+- 影响：**触宪法级 AGENTS.md §2 与 §7**。用户机器安装的 Node/dsh 版本彻底与壳运行时解耦。
+- 凭据：`cargo test` 147 绿（已清理退役机制测试），fmt 与 clippy -D warnings 零告警。
+
 ### 2026-09-04 宪法级改动 · 前端工具链全面 Native 化（pnpm 12 + TypeScript 7 + Oxlint + Lucide 1.40） —— guan（AI 协作）
 
 - 变更：
