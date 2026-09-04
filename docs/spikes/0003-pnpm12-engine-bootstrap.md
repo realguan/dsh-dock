@@ -112,10 +112,13 @@ engines/
   `unofficial-builds.nodejs.org`（`get_node_mirror` 映射只覆盖 release/nightly/… 官方通道）——
   WSL 客体内经 pnpm 装 musl node 的下载源**不可镜像注入**。实测本网络可达（HTTP 200），
   暂接受并挂复审条件；若需严格镜像主权，客体 node 可改由壳下载器投递（方案 B 残留能力）。
+  **2026-09-04 裁定：客体只支持 glibc 发行版（Ubuntu/Debian 等主流），Alpine/musl
+  不在支持范围**——musl node 源问题不作处理，边界关闭；客体探测识别 musl 系时出
+  可行动提示，随 P3 落地。
 
 ## 5. 遗留待办
 
 - [ ] Spike①② Windows / Linux 实机复验（同清单：镜像 env、非 TTY runtime set、签名包 resources 执行许可）
 - [ ] Spike④ WSL 客体投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）
 - [x] 边界 A 裁定（2026-09-04：安装包内压缩存储）
-- [ ] 边界 B 裁定（客体 musl node 源：暂接受 + 复审条件 vs P3 加壳投递兜底）
+- [x] 边界 B 裁定（2026-09-04：客体仅支持 glibc 发行版，Alpine/musl 不在范围）

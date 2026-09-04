@@ -138,8 +138,9 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   执行 dsh）。剩余：Windows/Linux 实机复验。
   ③ macOS 签名/公证包内 resources 二进制的执行许可实机验证；
   ④ WSL 客体二进制投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）。
-  ⚠ 实机新发现两处待裁定（spike §4）：pnpm 二进制解包 **32MB** 触发 §6 体积复审线；
-  musl node 下载源硬编码 unofficial-builds.nodejs.org、不可镜像注入（实测可达，暂接受）。
+  ⚠ 实机新发现两处，均已裁定（2026-09-04）：pnpm 二进制解包 32MB → §6「安装包内
+  压缩存储」；musl node 下载源硬编码 unofficial-builds、不可镜像注入 → **客体只支持
+  glibc 发行版**（Alpine/musl 不在支持范围），不再挂账（spike 0003 §4）。
 - [x] P1（2026-09-03 落地，独立先行）：TooOld 不再 bail（旧实现直接终止启动 = 死局）
   ——记录后落后续档（bundle/download）继续 boot；档序耗尽才带版本信息报错。复现
   测试 ×2：`resolve.rs::tests::resolve_too_old_system_falls_to_next_tier` /
@@ -183,7 +184,7 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
 | 版本保留 | node 当前 + 上一成功版，更老 GC；dsh 单份覆盖（pnpm 两段式安装兜底） |
 | 离线语义 | 首启必须联网；之后 registry 不可达 → 已装引擎直接启动 |
 | 引擎目录 | `PNPM_HOME = <数据目录>/engines/`；`<engines>/bin` 必须入子进程 PATH |
-| 客体投递 | musl pnpm 随 Windows 包 resources 内置（win + musl 两份），壳自动投递，用户零安装 |
+| 客体投递 | musl pnpm 随 Windows 包 resources 内置（win + musl 两份），壳自动投递，用户零安装；客体 node/dsh 引导**仅支持 glibc 发行版**（Ubuntu/Debian 等，2026-09-04 裁定；Alpine/musl 不在范围，客体探测识别 musl 时出可行动提示，随 P3 落地） |
 | 客体镜像主权 | 客体 pnpm 属壳资产，下载源壳注入镜像链；「用户镜像主权」只约束用户自身 npm/pnpm 配置（ADR-0004 据此补修订记录） |
 | 客体旧目录 | `~/.dsh-dock/node` 弃用不迁移不删除 |
 | 存量兼容 | 旧 `tools/node` 弃用不迁移；首次启动走一次完整引导 |
