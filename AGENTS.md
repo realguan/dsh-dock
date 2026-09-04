@@ -109,7 +109,9 @@
   `showFloatingSwitcher` 悬浮胶囊开关（2026-09-01）· `switcherShortcut` 切换快捷键偏好（2026-09-01）·
   `probe-cache.json` `--no-open` 探测缓存（2026-09-01；可丢失可重建的运行时缓存，
   损坏/缺失回退探测不阻断 boot）· `engines/` 引擎目录（2026-09-03，ADR-0010：
-  `PNPM_HOME` 指向的壳管理运行时资产 node/pnpm/dsh；可丢失可重建，缺失走引导）。
+  `PNPM_HOME` 指向的壳管理运行时资产 node/pnpm/dsh；可丢失可重建，缺失走引导）·
+  `dismissedUpdate` 升级提示条已忽略版本键（2026-09-04，ADR-0010 升级呈现；
+  形如 `dsh@<ver>`，同键不再弹非阻断提示条）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`

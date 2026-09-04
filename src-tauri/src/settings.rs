@@ -52,6 +52,10 @@ pub struct ShellSettings {
     pub show_floating_switcher: Option<bool>,
     /// 呼出控制中心快捷键偏好（2026-09-01；None / "default" = Cmd/Ctrl+,；可选 "shift_p" = Cmd/Ctrl+Shift+P）。
     pub switcher_shortcut: Option<String>,
+    /// 升级提示条已忽略的版本键（ADR-0010 升级呈现，2026-09-04，AGENTS §6
+    /// 已登记）。形如 "dsh@1.6.0" / "client@0.9.5"——同键不再弹非阻断提示条
+    ///（「拒绝后不再弹窗、无硬惩罚」），新版本键不受影响。
+    pub dismissed_update: Option<String>,
 }
 
 fn settings_path(data_dir: &Path) -> std::path::PathBuf {
@@ -121,6 +125,7 @@ mod tests {
             auto_restart: Some(true),
             show_floating_switcher: Some(false),
             switcher_shortcut: Some("shift_p".to_string()),
+            dismissed_update: Some("dsh@1.6.0".to_string()),
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
@@ -137,6 +142,7 @@ mod tests {
             auto_restart: None,
             show_floating_switcher: None,
             switcher_shortcut: None,
+            dismissed_update: None,
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);

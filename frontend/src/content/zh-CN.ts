@@ -81,6 +81,15 @@ export const t = {
     chipClientUpdating: "客户端更新",
     chipClientUpdatingRun: "客户端更新中…",
   },
+  updateBanner: {
+    // 升级提示条（ADR-0010 升级呈现；非阻断、可忽略同版本）
+    dshTitle: "dsh 有新版本 v{latest}（当前 v{current}）",
+    dshConsequence: "升级可获得安全修复与改进；长期不升级可能导致未来版本门槛抬升后无法直接追新。",
+    clientTitle: "桌面客户端有新版本 v{latest}",
+    clientConsequence: "建议升级以获得问题修复与体验改进。",
+    dismissTip: "忽略此版本（不再提醒）",
+    entryHint: "可从菜单 / 托盘的「关于」进入更新中心。",
+  },
   about: {
     title: "关于与更新",
     tagline: "更新中心 · 桌面客户端与运行环境",

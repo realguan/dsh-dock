@@ -76,6 +76,15 @@ export const enUS: AppCopy = {
     chipClientUpdating: "Updating App",
     chipClientUpdatingRun: "Updating App…",
   },
+  updateBanner: {
+    dshTitle: "dsh v{latest} available (current v{current})",
+    dshConsequence:
+      "Upgrading brings security fixes and improvements; staying behind may block future upgrades when version requirements rise.",
+    clientTitle: "App v{latest} available",
+    clientConsequence: "Upgrade is recommended for fixes and improvements.",
+    dismissTip: "Dismiss this version",
+    entryHint: "Open the update center from the About entry in the menu / tray.",
+  },
   about: {
     title: "About & Updates",
     tagline: "Update Center · Desktop Client & Runtime",

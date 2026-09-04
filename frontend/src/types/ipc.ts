@@ -211,6 +211,8 @@ export interface ShellSettings {
   autoRestart?: boolean | null
   showFloatingSwitcher?: boolean | null
   switcherShortcut?: string | null
+  /** 升级提示条已忽略版本键（"dsh@x.y.z" / "client@x.y.z"；同键不再弹） */
+  dismissedUpdate?: string | null
 }
 
 export interface NodeDiagnosticInfo {

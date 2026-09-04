@@ -17,6 +17,7 @@ import { PulseBar } from "@/components/boot/PulseBar"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
 import { ErrorCard } from "@/components/boot/ErrorCard"
+import { UpdateBanner } from "@/components/update/UpdateBanner"
 
 /// StrictMode 双挂载下去重同一份握手参数（choose_mode 会 teardown+重启会话）
 let lastHandoff = ""
@@ -163,6 +164,11 @@ export function BootIndex() {
           )}
         </div>
       </header>
+
+      {/* 升级提示条：非阻断浮层（ADR-0010 升级呈现；忽略同版本不再弹） */}
+      <div className="pointer-events-none absolute inset-x-0 top-14 z-10 flex justify-center px-6">
+        <UpdateBanner />
+      </div>
 
       {/* 主工作区 */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-24 pb-12">
