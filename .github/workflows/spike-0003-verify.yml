@@ -1,0 +1,102 @@
+name: spike-0003-verify
+# ADR-0010 Spike①②④ 的 CI 实机验证（维护者仅 macOS 一台实机；
+# GitHub Actions 三平台 runner = 真实 Windows/Linux 系统，WSL2 在 windows
+# runner 上实测）。结果判读与台账：docs/spikes/0003-pnpm12-engine-bootstrap.md
+on:
+  push:
+    paths:
+      - .github/workflows/spike-0003-verify.yml
+      - scripts/spike-0003-verify.sh
+  workflow_dispatch:
+
+jobs:
+  engine-bootstrap:
+    # Spike①②：镜像 env 通道接管 + 非 TTY runtime set + 布局 + npm 缺位 + add -g
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: pnpm12 引导链三平台复验
+        shell: bash
+        run: bash scripts/spike-0003-verify.sh
+
+  wsl-delivery-channel:
+    # Spike④：客体投递通道选型——\\wsl$ 文件拷贝 vs wsl.exe stdin(base64)
+    # 判据：两通道 32MB 随机文件 SHA-256 均一致；耗时对比供选型。
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      DISTRO: Ubuntu-24.04
+    steps:
+      - name: 确保 WSL2 + Ubuntu 客体
+        shell: pwsh
+        run: |
+          $raw = (wsl --list --quiet 2>$null) -replace "`0", ""
+          $list = $raw | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          Write-Host "现有发行版：$($list -join ', ')"
+          if ($list -notcontains $env:DISTRO) {
+            wsl --install -d $env:DISTRO --no-launch
+            if ($LASTEXITCODE -ne 0) { throw "wsl --install 失败（exit $LASTEXITCODE）" }
+          }
+          wsl -d $env:DISTRO -u root -e cat /etc/os-release
+          if ($LASTEXITCODE -ne 0) { throw "客体不可用（exit $LASTEXITCODE）" }
+
+      - name: 生成 32MB 随机探针（Windows 侧，壳→客体方向）
+        shell: pwsh
+        run: |
+          $src = "$env:RUNNER_TEMP\probe.bin"
+          $b = [byte[]]::new(32MB)
+          [System.Security.Cryptography.RandomNumberGenerator]::Fill($b)
+          [System.IO.File]::WriteAllBytes($src, $b)
+          $hash = (Get-FileHash $src -Algorithm SHA256).Hash
+          "PROBE_HASH=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM
+          Write-Host "探针 SHA-256：$hash"
+
+      - name: 通道 A —— \\wsl$ 文件拷贝
+        shell: pwsh
+        run: |
+          $src = "$env:RUNNER_TEMP\probe.bin"
+          $t = Measure-Command { Copy-Item $src "\\wsl$\$($env:DISTRO)\tmp\probe-a.bin" -Force }
+          $a = ((wsl -d $env:DISTRO -u root -e sha256sum /tmp/probe-a.bin) -replace "`0", "").Split()[0]
+          $ok = $a -eq $env:PROBE_HASH
+          $secs = [math]::Round($t.TotalSeconds, 1)
+          "CHANNEL_A_MATCH=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
+          "CHANNEL_A_SECONDS=$secs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
+          Write-Host "通道 A（\\wsl$）：完整性=$ok 耗时=${secs}s"
+          if (-not $ok) { throw "通道 A 完整性不一致：$a" }
+
+      - name: 通道 B —— wsl.exe stdin（base64 文本流）
+        shell: pwsh
+        run: |
+          $src = "$env:RUNNER_TEMP\probe.bin"
+          $b64 = "$env:RUNNER_TEMP\probe.b64"
+          [System.IO.File]::WriteAllText(
+            $b64,
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($src)))
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $t = Measure-Command {
+            Get-Content $b64 -Raw | wsl -d $env:DISTRO -u root -e bash -c "tr -d '\r' | base64 -d > /tmp/probe-b.bin"
+          }
+          if ($LASTEXITCODE -ne 0) { throw "客体解码失败（exit $LASTEXITCODE）" }
+          $b = ((wsl -d $env:DISTRO -u root -e sha256sum /tmp/probe-b.bin) -replace "`0", "").Split()[0]
+          $ok = $b -eq $env:PROBE_HASH
+          $secs = [math]::Round($t.TotalSeconds, 1)
+          "CHANNEL_B_MATCH=$ok" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
+          "CHANNEL_B_SECONDS=$secs" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8NoBOM -Append
+          Write-Host "通道 B（stdin base64）：完整性=$ok 耗时=${secs}s"
+          if (-not $ok) { throw "通道 B 完整性不一致：$b" }
+
+      - name: 选型结论
+        shell: pwsh
+        run: |
+          Write-Host "==== Spike④ 投递通道实测结论 ===="
+          Write-Host "A \\wsl$ 拷贝   ：完整性=$env:CHANNEL_A_MATCH 耗时=$($env:CHANNEL_A_SECONDS)s"
+          Write-Host "B wsl.exe stdin ：完整性=$env:CHANNEL_B_MATCH 耗时=$($env:CHANNEL_B_SECONDS)s"
+          if ($env:CHANNEL_A_MATCH -ne 'True' -or $env:CHANNEL_B_MATCH -ne 'True') {
+            throw "存在通道完整性失败"
+          }
+          Write-Host "两通道均完整；选型取耗时与实现复杂度，结论回填 docs/spikes/0003。"

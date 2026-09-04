@@ -130,14 +130,18 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   （release/nightly/rc/test/v8-canary）**，缺键**静默回退**默认源；`pnpm-workspace.yaml`
   / 全局 `config.yaml` 亦可；`.npmrc` 与 `--config.` 旗标静默无效；`--registry=` 全命令
   有效。决定性证据：本地 404 服务器收到 `index.json` 与 `v<ver>/SHASUMS256.txt` 请求
-  ——SHASUMS256 强制校验且与镜像同源。剩余：Windows/Linux 实机复验。
+  ——SHASUMS256 强制校验且与镜像同源。✅ 三平台 CI 复验全绿（2026-09-04，spike 0003 §2.7）。
   ② ✅ macOS 非 TTY 实机（GUI 子进程同态）：runtime set exit 0；字节进度行可解析映射
-  `boot:progress`；激活需 `pnpm shim add node`（PNPM_HOME/bin 硬链 node）；npm/npx/
+  `boot:progress`；激活需 `pnpm shim add node`（PNPM_HOME/bin 硬链）；npm/npx/
   corepack 缺位实证；**单目录引擎布局成立**（PNPM_HOME 兼作 runtime 项目，bin/global/
   node_modules/package.json 共存）；引擎链全绿（镜像装 node → add -g dsh → 引擎 node
-  执行 dsh）。剩余：Windows/Linux 实机复验。
-  ③ macOS 签名/公证包内 resources 二进制的执行许可实机验证；
-  ④ WSL 客体二进制投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）。
+  执行 dsh）。✅ 三平台 CI 复验全绿（2026-09-04，spike 0003 §2.7）。
+  ③ ✅ macOS 签名包内 resources 二进制执行许可（2026-09-04 本机，Developer ID +
+  hardened runtime，spike 0003 §2.6）：seal 覆盖 Resources 二进制、包内与 quarantine
+  模拟下均可执行；exec 级公证行为需真实发布产物复核——挂发版验收清单；
+  ④ ✅ WSL 客体投递通道选型（2026-09-04 CI 实测，spike 0003 §2.7）：`\\wsl$` 拷贝与
+  wsl.exe stdin base64 两通道 32MB 探针均完整（0.3s / 0.4s）——**选 `\\wsl$` 为主**，
+  base64 留兜底。
   ⚠ 实机新发现两处，均已裁定（2026-09-04）：pnpm 二进制解包 32MB → §6「安装包内
   压缩存储」；musl node 下载源硬编码 unofficial-builds、不可镜像注入 → **客体只支持
   glibc 发行版**（Alpine/musl 不在支持范围），不再挂账（spike 0003 §4）。

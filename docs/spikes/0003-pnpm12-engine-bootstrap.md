@@ -2,7 +2,7 @@
 
 - **日期**：2026-09-03
 - **执行人**：guan（AI 代理协作）
-- **状态**：✅ macOS 实机完成（Spike①② 的 macOS 侧闭环；Windows/Linux 复验与 ④ WSL 投递通道仍待实机）
+- **状态**：✅ 全部完成（2026-09-04：②③ macOS 本机 + ①② 三平台 CI 复验 + ④ WSL 双通道 CI 实测，见 §2.6/§2.7）
 - **输入**：ADR-0010 行动项 Spike①（镜像注入三平台复验）/ Spike②（`pnpm runtime set node` 三平台非 TTY 验证）；案头核查为 v12.3.1 源码级（见 ADR §5）
 - **输出**：本结论文档 → 喂给 P2（引擎私有 pnpm）/ P3（引擎编排模块）实现；两处需维护者知会的边界见 §4
 - **实证环境**：macOS darwin-arm64 · pnpm 12.3.1（`@pnpm/exe.darwin-arm64` 内二进制）· node-map pin v24.18.0
@@ -92,6 +92,47 @@ engines/
 → 引擎 pnpm / node / dsh 三件在单目录引擎内闭环；dsh 内部 `spawnSync("pnpm")` 所需的
 `engines/bin` 入 PATH 即可满足（生产由壳注入）。
 
+### 2.6 Spike③：macOS 签名包内 resources 二进制执行许可（2026-09-04 本机实机）
+
+- **方法**：手工搭最小 .app（Mach-O 主执行器 + `Resources/pnpm`，复刻 tauri 布局语义），
+  Developer ID「Developer ID Application: guan zhan (CLV3CCKL7H)」+ `--options runtime
+  --timestamp` 签名（与 build.yml CI 同一证书体系）。
+- **结果**：
+  1. `codesign --verify --deep --strict` 通过——**签名 seal 覆盖 Resources 二进制**；
+  2. 包内 `Resources/pnpm --version` 直接执行 ✓（exit 0，输出 12.3.1）；
+  3. quarantine xattr 模拟下载（规范格式 `flags;epoch;agent;UUID`）后执行 ✓；
+  4. 对照组：bare 副本（未独立签名）+ 同款 quarantine 也执行 ✓——说明本机
+     darwin 25 终端 exec 路径未触发 AMFI/Gatekeeper 拦截，且手工 xattr 不携带
+     真实下载 provenance，quarantine 维度无法在本机权威模拟。
+- **结论**：resources 放二进制 + 壳签名链路无 macOS 特有阻断，P3 内置方案成立；
+  exec 级公证行为的权威验证挂**发版验收清单**（真实 .dmg 下载 → 安装 → 首启；
+  本机无 notarytool 凭据，CI 亦未做公证）。
+
+### 2.7 Spike①② 三平台 CI 复验 + Spike④ WSL 投递通道（2026-09-04，CI 实机）
+
+维护者仅 macOS 一台实机——Windows/Linux/WSL 验证改道 GitHub Actions（runner 即
+真实系统）：`.github/workflows/spike-0003-verify.yml` + `scripts/spike-0003-verify.sh`。
+
+- **①② 三平台全绿**（macos-latest / ubuntu-latest / windows-latest，各 7 项 PASS）：
+  平台二进制取材（npmmirror）→ 镜像 env 通道接管（本地坏源决定性路由，`键=release`
+  三平台一致生效）→ 非 TTY `runtime set node 24.18.0` → 字节进度行 → `shim add node`
+  激活 → npm/npx/corepack 缺位 → `add -g` shim 链。**Windows 布局分叉（记录）**：
+  引擎 node 树根除 node.exe 外还有官方文档与 package.json 等（zip 变体按 npm 包形态
+  落地），CLI 级 npm 缺位判定不受影响。
+- **④ WSL 双通道实测**（windows-latest + WSL2 + Ubuntu-24.04，32MB 随机探针以
+  SHA-256 判完整性）：
+
+  | 通道 | 完整性 | 耗时 |
+  |:---|:---|:---|
+  | `\\wsl$` 文件拷贝 | ✅ | 0.3s |
+  | wsl.exe stdin（base64 文本流） | ✅ | 0.4s |
+
+  **选型：`\\wsl$` 拷贝为主通道**（更快、实现最简；投递前客体已被壳拉起即满足
+  UNC 可达），stdin base64 留作兜底（`\\wsl$` 不可达场景）。
+- **脚本首跑踩坑记录**：macOS runner 的 /bin/bash 3.2 把全角括号字节并入 `$PKG`
+  变量名（Linux bash 5 / git-bash 无此问题）——`${PKG}` 花括号封名修复；Windows
+  引擎 node 树非单文件布局，npm 缺位判定改按 CLI 名匹配。
+
 ## 3. 对 ADR-0010 台账的确认与细化
 
 | 节点 | 结果 |
@@ -118,7 +159,11 @@ engines/
 
 ## 5. 遗留待办
 
-- [ ] Spike①② Windows / Linux 实机复验（同清单：镜像 env、非 TTY runtime set、签名包 resources 执行许可）
-- [ ] Spike④ WSL 客体投递通道选型（`\\wsl$` 拷贝 vs wsl.exe stdin base64）
+- [x] Spike①② Windows / Linux 实机复验 → **CI 实机三平台全绿**（2026-09-04，
+  §2.7；GitHub Actions runner = 真实系统）
+- [x] Spike③ macOS 签名包内 resources 二进制执行许可（2026-09-04 本机完成，§2.6；
+  公证链路权威验证挂发版验收清单）
+- [x] Spike④ WSL 客体投递通道选型（2026-09-04 CI 实测，§2.7）：**选 `\\wsl$` 拷贝
+  为主**（0.3s vs 0.4s 且实现最简），stdin base64 留兜底
 - [x] 边界 A 裁定（2026-09-04：安装包内压缩存储）
 - [x] 边界 B 裁定（2026-09-04：客体仅支持 glibc 发行版，Alpine/musl 不在范围）
