@@ -32,6 +32,24 @@
 
 ## 三、记录
 
+### 2026-09-04 完成通知 · P3-a 引擎编排模块落地（engines.rs + updates 引导入口） —— guan（AI 协作）
+
+- 变更：
+  1. 新增 `src-tauri/src/engines.rs`（引擎编排，ADR-0010 主体第一件）：单目录布局
+     （PNPM_HOME = engines/）· pnpm 子进程 env（PNPM_HOME + 引擎 bin 前置 PATH）·
+     node 镜像 env 注入（键=release）· 非 TTY 进度行解析（映射 boot:progress）·
+     就绪判定（三件齐验版本，v 前缀归一）· 幂等引导四步（捆绑 pnpm 重铺 →
+     `runtime set node` 镜像链重试 → `shim add node` → `add -g dsh` registry 链
+     重试）；失败语义 = 离线可启动（缺件补不齐才 Err，首启必须联网）。
+  2. `updates.rs` 引擎引导唯一入口（AGENTS §7「引擎引导」）：`ensure_engine_bootstrapped`
+     （node 版本取 node-map、dsh 取最新**稳定版**并排除预发布）+ 内置 pnpm tgz
+     命名契约（resources/pnpm/<平台>.tgz，边界 A 压缩存储，系统 tar 解包零新增
+     依赖）；boot 接线随 P3-b，新入口暂标注 allow(dead_code)。
+- 影响：纯新增，不改变现有 boot 行为（P3-b 接线前 engine 路径不激活）。
+- 凭据：`cargo test` 190 全绿（+8：进度行 spike 实测格式 / 镜像 env JSON 形状 /
+  env 次序 / 就绪判定 v 归一 / tar 解包落位 / 假体探测 / 幂等零网络路径）+
+  `cargo fmt --check` + `clippy -D warnings` 零告警。
+
 ### 2026-09-03 完成通知 · Spike 0003 实机闭环 + P2 引擎私有 pnpm 与子进程 PATH 自构 —— guan（AI 协作）
 
 - 变更：

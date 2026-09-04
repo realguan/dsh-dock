@@ -157,6 +157,9 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   （剥离用户 PATH）随 P3 引擎模式落地。
 - [ ] P3（本 ADR 主体）：引擎编排模块 → 检测层退役 → contract v3（resolution
   简化）→ AGENTS §0/§6/§7 同步 → `docs/broadcasts.md` 落档。
+  （**engines.rs 编排模块 + updates 引导入口 2026-09-04 先行落地**——布局/就绪
+  判定/镜像注入/进度解析/四步幂等引导纯新增零接线，190 测试全绿；boot 接线、
+  探测层退役、contract v3 待续。）
 - [x] 文档同步（2026-09-03 完成）：ADR-0010 定稿 + AGENTS 红线 2 / §6 例外册 /
   §7 登记 / §9 索引 + contract v3 章节落稿（`format: 3` 随 P3 实现升版）+
   broadcasts 落档 + CONTEXT.md 术语表建立。

@@ -15,6 +15,9 @@
 mod credentials;
 mod diagnostics;
 mod dsh_settings;
+// P3-b boot 接线启用前，engines 的公开编排面暂仅测试可达
+#[allow(dead_code)]
+mod engines;
 mod executor;
 pub mod ipc;
 mod manifest;

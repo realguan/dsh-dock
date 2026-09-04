@@ -49,7 +49,7 @@ const PNPM_BUILD_PACKAGES: [&str; 5] = [
 ];
 
 /// 包管理器使用的 registry 顺序：国内镜像优先，官方源兜底。
-fn package_registry_bases() -> [&'static str; 2] {
+pub(crate) fn package_registry_bases() -> [&'static str; 2] {
     [
         "https://registry.npmmirror.com",
         "https://registry.npmjs.org",
@@ -1052,7 +1052,7 @@ fn pnpm_global_bin_dirs(pnpm_bin: &Path) -> Vec<String> {
 }
 
 /// pnpm 10 只识别 `--allow-build=<package>` 形式，必须显式拼在同一个参数中。
-fn pnpm_install_args(registry: &str, spec: &str) -> Vec<String> {
+pub(crate) fn pnpm_install_args(registry: &str, spec: &str) -> Vec<String> {
     let mut args = vec![
         "add".to_string(),
         "--global".to_string(),
@@ -1351,6 +1351,64 @@ pub(crate) fn find_pnpm(path_env: &str) -> Option<PathBuf> {
                 true
             }
         })
+}
+
+// ---------- 引擎引导入口（AGENTS §7「引擎引导」用途：updates 编排 engines 子进程网络） ----------
+
+/// 打包期随壳内置的 pnpm 压缩包位置（@pnpm/exe.<platform> tgz，边界 A 裁定：
+/// 安装包内压缩存储）。命名契约 = resources/pnpm/<平台>.tgz，装配方落位（P3-f）。
+#[allow(dead_code)] // P3-b boot 接线启用
+pub fn engine_pnpm_bundle(resources_dir: &Path) -> PathBuf {
+    let platform = if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "darwin-arm64"
+        } else {
+            "darwin-x64"
+        }
+    } else if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") {
+            "win32-arm64"
+        } else {
+            "win32-x64"
+        }
+    } else if cfg!(target_arch = "aarch64") {
+        "linux-arm64"
+    } else {
+        "linux-x64"
+    };
+    resources_dir.join("pnpm").join(format!("{platform}.tgz"))
+}
+
+/// dsh 引导目标版本：排序最高**稳定版**（排除预发布——ADR-0010 台账
+/// 0.1.2-alpha.2 事故预防；与更新检测「rc 也追」的 H-1 口径分离）。
+#[allow(dead_code)] // P3-b boot 接线启用
+pub fn latest_stable_dsh_version() -> Result<String> {
+    let packument =
+        fetch_packument().context("无法获取官方版本列表（registry 不可达或返回异常）")?;
+    parse_versions(&packument)
+        .into_iter()
+        .find(|v| !v.contains('-'))
+        .ok_or_else(|| anyhow::anyhow!("官方版本列表无稳定版"))
+}
+
+/// 引擎引导唯一入口（boot 接线随 P3-b；node 版本取 node-map，dsh 取最新稳定版）。
+#[allow(dead_code)] // P3-b boot 接线启用
+pub fn ensure_engine_bootstrapped(
+    data_dir: &Path,
+    resources_dir: &Path,
+    path_env: &str,
+    progress: DownloadProgress<'_>,
+) -> Result<crate::engines::BootstrapOutcome> {
+    let node_version = node_plan(data_dir).version;
+    let dsh_version = latest_stable_dsh_version()?;
+    crate::engines::bootstrap(
+        data_dir,
+        path_env,
+        &engine_pnpm_bundle(resources_dir),
+        &node_version,
+        &dsh_version,
+        progress,
+    )
 }
 
 /// download 档完整动作：node 执行器 → 全局装 dsh（排序最高版本，rc 也追）
