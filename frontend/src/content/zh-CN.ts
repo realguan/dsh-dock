@@ -124,6 +124,7 @@ export const t = {
     latestOfficial: "官方最新",
     notYetLocal: "本地尚未检出",
     checkFailedNet: "DSH 检测失败（网络不可达）",
+    nodeFromEngine: "壳引擎 · 随应用内置管理",
     nodeFromSystem: "来自你的系统",
     nodeManaged: "应用托管 · 随启动自动准备",
     nodeUnknown: "尚未确定",

@@ -13,7 +13,13 @@ export function NodeVersionCard() {
             {node.version}
           </span>
           <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-dim">
-            <DimNote>{node.origin === "system" ? t.about.nodeFromSystem : t.about.nodeManaged}</DimNote>
+            <DimNote>
+          {node.origin === "engine"
+            ? t.about.nodeFromEngine
+            : node.origin === "system"
+              ? t.about.nodeFromSystem
+              : t.about.nodeManaged}
+        </DimNote>
           </span>
         </div>
       ) : (

@@ -1231,19 +1231,21 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
                 &handle,
                 2,
                 "running",
-                "升级官方 DSH（pnpm 优先，npm 回退，排序最高版）…",
+                "升级官方 DSH（引擎内 add -g，最新稳定版）…",
             );
-            match crate::updates::install_latest_global(
-                &data_dir,
-                &mut download_progress_bridge(&handle),
-            ) {
-                Ok(_) => {
-                    emit_step(&handle, 2, "done", "DSH 升级完成");
+            // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
+            // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
+            let resources_dir = resolve_resources_dir(&handle);
+            let path_env = crate::resolve::effective_path();
+            match crate::updates::upgrade_engine_dsh(&data_dir, &resources_dir, &path_env) {
+                Ok(version) => {
+                    emit_step(&handle, 2, "done", &format!("DSH 已升级到 {version}"));
                     // 刷新版本状态（托盘/前端 chip）
                     refresh_update_ui(&handle, &state);
-                    emit_upgrade(&handle, "done", "");
+                    emit_upgrade(&handle, "done", &version);
                 }
                 Err(e) => {
+                    tracing::error!(err = ?e, "dsh 升级失败");
                     emit_upgrade(&handle, "failed", &format!("{e:#}"));
                     emit_boot_error(&handle, &format!("升级失败：{e:#}"), "");
                     return;
@@ -2026,7 +2028,7 @@ pub fn run() {
             {
                 let status = crate::updates::UpdateStatus {
                     dsh: crate::updates::ComponentUpdate {
-                        current: crate::updates::detect_current_version(),
+                        current: crate::updates::detect_current_version(&data_dir),
                         latest: None,
                         newer: false,
                         error: None,

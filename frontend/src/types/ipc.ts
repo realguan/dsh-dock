@@ -16,7 +16,7 @@ export interface ComponentUpdate {
 export interface NodeRuntimeInfo {
   version: string
   /** system = 复用用户已装的 node；managed = 应用私有缓存 */
-  origin: "system" | "managed"
+  origin: "engine" | "system" | "managed"
 }
 
 /// boot:update 载荷 / get_update_status 返回值。

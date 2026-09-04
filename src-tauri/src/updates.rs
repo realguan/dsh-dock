@@ -475,9 +475,20 @@ fn fetch_client_latest() -> Option<String> {
     parse_release_tag(&text)
 }
 
-/// Node 运行时维度：与 ensure_node 同一优先级（系统 node 优先，其次托管计划）。
+/// 引擎三件探测（版本维度共用一次 spawn 开销）。
+fn engine_status(data_dir: &Path) -> crate::engines::EngineStatus {
+    crate::engines::probe_engine(data_dir, &resolve::effective_path())
+}
+
+/// Node 运行时维度：引擎优先（ADR-0010）→ 系统探测（退役前过渡）→ 托管计划。
 fn node_runtime_info(data_dir: &Path) -> Option<NodeRuntimeInfo> {
     let path_env = resolve::effective_path();
+    if let Some(v) = engine_status(data_dir).node {
+        return Some(NodeRuntimeInfo {
+            version: v,
+            origin: "engine",
+        });
+    }
     if let Some(sys) = resolve::detect_system_node(&path_env) {
         return Some(NodeRuntimeInfo {
             version: sys.version,
@@ -490,8 +501,12 @@ fn node_runtime_info(data_dir: &Path) -> Option<NodeRuntimeInfo> {
     })
 }
 
-/// 当前宿主 dsh 版本：system 档探测（跟随启动链语义）。
-pub fn detect_current_version() -> Option<String> {
+/// 当前宿主 dsh 版本：引擎优先（ADR-0010），引擎未就绪回退系统探测
+///（探测层退役前的过渡口径；两者都缺 = None，前端展示「未检出」）。
+pub fn detect_current_version(data_dir: &Path) -> Option<String> {
+    if let Some(v) = engine_status(data_dir).dsh {
+        return Some(v);
+    }
     let path = crate::resolve::effective_path();
     crate::resolve::detect_system_dsh(&path).map(|d| d.version)
 }
@@ -515,10 +530,19 @@ fn component_update(
 
 /// 一次完整检测（三维度）。网络失败不视为致命：对应维度 error 展示。
 pub fn check_now(data_dir: &Path) -> UpdateStatus {
+    let engine_dsh = engine_status(data_dir).dsh;
     let dsh = match fetch_latest_version() {
-        Some(latest) => component_update(detect_current_version(), Some(latest), None),
+        Some(latest) => component_update(
+            Some(engine_dsh)
+                .flatten()
+                .or_else(detect_system_dsh_fallback),
+            Some(latest),
+            None,
+        ),
         None => component_update(
-            detect_current_version(),
+            Some(engine_dsh)
+                .flatten()
+                .or_else(detect_system_dsh_fallback),
             None,
             Some("registry 不可达或返回异常".to_string()),
         ),
@@ -537,6 +561,32 @@ pub fn check_now(data_dir: &Path) -> UpdateStatus {
         client,
         node: node_runtime_info(data_dir),
     }
+}
+
+/// dsh 当前版本系统探测兜底（引擎未就绪时的过渡口径，探测层退役随删）。
+fn detect_system_dsh_fallback() -> Option<String> {
+    let path = crate::resolve::effective_path();
+    crate::resolve::detect_system_dsh(&path).map(|d| d.version)
+}
+
+/// 升级引擎内 dsh 到最新稳定版（ADR-0010：升级全显式 + 引擎私有——不碰
+/// 用户全局安装）。返回实际写入的 dsh 版本。引擎 pnpm 缺位（boot 未跑成/
+/// 目录被清）先从捆绑包重铺；dsh 版本比对排除预发布（latest_stable）。
+pub fn upgrade_engine_dsh(data_dir: &Path, resources_dir: &Path, path_env: &str) -> Result<String> {
+    let version = latest_stable_dsh_version()?;
+    tracing::info!(
+        data_dir = %data_dir.display(),
+        target = %version,
+        "dsh 升级开始（引擎内 add -g，不触用户全局）"
+    );
+    if !crate::engines::engine_pnpm_bin(data_dir).exists() {
+        tracing::info!("引擎 pnpm 缺位，先从捆绑包重铺");
+        crate::engines::stage_pnpm_from_bundle(&engine_pnpm_bundle(resources_dir), data_dir)
+            .context("引擎 pnpm 重铺失败")?;
+    }
+    crate::engines::install_dsh_global(data_dir, &version, path_env)?;
+    tracing::info!(version = %version, "dsh 升级完成");
+    Ok(version)
 }
 
 // ---------- node 私有缓存 ----------

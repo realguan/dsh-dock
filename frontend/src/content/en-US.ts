@@ -117,6 +117,7 @@ export const enUS: AppCopy = {
     latestOfficial: "Official Latest",
     notYetLocal: "Not yet detected locally",
     checkFailedNet: "DSH Check Failed (Network Unreachable)",
+    nodeFromEngine: "Shell engine · managed by the app",
     nodeFromSystem: "From your system",
     nodeManaged: "Managed by App · Automatically prepared",
     nodeUnknown: "Unknown",
