@@ -356,11 +356,8 @@ pub struct ForwardRun {
     pub output: String,
 }
 
-/// 按工具链档执行一次 dsh 转发（插件操作与创建链共用入口）。系统档先做
-/// pnpm 防御检测（ensure_pnpm），可见性基准与本次 spawn 的 PATH 严格同源
-///（dsh_child_path）——否则补齐到引擎目录的 pnpm 在 spawn 时不可见，dsh 内部
-/// spawnSync("pnpm") 必败。引擎档不再检测：捆绑 pnpm 由 boot 每次重铺，
-/// 随 engines/bin 前置恒可见。
+/// 按工具链档执行一次 dsh 转发（插件操作与创建链共用入口）。引擎档免
+/// pnpm 检测：捆绑 pnpm 由 boot 每次重铺，随 engines/bin 前置恒可见。
 pub fn run_toolchain_forward(
     toolchain: &crate::engines::DshToolchain,
     args: &[String],
@@ -368,28 +365,15 @@ pub fn run_toolchain_forward(
     log_path: &Path,
     data_dir: &Path,
 ) -> Result<ForwardRun, String> {
-    match toolchain {
-        crate::engines::DshToolchain::Engine { node_bin, dsh_bin } => run_dsh_forward(
-            dsh_bin,
-            &[],
-            args,
-            dsh_home,
-            log_path,
-            &crate::resolve::dsh_child_path(node_bin, data_dir),
-        ),
-        crate::engines::DshToolchain::System { node_bin, bin_js } => {
-            let child_path = crate::resolve::dsh_child_path(node_bin, data_dir);
-            crate::updates::ensure_pnpm(node_bin, &child_path, data_dir)?;
-            run_dsh_forward(
-                node_bin,
-                &[bin_js.as_path()],
-                args,
-                dsh_home,
-                log_path,
-                &child_path,
-            )
-        }
-    }
+    let crate::engines::DshToolchain::Engine { node_bin, dsh_bin } = toolchain;
+    run_dsh_forward(
+        dsh_bin,
+        &[],
+        args,
+        dsh_home,
+        log_path,
+        &crate::resolve::dsh_child_path(node_bin, data_dir),
+    )
 }
 
 /// dsh 转发链统一内核（ADR-0010）：`program` + `prepend` 前置参数拼装命令行。
@@ -555,8 +539,7 @@ pub fn create_profile_blocking(
 ) -> Result<CreateProfileOutcome, String> {
     let home = crate::resolve::user_dsh_home();
     creation_blocker(&home, profile)?;
-    let path_env = crate::resolve::effective_path();
-    let toolchain = crate::engines::resolve_toolchain(data_dir, &path_env)?;
+    let toolchain = crate::engines::resolve_toolchain(data_dir)?;
     let args = create_command_args(profile);
     let run = run_toolchain_forward(
         &toolchain,

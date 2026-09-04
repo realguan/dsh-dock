@@ -46,7 +46,8 @@
   macos-signing · roadmap（陷阱清单）· frontend-migration · spikes
 - `src-tauri/`：`src/` 模块按职责命名（updates = 唯一网络面；settings = 唯一持久化）；
   **main.rs 6 行勿动**；build.rs 自动生成 allow-* 权限；capabilities/ 授权 remote 页面
-  （§7 三处同步）；resources/ 的 `dsh-snapshot/` **永不入库**
+  （§7 三处同步）；resources/ 的 `dsh-snapshot/` 与 `pnpm/`（打包期经
+  `scripts/fetch-pnpm-bundle.sh` 拉取）**永不入库**
 - `frontend/`：React SPA，单入口按窗口 label 路由；`node-map/` 的
   `node-map-private.key` **永不入库**；`scripts/` regen-icons / render-product（仅打包期）
 
@@ -148,8 +149,9 @@
   `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
 - **唯一网络面 = `updates.rs`**；其余模块禁触网，新网络需求先在此登记；外链域名在
-  `EXTERNAL_URL_HOSTS` 登记。已登记用途：boot 期 pnpm 补齐（`npm i -g pnpm`，
-  2026-08-28，ADR-0009 口径 2）；**插件运行态回环只读查询**（`plugins.rs`，
+  `EXTERNAL_URL_HOSTS` 登记。已登记用途：~~boot 期 pnpm 补齐（`npm i -g pnpm`，
+  2026-08-28，ADR-0009 口径 2）~~（2026-09-04 随探测层退役，由下方引擎引导接替）；
+  **插件运行态回环只读查询**（`plugins.rs`，
   `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
   一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
   registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /

@@ -47,32 +47,26 @@ pub fn engine_dsh_bin(data_dir: &Path) -> Option<PathBuf> {
 }
 
 /// dsh CLI 执行工具链（ADR-0010）：引擎档优先，引擎未就绪回退系统探测——
-/// 引擎就绪后系统安装不再是 dsh 操作的前置条件。消费方 = 插件操作与创建链
+/// dsh CLI 执行工具链（ADR-0010）：引擎档唯一——探测层退役后系统安装不再
+/// 是任何 dsh 操作的来源。消费方 = 插件操作与创建链
 ///（profiles::run_toolchain_forward 统一执行）。
 #[derive(Debug)]
 pub enum DshToolchain {
-    /// 引擎档：dsh 启动器直接执行（node/pnpm 经 PATH 解析，engines/bin 前置）。
+    /// dsh 启动器直接执行（node/pnpm 经 PATH 解析，engines/bin 前置）。
     Engine { node_bin: PathBuf, dsh_bin: PathBuf },
-    /// 系统档：node 前缀执行 dsh 的 lib/bin.js。
-    System { node_bin: PathBuf, bin_js: PathBuf },
 }
 
-/// 解析本次 dsh 操作的工具链：引擎档要求 node 与 dsh 双全（半就绪不做混搭，
-/// 整体走回退）；双缺给出可行动错误（指向引擎引导）。
-pub fn resolve_toolchain(data_dir: &Path, path_env: &str) -> Result<DshToolchain, String> {
-    if let (Some(node_bin), Some(dsh_bin)) = (engine_node_bin(data_dir), engine_dsh_bin(data_dir)) {
-        return Ok(DshToolchain::Engine { node_bin, dsh_bin });
+/// 解析本次 dsh 操作的工具链：node 与 dsh 双全才可用（半就绪 = boot 引导
+/// 未完成），缺件给可行动错误（指向引擎引导）。
+pub fn resolve_toolchain(data_dir: &Path) -> Result<DshToolchain, String> {
+    match (engine_node_bin(data_dir), engine_dsh_bin(data_dir)) {
+        (Some(node_bin), Some(dsh_bin)) => Ok(DshToolchain::Engine { node_bin, dsh_bin }),
+        (node, dsh) => Err(format!(
+            "引擎未就绪（node {}、dsh {}）——请先启动应用完成引擎引导后重试",
+            node.map(|_| "已就绪").unwrap_or("缺失"),
+            dsh.map(|_| "已就绪").unwrap_or("缺失"),
+        )),
     }
-    let node = crate::resolve::detect_system_node(path_env).ok_or(
-        "未检出可用 node（引擎未就绪且系统无 Node）——请先启动应用完成引擎引导，或安装 Node.js 后重试",
-    )?;
-    let dsh = crate::resolve::detect_system_dsh(path_env).ok_or(
-        "未检出可用 dsh（引擎未就绪且系统无 dsh）——请先启动应用完成引擎引导，或安装 dsh 后重试",
-    )?;
-    Ok(DshToolchain::System {
-        node_bin: node.bin,
-        bin_js: dsh.bin_js,
-    })
 }
 
 /// 引擎 bin 内按名找工具：Windows cmd-shim 形态（.exe / .cmd）与 Unix（裸名）

@@ -234,16 +234,8 @@ pub fn run_repair(
 
     fs::write(&script_path, script_content).map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
 
-    let path_env = crate::resolve::effective_path();
-    let node_bin = match crate::engines::engine_node_bin(data_dir) {
-        Some(bin) => bin,
-        None => crate::resolve::detect_system_node(&path_env)
-            .map(|n| n.bin)
-            .ok_or_else(|| {
-                "未检出可用 node（引擎未就绪且系统无 Node）——请先启动应用完成引擎引导后重试"
-                    .to_string()
-            })?,
-    };
+    let node_bin = crate::engines::engine_node_bin(data_dir)
+        .ok_or_else(|| "引擎未就绪（node 缺失）——请先启动应用完成引擎引导后重试".to_string())?;
     tracing::info!(
         target = ?target,
         node = %node_bin.display(),
@@ -416,6 +408,19 @@ mod tests {
 {"seq":1,"turn":1,"msg":"earlier"}
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
+
+        // 修复链 node 来源 = 引擎档唯一：预置假体 shim（转发 PATH 上的真 node）
+        let engine_bin = temp.join("engines/bin");
+        std::fs::create_dir_all(&engine_bin).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = engine_bin.join("node");
+            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
         assert!(outcome.success);

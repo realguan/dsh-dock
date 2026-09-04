@@ -29,45 +29,18 @@ pub const MANIFEST_MIN_COMPAT: u32 = 1;
 pub enum TierKind {
     /// 引擎档（v3 缺省）：壳自管 node/pnpm/dsh，boot 期幂等引导（ADR-0010）。
     Engine,
-    /// 用户环境复用（官方安装，过三重校验闸才成立）。v3 废止（探测层退役前保留）。
-    System,
-    /// 内置兜底（bundle 内 offline 副本；存在即优先——内置档语义）。
+    /// 内置兜底（bundle 内 offline 副本；快照档语义）。
     Bundle,
-    /// 实时下载（国内镜像优先，pnpm/npm 官方包管理通道；网络动作）。v3 废止。
-    Download,
 }
 
-/// 单个件的解析策略。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 单个件的解析档（v3 规范化产物）：`tiers` 不从文件反序列化——加载时由
+/// normalize 统一写定 [Engine] / [Bundle]，v1/v2 旧档序（system/download）
+/// 在解析期即被忽略（skip）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TierSpec {
-    /// 解析次序；system 缺失/不达标即进下一档。
-    #[serde(default = "default_tiers")]
+    #[serde(skip_deserializing, default)]
     pub tiers: Vec<TierKind>,
-    /// 版本下限（语义化区间左端，如 "0.1.0-rc.6"）；低于下限的 system 复用不成立。
-    /// 主要用于 dsh；node 用 engines 校验。
-    #[serde(default)]
-    pub min_version: Option<String>,
-    /// 复用 system 时任选 engines.node 校验（默认开）。
-    #[serde(default = "default_true")]
-    pub require_engines: bool,
-}
-
-fn default_tiers() -> Vec<TierKind> {
-    vec![TierKind::System, TierKind::Download] // 极简档语义：无内置
-}
-fn default_true() -> bool {
-    true
-}
-
-impl Default for TierSpec {
-    fn default() -> Self {
-        TierSpec {
-            tiers: default_tiers(),
-            min_version: None,
-            require_engines: true,
-        }
-    }
 }
 
 /// terminal 区块：终端行为（webUi profile 选择器，见 docs/contract.md manifest v2）。

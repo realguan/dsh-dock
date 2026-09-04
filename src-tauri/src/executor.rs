@@ -190,12 +190,7 @@ fn needs_profile_selector(
     direct_hit: bool,
     profile_count: usize,
 ) -> bool {
-    !direct_hit
-        && matches!(
-            tier,
-            crate::manifest::TierKind::System | crate::manifest::TierKind::Engine
-        )
-        && profile_count > 1
+    !direct_hit && tier == crate::manifest::TierKind::Engine && profile_count > 1
 }
 
 pub struct LocalExecutor {
@@ -251,29 +246,13 @@ impl Executor for LocalExecutor {
             e.to_string()
         })?;
         sink(1, "running", "宿主解析完成，准备环境依赖");
-        // pnpm 环境检查硬依赖（ADR-0009 红线 2 口径 2：保证 dsh 全部子命令
-        // 可用——`dsh plugin` 硬编码 spawnSync("pnpm") 无回退）。缺失经
-        // `npm install -g pnpm` 同步补齐，失败阻断 boot 出可行动错误卡。
-        // 基准 = 注入 dsh 的 PATH（node 首位 + effective_path）。引擎档跳过：
-        // 捆绑 pnpm 随 boot 每次重铺、恒在（ADR-0010）。WSL 执行器
-        // 不走本路径（客体内补齐链归 4.9，ADR-0004 §7）。
-        if launch.tier != crate::manifest::TierKind::Engine {
-            let runtime_path = crate::resolve::path_with_bin(&launch.node_bin, &self.path_env);
-            sink(1, "running", "正在检查并补齐包管理器…");
-            if let Err(e) =
-                crate::updates::ensure_pnpm(&launch.node_bin, &runtime_path, &self.data_dir)
-            {
-                sink(1, "error", &e);
-                return Err(e);
-            }
-        }
         sink(0, "done", "环境扫描完成");
         sink(1, "done", &format!("命中档位：{:?}", launch.tier));
         let home = crate::resolve::user_dsh_home();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
         // 4.3④ defaultProfile 消费（2026-08-28）：用户设过默认且在 webUi 候选
         // 内 → 直接用它启动并跳过选择器。仅覆盖 dsh_home = 用户 home 的档位
-        // （system/download；bundle 档是快照世界，管理器与其默认值都不适用）。
+        // （引擎档；bundle 快照档是独立世界，管理器与其默认值都不适用）。
         let stored = crate::settings::load(&self.data_dir).default_profile;
         // 强制目标（管理器切换/重试，4.3⑥）优先于 defaultProfile：用户此刻
         // 明确指定；档位守卫同上——bundle 快照档不消费（ADR-0009 §4 三次修订）。
@@ -358,7 +337,7 @@ impl Executor for LocalExecutor {
     fn just_installed(&self) -> bool {
         self.launch
             .as_ref()
-            .map(|l| l.tier == crate::manifest::TierKind::Download || l.first_bootstrap)
+            .map(|l| l.first_bootstrap)
             .unwrap_or(false)
     }
 
@@ -1004,10 +983,9 @@ mod tests {
     #[test]
     fn selector_shown_for_user_world_tiers_with_multiple_profiles() {
         use crate::manifest::TierKind;
-        // 引擎档与 system 档同语义：多候选且无直接目标 → 选择器（P3-b 修复：
+        // 引擎档（用户世界档）：多候选且无直接目标 → 选择器（P3-b 修复：
         // 引擎档原被漏判，多 profile 用户永远进不了选择器）
         assert!(needs_profile_selector(TierKind::Engine, false, 2));
-        assert!(needs_profile_selector(TierKind::System, false, 2));
         // 直接目标（defaultProfile 命中/强制目标）→ 跳过
         assert!(!needs_profile_selector(TierKind::Engine, true, 2));
         // 单候选 / 快照档 → 不出选择器

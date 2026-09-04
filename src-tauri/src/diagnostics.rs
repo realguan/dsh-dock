@@ -97,71 +97,60 @@ pub fn dir_size_and_count(dir: &Path) -> (u64, usize) {
     (total_size, count)
 }
 
-/// 收集全量诊断信息
-pub fn collect_diagnostics(home: &Path) -> SystemDiagnosticsReport {
-    // 使用完整合并环境 PATH（包含 login_shell_path、用户 home 固定目录与版本管理器目录）
-    let path_env = crate::resolve::effective_path();
+/// 收集全量诊断信息（ADR-0010 引擎四件套：pnpm/node/dsh 版本与落点 + 存储）。
+/// 数据源 = 壳引擎目录（engines/bin），不再探测用户环境（探测层已退役）。
+pub fn collect_diagnostics(home: &Path, data_dir: &Path) -> SystemDiagnosticsReport {
+    let engine_bin = crate::engines::engine_bin_dir(data_dir);
+    let status = crate::engines::probe_engine(data_dir, &crate::resolve::effective_path());
 
-    // Node 探测
-    let node_detected = crate::resolve::detect_system_node(&path_env);
-    let node = if let Some(n) = node_detected {
-        NodeDiagnosticInfo {
-            path: n.bin.to_string_lossy().to_string(),
-            version: n.version.as_str().to_string(),
-            source: "system".to_string(),
+    let node = match (&status.node, crate::engines::engine_node_bin(data_dir)) {
+        (Some(version), Some(bin)) => NodeDiagnosticInfo {
+            path: bin.to_string_lossy().to_string(),
+            version: version.clone(),
+            source: "engine".to_string(),
             is_ready: true,
-        }
-    } else {
-        NodeDiagnosticInfo {
-            path: "未检出".to_string(),
-            version: "未知".to_string(),
+        },
+        _ => NodeDiagnosticInfo {
+            path: engine_bin.to_string_lossy().to_string(),
+            version: "未检出".to_string(),
             source: "none".to_string(),
             is_ready: false,
-        }
+        },
     };
 
-    // pnpm 探测
-    let pnpm_detected = crate::updates::find_pnpm(&path_env);
-    let pnpm = if let Some(p) = pnpm_detected {
-        let version = crate::child_cmd(&p).arg("-v").output().ok().and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        });
-
-        PnpmDiagnosticInfo {
-            path: p.to_string_lossy().to_string(),
-            version,
+    let pnpm = match (
+        &status.pnpm,
+        crate::engines::engine_pnpm_bin(data_dir).exists(),
+    ) {
+        (Some(version), true) => PnpmDiagnosticInfo {
+            path: crate::engines::engine_pnpm_bin(data_dir)
+                .to_string_lossy()
+                .to_string(),
+            version: Some(version.clone()),
             is_ready: true,
-        }
-    } else {
-        PnpmDiagnosticInfo {
-            path: "未检出".to_string(),
+        },
+        _ => PnpmDiagnosticInfo {
+            path: crate::engines::engine_pnpm_bin(data_dir)
+                .to_string_lossy()
+                .to_string(),
             version: None,
             is_ready: false,
-        }
+        },
     };
 
-    // DSH 探测
-    let dsh_detected = crate::resolve::detect_system_dsh(&path_env);
-    let dsh = if let Some(d) = dsh_detected {
-        DshDiagnosticInfo {
-            path: d.bin_js.to_string_lossy().to_string(),
-            version: Some(d.version),
-            source: "system".to_string(),
+    let dsh = match (&status.dsh, crate::engines::engine_dsh_bin(data_dir)) {
+        (Some(version), Some(bin)) => DshDiagnosticInfo {
+            path: bin.to_string_lossy().to_string(),
+            version: Some(version.clone()),
+            source: "engine".to_string(),
             is_ready: true,
-        }
-    } else {
-        DshDiagnosticInfo {
-            path: "未检出".to_string(),
+        },
+        _ => DshDiagnosticInfo {
+            path: engine_bin.to_string_lossy().to_string(),
             version: None,
             source: "none".to_string(),
             is_ready: false,
-        }
+        },
     };
 
     // 存储占用统计

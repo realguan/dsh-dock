@@ -1050,11 +1050,12 @@ fn set_shell_settings(
 /// 环境健康体检：全量诊断大盘数据采集（4.11）
 #[tauri::command]
 async fn get_system_diagnostics(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
 ) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
-        crate::diagnostics::collect_diagnostics(&home)
+        crate::diagnostics::collect_diagnostics(&home, &data_dir)
     })
     .await
     .map_err(|e| format!("诊断报告收集异常终止：{e}"))

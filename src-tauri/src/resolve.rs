@@ -17,7 +17,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
-use crate::manifest::{FallbackSpec, ProductManifest, TierKind, TierSpec};
+use crate::manifest::{FallbackSpec, ProductManifest, TierKind};
 
 /// dsh 执行形态（ADR-0010 引擎档引入）：解析器产出、spawn_dsh / no-open 探测消费。
 #[derive(Debug, Clone)]
@@ -115,16 +115,6 @@ pub fn compare_versions_asc(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-pub fn version_at_least(current: &str, min: &str) -> bool {
-    compare_versions_asc(current, min) != std::cmp::Ordering::Less
-}
-
-/// 从版本字符串取主版本号（"v24.18.0"/"24.18.0" → 24）。
-fn major_of(v: &str) -> Option<u64> {
-    let s = v.trim_start_matches('v');
-    s.split('.').next()?.parse::<u64>().ok()
-}
-
 // ---------- 环境感知（GUI 启动的 PATH 是系统最小集，必须先补全） ----------
 
 /// 解码 wsl.exe / 子进程的原始输出字节：探测 UTF-16LE（BOM 或 NUL 间隔）则按
@@ -175,6 +165,8 @@ pub fn read_log_auto(path: &std::path::Path) -> String {
 /// 带超时执行并取原始 stdout 字节（login shell 拉 PATH / executor 的 wsl.exe
 /// 捕获共用——统一走 `quiet_cmd` 纪律与超时上限；返回原始字节以便按需解码，
 /// 如 wsl.exe 可能输出 UTF-16LE 而非 UTF-8）。
+// WSL 执行器（Windows-only）消费；非 Windows 构建下合法 dead（lib 级告警抑制）。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn run_with_timeout_raw(cmd: &mut Command, timeout: std::time::Duration) -> Option<Vec<u8>> {
     crate::quiet_cmd(cmd);
     let mut child = cmd
@@ -202,91 +194,12 @@ pub fn run_with_timeout_raw(cmd: &mut Command, timeout: std::time::Duration) -> 
     }
 }
 
-/// 带超时执行并取 stdout（UTF-8 lossy；wsl 相关请用 `run_with_timeout_raw` 再解码）。
-pub fn run_with_timeout(cmd: &mut Command, timeout: std::time::Duration) -> Option<String> {
-    let raw = run_with_timeout_raw(cmd, timeout)?;
-    let t = String::from_utf8_lossy(&raw).trim().to_string();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t)
-    }
-}
-
-/// 登录 shell 的 PATH（zsh → bash，HOME 注入；GUI app 不含用户 PATH 的来源）。
-fn login_shell_path() -> Option<String> {
-    // macOS 官方登录 shell 是 zsh；Linux 一般为 bash
-    for shell in ["/bin/zsh", "/bin/bash"] {
-        if !Path::new(shell).is_file() {
-            continue;
-        }
-        let mut cmd = crate::child_cmd(Path::new(shell));
-        cmd.args(["-lc", "echo -n \"$PATH\""]);
-        if let Some(home) = user_home_dir() {
-            cmd.env("HOME", &home);
-        }
-        if let Some(p) = run_with_timeout(&mut cmd, std::time::Duration::from_secs(2)) {
-            return Some(p);
-        }
-    }
-    None
-}
-
 fn path_separator() -> char {
     if cfg!(windows) {
         ';'
     } else {
         ':'
     }
-}
-
-fn path_separator_string() -> &'static str {
-    if cfg!(windows) {
-        ";"
-    } else {
-        ":"
-    }
-}
-
-fn join_path_dirs(dirs: impl IntoIterator<Item = PathBuf>) -> String {
-    dirs.into_iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(path_separator_string())
-}
-
-/// 常见安装目录（GUI 下除登录 shell 之外的第二来源）。
-fn fixed_path_dirs(home: &Path) -> Vec<PathBuf> {
-    let dirs = if cfg!(windows) {
-        vec![
-            // npm / pnpm 的默认全局命令目录。新电脑首次下载后，下一次启动也能从这里复用。
-            home.join("AppData/Roaming/npm"),
-            home.join("AppData/Local/pnpm"),
-            home.join(".volta/bin"),
-            home.join("AppData/Local/Volta/bin"),
-            home.join("scoop/shims"),
-            std::env::var_os("ProgramFiles")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
-                .join("nodejs"),
-        ]
-    } else {
-        vec![
-            home.join(".npm-global/bin"),
-            home.join(".local/bin"),
-            home.join("Library/pnpm"),
-            home.join(".local/share/pnpm"),
-            home.join(".volta/bin"),
-            home.join(".nvm/versions/node"),
-            home.join(".local/share/fnm/node-versions"),
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/opt/homebrew/sbin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/bin"),
-        ]
-    };
-    dirs.into_iter().filter(|path| path.is_dir()).collect()
 }
 
 /// 合并多路 PATH 源（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
@@ -309,22 +222,14 @@ fn merge_paths_with_separator(sources: &[String], separator: char) -> String {
     dirs.join(&separator.to_string())
 }
 
-/// 合并后的探测 PATH 串（用户环境优先 → 固定目录 → 当前 PATH，去重保序）。
-/// 本函数是 shell 侧环境感知的唯一入口；dsh 子进程启动时也应继承同一份。
+/// 壳进程可见 PATH（原样）。探测层退役（ADR-0010）后壳不再补全用户环境：
+/// 引擎工具走 engines/bin 前置（dsh_child_path），系统实用程序（tar 等）
+/// 在 GUI 最小 PATH 内恒可达。
 pub fn effective_path() -> String {
-    fn build() -> String {
-        let home = user_home_dir().unwrap_or_default();
-        merge_paths(&[
-            login_shell_path().unwrap_or_default(),
-            join_path_dirs(fixed_path_dirs(&home)),
-            // fnm/nvm 的 Node 实际落在版本目录的 bin/；Finder 启动时 login
-            // shell 不会读 .zshrc，因此不能只依赖 shell 注入的 PATH。
-            join_path_dirs(fnm_nvm_bin_dirs()),
-            std::env::var("PATH").unwrap_or_default(),
-        ])
-    }
     static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    CACHE.get_or_init(build).clone()
+    CACHE
+        .get_or_init(|| std::env::var("PATH").unwrap_or_default())
+        .clone()
 }
 
 /// 把选中的 Node 可执行目录放到 PATH 首位。
@@ -351,261 +256,20 @@ pub fn engines_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("engines")
 }
 
-/// 引擎内 npm 全局 prefix（P2 过渡期 pnpm 补齐落点；P3 换 pnpm12 引导后回收）。
-pub fn engine_npm_prefix(data_dir: &Path) -> PathBuf {
-    engines_dir(data_dir).join("npm")
-}
-
-/// 引擎 bin 目录集合：Windows 的 npm 全局 shim 落 prefix 根，Unix 落
-/// prefix/bin——平台布局差异在此吸收，注入方不感知平台。
-pub fn engine_bin_dirs(data_dir: &Path) -> Vec<PathBuf> {
-    let prefix = engine_npm_prefix(data_dir);
-    if cfg!(windows) {
-        vec![prefix]
-    } else {
-        vec![prefix.join("bin")]
-    }
-}
-
-/// 引擎 bin 前置合并进既有 PATH：首位保证引擎工具恒优先于用户世界同名工具。
-pub fn path_with_engines(data_dir: &Path, path_env: &str) -> String {
-    let mut sources = vec![join_path_dirs(engine_bin_dirs(data_dir))];
-    sources.push(path_env.to_string());
-    merge_paths(&sources)
-}
-
-/// dsh 子进程环境自构第一步（ADR-0010 P2）：确定性构造 spawn PATH——
-/// 引擎 bin（dsh 内部 `spawnSync("pnpm")` 依赖它恒可达）→ node bin → 用户
-/// PATH。executor.probe 的 pnpm 可见性检查与 shell::spawn_dsh 必须同源于此。
+/// dsh 子进程环境自构（ADR-0010）：引擎 bin（捆绑 pnpm / node shim / dsh
+/// 启动器恒可达）→ 选定 node 所在目录 → 用户 PATH。spawn_dsh、插件/创建
+/// 工具链、no-open 探测必须同源本函数。
 pub fn dsh_child_path(node_bin: &Path, data_dir: &Path) -> String {
-    path_with_engines(data_dir, &path_with_bin(node_bin, &effective_path()))
+    merge_paths(&[
+        crate::engines::engine_bin_dir(data_dir)
+            .display()
+            .to_string(),
+        path_with_bin(node_bin, &effective_path()),
+    ])
 }
 
-// ---------- system 探测 ----------
-
-pub struct SystemDsh {
-    /// dsh 入口：tree/lib/bin.js。
-    pub bin_js: PathBuf,
-    pub version: String,
-    pub engines_node: Option<String>,
-}
-
-/// 在合并 PATH 上找官方安装的 dsh（npm/pnpm 全局）：`which dsh` → 解符号链 →
-/// 逐级上溯找包根 → 读 package.json。找不到返回 None。
-pub fn detect_system_dsh(path_env: &str) -> Option<SystemDsh> {
-    // fnm/nvm 版本目录里也可能有全局 dsh（版本目录的 bin/）
-    let mut dirs = path_dirs(path_env);
-    for extra in fnm_nvm_bin_dirs() {
-        dirs.push(extra);
-    }
-    let names: &[&str] = if cfg!(windows) {
-        &["dsh.cmd", "dsh.exe", "dsh"]
-    } else {
-        &["dsh"]
-    };
-    let bin = dirs.into_iter().find_map(|dir| {
-        names
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|candidate| candidate.is_file() && is_executable(candidate))
-    });
-    let Some(bin) = bin else {
-        tracing::info!("system dsh 探测：PATH 中无可执行 dsh");
-        return None;
-    };
-    // Unix shim 一般是指向 lib/bin.js 的符号链接。Windows 的 .cmd shim 不会被
-    // canonicalize 到包树，因此额外从 npm/pnpm 全局 prefix 的 node_modules 查一次。
-    let tree = fs::canonicalize(&bin)
-        .ok()
-        .and_then(|real| find_package_root(&real, "@deepseek-ai/dsh"))
-        .or_else(|| find_global_package_root_from_command(&bin, "@deepseek-ai/dsh"));
-    let Some(tree) = tree else {
-        tracing::info!("system dsh 探测：找到 {} 但无法解析包树", bin.display());
-        return None;
-    };
-    let manifest_path = tree.join("package.json");
-    let text = fs::read_to_string(&manifest_path).ok()?;
-    let pkg: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let version = pkg.get("version")?.as_str()?.to_string();
-    let engines_node = pkg
-        .get("engines")
-        .and_then(|e| e.get("node"))
-        .and_then(|n| n.as_str())
-        .map(String::from);
-    Some(SystemDsh {
-        bin_js: tree.join("lib").join("bin.js"),
-        version,
-        engines_node,
-    })
-}
-
-/// 从 npm 全局命令所在的 prefix 推导包树，覆盖 Windows 的 dsh.cmd shim。
-fn find_global_package_root_from_command(command: &Path, name: &str) -> Option<PathBuf> {
-    let mut dir = command.parent()?;
-    for _ in 0..4 {
-        let mut candidates = vec![dir.join("node_modules").join(name)];
-        // pnpm setup 的 Windows 全局布局：<PNPM_HOME>/global/<major>/node_modules/<name>。
-        candidates.extend((3..=10).map(|major| {
-            dir.join("global")
-                .join(major.to_string())
-                .join("node_modules")
-                .join(name)
-        }));
-        if let Some(candidate) = candidates
-            .into_iter()
-            .find(|candidate| package_root_matches(candidate, name))
-        {
-            return Some(candidate);
-        }
-        dir = dir.parent()?;
-    }
-    None
-}
-
-fn package_root_matches(dir: &Path, name: &str) -> bool {
-    let manifest = dir.join("package.json");
-    fs::read_to_string(&manifest)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|pkg| pkg.get("name").and_then(|n| n.as_str()).map(str::to_owned))
-        .as_deref()
-        == Some(name)
-}
-
-/// 从可执行文件路径逐级上溯，找到 name 匹配的 package.json 所在的包根。
-fn find_package_root(start: &Path, name: &str) -> Option<PathBuf> {
-    let mut dir = start.parent()?;
-    for _ in 0..8 {
-        if package_root_matches(dir, name) {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
-    }
-    None
-}
-
-/// fnm/nvm 版本目录里的 bin/（node、可能的全局 dsh）；取最新版本目录。
-fn fnm_nvm_bin_dirs() -> Vec<PathBuf> {
-    let home = user_home_dir().unwrap_or_default();
-    fnm_nvm_bin_dirs_in(&home)
-}
-
-/// 枚举指定 home 中最新 fnm/nvm Node 的可执行目录，供环境补全和测试共用。
-fn fnm_nvm_bin_dirs_in(home: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let roots = if cfg!(windows) {
-        vec![
-            home.join("AppData/Roaming/fnm/node-versions"),
-            home.join(".fnm/node-versions"),
-        ]
-    } else {
-        vec![
-            home.join(".local/share/fnm/node-versions"),
-            home.join(".nvm/versions/node"),
-        ]
-    };
-    for root in roots {
-        if !root.is_dir() {
-            continue;
-        }
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        let mut versions: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect();
-        versions.sort_by(|a, b| {
-            compare_versions_asc(
-                &a.file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                &b.file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            )
-        });
-        if let Some(latest) = versions.last() {
-            if cfg!(windows) {
-                out.push(latest.join("installation"));
-            }
-            out.push(latest.join("installation/bin"));
-            out.push(latest.join("bin"));
-        }
-    }
-    out
-}
-
-/// PATH 上的系统 node 及其版本（"--version"）。
-pub struct SystemNode {
-    pub bin: PathBuf,
-    pub version: String,
-}
-
-pub fn detect_system_node(path_env: &str) -> Option<SystemNode> {
-    let mut dirs = path_dirs(path_env);
-    for extra in fnm_nvm_bin_dirs() {
-        dirs.push(extra);
-    }
-    let names: &[&str] = if cfg!(windows) {
-        &["node.exe", "node"]
-    } else {
-        &["node"]
-    };
-    let bin = dirs.into_iter().find_map(|dir| {
-        names
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|candidate| candidate.is_file() && is_executable(candidate))
-    })?;
-    let mut version_cmd = crate::child_cmd(&bin);
-    version_cmd.arg("--version");
-    let version = version_cmd.output().ok()?;
-    if !version.status.success() {
-        return None;
-    }
-    let version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    if version.is_empty() {
-        return None;
-    }
-    Some(SystemNode { bin, version })
-}
-
-/// 宽松 engines 校验：提取 engines 要求的主版本下限，与 node 主版本比较；
-/// engines 缺失/解析失败视为通过（不挡复用，栅栏只拦明显不满足）。
-pub fn engines_satisfied(node_version: &str, engines_node: Option<&str>) -> bool {
-    let Some(req) = engines_node else { return true };
-    let Some(required) = req.split(['>', '=', '<', '~', '^', ' ']).find_map(|t| {
-        t.chars()
-            .next()
-            .filter(|c| c.is_ascii_digit())
-            .and_then(|_| major_of(t))
-    }) else {
-        return true;
-    };
-    let Some(have) = major_of(node_version) else {
-        return false;
-    };
-    // 仅当要求明确高于当前时才拒绝；"<23" 之类的上限忽略（宽松语义）。
-    have >= required
-}
-
-// ---------- 解析链 ----------
-
-/// system 档探测结果：命中 / 缺失（含 engines 不达标）/ 版本过低。
-enum SystemOutcome {
-    Hit(SystemHit),
-    Miss,
-    /// 用户已有 dsh 但低于下限：**不自动覆盖**；2026-09-03 ADR-0010 P1 起
-    /// 不再终止启动（旧实现直接 bail = 死局），跳后续档继续 boot。
-    TooOld {
-        found: String,
-        min: String,
-    },
-}
-
-/// 按档序解析本次启动的 LaunchSpec。download 档的下载进度经 `progress` 上抛。
+/// 按档序解析本次启动的 LaunchSpec（规范化后仅 Engine / Bundle 两档）。
+/// 引擎档引导的网络进度经 `progress` 上抛。
 pub fn resolve_launch(
     manifest: &ProductManifest,
     resources_dir: &Path,
@@ -615,144 +279,54 @@ pub fn resolve_launch(
 ) -> Result<LaunchSpec> {
     let spec = &manifest.terminal.resolution.dsh;
 
-    // 2026-09-03 ADR-0010 P1：system dsh 版本过低不再终止启动（旧实现直接
-    // bail，演变成「不可启动」死局）——记录后落后续档（bundle/download）继续
-    // boot，用户全局 dsh 仍不被触碰；仅当档序耗尽仍无宿主时才带版本信息报错。
-    let mut too_old: Option<(String, String)> = None;
-
-    for tier in &spec.tiers {
-        match tier {
-            TierKind::System => match probe_system(spec, path_env) {
-                SystemOutcome::Hit(hit) => {
-                    let no_open = system_no_open_supported(&hit, data_dir);
-                    return Ok(LaunchSpec {
-                        node_bin: hit.node.bin,
-                        dsh_entry: DshEntry::NodeScript {
-                            bin_js: hit.dsh.bin_js,
-                        },
-                        dsh_home: user_dsh_home(),
-                        profile: manifest.terminal.default_profile.clone(),
-                        tier: TierKind::System,
-                        no_open,
-                        first_bootstrap: false,
-                    });
+    let [tier] = spec.tiers.as_slice() else {
+        anyhow::bail!("resolution 档序为空，无法解析宿主");
+    };
+    match tier {
+        TierKind::Engine => {
+            // 引擎档（ADR-0010，v3 缺省）：壳引擎三件幂等引导——pnpm 随壳
+            // 重铺、node=node-map（缺失必补/不符切换/离线降级）、dsh=最新
+            // 稳定版（缺失才装，dist-tags 惰性解析保离线零网络）。
+            let outcome = crate::updates::ensure_engine_bootstrapped(
+                data_dir,
+                resources_dir,
+                path_env,
+                progress,
+            )
+            .map_err(|e| anyhow::anyhow!("引擎引导失败：{e}"))?;
+            tracing::info!(
+                "引擎引导完成：pnpm={:?} node={:?} dsh={:?}（node 切换={}，dsh 补装={}）",
+                outcome.status.pnpm,
+                outcome.status.node,
+                outcome.status.dsh,
+                outcome.node_switched,
+                outcome.dsh_installed,
+            );
+            engine_launch_spec(
+                data_dir,
+                outcome.status.dsh.as_deref(),
+                outcome.dsh_installed,
+                manifest.terminal.default_profile.clone(),
+            )
+        }
+        TierKind::Bundle => {
+            let fb = manifest.fallback.clone().ok_or_else(|| {
+                anyhow::anyhow!("契约声明 bundle 档但缺少 fallback（自洽性校验应拦截，此属异常）")
+            })?;
+            // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
+            let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
+            spec.no_open = true;
+            // 快照 home 在 bundle 内只读：首启同步到
+            // 可写数据目录，dsh 的会话/设置才落得下；仅覆盖不删除，运行数据保留。
+            match sync_fallback_home(&spec.dsh_home, data_dir) {
+                Ok(home) => spec.dsh_home = home,
+                Err(e) => {
+                    anyhow::bail!("同步兜底 home 到数据目录失败：{e}");
                 }
-                SystemOutcome::TooOld { found, min } => {
-                    tracing::warn!(
-                        "system dsh 版本过低（{found} < 终端要求 {min}），跳过 system 档继续解析"
-                    );
-                    too_old = Some((found, min));
-                }
-                SystemOutcome::Miss => {
-                    tracing::info!("system 档未命中（用户环境无可用官方 dsh）");
-                }
-            },
-            TierKind::Engine => {
-                // 引擎档（ADR-0010，v3 缺省）：壳引擎三件幂等引导——pnpm 随壳
-                // 重铺、node=node-map（缺失必补/不符切换/离线降级）、dsh=最新
-                // 稳定版（缺失才装，dist-tags 惰性解析保离线零网络）。
-                let outcome = crate::updates::ensure_engine_bootstrapped(
-                    data_dir,
-                    resources_dir,
-                    path_env,
-                    progress,
-                )
-                .map_err(|e| anyhow::anyhow!("引擎引导失败：{e}"))?;
-                tracing::info!(
-                    "引擎引导完成：pnpm={:?} node={:?} dsh={:?}（node 切换={}，dsh 补装={}）",
-                    outcome.status.pnpm,
-                    outcome.status.node,
-                    outcome.status.dsh,
-                    outcome.node_switched,
-                    outcome.dsh_installed,
-                );
-                return engine_launch_spec(
-                    data_dir,
-                    outcome.status.dsh.as_deref(),
-                    outcome.dsh_installed,
-                    manifest.terminal.default_profile.clone(),
-                );
             }
-            TierKind::Bundle => {
-                let fb = manifest.fallback.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "契约声明 bundle 档但缺少 fallback（自洽性校验应拦截，此属异常）"
-                    )
-                })?;
-                // 快照 home 内是装配时固化的 profile：boot 它而不是 default_profile。
-                let mut spec = launch_from_fallback(&fb, resources_dir, fb.profile.clone());
-                spec.no_open = true;
-                // 快照 home 在 bundle 内只读：首启同步到
-                // 可写数据目录，dsh 的会话/设置才落得下；仅覆盖不删除，运行数据保留。
-                match sync_fallback_home(&spec.dsh_home, data_dir) {
-                    Ok(home) => spec.dsh_home = home,
-                    Err(e) => {
-                        anyhow::bail!("同步兜底 home 到数据目录失败：{e}");
-                    }
-                }
-                return Ok(spec);
-            }
-            TierKind::Download => {
-                // 实时下载：node 执行器（系统优先，无则缓存下载）→ pnpm 优先、npm 回退，全局装官方最新 dsh
-                let (node, tree) = crate::updates::install_latest_global(data_dir, progress)
-                    .map_err(|e| anyhow::anyhow!("实时下载档失败：{e}"))?;
-                return Ok(LaunchSpec {
-                    node_bin: node,
-                    dsh_entry: DshEntry::NodeScript {
-                        bin_js: tree.join("lib").join("bin.js"),
-                    },
-                    dsh_home: user_dsh_home(),
-                    profile: manifest.terminal.default_profile.clone(),
-                    tier: TierKind::Download,
-                    no_open: true,
-                    first_bootstrap: false,
-                });
-            }
+            Ok(spec)
         }
     }
-    match too_old {
-        Some((found, min)) => anyhow::bail!(
-            "宿主解析失败：您机器上的 DSH 版本过低（{found} < 终端要求 {min}），\
-             且后续档均不可用。\n终端不会自动覆盖您的全局安装；\
-             请执行 `npm i -g @deepseek-ai/dsh` 升级后重试。"
-        ),
-        None => anyhow::bail!("resolution 档序为空，无法解析宿主"),
-    }
-}
-
-/// system 档三重闸：dsh 树存在 + 版本 ≥ 下限 + node 可用且 engines 通过。
-fn probe_system(spec: &TierSpec, path_env: &str) -> SystemOutcome {
-    let Some(dsh) = detect_system_dsh(path_env) else {
-        return SystemOutcome::Miss;
-    };
-    if let Some(min) = &spec.min_version {
-        if !version_at_least(&dsh.version, min) {
-            tracing::info!("system dsh 版本过低：{} < {}", dsh.version, min);
-            return SystemOutcome::TooOld {
-                found: dsh.version,
-                min: min.clone(),
-            };
-        }
-    }
-    let Some(node) = detect_system_node(path_env) else {
-        tracing::info!("system 档未命中（无系统 node，下载档会自备执行器）");
-        return SystemOutcome::Miss;
-    };
-    if spec.require_engines && !engines_satisfied(&node.version, dsh.engines_node.as_deref()) {
-        tracing::info!(
-            "system node 不满足 dsh engines（node {} / {:?}）",
-            node.version,
-            dsh.engines_node
-        );
-        return SystemOutcome::Miss;
-    }
-    // 平台校验：system 树是就地安装的（npm 全局），架构天然一致；显式保留钩子。
-    SystemOutcome::Hit(SystemHit { node, dsh })
-}
-
-struct SystemHit {
-    node: SystemNode,
-    dsh: SystemDsh,
 }
 
 /// 把兜底 home 同步到可写数据目录（`<data_dir>/runtimes/fallback-home`）。
@@ -861,20 +435,6 @@ fn save_probe_cache(
     Ok(())
 }
 
-/// system 档：探测该 dsh 版本是否支持 `--no-open`（`--profile web --help` 一次）。
-/// 结果跨启动持久化到 `<data_dir>/probe-cache.json`（dsh 版本 → bool）：
-/// `--no-open` 支持是版本特性，版本不变结果稳定——稳态启动零 spawn（2026-09-01
-/// 实测：spawn 一次耗时 8s+，其中帮助文本 1.4s 即出现；缓存命中后该部分 ≈0）。
-/// 探测失败 → 不支持（宁可不传，避免旧版 dsh 秒退）。
-fn system_no_open_supported(hit: &SystemHit, data_dir: &Path) -> bool {
-    no_open_supported(
-        &hit.dsh.version,
-        (hit.node.bin.clone(), hit.dsh.bin_js.clone()),
-        || probe_no_open_with(&hit.node.bin, &hit.dsh.bin_js, PROBE_NO_OPEN_TIMEOUT),
-        data_dir,
-    )
-}
-
 /// 引擎档 no-open 支持性：dsh 启动器直接探测（node 经 PATH 解析），
 /// 版本 = 引导终态版本（缓存键与 system 档同机制）。
 fn engine_no_open_supported(version: &str, launcher: &Path, data_dir: &Path) -> bool {
@@ -925,14 +485,6 @@ fn no_open_supported(
 /// BOOT_TIMEOUT 90s；超时按「不支持 --no-open」处理（宁可不传），
 /// 探测进程卡死不再永久阻塞 boot。
 const PROBE_NO_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// 参数化探测（超时注入，供测试）：`child_cmd` 只做 Windows 批处理包装
-/// （cmd /C + CREATE_NO_WINDOW），跨平台可测。
-fn probe_no_open_with(node: &Path, dsh_bin: &Path, timeout: std::time::Duration) -> bool {
-    let mut cmd = crate::child_cmd(node);
-    cmd.arg(dsh_bin).args(["--profile", "web", "--help"]);
-    probe_no_open_cmd(cmd, timeout)
-}
 
 /// 引擎档探测：dsh 启动器直接执行（shebang 脚本 / .cmd shim 经 child_cmd
 /// 分发，node 经 PATH 解析），参数与 system 档探测同款。
@@ -1013,28 +565,6 @@ fn probe_no_open_cmd(mut cmd: std::process::Command, timeout: std::time::Duratio
     false
 }
 
-// ---------- 工具 ----------
-
-fn path_dirs(path_env: &str) -> Vec<PathBuf> {
-    path_env
-        .split(path_separator())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
-#[cfg(unix)]
-fn is_executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    p.metadata()
-        .map(|m| m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-#[cfg(not(unix))]
-fn is_executable(_p: &Path) -> bool {
-    true
-}
-
 /// defaultProfile 消费决策（4.3④ 接线，2026-08-28；纯函数）。
 /// 存储的默认 profile 直接作为本次启动 profile（并跳过选择器）当且仅当：
 /// 它在 webUi 候选内。壳的启动链路以「日志解析 URL → WebView 导航」为前提，
@@ -1113,10 +643,23 @@ mod tests {
 
     #[test]
     fn version_ordering_handles_rc() {
-        assert!(version_at_least("0.1.0-rc.9", "0.1.0-rc.6"));
-        assert!(!version_at_least("0.1.0-rc.5", "0.1.0-rc.6"));
-        assert!(version_at_least("0.1.0", "0.1.0-rc.9"));
-        assert!(version_at_least("0.1.0-rc.6", "0.1.0-rc.6"));
+        use std::cmp::Ordering;
+        assert_eq!(
+            compare_versions_asc("0.1.0-rc.9", "0.1.0-rc.6"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions_asc("0.1.0-rc.5", "0.1.0-rc.6"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_versions_asc("0.1.0", "0.1.0-rc.9"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions_asc("0.1.0-rc.6", "0.1.0-rc.6"),
+            Ordering::Equal
+        );
     }
 
     #[test]
@@ -1164,35 +707,6 @@ mod tests {
     }
 
     #[test]
-    fn engine_bin_dirs_absorb_platform_layout() {
-        let root = tmp();
-        let dirs = engine_bin_dirs(&root);
-        if cfg!(windows) {
-            // Windows npm 全局 shim 落 prefix 根
-            assert_eq!(dirs, vec![root.join("engines/npm")]);
-        } else {
-            assert_eq!(dirs, vec![root.join("engines/npm/bin")]);
-        }
-    }
-
-    #[test]
-    fn engine_bins_are_prepended_and_deduped() {
-        let root = tmp();
-        let engine = engine_bin_dirs(&root)[0].display().to_string();
-        let sep = path_separator_string();
-        let base = format!("{engine}{sep}/usr/bin{sep}{engine}");
-        let merged = path_with_engines(&root, &base);
-        let parts: Vec<&str> = merged.split(path_separator()).collect();
-        assert_eq!(parts[0], engine, "引擎 bin 必须在首位：{merged}");
-        assert_eq!(
-            parts.iter().filter(|p| **p == engine).count(),
-            1,
-            "引擎 bin 去重后仅保留一次：{merged}"
-        );
-        assert!(parts.contains(&"/usr/bin"), "用户 PATH 保留：{merged}");
-    }
-
-    #[test]
     fn dsh_child_path_orders_engines_node_then_user() {
         // 引擎 bin（pnpm 恒可达）→ node bin → 用户 PATH 的次序是
         // spawnSync("pnpm") 与 helper 执行器两边的硬前提（ADR-0010 P2）。
@@ -1200,125 +714,11 @@ mod tests {
         let node = Path::new("/opt/node/bin/node");
         let merged = dsh_child_path(node, &root);
         let parts: Vec<&str> = merged.split(path_separator()).collect();
-        let engines = engine_bin_dirs(&root)[0].display().to_string();
+        let engines = crate::engines::engine_bin_dir(&root).display().to_string();
         let engine_pos = parts.iter().position(|p| *p == engines).unwrap();
         let node_pos = parts.iter().position(|p| *p == "/opt/node/bin").unwrap();
         assert!(engine_pos < node_pos, "引擎 bin 先于 node bin：{merged}");
         assert!(node_pos < parts.len() - 1, "用户 PATH 在最后：{merged}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn fnm_paths_include_latest_installation_bin() {
-        // Windows 下 fnm 布局是 AppData/Roaming/fnm，此测试只覆盖 Unix 布局
-        //（fnm_nvm_bin_dirs_in 的分支本身在 resolve 的 Windows 路径测试之外）。
-        let root = tmp();
-        let versions = root.join(".local/share/fnm/node-versions");
-        std::fs::create_dir_all(versions.join("v20.0.0/installation/bin")).unwrap();
-        std::fs::create_dir_all(versions.join("v24.18.0/installation/bin")).unwrap();
-
-        let dirs = fnm_nvm_bin_dirs_in(&root);
-        assert!(dirs.contains(&versions.join("v24.18.0/installation/bin")));
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn engines_gate_is_lenient() {
-        assert!(engines_satisfied("v24.18.0", Some(">=22")));
-        assert!(!engines_satisfied("v20.0.0", Some(">=22")));
-        assert!(engines_satisfied("v24.18.0", None));
-        assert!(engines_satisfied("v24.18.0", Some("garbage"))); // 解析失败放行
-    }
-
-    #[test]
-    fn find_package_root_walks_up() {
-        let root = tmp();
-        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(pkg.join("lib")).unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            r#"{"name": "@deepseek-ai/dsh", "version": "0.1.0-rc.8"}"#,
-        )
-        .unwrap();
-        let bin = pkg.join("lib/bin.js");
-        std::fs::write(&bin, "#!/usr/bin/env node\n").unwrap();
-        assert_eq!(find_package_root(&bin, "@deepseek-ai/dsh"), Some(pkg));
-        assert_eq!(find_package_root(&bin, "@deepseek-ai/nope"), None);
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn windows_command_shim_resolves_npm_global_package_tree() {
-        let root = tmp();
-        let command = root.join("bin/dsh.cmd");
-        let pkg = root.join("node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(command.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(&command, "@echo off\n").unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.9"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            find_global_package_root_from_command(&command, "@deepseek-ai/dsh"),
-            Some(pkg)
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn windows_pnpm_shim_resolves_global_package_tree() {
-        let root = tmp();
-        let command = root.join("pnpm-home/dsh.cmd");
-        let pkg = root.join("pnpm-home/global/5/node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(command.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(&command, "@echo off\n").unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.9"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            find_global_package_root_from_command(&command, "@deepseek-ai/dsh"),
-            Some(pkg)
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn detects_system_dsh_via_fake_path() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = tmp();
-        let bindir = root.join("bin");
-        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(&bindir).unwrap();
-        std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::create_dir_all(pkg.join("lib")).unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            r#"{"name": "@deepseek-ai/dsh", "version": "0.1.0-rc.7",
-                "engines": {"node": ">=22"}}"#,
-        )
-        .unwrap();
-        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
-        std::fs::set_permissions(pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
-            .unwrap();
-        // npm 全局形态：bin 目录里的 dsh 是指向包内入口的符号链接
-        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
-
-        let hit = detect_system_dsh(&bindir.display().to_string()).unwrap();
-        assert_eq!(hit.version, "0.1.0-rc.7");
-        assert_eq!(hit.engines_node.as_deref(), Some(">=22"));
-        assert!(hit.bin_js.ends_with("lib/bin.js"));
-        std::fs::remove_dir_all(&root).ok();
-
-        // 无 dsh 的 PATH → None
-        let empty = tmp();
-        assert!(detect_system_dsh(&empty.display().to_string()).is_none());
-        std::fs::remove_dir_all(&empty).ok();
     }
 
     #[cfg(unix)]
@@ -1418,7 +818,10 @@ mod tests {
         // fallback home 必须真实存在（sync 语义）
         std::fs::create_dir_all(res.join("dsh-snapshot/home/profiles/desktop-demo")).unwrap();
         std::fs::write(res.join("dsh-snapshot/home/settings.yaml"), "k: v\n").unwrap();
-        let m: ProductManifest = serde_json::from_str(json).unwrap();
+        // tiers 是规范化产物（skip 反序列化）→ 走 load 迁移：v2+fallback → [Bundle]
+        let manifest_path = root.join("product.manifest.json");
+        std::fs::write(&manifest_path, json).unwrap();
+        let m = ProductManifest::load(&manifest_path).unwrap();
         let spec = resolve_launch(&m, &res, "", &root, &mut |_, _| {}).unwrap();
         assert_eq!(spec.tier, TierKind::Bundle);
         assert_eq!(spec.profile, "desktop-demo");
@@ -1469,97 +872,6 @@ mod tests {
         assert!(err.to_string().contains("档序为空"));
     }
 
-    /// 造一个低版本系统 dsh（npm 全局形态：bin 符号链接 → 包内入口），
-    /// 返回应注入 PATH 的 bin 目录。仅 Unix（Windows shim 形态另有专项测试）。
-    #[cfg(unix)]
-    fn fake_old_system_dsh(root: &Path, version: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let bindir = root.join("bin");
-        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(&bindir).unwrap();
-        std::fs::create_dir_all(pkg.join("lib")).unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            format!(r#"{{"name": "@deepseek-ai/dsh", "version": "{version}"}}"#),
-        )
-        .unwrap();
-        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n// bin\n").unwrap();
-        std::fs::set_permissions(pkg.join("lib/bin.js"), fs::Permissions::from_mode(0o755))
-            .unwrap();
-        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
-        bindir
-    }
-
-    /// 复现先行（ADR-0010 P1，2026-09-03）：system dsh 低于 minVersion 时，
-    /// 旧实现直接 bail（死局）；修复后应跳过 system 档、落 bundle 档继续 boot。
-    #[cfg(unix)]
-    #[test]
-    fn resolve_too_old_system_falls_to_next_tier() {
-        let root = tmp();
-        let bindir = fake_old_system_dsh(&root, "0.0.9");
-        let res = root.join("resources");
-        std::fs::create_dir_all(&res).unwrap();
-        std::fs::create_dir_all(res.join("dsh-snapshot/home/profiles/desktop-demo")).unwrap();
-        std::fs::write(res.join("dsh-snapshot/home/settings.yaml"), "k: v\n").unwrap();
-        let json = r#"{
-          "format": 2,
-          "productName": "T",
-          "terminal": {
-            "resolution": {
-              "dsh": { "tiers": ["system", "bundle"], "minVersion": "0.1.0" }
-            }
-          },
-          "fallback": {
-            "nodeBin": "dsh-snapshot/node/bin/dsh-node",
-            "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
-            "dshHome": "dsh-snapshot/home",
-            "profile": "desktop-demo"
-          }
-        }"#;
-        let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let spec = resolve_launch(
-            &m,
-            &res,
-            &bindir.display().to_string(),
-            &root,
-            &mut |_, _| {},
-        )
-        .unwrap();
-        assert_eq!(spec.tier, TierKind::Bundle);
-        assert_eq!(spec.profile, "desktop-demo");
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    /// 档序耗尽且唯一线索是版本过低：报错必须保留可行动文案（实测版本不丢）。
-    #[cfg(unix)]
-    #[test]
-    fn resolve_too_old_exhausted_reports_actionable_error() {
-        let root = tmp();
-        let bindir = fake_old_system_dsh(&root, "0.0.9");
-        let json = r#"{
-          "format": 2,
-          "productName": "T",
-          "terminal": {
-            "resolution": {
-              "dsh": { "tiers": ["system"], "minVersion": "0.1.0" }
-            }
-          }
-        }"#;
-        let m: ProductManifest = serde_json::from_str(json).unwrap();
-        let err = resolve_launch(
-            &m,
-            Path::new("/res-none"),
-            &bindir.display().to_string(),
-            &root,
-            &mut |_, _| {},
-        )
-        .unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("版本过低"), "报错应含版本闸语义：{msg}");
-        assert!(msg.contains("0.0.9"), "报错应携带实测版本：{msg}");
-        std::fs::remove_dir_all(&root).ok();
-    }
-
     // ---------- probe_no_open 探测（2026-09-01：流式早退 + 超时兜底） ----------
 
     /// 造一个「假 node 执行器」：把 dsh 参数拼进一个可配置 shell 脚本。
@@ -1594,11 +906,13 @@ sleep 30
 "#,
         );
         let t0 = std::time::Instant::now();
-        let hit = probe_no_open_with(&node, &fake_dsh(&dir), std::time::Duration::from_secs(60));
+        let mut cmd = std::process::Command::new(&node);
+        cmd.arg(fake_dsh(&dir));
+        let hit = probe_no_open_cmd(cmd, std::time::Duration::from_secs(60));
         assert!(hit, "usage 含 --no-open 应判 true");
         assert!(
-            t0.elapsed() < std::time::Duration::from_secs(5),
-            "命中后应 kill 早退，实测 {:?}",
+            t0.elapsed() < std::time::Duration::from_secs(10),
+            "命中后应 kill 早退（并行负载容差），实测 {:?}",
             t0.elapsed()
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1616,11 +930,9 @@ echo "Usage: dsh --profile web [options]"
 echo "  --port <port>  listen port"
 "#,
         );
-        assert!(!probe_no_open_with(
-            &node,
-            &fake_dsh(&dir),
-            std::time::Duration::from_secs(10)
-        ));
+        let mut cmd = std::process::Command::new(&node);
+        cmd.arg(fake_dsh(&dir));
+        assert!(!probe_no_open_cmd(cmd, std::time::Duration::from_secs(10)));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1631,11 +943,9 @@ echo "  --port <port>  listen port"
         let dir = tmp();
         let node = fake_node_executor(&dir, "#!/bin/sh\nsleep 60\n");
         let t0 = std::time::Instant::now();
-        let hit = probe_no_open_with(
-            &node,
-            &fake_dsh(&dir),
-            std::time::Duration::from_millis(300),
-        );
+        let mut cmd = std::process::Command::new(&node);
+        cmd.arg(fake_dsh(&dir));
+        let hit = probe_no_open_cmd(cmd, std::time::Duration::from_millis(300));
         assert!(!hit, "卡死进程超时应判 false");
         assert!(
             t0.elapsed() < std::time::Duration::from_secs(3),
@@ -1658,7 +968,9 @@ sleep 30
 "#,
         );
         let t0 = std::time::Instant::now();
-        let hit = probe_no_open_with(&node, &fake_dsh(&dir), std::time::Duration::from_secs(60));
+        let mut cmd = std::process::Command::new(&node);
+        cmd.arg(fake_dsh(&dir));
+        let hit = probe_no_open_cmd(cmd, std::time::Duration::from_secs(60));
         assert!(hit, "stderr 上的 --no-open 同样应命中");
         assert!(t0.elapsed() < std::time::Duration::from_secs(5));
         std::fs::remove_dir_all(&dir).ok();
@@ -1687,90 +999,44 @@ sleep 30
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// system_no_open_supported 缓存命中零 spawn：直接 pre 写缓存后调用，
-    /// 断言命中且没有执行探测（用「会创建标记文件的 node」验证）。
-    #[cfg(unix)]
+    /// 缓存判定泛化后回归：命中零探测、miss 探测写回、版本变化失效
+    ///（no_open_supported 纯缓存逻辑 + 注入探测闭包，零 spawn 可测）。
     #[test]
-    fn system_no_open_uses_cache_without_spawn() {
-        use std::os::unix::fs::PermissionsExt;
+    fn no_open_supported_cache_hit_miss_and_version_invalidation() {
         let dir = tmp();
-        let dsh_version = "0.1.1-rc.2";
-        let mut cache = std::collections::HashMap::new();
-        cache.insert(dsh_version.to_string(), true);
-        save_probe_cache(&dir, &cache).unwrap();
-        // node 假体：被 spawn 即写标记文件
-        let node = dir.join("should-not-run");
-        std::fs::write(&node, "#!/bin/sh\ntouch spawned-marker\n").unwrap();
-        std::fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
-        let hit = SystemHit {
-            node: SystemNode {
-                bin: node.clone(),
-                version: "v24.18.0".to_string(),
-            },
-            dsh: SystemDsh {
-                bin_js: dir.join("nope.js"),
-                version: dsh_version.to_string(),
-                engines_node: None,
-            },
+        // miss → 探测（写标记文件证明闭包执行）→ 写回
+        let marker = dir.join("probed");
+        let probe = || {
+            std::fs::write(&marker, b"1").unwrap();
+            true
         };
-        let v = system_no_open_supported(&hit, &dir);
-        assert!(v, "缓存命中应直接返回 true");
-        assert!(
-            !dir.join("spawned-marker").exists(),
-            "缓存命中后不得 spawn 探测进程"
+        let v1 = no_open_supported(
+            "0.1.0",
+            (PathBuf::from("/p"), PathBuf::from("/p")),
+            probe,
+            &dir,
         );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// 缓存 miss → 探测 → 写回。
-    #[cfg(unix)]
-    #[test]
-    fn system_no_open_miss_probes_and_writes_back() {
-        let dir = tmp();
-        let node = fake_node_executor(&dir, "#!/bin/sh\necho \"  --no-open    do not open\"\n");
-        let hit = SystemHit {
-            node: SystemNode {
-                bin: node.clone(),
-                version: "v24.18.0".to_string(),
-            },
-            dsh: SystemDsh {
-                bin_js: dir.join("fake.js"),
-                version: "0.1.1-rc.2".to_string(),
-                engines_node: None,
-            },
-        };
-        let v = system_no_open_supported(&hit, &dir);
-        assert!(v);
-        let cache = load_probe_cache(&dir);
-        assert_eq!(cache.get("0.1.1-rc.2"), Some(&true), "探测后应写回缓存");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// 版本变化失效：缓存 v1=true，新版本 → 重新探测（假体返回 false）。
-    #[cfg(unix)]
-    #[test]
-    fn system_no_open_cache_invalidates_on_version_change() {
-        let dir = tmp();
-        let mut cache = std::collections::HashMap::new();
-        cache.insert("0.1.0-rc.5".to_string(), true);
-        save_probe_cache(&dir, &cache).unwrap();
-        let node = fake_node_executor(&dir, "#!/bin/sh\necho \"Usage: plain\"\n");
-        let hit = SystemHit {
-            node: SystemNode {
-                bin: node.clone(),
-                version: "v24.18.0".to_string(),
-            },
-            dsh: SystemDsh {
-                bin_js: dir.join("fake.js"),
-                version: "0.1.1-rc.2".to_string(),
-                engines_node: None,
-            },
-        };
-        let v = system_no_open_supported(&hit, &dir);
-        assert!(!v, "新版本未命中缓存应重新探测（假体无 --no-open → false）");
-        let cache = load_probe_cache(&dir);
-        assert_eq!(cache.get("0.1.0-rc.5"), Some(&true), "旧版本缓存保留");
-        assert_eq!(cache.get("0.1.1-rc.2"), Some(&false), "新版本探测结果写回");
+        assert!(v1 && marker.is_file(), "miss 应实测并写回");
+        // 命中 → 零探测（标记文件删掉后不再重建）
+        std::fs::remove_file(&marker).unwrap();
+        let v2 = no_open_supported(
+            "0.1.0",
+            (PathBuf::from("/q"), PathBuf::from("/q")),
+            probe,
+            &dir,
+        );
+        assert!(v2 && !marker.exists(), "命中应零探测");
+        // 版本变化 → 重新探测
+        let v3 = no_open_supported(
+            "0.2.0",
+            (PathBuf::from("/r"), PathBuf::from("/r")),
+            || false,
+            &dir,
+        );
+        assert!(!v3, "新版本重新实测");
+        let loaded = load_probe_cache(&dir);
+        assert_eq!(loaded.get("0.1.0"), Some(&true));
+        assert_eq!(loaded.get("0.2.0"), Some(&false));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

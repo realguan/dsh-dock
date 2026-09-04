@@ -382,9 +382,8 @@ pub fn mutate_plugin_blocking(
             "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
         ));
     }
-    let path_env = crate::resolve::effective_path();
     let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir, &path_env)?,
+        &crate::engines::resolve_toolchain(data_dir)?,
         &[
             "plugin".to_string(),
             "--profile".to_string(),
@@ -491,62 +490,22 @@ mod op_tests {
         for name in ["node", "node.exe", "dsh", "dsh.cmd", "dsh.exe"] {
             std::fs::write(bin.join(name), "").unwrap();
         }
-        match crate::engines::resolve_toolchain(&data_dir, "/nonexistent").unwrap() {
+        match crate::engines::resolve_toolchain(&data_dir).unwrap() {
             crate::engines::DshToolchain::Engine { node_bin, dsh_bin } => {
                 assert_eq!(node_bin.parent(), Some(bin.as_path()));
                 assert_eq!(dsh_bin.parent(), Some(bin.as_path()));
             }
-            crate::engines::DshToolchain::System { .. } => panic!("引擎就绪应选引擎档"),
-        }
-        std::fs::remove_dir_all(&data_dir).ok();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn toolchain_falls_back_to_system_when_engines_empty() {
-        // 引擎目录缺席（P3-b 前常态）→ 回退系统探测：fixture 同
-        // resolve.rs detects_system_dsh_via_fake_path 的 npm 全局形态
-        use std::os::unix::fs::PermissionsExt;
-        let data_dir = std::env::temp_dir().join("dsh-dock-fallback-toolchain-test");
-        let _ = std::fs::remove_dir_all(&data_dir);
-        let root = data_dir.join("sys-fixture");
-        let bindir = root.join("bin");
-        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
-        std::fs::create_dir_all(&bindir).unwrap();
-        std::fs::create_dir_all(pkg.join("lib")).unwrap();
-        std::fs::write(
-            pkg.join("package.json"),
-            r#"{"name":"@deepseek-ai/dsh","version":"0.9.0","engines":{"node":">=22"}}"#,
-        )
-        .unwrap();
-        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n").unwrap();
-        // is_executable 穿透符号链接看目标权限：bin.js 必须可执行
-        std::fs::set_permissions(
-            pkg.join("lib/bin.js"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
-        let node = bindir.join("node");
-        std::fs::write(&node, "#!/bin/sh\necho v24.18.0\n").unwrap();
-        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        match crate::engines::resolve_toolchain(&data_dir, &bindir.display().to_string()).unwrap() {
-            crate::engines::DshToolchain::System { bin_js, .. } => {
-                assert!(bin_js.ends_with("lib/bin.js"))
-            }
-            crate::engines::DshToolchain::Engine { .. } => panic!("引擎缺席应回退系统档"),
         }
         std::fs::remove_dir_all(&data_dir).ok();
     }
 
     #[test]
-    fn toolchain_errors_actionable_when_engine_and_system_both_missing() {
-        // 双缺（引擎未就绪 + PATH 无 node/dsh）：错误文案必须指向引擎引导
+    fn toolchain_errors_actionable_when_engine_not_ready() {
+        // 引擎未就绪（node/dsh 缺件）：错误文案必须指向引擎引导
+        //（探测层退役后引擎是 dsh 操作的唯一来源，不再回退系统探测）
         let data_dir = std::env::temp_dir().join("dsh-dock-noengine-toolchain-test");
         let _ = std::fs::remove_dir_all(&data_dir);
-        let err = crate::engines::resolve_toolchain(&data_dir, &data_dir.display().to_string())
-            .unwrap_err();
+        let err = crate::engines::resolve_toolchain(&data_dir).unwrap_err();
         assert!(err.contains("引擎未就绪"), "{err}");
     }
 }
@@ -633,9 +592,8 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
     {
         return Err(format!("profile「{profile}」尚未初始化"));
     }
-    let path_env = crate::resolve::effective_path();
     let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir, &path_env)?,
+        &crate::engines::resolve_toolchain(data_dir)?,
         &[
             "--profile".to_string(),
             profile.to_string(),
