@@ -32,6 +32,26 @@
 
 ## 三、记录
 
+### 2026-09-04 完成通知 · P3 插件操作改引擎档（工具链解析引擎优先 + 转发链统一内核） —— guan（AI 协作）
+
+- 变更：
+  1. `plugins.rs` 工具链解析 `resolve_toolchain`：引擎档优先——engines/bin 内
+     node shim 与 dsh 全局启动器**双全**才选引擎（半就绪不混搭，整体回退）；
+     引擎未就绪回退系统探测。移除「未检出系统 Node/系统 dsh」硬失败——引擎
+     就绪后系统安装不再是插件操作的前置条件（P3-b 接线前引擎恒空，行为等价旧系统档）。
+  2. 引擎档执行：dsh 启动器（pnpm 全局 shim）直接执行——Unix shebang 脚本 /
+     Windows .cmd（child_cmd 吸收），node/pnpm 经 PATH 解析，不再深挖 pnpm
+     全局树取 lib/bin.js；`engines.rs` 增 `engine_node_bin` / `engine_dsh_bin` 定位入口。
+  3. `profiles.rs` 转发链统一内核 `run_dsh_forward`（program + prepend + child_path）：
+     `run_dsh_plugin` 保持原行为成为系统档薄封装（创建链零改动，随 P3-b 一并切）。
+  4. 顺带闭合系统档隐患：插件操作的 spawn PATH 改 `dsh_child_path`（引擎 bin →
+     node bin → 用户 PATH），与 ensure_pnpm 可见性基准严格同源——原实现补齐到
+     引擎目录的 pnpm 在 spawn 时不可见，dsh 内部 spawnSync("pnpm") 会 ENOENT。
+- 影响：普通区三文件（engines / profiles / plugins），lib.rs / IPC / 网络面零改动；
+  引擎档暂未激活（boot 接线前 engines/bin 为空），现有用户行为不变。
+- 凭据：`cargo test` 193 全绿（+3：引擎优先选择 / 系统回退 fixture / 双缺可行动
+  错误）+ `cargo fmt --check` + `clippy -D warnings` 零告警。
+
 ### 2026-09-04 完成通知 · Apple 凭据全量轮换与分发链路验收（CI 四处修复 + rc.4 试发回退） —— guan（AI 协作）
 
 - 变更：

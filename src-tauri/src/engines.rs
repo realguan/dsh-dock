@@ -35,6 +35,17 @@ pub fn engine_pnpm_bin(data_dir: &Path) -> PathBuf {
     engine_bin_dir(data_dir).join(if cfg!(windows) { "pnpm.exe" } else { "pnpm" })
 }
 
+/// 引擎 node 可执行（`shim add node` 激活的硬链；Windows 命名差异在此吸收）。
+pub fn engine_node_bin(data_dir: &Path) -> Option<PathBuf> {
+    find_engine_tool(data_dir, "node")
+}
+
+/// 引擎 dsh 启动器（`pnpm add -g` 全局 shim：Unix shebang 脚本 / Windows .cmd，
+/// 可直接执行，node 经 PATH 解析——不必再深挖 pnpm 全局树取 lib/bin.js）。
+pub fn engine_dsh_bin(data_dir: &Path) -> Option<PathBuf> {
+    find_engine_tool(data_dir, "dsh")
+}
+
 /// 引擎 bin 内按名找工具：Windows cmd-shim 形态（.exe / .cmd）与 Unix（裸名）
 /// 差异在此吸收。
 fn find_engine_tool(data_dir: &Path, name: &str) -> Option<PathBuf> {

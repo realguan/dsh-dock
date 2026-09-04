@@ -160,10 +160,15 @@ musl pnpm（随 Windows 包内置，用户零安装），客体 pnpm 属壳资�
   （**engines.rs 编排模块 + updates 引导入口 2026-09-04 先行落地**——布局/就绪
   判定/镜像注入/进度解析/四步幂等引导纯新增零接线，190 测试全绿；boot 接线、
   探测层退役、contract v3 待续。）
+  （**插件操作改引擎档 2026-09-04 落地**——`plugins.rs` 工具链解析引擎优先
+  （engines/bin node+dsh 双全才选引擎，半就绪不混搭）、系统探测回退；dsh 启动器
+  直接执行（pnpm 全局 shim，child_cmd 吸收 .cmd 差异），不再深挖全局树取 bin.js；
+  顺带闭合系统档隐患：spawn PATH 与 ensure_pnpm 可见性基准同源 `dsh_child_path`。
+  创建链暂留系统档（`run_dsh_plugin` 保持原行为成为薄封装），随 P3-b 一并切。）
 - [x] 文档同步（2026-09-03 完成）：ADR-0010 定稿 + AGENTS 红线 2 / §6 例外册 /
   §7 登记 / §9 索引 + contract v3 章节落稿（`format: 3` 随 P3 实现升版）+
   broadcasts 落档 + CONTEXT.md 术语表建立。
-- [ ] 插件/创建操作改用引擎 node/dsh（移除 plugins.rs 对系统 node+dsh 的硬要求）。
+- [ ] 插件/创建操作改用引擎 node/dsh（插件操作已落地 2026-09-04；创建链随 P3-b）。
 - [ ] 升级清单（随壳 bump pnpm 必过）：runtime set 可用、`pnpm add -g` 可用、
   spawnSync("pnpm") 可达、三平台 boot 冒烟。
 

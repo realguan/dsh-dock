@@ -356,18 +356,39 @@ pub struct ForwardRun {
     pub output: String,
 }
 
-/// 执行一次 dsh plugin 转发链（阻塞，调用方负责放后台线程）。
-/// stdout/stderr 合流落 log_path（双管道直读有死锁风险，文件中转与
-/// shell.rs spawn_dsh 同风格），200ms 轮询 try_wait，超时 kill。
-/// env 注入与 shell.rs spawn_dsh 同链：显式 DSH_HOME（与扫描器同一
-/// user_dsh_home()，创建的目录必落在列表可见位置）；PATH = node 首位 +
-/// effective_path（dsh 内部 spawnSync("pnpm") 靠它找到 pnpm，Spike A §3.4）。
+/// 执行一次 dsh plugin 转发链（阻塞，调用方负责放后台线程）——系统档便捷
+/// 封装：node 前缀执行 lib/bin.js，PATH = node 首位 + effective_path。
 pub fn run_dsh_plugin(
     node_bin: &Path,
     dsh_bin_js: &Path,
     args: &[String],
     dsh_home: &Path,
     log_path: &Path,
+) -> Result<ForwardRun, String> {
+    run_dsh_forward(
+        node_bin,
+        &[dsh_bin_js],
+        args,
+        dsh_home,
+        log_path,
+        &crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
+    )
+}
+
+/// dsh 转发链统一内核（ADR-0010）：`program` + `prepend` 前置参数拼装命令行。
+/// 系统档 = (node, [lib/bin.js])；引擎档 = (engines/bin/dsh 启动器, [])——
+/// 启动器为 shebang 脚本（Unix）或 .cmd shim（Windows，child_cmd 吸收差异），
+/// node/pnpm 经 PATH 解析，故 `child_path` 由调用方按档构造并保证与 pnpm
+/// 可见性检查同源（dsh 内部 spawnSync("pnpm") 靠它，Spike A §3.4）。
+/// stdout/stderr 合流落 log_path（双管道直读有死锁风险，文件中转与
+/// shell.rs spawn_dsh 同风格），200ms 轮询 try_wait，超时 kill。
+pub fn run_dsh_forward(
+    program: &Path,
+    prepend: &[&Path],
+    args: &[String],
+    dsh_home: &Path,
+    log_path: &Path,
+    child_path: &str,
 ) -> Result<ForwardRun, String> {
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -378,14 +399,11 @@ pub fn run_dsh_plugin(
         .write(true)
         .open(log_path)
         .map_err(|e| format!("打开日志 {} 失败：{e}", log_path.display()))?;
-    let mut cmd = crate::child_cmd(node_bin);
-    cmd.arg(dsh_bin_js)
+    let mut cmd = crate::child_cmd(program);
+    cmd.args(prepend)
         .args(args)
         .env("DSH_HOME", dsh_home)
-        .env(
-            "PATH",
-            crate::resolve::path_with_bin(node_bin, &crate::resolve::effective_path()),
-        )
+        .env("PATH", child_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(
             log.try_clone().map_err(|e| e.to_string())?,
@@ -393,7 +411,7 @@ pub fn run_dsh_plugin(
         .stderr(std::process::Stdio::from(log));
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("spawn dsh 失败（{}）：{e}", node_bin.display()))?;
+        .map_err(|e| format!("spawn dsh 失败（{}）：{e}", program.display()))?;
     let deadline = std::time::Instant::now() + CREATE_FORWARD_TIMEOUT;
     loop {
         match child.try_wait() {

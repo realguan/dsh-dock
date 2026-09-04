@@ -14,7 +14,7 @@
 //!   **id 空间**：entryId（`include:*` 树路径）≠ patch/配置行 id——4.4 后续
 //!   禁用写入的 id 以 `--dump-config` 行 id 为准，本模块不提供写入。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 清单条目：官方内置 bundle 或第三方依赖插件。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -361,6 +361,72 @@ pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 插件操作工具链（ADR-0010）：引擎档优先（engines/bin 的 node shim + dsh
+/// 全局启动器，boot 引导产物），引擎未就绪回退系统探测。引擎就绪后系统
+/// 安装不再是前置条件；P3-b boot 接线落地前引擎恒空，行为等价于旧系统档。
+#[derive(Debug)]
+enum DshToolchain {
+    /// 引擎档：dsh 启动器直接执行（node/pnpm 经 PATH 解析，engines/bin 前置）。
+    Engine { node_bin: PathBuf, dsh_bin: PathBuf },
+    /// 系统档：node 前缀执行 dsh 的 lib/bin.js。
+    System { node_bin: PathBuf, bin_js: PathBuf },
+}
+
+fn resolve_toolchain(data_dir: &Path, path_env: &str) -> Result<DshToolchain, String> {
+    // 引擎档要求 node 与 dsh 双全：半就绪（boot 中断）不做混搭，整体走回退。
+    if let (Some(node_bin), Some(dsh_bin)) = (
+        crate::engines::engine_node_bin(data_dir),
+        crate::engines::engine_dsh_bin(data_dir),
+    ) {
+        return Ok(DshToolchain::Engine { node_bin, dsh_bin });
+    }
+    let node = crate::resolve::detect_system_node(path_env).ok_or(
+        "未检出可用 node（引擎未就绪且系统无 Node）——请先启动应用完成引擎引导，或安装 Node.js 后重试",
+    )?;
+    let dsh = crate::resolve::detect_system_dsh(path_env).ok_or(
+        "未检出可用 dsh（引擎未就绪且系统无 dsh）——请先启动应用完成引擎引导，或安装 dsh 后重试",
+    )?;
+    Ok(DshToolchain::System {
+        node_bin: node.bin,
+        bin_js: dsh.bin_js,
+    })
+}
+
+/// 按工具链档执行一次 dsh 转发。系统档先做 pnpm 防御检测（ensure_pnpm），
+/// 可见性基准与本次 spawn 的 PATH 严格同源（dsh_child_path）——否则补齐到
+/// 引擎目录的 pnpm 在 spawn 时不可见，dsh 内部 spawnSync("pnpm") 必败。
+/// 引擎档不再检测：捆绑 pnpm 由 boot 每次重铺，随 engines/bin 前置恒可见。
+fn run_toolchain_forward(
+    toolchain: &DshToolchain,
+    args: &[String],
+    dsh_home: &Path,
+    log_path: &Path,
+    data_dir: &Path,
+) -> Result<crate::profiles::ForwardRun, String> {
+    match toolchain {
+        DshToolchain::Engine { node_bin, dsh_bin } => crate::profiles::run_dsh_forward(
+            dsh_bin,
+            &[],
+            args,
+            dsh_home,
+            log_path,
+            &crate::resolve::dsh_child_path(node_bin, data_dir),
+        ),
+        DshToolchain::System { node_bin, bin_js } => {
+            let child_path = crate::resolve::dsh_child_path(node_bin, data_dir);
+            crate::updates::ensure_pnpm(node_bin, &child_path, data_dir)?;
+            crate::profiles::run_dsh_forward(
+                node_bin,
+                &[bin_js.as_path()],
+                args,
+                dsh_home,
+                log_path,
+                &child_path,
+            )
+        }
+    }
+}
+
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
 pub fn mutate_plugin_blocking(
@@ -383,18 +449,8 @@ pub fn mutate_plugin_blocking(
         ));
     }
     let path_env = crate::resolve::effective_path();
-    let node = crate::resolve::detect_system_node(&path_env)
-        .ok_or("未检出系统 Node（PATH 上无 node）——插件操作需要系统 Node 与 dsh")?;
-    let dsh = crate::resolve::detect_system_dsh(&path_env)
-        .ok_or("未检出系统 dsh（PATH 上无官方安装）——插件操作经 dsh CLI 完成")?;
-    crate::updates::ensure_pnpm(
-        &node.bin,
-        &crate::resolve::path_with_bin(&node.bin, &path_env),
-        data_dir,
-    )?;
-    let run = crate::profiles::run_dsh_plugin(
-        &node.bin,
-        &dsh.bin_js,
+    let run = run_toolchain_forward(
+        &resolve_toolchain(data_dir, &path_env)?,
         &[
             "plugin".to_string(),
             "--profile".to_string(),
@@ -404,6 +460,7 @@ pub fn mutate_plugin_blocking(
         ],
         &home,
         &data_dir.join("plugin-op.log"),
+        data_dir,
     )?;
     let ok = !run.timed_out && run.code == Some(0);
     let detail = if ok {
@@ -487,6 +544,73 @@ mod op_tests {
         );
         // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
         assert!(mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir).is_err());
+    }
+
+    #[test]
+    fn toolchain_prefers_engine_when_engines_ready() {
+        // 引擎 bin 内 node/dsh 落位即选引擎档（写全平台命名变体使单测跨平台
+        // 成立）；path_env 故意给死目录——引擎分支不触系统探测的证明
+        let data_dir = std::env::temp_dir().join("dsh-dock-engine-toolchain-test");
+        let _ = std::fs::remove_dir_all(&data_dir);
+        let bin = data_dir.join("engines/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["node", "node.exe", "dsh", "dsh.cmd", "dsh.exe"] {
+            std::fs::write(bin.join(name), "").unwrap();
+        }
+        match resolve_toolchain(&data_dir, "/nonexistent").unwrap() {
+            DshToolchain::Engine { node_bin, dsh_bin } => {
+                assert_eq!(node_bin.parent(), Some(bin.as_path()));
+                assert_eq!(dsh_bin.parent(), Some(bin.as_path()));
+            }
+            DshToolchain::System { .. } => panic!("引擎就绪应选引擎档"),
+        }
+        std::fs::remove_dir_all(&data_dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn toolchain_falls_back_to_system_when_engines_empty() {
+        // 引擎目录缺席（P3-b 前常态）→ 回退系统探测：fixture 同
+        // resolve.rs detects_system_dsh_via_fake_path 的 npm 全局形态
+        use std::os::unix::fs::PermissionsExt;
+        let data_dir = std::env::temp_dir().join("dsh-dock-fallback-toolchain-test");
+        let _ = std::fs::remove_dir_all(&data_dir);
+        let root = data_dir.join("sys-fixture");
+        let bindir = root.join("bin");
+        let pkg = root.join("lib/node_modules/@deepseek-ai/dsh");
+        std::fs::create_dir_all(&bindir).unwrap();
+        std::fs::create_dir_all(pkg.join("lib")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.9.0","engines":{"node":">=22"}}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg.join("lib/bin.js"), "#!/usr/bin/env node\n").unwrap();
+        // is_executable 穿透符号链接看目标权限：bin.js 必须可执行
+        std::fs::set_permissions(
+            pkg.join("lib/bin.js"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(pkg.join("lib/bin.js"), bindir.join("dsh")).unwrap();
+        let node = bindir.join("node");
+        std::fs::write(&node, "#!/bin/sh\necho v24.18.0\n").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        match resolve_toolchain(&data_dir, &bindir.display().to_string()).unwrap() {
+            DshToolchain::System { bin_js, .. } => assert!(bin_js.ends_with("lib/bin.js")),
+            DshToolchain::Engine { .. } => panic!("引擎缺席应回退系统档"),
+        }
+        std::fs::remove_dir_all(&data_dir).ok();
+    }
+
+    #[test]
+    fn toolchain_errors_actionable_when_engine_and_system_both_missing() {
+        // 双缺（引擎未就绪 + PATH 无 node/dsh）：错误文案必须指向引擎引导
+        let data_dir = std::env::temp_dir().join("dsh-dock-noengine-toolchain-test");
+        let _ = std::fs::remove_dir_all(&data_dir);
+        let err = resolve_toolchain(&data_dir, &data_dir.display().to_string()).unwrap_err();
+        assert!(err.contains("引擎未就绪"), "{err}");
     }
 }
 
@@ -573,13 +697,8 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
         return Err(format!("profile「{profile}」尚未初始化"));
     }
     let path_env = crate::resolve::effective_path();
-    let node = crate::resolve::detect_system_node(&path_env)
-        .ok_or("未检出系统 Node——行表查询需要系统 Node 与 dsh")?;
-    let dsh = crate::resolve::detect_system_dsh(&path_env)
-        .ok_or("未检出系统 dsh——行表查询经 dsh CLI 完成")?;
-    let run = crate::profiles::run_dsh_plugin(
-        &node.bin,
-        &dsh.bin_js,
+    let run = run_toolchain_forward(
+        &resolve_toolchain(data_dir, &path_env)?,
         &[
             "--profile".to_string(),
             profile.to_string(),
@@ -587,6 +706,7 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
         ],
         &home,
         &data_dir.join("plugin-rows.log"),
+        data_dir,
     )?;
     if run.timed_out || run.code != Some(0) {
         return Err(format!(
