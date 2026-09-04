@@ -444,19 +444,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release-state.json 2> release-state.err; then
-            is_draft=$(python3 -c 'import json; print(json.load(open("release-state.json"))["draft"])')
-            if [ "$is_draft" != "True" ]; then
+          # /releases/tags/{tag} 对 draft release 一律 404（2026-09-04 实测），
+          # 必须走列表按 tag_name 过滤才能识别草稿；列表按最新在前排序。
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" > releases-all.json
+          state=$(python3 - <<'PY'
+          import json, os
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = [r for r in json.load(open("releases-all.json")) if r["tag_name"] == tag]
+          if not match:
+              print("absent")
+          elif match[0]["draft"]:
+              print("draft")
+          else:
+              print("published")
+          PY
+          )
+          case "$state" in
+            published)
               echo "::error::Release ${GITHUB_REF_NAME} 已公开；拒绝覆盖已发行资产"
               exit 1
-            fi
-            echo "继续已有草稿 Release ${GITHUB_REF_NAME}"
-          elif grep -qE 'HTTP 404|Not Found' release-state.err; then
-            echo "尚无 Release，将创建草稿"
-          else
-            cat release-state.err
-            exit 1
-          fi
+              ;;
+            draft) echo "继续已有草稿 Release ${GITHUB_REF_NAME}" ;;
+            absent) echo "尚无 Release，将创建草稿" ;;
+          esac
 
       # 草稿先吸收安装器和签名，generator 可据 API 资产清单断言每个 updater 目标都
       # 有对应二进制。draft 的临时 URL 不会写入 feed，脚本会构造正式 tag URL。
@@ -478,7 +489,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release-assets.json
+          # 同上：draft 不能走 /releases/tags/{tag}（404），列表过滤取本 tag
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" > releases-all.json
+          python3 - <<'PY'
+          import json, os
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = [r for r in json.load(open("releases-all.json")) if r["tag_name"] == tag]
+          if not match:
+              raise SystemExit(f"未找到 tag {tag} 对应的 Release（含草稿）")
+          json.dump(match[0], open("release-assets.json", "w"))
+          PY
 
       - name: Generate and validate latest.json
         shell: bash
