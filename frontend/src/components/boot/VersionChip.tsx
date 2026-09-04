@@ -40,17 +40,17 @@ export function VersionChip() {
     clientMsg = t.selector.chipClientUpdatingRun
 
   return (
-    <div className="inline-flex max-w-[320px] items-center gap-2 rounded-full border border-line bg-panel/90 px-3 py-1 font-mono text-[11px] text-dim shadow-xs backdrop-blur-xs whitespace-nowrap">
+    <div className="inline-flex max-w-[340px] items-center gap-2 rounded-full border border-line/80 bg-panel/90 px-3 py-1 font-mono text-[11px] text-dim shadow-2xs backdrop-blur-md transition-all hover:border-brand/30 hover:text-ink whitespace-nowrap">
       <span
-        className={`size-2 shrink-0 rounded-full transition-colors ${
+        className={`size-2 shrink-0 rounded-full transition-all ${
           dot === "ok"
-            ? "bg-ok ring-2 ring-ok/20"
+            ? "bg-ok ring-2 ring-ok/25"
             : dot === "new"
-              ? "animate-pulse bg-warn ring-2 ring-warn/25"
-              : "bg-faint"
+              ? "animate-pulse bg-warn ring-2 ring-warn/30"
+              : "bg-faint/60"
         }`}
       />
-      <span className="truncate font-medium text-ink/85">{text}</span>
+      <span className="truncate font-medium text-ink/90">{text}</span>
       {clientMsg && (
         <span className="truncate border-l border-line pl-2 font-medium text-warn">
           {clientMsg}

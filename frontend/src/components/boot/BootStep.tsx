@@ -11,12 +11,16 @@ export function BootStep({
   hint,
   detail,
   status,
+  isFirst = false,
+  isLast = false,
 }: {
   no: string
   name: string
   hint: string
   detail?: string
   status: BootStepState
+  isFirst?: boolean
+  isLast?: boolean
 }) {
   const isDone = status === "done"
   const isRunning = status === "running"
@@ -25,26 +29,44 @@ export function BootStep({
   return (
     <motion.div
       layout="position"
-      className={`group flex items-start gap-3.5 px-3 py-2.5 rounded-lg transition-colors ${
-        isRunning ? "bg-wash/60" : "hover:bg-line-soft/30"
+      className={`group relative flex items-start gap-3.5 rounded-xl px-3 py-2.5 transition-all ${
+        isRunning ? "bg-wash/70 shadow-2xs" : "hover:bg-line-soft/40"
       }`}
     >
-      {/* 序号 / 状态指示器 */}
+      {/* 竖向流水线导轨与状态指示器 */}
       <div className="relative mt-0.5 flex size-6 shrink-0 items-center justify-center">
+        {/* 顶部连接线 */}
+        {!isFirst && (
+          <div
+            className={`absolute -top-3 left-1/2 -translate-x-1/2 w-0.5 h-3 transition-colors duration-300 ${
+              isDone || isRunning ? "bg-ok/40" : "bg-line"
+            }`}
+          />
+        )}
+        {/* 底部连接线 */}
+        {!isLast && (
+          <div
+            className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-0.5 h-3 transition-colors duration-300 ${
+              isDone ? "bg-ok/40" : isRunning ? "bg-brand/40" : "bg-line"
+            }`}
+          />
+        )}
+
+        {/* 状态节点 */}
         {isDone ? (
-          <div className="flex size-6 items-center justify-center rounded-full border border-ok/30 bg-ok-soft text-ok shadow-xs">
+          <div className="relative z-1 flex size-6 items-center justify-center rounded-full border border-ok/30 bg-ok-soft text-ok shadow-2xs">
             <Check className="size-3.5" strokeWidth={2.5} />
           </div>
         ) : isRunning ? (
-          <div className="relative flex size-6 items-center justify-center rounded-full bg-brand text-white shadow-[0_0_12px_rgba(65,118,230,0.4)] ring-2 ring-brand/25">
+          <div className="relative z-1 flex size-6 items-center justify-center rounded-full bg-brand text-white shadow-[0_0_12px_rgba(65,118,230,0.45)] ring-3 ring-brand/20">
             <Loader2 className="size-3.5 animate-spin" />
           </div>
         ) : isError ? (
-          <div className="flex size-6 items-center justify-center rounded-full border border-warn/30 bg-warn-soft text-warn">
+          <div className="relative z-1 flex size-6 items-center justify-center rounded-full border border-warn/30 bg-warn-soft text-warn shadow-2xs">
             <AlertCircle className="size-3.5" />
           </div>
         ) : (
-          <div className="flex size-6 items-center justify-center rounded-full border border-line bg-line-soft/60 font-mono text-[10px] font-medium text-faint tabular-nums">
+          <div className="relative z-1 flex size-6 items-center justify-center rounded-full border border-line bg-panel font-mono text-[10px] font-semibold text-faint tabular-nums shadow-2xs">
             {no}
           </div>
         )}
@@ -58,25 +80,25 @@ export function BootStep({
               isRunning
                 ? "font-semibold text-ink"
                 : isError
-                  ? "font-medium text-warn"
+                  ? "font-semibold text-warn"
                   : isDone
                     ? "font-medium text-ink/80"
-                    : "font-normal text-faint"
+                    : "font-normal text-dim/70"
             }`}
           >
             {name}
           </span>
           {isRunning && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-1.5 py-0.2 text-[10px] font-medium text-brand">
+            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.2 font-mono text-[10px] font-medium text-brand">
               <span className="size-1 animate-pulse rounded-full bg-brand" />
-              执行中
+              运行中
             </span>
           )}
         </div>
 
         <div className="mt-1">
           {detail ? (
-            <span className="inline-block rounded border border-brand/20 bg-panel px-1.5 py-0.5 font-mono text-[11px] text-dim shadow-2xs">
+            <span className="inline-block max-w-full truncate rounded-md border border-brand/20 bg-panel px-2 py-0.5 font-mono text-[11px] text-dim shadow-2xs">
               {detail}
             </span>
           ) : (

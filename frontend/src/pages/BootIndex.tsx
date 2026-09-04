@@ -118,11 +118,15 @@ export function BootIndex() {
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
       {/* 顶部环境渐变光晕 */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(65,118,230,0.12),transparent_70%)]" />
 
-      {/* 顶栏：准备阶段极简（方案 b），就绪后显示品牌与控制中心 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
-        <div data-tauri-drag-region className="flex-1" />
+      {/* 顶栏：轻量工作台徽标 + 版本芯片 + WSL 切换 + 控制中心入口 */}
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/75 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
+        <div data-tauri-drag-region className="flex flex-1 items-center gap-2 select-none">
+          <span className="flex size-2 rounded-full bg-brand ring-4 ring-brand/10" />
+          <span className="font-mono text-xs font-semibold tracking-wider text-ink/90">DSH DOCK</span>
+          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">DESKTOP</span>
+        </div>
 
         <div className="flex items-center gap-2.5">
           {maxStepSeen >= 4 && (
@@ -177,25 +181,38 @@ export function BootIndex() {
           {!shownError && (
             <motion.section
               key="boot-hero"
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
+              exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
               className="flex w-full max-w-xl flex-col items-center text-center"
             >
-              <div className="relative mb-2">
-                <div className="absolute -inset-2 rounded-2xl bg-brand/10 blur-xl" />
-                <Emblem size={56} />
+              <div className="relative mb-3 flex items-center justify-center">
+                <div className="absolute -inset-4 rounded-3xl bg-brand/12 blur-xl transition-all" />
+                <div className="absolute -inset-1 rounded-2xl bg-gradient-to-b from-brand/15 to-transparent blur-xs" />
+                <Emblem size={60} />
               </div>
 
-              <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">
+              <motion.h1
+                key={headline}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+                className="mt-2 text-2xl font-bold tracking-tight text-ink"
+              >
                 {headline}
-              </h1>
+              </motion.h1>
 
               {subline && (
-                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-dim">
+                <motion.p
+                  key={subline}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-dim"
+                >
                   {subline}
-                </p>
+                </motion.p>
               )}
 
               {showPulse && (
@@ -213,7 +230,7 @@ export function BootIndex() {
           )}
         </AnimatePresence>
 
-        {/* 启动详情：时间线 + 内嵌错误区 */}
+        {/* 启动控制台：时间线 + 内嵌错误区 */}
         <section className="mt-7 w-full max-w-xl">
           <BootTimeline />
           {shownError && (

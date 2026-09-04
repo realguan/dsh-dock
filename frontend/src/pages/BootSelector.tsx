@@ -88,8 +88,12 @@ export function BootSelector() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
 
       {/* 顶栏：wordmark + 版本芯片 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/70 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
-        <div data-tauri-drag-region className="flex-1" />
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/75 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
+        <div data-tauri-drag-region className="flex flex-1 items-center gap-2 select-none">
+          <span className="flex size-2 rounded-full bg-brand ring-4 ring-brand/10" />
+          <span className="font-mono text-xs font-semibold tracking-wider text-ink/90">DSH DOCK</span>
+          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">SELECTOR</span>
+        </div>
         <div className="flex items-center gap-2.5">
           <button
             type="button"
