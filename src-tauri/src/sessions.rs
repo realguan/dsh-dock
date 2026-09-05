@@ -437,6 +437,11 @@ mod tests {
 {"type":"turn/end","seq":5,"time":6,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
+        // 模拟静止会话：修复脚本的活跃检测（10s 内 mtime 更新 = 活跃）会拒绝
+        // 刚写入的文件，这里把 mtime 拨回过去以测试真实修复路径。
+        let f = fs::File::open(&target_file).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
 
         // 修复链 node 来源 = 引擎档唯一：预置假体 shim（转发 PATH 上的真 node）
         let engine_bin = temp.join("engines/bin");
@@ -523,6 +528,10 @@ mod tests {
 {"type":"turn/end","seq":2,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, healthy_data).unwrap();
+        // 同活跃检测语义：拨回 mtime 模拟静止会话，避免误拒。
+        let f = fs::File::open(&target_file).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
 
         let engine_bin = temp.join("engines/bin");
         std::fs::create_dir_all(&engine_bin).unwrap();

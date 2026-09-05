@@ -297,6 +297,25 @@ export async function repairSessionFile(filePath) {
     return { ok: false, changed: false, message: `❌ 文件不存在: ${filePath}` }
   }
 
+  // 活跃会话预防：文件在极短时间内被修改（<10s）视为仍被 dsh 写入中，
+  // 直接明确拒绝而非尝试修复（修复必然被下一次 flush 覆盖 → 假成功）。
+  // dsh 的 flush 间隔在秒级（实测 828cfec4 多次在数秒内重写），10s 阈值
+  // 足以覆盖注入竞态窗口，同时静止文件不受影响。
+  // （2026-09-05 实测：对活跃会话修复后 30s 内被 dsh 重写覆盖。）
+  try {
+    const now = Date.now()
+    const st = statSync(filePath)
+    if (st.size > 0 && now - st.mtimeMs < 10000) {
+      return {
+        ok: false,
+        changed: false,
+        message: `⚠️ 会话 ${filePath.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''} 仍被 dsh 写入（活跃会话），为避免修复被覆盖，请稍候片刻再修复。`,
+      }
+    }
+  } catch {
+    /* stat 失败走正常流程 */
+  }
+
   const isZstd = filePath.endsWith('.zstd')
   let original
   try {
@@ -387,21 +406,39 @@ export async function repairSessionFile(filePath) {
   renameSync(tmpPath, filePath)
 
   // 写后竞态复查：确认磁盘上的文件正是本次写入的字节（而非期间被其他进程
-  // 改写——活跃会话会在修复期间继续追加，此时按原始字节回滚并重试一次）。
+  // 改写——活跃会话会在修复期间继续追加）。
+  // 策略（2026-09-05 实测脆断后修订）：竞态 = 立即停止并返回失败，**保留现场**
+  // （不回滚到原始损坏数据——回滚会破坏已生效的修复，随后重试又可能与写入
+  // 竞争，最终文件仍是损坏态但脚本报告成功，即用户看到的「点了修复没修复」）。
+  // 双重视角：① 磁盘字节与写入字节比对；② stat 修订（size+mtime+ino）与
+  // 写入前后比对——文件系统的 stat 比内容读更有机会发现并发写入。
   let diskBytes
+  let diskStat
   try {
     diskBytes = readFileSync(filePath)
+    diskStat = statSync(filePath)
   } catch {
     diskBytes = null
+    diskStat = null
   }
-  if (diskBytes && !diskBytes.equals(repairedBytes)) {
-    // 文件在修复期间被改动：回滚到原始字节后整体重试。
-    writeAtomic(filePath, original.buffer)
-    const retry = await repairSessionFile(filePath)
-    if (!retry.ok) {
-      return { ok: false, changed: false, message: `会话文件在修复期间被其他进程写入（可能为活跃会话），重试仍失败：${retry.message}` }
+  const wroteStat = (() => {
+    try {
+      return statSync(filePath)
+    } catch {
+      return null
     }
-    return retry
+  })()
+  const statChanged =
+    diskStat && wroteStat &&
+    (diskStat.size !== wroteStat.size ||
+      diskStat.mtimeMs !== wroteStat.mtimeMs ||
+      diskStat.ino !== wroteStat.ino)
+  if ((diskBytes && !diskBytes.equals(repairedBytes)) || statChanged) {
+    return {
+      ok: false,
+      changed: false,
+      message: `⚠️ 会话 ${sessionId} 修复期间文件被其他进程写入（可能为活跃会话），本次未生效；文件已保留为修复后的状态，请稍后在会话静止时再次修复。`,
+    }
   }
 
   return {
