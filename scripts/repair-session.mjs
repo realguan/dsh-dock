@@ -110,6 +110,57 @@ function isSessionHeader(value) {
 }
 
 /**
+ * 校验 sourceEventSeqs 出处链（对齐 dsh 加载器 expandProvenanceFromStorage /
+ * decodeSeqRanges 语义）：
+ * - 纯数字列表**允许乱序**（dsh 语义：数字条目本身不要求递增——加载器只
+ *   在出现 [start,end] 区间时才强制整体严格递增）；
+ * - 含区间对 [start,end] 时：start <= end 且展开后**整体**严格递增；
+ * - 条目总数不得超过 record.seq（maxEntries 上限）——违反 = 出处链损坏
+ *   （2026-09-05 实测：旧版重编号后 sourceEventSeqs 未同步，展开条目数
+ *   远超新 seq，dsh 打开即 `unparsable committed event`）。
+ */
+function checkSourceEventSeqs(record) {
+  const raw = record.sourceEventSeqs
+  if (raw === undefined) return
+  if (!Array.isArray(raw)) throw new Error('sourceEventSeqs must be an array')
+  const maxEntries = Number.isSafeInteger(record.seq) && record.seq >= 0 ? record.seq : Number.MAX_SAFE_INTEGER
+  let count = 0
+  let hasRange = false
+  for (const entry of raw) {
+    if (typeof entry === 'number') {
+      if (!Number.isSafeInteger(entry) || entry < 0) throw new Error('sourceEventSeqs must contain non-negative safe integers')
+      count += 1
+    } else if (Array.isArray(entry) && entry.length === 2) {
+      const [start, end] = entry
+      if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(end) || end < start) {
+        throw new Error('sourceEventSeqs ranges require valid start <= end')
+      }
+      hasRange = true
+      count += end - start + 1
+    } else {
+      throw new Error('sourceEventSeqs entries must be numbers or [start, end] pairs')
+    }
+  }
+  if (count > maxEntries) {
+    throw new Error(`sourceEventSeqs exceeds its event sequence (expanded ${count} > seq ${maxEntries})`)
+  }
+  if (hasRange) {
+    // 仅在含区间对时，要求展开后的整体序列严格递增（与 decodeSeqRanges 一致）
+    let prev = -1
+    for (const entry of raw) {
+      if (typeof entry === 'number') {
+        if (entry <= prev) throw new Error('sourceEventSeqs must be strictly increasing')
+        prev = entry
+      } else {
+        const [start, end] = entry
+        if (start <= prev) throw new Error('sourceEventSeqs must be strictly increasing')
+        prev = end
+      }
+    }
+  }
+}
+
+/**
  * 计算一条存储记录展开后的事件 seq 区间 [lo, hi]。
  * 与 dsh-session chunk-rows validateRow/expandRow 的判据对齐（envelope 精确键、
  * payload 为字符串数组、dt 为安全整数且长度 = payload-1）。
@@ -121,6 +172,7 @@ function expandSpan(record) {
   if (!isRow) {
     const seq = record?.seq
     if (typeof seq !== 'number') return null // 无 seq 事件：加载器将其视作截断点（缺失类）
+    checkSourceEventSeqs(record)
     return { lo: seq, hi: seq }
   }
 
@@ -424,14 +476,34 @@ export async function repairSessionFile(filePath) {
   }
 
   const sessionId = JSON.parse(headerLine).id
-  const decision = analyzeAndRepair(records)
+  let decision = analyzeAndRepair(records)
 
   if (decision.kind === 'healthy') {
     return { ok: true, changed: false, message: `✅ 会话 ${sessionId} 序列正常，无需修复。` }
   }
 
   if (decision.kind === 'unrepairable') {
-    return { ok: false, changed: false, message: `❌ 会话 ${sessionId} 无法安全修复：${decision.detail}` }
+    // 第 4 类损坏（2026-09-05 实测）：sourceEventSeqs 出处链损坏（旧版重编号
+    // 遗留——seq 已连续但 sourceEventSeqs 指向旧 seq，展开条目数超限/乱序，
+    // dsh expandProvenanceFromStorage 抛 `unparsable committed event`）。
+    // 剥离该字段可让记录原样通过加载器（仅失去溯源元数据，不影响内容）。
+    const stripped = records.map((r) => {
+      if (r && 'sourceEventSeqs' in r) {
+        const { sourceEventSeqs, ...rest } = r
+        return rest
+      }
+      return r
+    })
+    const retry = analyzeAndRepair(stripped)
+    if (retry.kind === 'healthy' || retry.kind === 'repaired' || retry.kind === 'truncated') {
+      decision = {
+        kind: retry.kind,
+        records: retry.records ?? stripped,
+        detail: `sourceEventSeqs 出处链损坏（可能为旧版重编号遗留），已剥离该元数据字段（内容与 seq 原样保留）：${decision.detail}`,
+      }
+    } else {
+      return { ok: false, changed: false, message: `❌ 会话 ${sessionId} 无法安全修复：${decision.detail}` }
+    }
   }
 
   // 修复路径：备份 → 写回 → 加载器语义校验 → 失败回滚。
