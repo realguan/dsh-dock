@@ -232,7 +232,7 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
     if let Ok(health_map) = scan_health_via_script(home, data_dir) {
         for item in &mut items {
             if let Some(h) = health_map.get(&item.file_path) {
-                item.title.clone_from(&h.title);
+                item.title = h.title.clone().unwrap_or_default();
                 item.status = match h.status.as_str() {
                     "healthy" => SessionStatus::Healthy,
                     "needs_repair" => SessionStatus::NeedsRepair,
@@ -247,12 +247,15 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
 }
 
 /// `--scan` 健康检查的 JSON 行（脚本 `scanSessionHealth` 的结构）。
+/// title/detail 在脚本侧可为 null（无标题/无异常），必须用 Option 接收——
+/// 否则任一 null 字段会让整批反序列化失败（2026-09-05 实测：
+/// 一个 title:null 即致全列表降级 Unknown）。
 #[derive(Debug, Clone, Deserialize)]
 struct ScriptHealthEntry {
     path: String,
     status: String,
     #[serde(default)]
-    title: String,
+    title: Option<String>,
     #[serde(default)]
     detail: Option<String>,
 }
@@ -400,6 +403,22 @@ pub fn remove_session(home: &Path, session_path_str: &str) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_health_parses_null_title_and_detail() {
+        // 回归（2026-09-05）：脚本对无标题/无异常会话输出 title/detail 为 null，
+        // 反序列化必须接受 Option，否则任一会话致整批失败并让列表降级 Unknown。
+        let fixture = r#"[
+          {"path":"/a/session.jsonl.zstd","status":"healthy","title":null,"detail":null},
+          {"path":"/b/session.jsonl.zstd","status":"needs_repair","title":"有标题","detail":"重放重叠"}
+        ]"#;
+        let entries: Vec<ScriptHealthEntry> = serde_json::from_str(fixture).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].title.is_none());
+        assert_eq!(entries[1].title.as_deref(), Some("有标题"));
+        assert!(entries[0].detail.is_none());
+        assert_eq!(entries[1].detail.as_deref(), Some("重放重叠"));
+    }
 
     #[test]
     fn decode_project_dir_extracts_basename() {
