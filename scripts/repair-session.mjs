@@ -327,14 +327,16 @@ export function scanSessionHealth(filePath) {
     return { status: 'unknown', title: '', eventCount: 0, active, detail: `解压失败：${e.message}` }
   }
 
-  // 标题提取：首个 session/title 事件（跳过 sourceEventSeqs 修饰的镜像行）
+  // 标题提取：会话标题以**最新** `session/title` 事件为准（dsh 标题体系：
+  // 首条 user 消息生成初稿，LLM/分析器随后生成最终标题——projcache 记录
+  // 的是最终值；取首个会与 dsh Web 侧边栏不一致，2026-09-05 实测 8650）。
+  // 跳过 sourceEventSeqs 修饰的镜像行（重复的检索快照）。
   let title = ''
   for (const r of records) {
     if (r?.type === 'session/title' && !('sourceEventSeqs' in r)) {
       const t = r?.data?.title
       if (typeof t === 'string' && t.trim()) {
-        title = t.trim()
-        break
+        title = t.trim() // 持续覆盖 → 最终取到最后一个
       }
     }
   }
