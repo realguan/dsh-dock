@@ -32,6 +32,16 @@
 
 ## 三、记录
 
+### 2026-09-05 会话维护 UI/UX 重构 · 健康检查 + 会话名称 + 日志时区修复 —— guan（AI 协作）
+
+- 变更（commit 9935cdd）：
+  1. **健康检查**：`repair-session.mjs` 新增 `--scan` 只读模式（JSON 输出 healthy/needs_repair/unknown + 标题），Rust `scan_sessions` 经引擎 node 调用填充 status/title/healthDetail（node 缺失降级 Unknown）；`SessionItem` 新增 `title`/`healthDetail` 字段。
+  2. **会话名称**：标题取自 dsh `session/title` 事件，列表以会话名称为主视觉，ID 为等宽辅助（可复制）。
+  3. **SessionManager UI/UX 重构（会话探针室风格）**：健康状态色点徽标；修复按钮仅非健康会话显示；全局「一键全量体检与自愈」仅异常时可用（脚本对健康 no-op）；状态筛选（全部/仅看异常带计数）；非健康行琥珀色脉冲边条 + 异常原因。
+  4. **日志时区修复**：`localizeLogTimestamp`（lib/format.ts）ISO8601 UTC → 本地时区（兼容 ANSI 转义/跨日），LogViewerPane 接入；+4 单测。
+- 验证：cargo test 151 全绿 + fmt + clippy；前端 typecheck + oxlint + 104 单测；真实 `--scan` 9 会话（8 健康 1 需修复）。
+- 注：同批 `lib.rs` 含先前在途 boot 改动一并提交（编译依赖）。
+
 ### 2026-09-04 会话自愈重写 · 与 dsh 加载器语义对齐的重放重叠去重修复 —— guan（AI 协作）
 
 - 触发：会话 `session-1214c12f`（用户会话）损坏，一键全量体检与自愈、单会话一键修复均无效（假成功）。
