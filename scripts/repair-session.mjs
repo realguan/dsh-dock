@@ -274,6 +274,74 @@ function readStable(filePath) {
   throw new Error('文件在读取期间持续被写入（活跃会话），无法稳定读取')
 }
 
+/**
+ * 只读健康检查（不写回、不备份）：返回 { status, title, eventCount, detail }。
+ * status ∈ healthy | needs_repair | unknown。
+ * - healthy：seq 严格连续（加载器语义）；
+ * - needs_repair：存在可安全修复的重放重叠/缺口（分析器判定 repaired/truncated）；
+ * - unknown：无法解析/不可安全修复（unrepairable）/读取失败。
+ * 标题取自 `session/title` 事件（dsh 会话摘要，含 sourceEventSeqs 行不取，
+ * 取首个非 sourceEventSeqs 的 title 事件）。
+ */
+export function scanSessionHealth(filePath) {
+  const isZstd = filePath.endsWith('.zstd')
+  let buffer
+  let st = null
+  try {
+    const stable = readStable(filePath)
+    buffer = stable.buffer
+    st = stable.before
+  } catch (e) {
+    return { status: 'unknown', title: '', eventCount: 0, detail: `读取失败：${e.message}` }
+  }
+  if (buffer.length === 0) return { status: 'unknown', title: '', eventCount: 0, detail: '文件为空' }
+
+  let headerLine
+  let records
+  try {
+    const rawText = isZstd ? decompressZstd(buffer).toString('utf8') : buffer.toString('utf8')
+    const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (lines.length === 0) return { status: 'unknown', title: '', eventCount: 0, detail: '文件为空' }
+    headerLine = lines[0]
+    if (!isSessionHeader(JSON.parse(headerLine))) {
+      return { status: 'unknown', title: '', eventCount: 0, detail: 'header 非法' }
+    }
+    records = []
+    for (let i = 1; i < lines.length; i++) {
+      try {
+        records.push(JSON.parse(lines[i]))
+      } catch (e) {
+        return { status: 'unknown', title: '', eventCount: 0, detail: `第 ${i + 1} 行 JSON 解析失败` }
+      }
+    }
+  } catch (e) {
+    return { status: 'unknown', title: '', eventCount: 0, detail: `解压失败：${e.message}` }
+  }
+
+  // 标题提取：首个 session/title 事件（跳过 sourceEventSeqs 修饰的镜像行）
+  let title = ''
+  for (const r of records) {
+    if (r?.type === 'session/title' && !('sourceEventSeqs' in r)) {
+      const t = r?.data?.title
+      if (typeof t === 'string' && t.trim()) {
+        title = t.trim()
+        break
+      }
+    }
+  }
+
+  // 健康判定：与修复分析同一套判定
+  const decision = analyzeAndRepair(records)
+  if (decision.kind === 'healthy') {
+    return { status: 'healthy', title, eventCount: 0, detail: '' }
+  }
+  if (decision.kind === 'repaired' || decision.kind === 'truncated') {
+    return { status: 'needs_repair', title, eventCount: 0, detail: decision.detail }
+  }
+  return { status: 'unknown', title, eventCount: 0, detail: decision.detail }
+}
+
+
 /** 原子替换：写临时文件 → 覆盖（Windows 先删目标，POSIX rename 原子）。 */
 function writeAtomic(filePath, bytes) {
   const tmp = `${filePath}.dsh-repair-tmp`
@@ -475,17 +543,34 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
 用法:
   node scripts/repair-session.mjs <sessionId 或 路径>
   node scripts/repair-session.mjs --all
+  node scripts/repair-session.mjs --scan   # 只读扫描，输出 JSON（供壳端健康检查与标题提取）
 
 示例:
   node scripts/repair-session.mjs session-af85a2e7-7c2e-44c5-a498-afeb3ba79297
   node scripts/repair-session.mjs ~/.dsh/sessions/--my-project--/session-xxx/session.jsonl.zstd
   node scripts/repair-session.mjs --all
+  node scripts/repair-session.mjs --scan
 `)
     process.exit(0)
   }
 
   const dshHome = getDshHome()
   const sessionsDir = join(dshHome, 'sessions')
+
+  if (args[0] === '--scan') {
+    const files = await findSessionFiles(sessionsDir)
+    const out = files.map((file) => {
+      const health = scanSessionHealth(file)
+      return {
+        path: file,
+        status: health.status,
+        title: health.title || null,
+        detail: health.detail || null,
+      }
+    })
+    console.log(JSON.stringify(out))
+    process.exit(0)
+  }
 
   if (args[0] === '--all') {
     console.log(`🚀 开始全量扫描会话目录: ${sessionsDir}`)

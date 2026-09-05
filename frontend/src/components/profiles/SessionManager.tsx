@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { motion } from "framer-motion"
 import {
   AlertTriangle,
   Archive,
   Check,
   ChevronDown,
   ChevronRight,
+  Clipboard,
   Clock,
   Copy,
   ExternalLink,
   FileCode,
   Folder,
   HardDrive,
+  HelpCircle,
   Layers,
   List,
   LoaderCircle,
@@ -46,6 +49,38 @@ function formatRelativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString()
 }
 
+/** 会话展示名：标题优先；无标题回退「未命名会话」（ID 由次行承载）。 */
+function sessionDisplayName(s: SessionItem, noTitle: string): string {
+  return s.title?.trim() ? s.title.trim() : noTitle
+}
+
+/** 状态视觉映射：色点 + 徽标 + 描述。 */
+function statusMeta(
+  status: SessionItem["status"],
+  t: ReturnType<typeof useI18n>["t"],
+): { dot: string; badge: string; desc: string } {
+  switch (status) {
+    case "healthy":
+      return {
+        dot: "bg-emerald-500",
+        badge: `${t.sessions.statusHealthy}`,
+        desc: t.sessions.statusHealthyDesc,
+      }
+    case "needs_repair":
+      return {
+        dot: "bg-amber-500 animate-pulse",
+        badge: t.sessions.statusNeedsRepair,
+        desc: t.sessions.statusNeedsRepairDesc,
+      }
+    default:
+      return {
+        dot: "bg-faint/50",
+        badge: t.sessions.statusUnknown,
+        desc: t.sessions.statusUnknownDesc,
+      }
+  }
+}
+
 export function SessionManager({
   refreshKey,
   onNotice,
@@ -58,6 +93,7 @@ export function SessionManager({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState<"all" | "needs_repair">("all")
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
@@ -95,7 +131,7 @@ export function SessionManager({
       projects.add(s.projectDirRaw)
       if (s.status === "needs_repair") {
         needsRepair++
-      } else {
+      } else if (s.status === "healthy") {
         healthy++
       }
     }
@@ -112,7 +148,7 @@ export function SessionManager({
     try {
       const res = await api.repairSession(session.filePath)
       if (res.success) {
-        onNotice?.(t.sessions.repairSuccess(session.id), "ok")
+        onNotice?.(t.sessions.repairSuccess(sessionDisplayName(session, t.sessions.noTitle)), "ok")
         await loadSessions()
       } else {
         onNotice?.(res.message || "修复失败", "warn")
@@ -194,16 +230,19 @@ export function SessionManager({
 
   const filteredSessions = useMemo(() => {
     if (!sessions) return []
-    if (!searchQuery.trim()) return sessions
     const q = searchQuery.toLowerCase().trim()
-    return sessions.filter(
-      (s) =>
+    return sessions.filter((s) => {
+      if (statusFilter === "needs_repair" && s.status !== "needs_repair") return false
+      if (!q) return true
+      return (
+        (s.title ?? "").toLowerCase().includes(q) ||
         s.id.toLowerCase().includes(q) ||
         s.projectName.toLowerCase().includes(q) ||
         s.decodedProjectPath.toLowerCase().includes(q) ||
-        s.projectDirRaw.toLowerCase().includes(q),
-    )
-  }, [sessions, searchQuery])
+        s.projectDirRaw.toLowerCase().includes(q)
+      )
+    })
+  }, [sessions, searchQuery, statusFilter])
 
   // 按工作区项目分组
   const projectGroups = useMemo(() => {
@@ -230,6 +269,167 @@ export function SessionManager({
     return Array.from(map.entries())
   }, [filteredSessions])
 
+  /** 单条会话行（分组/平铺共用）。 */
+  const renderSessionRow = (sess: SessionItem) => {
+    const isBusy = repairingTarget === sess.id
+    const isDeleting = deletingTarget === sess.id
+    const isNeedsRepair = sess.status === "needs_repair"
+    const isHealthy = sess.status === "healthy"
+    const meta = statusMeta(sess.status, t)
+    const displayName = sessionDisplayName(sess, t.sessions.noTitle)
+
+    return (
+      <motion.div
+        key={sess.id}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+        className={`group relative flex flex-col gap-2.5 p-3.5 transition-colors sm:flex-row sm:items-center ${
+          isNeedsRepair
+            ? "bg-amber-500/[0.06] hover:bg-amber-500/[0.10]"
+            : isHealthy
+              ? "hover:bg-line-soft/30"
+              : "hover:bg-line-soft/30"
+        }`}
+      >
+        {/* 非健康左侧脉冲条 */}
+        {isNeedsRepair && (
+          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-amber-500/80 animate-pulse" />
+        )}
+
+        <div className="min-w-0 flex-1 space-y-1">
+          {/* 首行：状态徽标 + 会话名称（标题为主） */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+                isNeedsRepair
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  : isHealthy
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "bg-line text-dim"
+              }`}
+              title={meta.desc}
+            >
+              <span className={`size-1.5 rounded-full ${meta.dot}`} />
+              {meta.badge}
+            </span>
+
+            <span
+              className="truncate text-[13px] font-semibold text-ink"
+              title={isNeedsRepair ? displayName : displayName}
+            >
+              {displayName}
+            </span>
+
+            {sess.hasBackup && (
+              <span className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Archive className="size-2.5" />
+                {t.sessions.backupTag}
+              </span>
+            )}
+          </div>
+
+          {/* 次行：ID（等宽可复制）+ 元信息 */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-faint">
+            <button
+              type="button"
+              onClick={() => handleCopyId(sess.id)}
+              title="复制会话 ID"
+              className="inline-flex items-center gap-1 font-mono hover:text-ink transition-colors"
+            >
+              {sess.id.slice(0, 18)}…
+              {copiedId === sess.id ? (
+                <Check className="size-3 text-emerald-500" />
+              ) : (
+                <Clipboard className="size-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
+              )}
+            </button>
+
+            <span className="inline-flex items-center gap-1">
+              <Clock className="size-3" />
+              {formatRelativeTime(sess.updatedAt)}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <HardDrive className="size-3" />
+              {formatBytes(sess.sizeBytes)}
+            </span>
+            <span className="hidden items-center gap-1 sm:inline-flex">
+              <Folder className="size-3" />
+              <span className="max-w-[220px] truncate font-mono">{sess.projectName}</span>
+            </span>
+          </div>
+
+          {/* 异常详情（非健康时展示原因） */}
+          {isNeedsRepair && sess.healthDetail && (
+            <p className="line-clamp-1 text-[11px] text-amber-600/70 dark:text-amber-400/70">
+              {sess.healthDetail}
+            </p>
+          )}
+        </div>
+
+        {/* 操作区：修复按钮仅非健康显示；健康显示状态描述 */}
+        <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
+          {isNeedsRepair ? (
+            <Button
+              size="sm"
+              onClick={() => handleRepairSingle(sess)}
+              disabled={isBusy || batchRepairing || isDeleting}
+              className="h-7 gap-1 bg-amber-500 text-white hover:bg-amber-500/90 px-2.5 text-xs"
+            >
+              {isBusy ? (
+                <LoaderCircle className="size-3 animate-spin" />
+              ) : (
+                <Wrench className="size-3" />
+              )}
+              <span>{t.sessions.repairBtn}</span>
+            </Button>
+          ) : (
+            <span
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-line bg-panel px-2.5 text-[11px] text-dim"
+              title={meta.desc}
+            >
+              {isHealthy ? (
+                <ShieldCheck className="size-3 text-emerald-500/80" />
+              ) : (
+                <HelpCircle className="size-3 text-faint" />
+              )}
+              {isHealthy ? t.sessions.statusHealthy : t.sessions.statusUnknown}
+            </span>
+          )}
+
+          <Button
+            size="sm"
+            variant="outline"
+            title="复制会话文件完整路径"
+            onClick={() => handleCopyPath(sess.filePath)}
+            className="size-7 p-0"
+          >
+            {copiedPath === sess.filePath ? (
+              <Check className="size-3 text-emerald-500" />
+            ) : (
+              <Copy className="size-3 text-faint" />
+            )}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            title={t.sessions.deleteBtn}
+            onClick={() => handleDeleteSingle(sess)}
+            disabled={isBusy || batchRepairing || isDeleting}
+            className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
+          >
+            {isDeleting ? (
+              <LoaderCircle className="size-3 animate-spin text-rose-500" />
+            ) : (
+              <Trash2 className="size-3 text-faint" />
+            )}
+          </Button>
+        </div>
+      </motion.div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -246,9 +446,7 @@ export function SessionManager({
               <ShieldCheck className="size-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-ink">
-                {t.sessions.title}
-              </h3>
+              <h3 className="text-sm font-bold text-ink">{t.sessions.title}</h3>
               <p className="text-xs text-faint">{t.sessions.subtitle}</p>
             </div>
           </div>
@@ -265,11 +463,17 @@ export function SessionManager({
               <span>{t.sessions.scanBtn}</span>
             </Button>
 
+            {/* 全局修复：仅存在异常会话时才可点击 */}
             <Button
               size="sm"
               onClick={handleRepairAll}
-              disabled={batchRepairing || loading || !sessions || sessions.length === 0}
-              className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
+              disabled={batchRepairing || loading || !sessions || stats.needsRepair === 0}
+              title={stats.needsRepair === 0 ? t.sessions.repairAllDisabled : t.sessions.repairNeedHint}
+              className={`gap-1.5 text-xs shadow-xs ${
+                stats.needsRepair > 0
+                  ? "bg-amber-500 text-white hover:bg-amber-500/90"
+                  : "bg-brand/80 text-white opacity-55 hover:bg-brand/80 cursor-not-allowed"
+              }`}
             >
               {batchRepairing ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -281,29 +485,31 @@ export function SessionManager({
           </div>
         </div>
 
-        {/* 统计指标 */}
+        {/* 统计指标：健康 / 异常 / 总数 三色探针 */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           <div className="rounded-xl border border-line bg-bg p-3">
             <span className="text-[11px] text-faint">工作区项目数</span>
-            <div className="mt-1 font-mono text-base font-bold text-ink">
-              {stats.projectsCount}
-            </div>
+            <div className="mt-1 font-mono text-base font-bold text-ink">{stats.projectsCount}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
             <span className="text-[11px] text-faint">会话总数</span>
-            <div className="mt-1 font-mono text-base font-bold text-ink">
-              {stats.total}
-            </div>
+            <div className="mt-1 font-mono text-base font-bold text-ink">{stats.total}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400">健康就绪</span>
+            <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              健康就绪
+            </span>
             <div className="mt-1 font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
               {stats.healthy}
             </div>
           </div>
-          <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-[11px] text-amber-500">待修复异常</span>
-            <div className="mt-1 font-mono text-base font-bold text-amber-500">
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
+            <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+              待修复异常
+            </span>
+            <div className="mt-1 font-mono text-base font-bold text-amber-600 dark:text-amber-400">
               {stats.needsRepair}
             </div>
           </div>
@@ -312,7 +518,7 @@ export function SessionManager({
 
       {/* 搜索与视图切换 */}
       <div className="flex flex-wrap items-center justify-between gap-2.5">
-        <div className="relative min-w-[240px] flex-1">
+        <div className="relative min-w-[220px] flex-1">
           <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
           <input
             value={searchQuery}
@@ -322,7 +528,38 @@ export function SessionManager({
           />
         </div>
 
+        {/* 状态筛选：全部 / 仅看异常 */}
         <div className="flex items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setStatusFilter("all")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              statusFilter === "all" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
+            }`}
+          >
+            <Layers className="size-3.5" />
+            <span>{t.sessions.filterAll}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter("needs_repair")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              statusFilter === "needs_repair"
+                ? "bg-panel text-amber-600 dark:text-amber-400 shadow-xs"
+                : "text-dim hover:text-ink"
+            }`}
+          >
+            <AlertTriangle className="size-3.5" />
+            <span>{t.sessions.filterNeedsRepair}</span>
+            {stats.needsRepair > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-[10px] text-amber-600 dark:text-amber-400">
+                {stats.needsRepair}
+              </span>
+            )}
+          </button>
+        </div>
+
+        <div className="hidden items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs sm:flex">
           <button
             type="button"
             onClick={() => setViewMode("grouped")}
@@ -356,11 +593,12 @@ export function SessionManager({
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel py-12 text-center">
           <FileCode className="text-faint size-8" />
           <p className="text-ink mt-2 text-xs font-medium">
-            {searchQuery ? t.sessions.emptyFilter : t.sessions.emptyList}
+            {searchQuery || statusFilter === "needs_repair"
+              ? t.sessions.emptyFilter
+              : t.sessions.emptyList}
           </p>
         </div>
       ) : viewMode === "grouped" ? (
-        /* 分组呈现（优化规整布局） */
         <div className="space-y-3.5">
           {projectGroups.map(([rawKey, group]) => {
             const isCollapsed = collapsedProjects.has(rawKey)
@@ -369,9 +607,7 @@ export function SessionManager({
                 key={rawKey}
                 className="overflow-hidden rounded-2xl border border-line bg-panel shadow-xs transition-colors hover:border-brand/30"
               >
-                {/* 分组头部：规整上下两层设计 */}
                 <div className="border-b border-line bg-line-soft/40 px-4 py-3 space-y-1.5">
-                  {/* 第一行：标题与主要操作 */}
                   <div className="flex items-center justify-between gap-3">
                     <div
                       onClick={() => toggleProjectCollapse(rawKey)}
@@ -403,7 +639,6 @@ export function SessionManager({
                     </Button>
                   </div>
 
-                  {/* 第二行：完整反解工作区路径 */}
                   <div className="pl-6">
                     <span
                       className="font-mono text-[11px] text-faint block truncate"
@@ -414,117 +649,9 @@ export function SessionManager({
                   </div>
                 </div>
 
-                {/* 分组内会话列表 */}
                 {!isCollapsed && (
                   <div className="divide-y divide-line/60">
-                    {group.items.map((sess) => {
-                      const isBusy = repairingTarget === sess.id
-                      const isDeleting = deletingTarget === sess.id
-                      const isNeedsRepair = sess.status === "needs_repair"
-
-                      return (
-                        <div
-                          key={sess.id}
-                          className={`flex flex-col justify-between gap-3 p-3.5 transition-colors sm:flex-row sm:items-center ${
-                            isNeedsRepair
-                              ? "bg-amber-500/5 hover:bg-amber-500/10"
-                              : "hover:bg-line-soft/30"
-                          }`}
-                        >
-                          <div className="min-w-0 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-mono text-xs font-semibold text-ink">
-                                {sess.id}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyId(sess.id)}
-                                title="复制会话 ID"
-                                className="text-faint hover:text-ink rounded p-0.5 transition-colors"
-                              >
-                                {copiedId === sess.id ? (
-                                  <Check className="size-3 text-emerald-500" />
-                                ) : (
-                                  <Copy className="size-3" />
-                                )}
-                              </button>
-
-                              {isNeedsRepair && (
-                                <span className="flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                                  <AlertTriangle className="size-2.5" />
-                                  需自愈
-                                </span>
-                              )}
-
-                              {sess.hasBackup && (
-                                <span className="flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                                  <Archive className="size-2.5" />
-                                  {t.sessions.backupTag}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
-                              <span className="flex items-center gap-1">
-                                <Clock className="size-3" />
-                                {formatRelativeTime(sess.updatedAt)}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <HardDrive className="size-3" />
-                                {formatBytes(sess.sizeBytes)}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* 操作按钮组：图标纠正 */}
-                          <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              title="复制会话文件完整路径"
-                              onClick={() => handleCopyPath(sess.filePath)}
-                              className="size-7 p-0"
-                            >
-                              {copiedPath === sess.filePath ? (
-                                <Check className="size-3 text-emerald-500" />
-                              ) : (
-                                <Copy className="size-3 text-faint" />
-                              )}
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRepairSingle(sess)}
-                              disabled={isBusy || batchRepairing || isDeleting}
-                              className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand"
-                            >
-                              {isBusy ? (
-                                <LoaderCircle className="size-3 animate-spin text-brand" />
-                              ) : (
-                                <Wrench className="size-3 text-dim" />
-                              )}
-                              <span>{t.sessions.repairBtn}</span>
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              title={t.sessions.deleteBtn}
-                              onClick={() => handleDeleteSingle(sess)}
-                              disabled={isBusy || batchRepairing || isDeleting}
-                              className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
-                            >
-                              {isDeleting ? (
-                                <LoaderCircle className="size-3 animate-spin text-rose-500" />
-                              ) : (
-                                <Trash2 className="size-3 text-faint" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {group.items.map((sess) => renderSessionRow(sess))}
                   </div>
                 )}
               </div>
@@ -532,106 +659,8 @@ export function SessionManager({
           })}
         </div>
       ) : (
-        /* 平铺列表呈现 */
         <div className="divide-y divide-line rounded-2xl border border-line bg-panel shadow-xs overflow-hidden">
-          {filteredSessions.map((sess) => {
-            const isBusy = repairingTarget === sess.id
-            const isDeleting = deletingTarget === sess.id
-            const isNeedsRepair = sess.status === "needs_repair"
-
-            return (
-              <div
-                key={sess.id}
-                className={`flex flex-col justify-between gap-3 p-4 transition-colors sm:flex-row sm:items-center ${
-                  isNeedsRepair
-                    ? "bg-amber-500/5 hover:bg-amber-500/10"
-                    : "hover:bg-line-soft/30"
-                }`}
-              >
-                <div className="min-w-0 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-ink">
-                      {sess.id}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyId(sess.id)}
-                      className="text-faint hover:text-ink rounded p-0.5 transition-colors"
-                    >
-                      {copiedId === sess.id ? (
-                        <Check className="size-3 text-emerald-500" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </button>
-                    <span className="rounded-md bg-line px-1.5 py-0.5 font-mono text-[10px] text-dim">
-                      {sess.projectName}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
-                    <span className="font-mono">{sess.decodedProjectPath}</span>
-                    <span>·</span>
-                    <span>{formatRelativeTime(sess.updatedAt)}</span>
-                    <span>·</span>
-                    <span>{formatBytes(sess.sizeBytes)}</span>
-                  </div>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    title={t.sessions.openInFinder}
-                    onClick={() => handleOpenWorkspace(sess.decodedProjectPath)}
-                    className="size-8 p-0"
-                  >
-                    <ExternalLink className="size-3.5 text-faint" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    title={t.sessions.copyPath}
-                    onClick={() => handleCopyPath(sess.filePath)}
-                    className="size-8 p-0"
-                  >
-                    {copiedPath === sess.filePath ? (
-                      <Check className="size-3.5 text-emerald-500" />
-                    ) : (
-                      <Copy className="size-3.5 text-faint" />
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleRepairSingle(sess)}
-                    disabled={isBusy || batchRepairing || isDeleting}
-                    className="gap-1 text-xs hover:border-brand"
-                  >
-                    {isBusy ? (
-                      <LoaderCircle className="size-3 animate-spin text-brand" />
-                    ) : (
-                      <Wrench className="size-3 text-dim" />
-                    )}
-                    <span>{t.sessions.repairBtn}</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDeleteSingle(sess)}
-                    disabled={isBusy || batchRepairing || isDeleting}
-                    className="size-8 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
-                  >
-                    {isDeleting ? (
-                      <LoaderCircle className="size-3.5 animate-spin text-rose-500" />
-                    ) : (
-                      <Trash2 className="size-3.5 text-faint" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )
-          })}
+          {filteredSessions.map((sess) => renderSessionRow(sess))}
         </div>
       )}
     </div>

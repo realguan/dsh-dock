@@ -6,6 +6,7 @@ describe("Session & Workspace Management", () => {
   const mockSessions: SessionItem[] = [
     {
       id: "session-001",
+      title: "启动页重构",
       projectName: "dsh-dock",
       projectDirRaw: "--Users-guan-git-dsh-dock--",
       decodedProjectPath: "/Users/guan/git/dsh/dock",
@@ -18,6 +19,7 @@ describe("Session & Workspace Management", () => {
     },
     {
       id: "session-002",
+      title: "会话自愈失败需修复",
       projectName: "dsh-dock",
       projectDirRaw: "--Users-guan-git-dsh-dock--",
       decodedProjectPath: "/Users/guan/git/dsh/dock",
@@ -27,9 +29,11 @@ describe("Session & Workspace Management", () => {
       isCompressed: true,
       hasBackup: true,
       status: "needs_repair",
+      healthDetail: "重放重叠已检测",
     },
     {
       id: "session-003",
+      title: "",
       projectName: "my-web-app",
       projectDirRaw: "--Users-guan-projects-my-web-app--",
       decodedProjectPath: "/Users/guan/projects/my-web-app",

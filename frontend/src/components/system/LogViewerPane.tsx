@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
+import { localizeLogTimestamp } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import type { LogQueryResult } from "@/types/ipc"
@@ -233,6 +234,7 @@ export function LogViewerPane({
           ) : (
             <div className="space-y-0.5">
               {filteredLines.map((line, idx) => {
+                const displayLine = localizeLogTimestamp(line)
                 const isError =
                   line.includes("ERROR") ||
                   line.includes("error") ||
@@ -260,7 +262,7 @@ export function LogViewerPane({
                               : "text-slate-300"
                       }`}
                     >
-                      {line}
+                      {displayLine}
                     </span>
                   </div>
                 )

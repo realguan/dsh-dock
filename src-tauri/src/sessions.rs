@@ -24,6 +24,9 @@ pub enum SessionStatus {
 #[serde(rename_all = "camelCase")]
 pub struct SessionItem {
     pub id: String,
+    /// 会话标题（取自 `session/title` 事件的 data.title；无标题时回退为空串
+    /// 或截断的会话 ID 前缀，前端负责最终展示）。
+    pub title: String,
     pub project_name: String,
     pub project_dir_raw: String,
     pub decoded_project_path: String,
@@ -33,6 +36,8 @@ pub struct SessionItem {
     pub is_compressed: bool,
     pub has_backup: bool,
     pub status: SessionStatus,
+    /// 健康检查附加信息（异常原因/未修复原因），无异常时为空。
+    pub health_detail: Option<String>,
 }
 
 /// 修复操作结果
@@ -131,8 +136,12 @@ pub fn decode_project_dir_name(raw: &str) -> String {
     stripped.to_string()
 }
 
-/// 扫描指定 DSH HOME 下的所有会话
-pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
+/// 扫描指定 DSH HOME 下的所有会话。
+///
+/// 健康检查与标题提取经引擎 node 运行内置脚本 `--scan`（只读，不解压进 Rust
+/// ——Rust 无 zstd 依赖；脚本与 dsh 加载器语义对齐）。node 不可用时降级：
+/// 健康状态标记为 Unknown、标题为空（列表仍可用，修复入口保留）。
+pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, String> {
     let sessions_dir = home.join("sessions");
     if !sessions_dir.is_dir() {
         return Ok(Vec::new());
@@ -200,6 +209,7 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
 
                 items.push(SessionItem {
                     id: session_id,
+                    title: String::new(), // 由 --scan 结果填充
                     project_name: project_name.clone(),
                     project_dir_raw: project_dir_name.clone(),
                     decoded_project_path,
@@ -208,7 +218,8 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
                     size_bytes,
                     is_compressed,
                     has_backup,
-                    status: SessionStatus::Healthy, // 默认标记
+                    status: SessionStatus::Unknown, // 由 --scan 结果填充
+                    health_detail: None,
                 });
             }
         }
@@ -217,7 +228,80 @@ pub fn scan_sessions(home: &Path) -> Result<Vec<SessionItem>, String> {
     // 按最后修改时间倒序排列（最新活跃在前）
     items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
 
+    // 引擎 node 健康扫描：填充 title 与 status。失败时保持 Unknown 降级。
+    if let Ok(health_map) = scan_health_via_script(home, data_dir) {
+        for item in &mut items {
+            if let Some(h) = health_map.get(&item.file_path) {
+                item.title.clone_from(&h.title);
+                item.status = match h.status.as_str() {
+                    "healthy" => SessionStatus::Healthy,
+                    "needs_repair" => SessionStatus::NeedsRepair,
+                    _ => SessionStatus::Unknown,
+                };
+                item.health_detail = h.detail.clone();
+            }
+        }
+    }
+
     Ok(items)
+}
+
+/// `--scan` 健康检查的 JSON 行（脚本 `scanSessionHealth` 的结构）。
+#[derive(Debug, Clone, Deserialize)]
+struct ScriptHealthEntry {
+    path: String,
+    status: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+/// 进程内临时脚本命名计数器：并行线程的时间戳可能同纳秒（cargo test 并行
+/// 实测过同名互踩），用原子自增保证唯一。
+static SCRIPT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn unique_script_path(prefix: &str) -> PathBuf {
+    let seq = SCRIPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}-{seq}.mjs",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
+/// 运行内置脚本 `--scan`（只读）并解析结果。失败返回 Err（调用方降级）。
+fn scan_health_via_script(
+    home: &Path,
+    data_dir: &Path,
+) -> Result<std::collections::HashMap<String, ScriptHealthEntry>, String> {
+    let script_content = include_str!("../../scripts/repair-session.mjs");
+    let script_path = unique_script_path("dsh-dock-scan-session");
+    fs::write(&script_path, script_content).map_err(|e| format!("写入临时扫描脚本失败：{e}"))?;
+
+    let node_bin = crate::engines::engine_node_bin(data_dir)
+        .ok_or_else(|| "引擎未就绪（node 缺失）".to_string())?;
+
+    let mut cmd = crate::child_cmd(&node_bin);
+    cmd.arg(&script_path);
+    cmd.arg("--scan");
+    cmd.env("DSH_HOME", home);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("执行扫描脚本失败（无法拉起 Node）：{e}"))?;
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let entries: Vec<ScriptHealthEntry> =
+        serde_json::from_str(stdout.trim()).map_err(|e| format!("解析扫描结果失败：{e}"))?;
+    Ok(entries.into_iter().map(|e| (e.path.clone(), e)).collect())
 }
 
 /// 执行单会话或全量会话修复（通过内置修复脚本）。node 来源引擎档优先
@@ -236,17 +320,9 @@ pub fn run_repair(
     data_dir: &Path,
 ) -> Result<RepairOutcome, String> {
     let script_content = include_str!("../../scripts/repair-session.mjs");
-    let temp_dir = std::env::temp_dir();
-    // 脚本路径含 PID + 时间戳：并发修复（多窗口/并行单测）互不踩踏，
-    // 且与「脚本执行中删除自身」的竞态彻底隔离。
-    let script_path = temp_dir.join(format!(
-        "dsh-dock-repair-session-{}-{}.mjs",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    // 脚本路径含 PID + 时间戳 + 进程内自增序号：并发修复（多窗口/并行单测）
+    // 互不踩踏，且与「脚本执行中删除自身」的竞态彻底隔离。
+    let script_path = unique_script_path("dsh-dock-repair-session");
 
     fs::write(&script_path, script_content).map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
 
@@ -355,7 +431,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
 
-        let list = scan_sessions(&temp).unwrap();
+        let list = scan_sessions(&temp, &temp).unwrap();
         assert!(list.is_empty());
 
         let _ = fs::remove_dir_all(&temp);
@@ -373,7 +449,8 @@ mod tests {
         fs::create_dir_all(&sess_dir).unwrap();
         fs::write(sess_dir.join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
 
-        let list = scan_sessions(&temp).unwrap();
+        // node 缺失时降级：状态 Unknown、标题空（该目录布局样例无引擎档）。
+        let list = scan_sessions(&temp, &temp).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "session-12345");
         assert_eq!(list[0].project_name, "my-app");
@@ -381,7 +458,7 @@ mod tests {
 
         // 测试删除
         remove_session(&temp, &list[0].file_path).unwrap();
-        let after = scan_sessions(&temp).unwrap();
+        let after = scan_sessions(&temp, &temp).unwrap();
         assert!(after.is_empty());
 
         let _ = fs::remove_dir_all(&temp);

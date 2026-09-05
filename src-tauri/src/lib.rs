@@ -157,6 +157,21 @@ struct ShellState {
     client_update: Mutex<Option<crate::updater::ClientUpdate>>,
     /// 崩溃历史时间戳（4.12 崩溃守护与熔断，记录最近 60s 内异常退出次数）。
     crash_timestamps: Mutex<Vec<std::time::Instant>>,
+    /// 最近发射的 boot:error（用于前端挂载后经 get_boot_status 补水，防早期事件竞态丢失）。
+    boot_error: Mutex<Option<serde_json::Value>>,
+    /// 最近发射的 boot:step 列表（用于前端挂载后经 get_boot_status 补水）。
+    boot_steps: Mutex<Vec<serde_json::Value>>,
+}
+
+impl ShellState {
+    fn clear_boot_cache(&self) {
+        if let Ok(mut err) = self.boot_error.lock() {
+            *err = None;
+        }
+        if let Ok(mut steps) = self.boot_steps.lock() {
+            steps.clear();
+        }
+    }
 }
 
 /// 启动当前会话（probe 已完成）：start → 就绪等待 → 导航 → 监护。
@@ -242,7 +257,18 @@ fn run_executor_session(
                         *state.workbench_url.lock().unwrap() = Some(url.clone());
                         emit_step(&app, 3, "done", &format!("DSH 已就绪：{url}"));
                         emit_step(&app, 4, "running", "导航到工作台界面");
-                        let _ = state.window.navigate(url);
+                        let navigate_url = match authenticate_workbench_session(&state.window, &url)
+                        {
+                            Ok(Some(clean_url)) => clean_url,
+                            Ok(None) => url.clone(),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "预植入工作台认证 Cookie 失败（回退原地址导航）：{e}"
+                                );
+                                url.clone()
+                            }
+                        };
+                        let _ = state.window.navigate(navigate_url);
                         emit_step(&app, 4, "done", "已进入工作台");
                         guard_session(&app, &state, &log, epoch);
                     }
@@ -256,6 +282,55 @@ fn run_executor_session(
         }
     });
     Ok(())
+}
+
+/// 为 dsh web（0.1.2+）在壳侧先兑换 token 并将 SameSite=Lax 的会话 Cookie 注入 WebView，
+/// 从而规避 WebKit 跨域导航（tauri://localhost → 127.0.0.1）在 303 重定向时
+/// 丢弃 SameSite=Strict Cookie 导致的 401（dsh web authentication required）。
+fn authenticate_workbench_session(
+    window: &tauri::WebviewWindow,
+    url: &tauri::Url,
+) -> anyhow::Result<Option<tauri::Url>> {
+    if !url.query().unwrap_or("").contains("token=") {
+        return Ok(None);
+    }
+    tracing::info!("检测到工作台携带 launch token，在壳内预兑换会话 Cookie…");
+    let resp = ureq::builder()
+        .redirects(0)
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .get(url.as_str())
+        .call();
+
+    let set_cookie_str = match &resp {
+        Ok(r) => r.header("set-cookie").map(|s| s.to_string()),
+        Err(ureq::Error::Status(_, r)) => r.header("set-cookie").map(|s| s.to_string()),
+        Err(e) => anyhow::bail!("向工作台请求认证 Token 失败：{e}"),
+    };
+
+    let Some(raw_cookie) = set_cookie_str else {
+        tracing::warn!("工作台响应未携带 Set-Cookie，回退原地址导航");
+        return Ok(None);
+    };
+
+    let mut parsed = tauri::webview::cookie::Cookie::parse(raw_cookie.as_str())
+        .map_err(|e| anyhow::anyhow!("解析工作台 Cookie 失败: {e}"))?
+        .into_owned();
+
+    let domain = url.host_str().unwrap_or("127.0.0.1");
+    parsed.set_domain(domain);
+    parsed.set_path("/");
+    parsed.set_same_site(tauri::webview::cookie::SameSite::Lax);
+
+    window
+        .set_cookie(parsed)
+        .map_err(|e| anyhow::anyhow!("注入 WebView Cookie 失败: {e}"))?;
+
+    tracing::info!("成功向 WebView 注入工作台会话 Cookie（Lax），准备直达根路径");
+
+    let mut clean_url = url.clone();
+    clean_url.set_query(None);
+    Ok(Some(clean_url))
 }
 
 /// 会话代际是否仍为当前：等待/监护线程每轮/关键节点调用；被外部切换则 false。
@@ -410,6 +485,29 @@ fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> 
         }
     });
     Ok(())
+}
+
+/// 读取启动阶段缓存的状态与错误（前端挂载时补水，解决 early emit 竞态丢失事件的问题）。
+#[tauri::command]
+fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
+        let error = shell_state.boot_error.lock().ok().and_then(|e| e.clone());
+        let steps = shell_state
+            .boot_steps
+            .lock()
+            .ok()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        Ok(serde_json::json!({
+            "steps": steps,
+            "error": error,
+        }))
+    } else {
+        Ok(serde_json::json!({
+            "steps": [],
+            "error": null,
+        }))
+    }
 }
 
 /// 前端/托盘读取最近一次检测结果（即读，不触网）。
@@ -986,11 +1084,12 @@ async fn copy_plugin_config(
     .map_err(|e| format!("配置复制任务异常终止：{e}"))?
 }
 
-/// 会话管理与自愈：扫描会话列表（只读文件扫描）
+/// 会话管理与自愈：扫描会话列表（只读文件扫描 + 健康检查/标题提取）
 #[tauri::command]
-async fn list_sessions() -> Result<Vec<crate::sessions::SessionItem>, String> {
+async fn list_sessions(app: tauri::AppHandle) -> Result<Vec<crate::sessions::SessionItem>, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::scan_sessions(&crate::resolve::user_dsh_home())
+        crate::sessions::scan_sessions(&crate::resolve::user_dsh_home(), &data_dir)
     })
     .await
     .map_err(|e| format!("会话列表扫描任务异常终止：{e}"))?
@@ -1357,6 +1456,7 @@ fn executor_for_mode(
 /// retry/upgrade 共用：按**当前会话的运行环境**重建执行器并重新走 probe →
 /// 分派（不再是永远 local——WSL 会话挂掉后重试仍留在 WSL）。
 fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
+    state.clear_boot_cache();
     let mode = state
         .active_mode
         .lock()
@@ -1379,6 +1479,7 @@ fn switch_mode(
 ) {
     tracing::info!("切换运行环境 → {}", mode.as_str());
     let _ = teardown_session(&state);
+    state.clear_boot_cache();
     // 清空强制目标：模式切换重走常规解析（defaultProfile → 选择器），
     // 不继承上一次的 profile 切换目标（4.3⑥）。
     *state.forced_profile.lock().unwrap() = None;
@@ -1432,6 +1533,7 @@ fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result
         return Err("WSL 仅支持 Windows 平台。".to_string());
     }
     let state = app.state::<Arc<ShellState>>().inner().clone();
+    state.clear_boot_cache();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     if set_default {
         // load-modify-save：同 switch_mode，不得抹掉其他已存字段。
@@ -1871,6 +1973,15 @@ const BOOT_STALL: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
 fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
+    // dev 模式（debug_assertions）：源码树 resources 为最高优先级真理源，
+    // 避免 target/debug 复制产物因构建时差或增量缺失导致资源不全。
+    #[cfg(debug_assertions)]
+    {
+        let src_res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        if src_res.join("product.manifest.json").is_file() {
+            return src_res;
+        }
+    }
     let runtime = app.path().resource_dir().ok().unwrap_or_default();
     // 生产（bundle）：Tauri v2 打包器保留相对 src-tauri 的路径前缀——
     // 配置 `"resources": ["resources/**"]` 时，文件实际落在 `<资源根>/resources/`
@@ -2019,6 +2130,8 @@ pub fn run() {
                 forced_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
                 crash_timestamps: Mutex::new(Vec::new()),
+                boot_error: Mutex::new(None),
+                boot_steps: Mutex::new(Vec::new()),
             });
             app.manage(state.clone());
             // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
@@ -2182,6 +2295,7 @@ pub fn run() {
             fetch_market_registry,
             open_profiles_window,
             focus_main_window,
+            get_boot_status,
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -2203,14 +2317,17 @@ pub fn run() {
 fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
     use tauri::Emitter;
     tracing::info!("boot:step step={step} state={state} {detail}");
-    let _ = app.emit(
-        "boot:step",
-        serde_json::json!({
-            "step": step,
-            "state": state,
-            "detail": detail,
-        }),
-    );
+    let payload = serde_json::json!({
+        "step": step,
+        "state": state,
+        "detail": detail,
+    });
+    if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
+        if let Ok(mut steps) = shell_state.boot_steps.lock() {
+            steps.push(payload.clone());
+        }
+    }
+    let _ = app.emit("boot:step", payload);
 }
 
 /// executor 进度回调（BootSink）→ boot:step 事件的适配（executor 保持零
@@ -2259,16 +2376,19 @@ fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
 fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
     use tauri::Emitter;
     let (title, suggestion, actions) = classify_boot_error(detail);
-    let _ = app.emit(
-        "boot:error",
-        serde_json::json!({
-            "title": title,
-            "detail": detail,
-            "suggestion": suggestion,
-            "actions": actions,
-            "log": log_tail,
-        }),
-    );
+    let payload = serde_json::json!({
+        "title": title,
+        "detail": detail,
+        "suggestion": suggestion,
+        "actions": actions,
+        "log": log_tail,
+    });
+    if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
+        if let Ok(mut err) = shell_state.boot_error.lock() {
+            *err = Some(payload.clone());
+        }
+    }
+    let _ = app.emit("boot:error", payload);
 }
 
 /// 错误分类：把 dsh 世界的问题归到可行动动作（upgrade / retry）。
@@ -2330,6 +2450,28 @@ fn read_error_detail(log_path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{cached_status_or_default, classify_boot_error, ensure_switchable_profile};
+
+    #[test]
+    fn cookie_parsing_adjusts_samesite_and_domain() {
+        let raw = "dsh-auth-enkR2grNa5kh2vWUO35uv_f-LSUholBNvVmCSRPr3-M=v1.eyJ2ZXJzaW9uIjoxLCJhdXRob3JpdHkiOiIxMjcuMC4wLjE6NTc3NDYiLCJpc3N1ZWRBdCI6MTc4ODUxNTg0NDEzNywiZXhwaXJlc0F0IjoxNzkxMTA3ODQ0MTM3fQ.6Ic6MHrPEbFn9jWvIGyIqOUfuz5L5tgvWkTWG2jRu44; Max-Age=2592000; Path=/; Expires=Sun, 04 Oct 2026 09:57:24 GMT; HttpOnly; SameSite=Strict";
+        let mut cookie = tauri::webview::cookie::Cookie::parse(raw)
+            .unwrap()
+            .into_owned();
+        assert_eq!(
+            cookie.name(),
+            "dsh-auth-enkR2grNa5kh2vWUO35uv_f-LSUholBNvVmCSRPr3-M"
+        );
+        assert_eq!(cookie.http_only(), Some(true));
+        cookie.set_domain("127.0.0.1");
+        cookie.set_path("/");
+        cookie.set_same_site(tauri::webview::cookie::SameSite::Lax);
+        assert_eq!(
+            cookie.same_site(),
+            Some(tauri::webview::cookie::SameSite::Lax)
+        );
+        assert_eq!(cookie.domain(), Some("127.0.0.1"));
+        assert_eq!(cookie.path(), Some("/"));
+    }
 
     #[test]
     fn update_status_is_safe_before_shell_state_is_managed() {

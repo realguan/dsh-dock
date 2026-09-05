@@ -62,3 +62,24 @@ export function getProfileColorClass(profileName: string): string {
   return PROFILE_COLOR_PALETTES[idx]
 }
 
+/**
+ * 将日志行中的 ISO8601 UTC 时间戳转换为本地时区显示（日志时区修复，
+ * 2026-09-05）：定位行内 ISO 时间戳区间，整体换算为本地时间（含日期
+ * 偏移），兼容 ANSI 转义码包裹（如 `\x1b[2m2026-09-05T05:15:33.883479Z\x1b[0m`）；
+ * 失败（无时间戳/非法）时原样返回。
+ */
+export function localizeLogTimestamp(line: string): string {
+  if (!line) return line
+  const m = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/)
+  if (!m || m.index === undefined) return line
+  const date = new Date(m[0])
+  if (Number.isNaN(date.getTime())) return line
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0")
+  const localTs = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${m[1] ? m[1].slice(0, 4) : ""}`
+  const start = line.slice(0, m.index)
+  const end = line.slice(m.index + m[0].length)
+  return `${start}${localTs}${end}`
+}
+

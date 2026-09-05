@@ -167,6 +167,8 @@ export interface DeleteOutcome {
 /// 会话简要信息
 export interface SessionItem {
   id: string
+  /** 会话标题（取自 dsh `session/title` 事件；无标题时为空串） */
+  title: string
   projectName: string
   projectDirRaw: string
   decodedProjectPath: string
@@ -176,6 +178,8 @@ export interface SessionItem {
   isCompressed: boolean
   hasBackup: boolean
   status: "healthy" | "needs_repair" | "unknown"
+  /** 健康检查附加信息（异常原因/未修复原因），无异常时不返回 */
+  healthDetail?: string
 }
 
 /// 会话修复结果
