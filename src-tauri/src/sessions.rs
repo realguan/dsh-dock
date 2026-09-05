@@ -38,6 +38,9 @@ pub struct SessionItem {
     pub status: SessionStatus,
     /// 健康检查附加信息（异常原因/未修复原因），无异常时为空。
     pub health_detail: Option<String>,
+    /// 可能仍在被 dsh 写入（间歇 flush，mtime < 5 分钟）——仅 UI 提示「运行中」，
+    /// 不参与健康判定；活跃会话不应在运行时修复。
+    pub active: bool,
 }
 
 /// 修复操作结果
@@ -220,6 +223,7 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
                     has_backup,
                     status: SessionStatus::Unknown, // 由 --scan 结果填充
                     health_detail: None,
+                    active: false,
                 });
             }
         }
@@ -239,6 +243,7 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
                     _ => SessionStatus::Unknown,
                 };
                 item.health_detail = h.detail.clone();
+                item.active = h.active;
             }
         }
     }
@@ -256,6 +261,8 @@ struct ScriptHealthEntry {
     status: String,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    active: bool,
     #[serde(default)]
     detail: Option<String>,
 }

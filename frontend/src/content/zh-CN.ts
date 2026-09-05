@@ -367,6 +367,8 @@ export const t = {
     statusHealthy: "健康",
     statusNeedsRepair: "需自愈",
     statusUnknown: "状态未知",
+    statusRunning: "运行中",
+    statusRunningDesc: "会话正在被 dsh 使用，结束后才能安全修复",
     statusHealthyDesc: "会话日志序列完整，可正常打开",
     statusNeedsRepairDesc: "检测到重放重叠或序列异常，建议修复后可查看完整会话",
     statusUnknownDesc: "无法判定健康状态（可能为活跃会话或引擎未就绪）",

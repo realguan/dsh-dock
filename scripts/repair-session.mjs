@@ -292,30 +292,39 @@ export function scanSessionHealth(filePath) {
     buffer = stable.buffer
     st = stable.before
   } catch (e) {
-    return { status: 'unknown', title: '', eventCount: 0, detail: `读取失败：${e.message}` }
+    return { status: 'unknown', title: '', eventCount: 0, active: false, detail: `读取失败：${e.message}` }
   }
-  if (buffer.length === 0) return { status: 'unknown', title: '', eventCount: 0, detail: '文件为空' }
+  if (buffer.length === 0) {
+    return { status: 'unknown', title: '', eventCount: 0, active: false, detail: '文件为空' }
+  }
+
+  // 活跃标志（仅 UI 提示，不参与健康判定）：mtime 距今 <5 分钟视为可能仍在
+  // 被 dsh 间歇 flush（dsh 批量写间隔分钟级）。用于前端显示「运行中」徽标，
+  // 与「需自愈」区分——活跃会话不能修（修了会被下次 flush 覆盖）。
+  const active = st !== null && Date.now() - st.mtimeMs < 5 * 60 * 1000
 
   let headerLine
   let records
   try {
     const rawText = isZstd ? decompressZstd(buffer).toString('utf8') : buffer.toString('utf8')
     const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
-    if (lines.length === 0) return { status: 'unknown', title: '', eventCount: 0, detail: '文件为空' }
+    if (lines.length === 0) {
+      return { status: 'unknown', title: '', eventCount: 0, active, detail: '文件为空' }
+    }
     headerLine = lines[0]
     if (!isSessionHeader(JSON.parse(headerLine))) {
-      return { status: 'unknown', title: '', eventCount: 0, detail: 'header 非法' }
+      return { status: 'unknown', title: '', eventCount: 0, active, detail: 'header 非法' }
     }
     records = []
     for (let i = 1; i < lines.length; i++) {
       try {
         records.push(JSON.parse(lines[i]))
       } catch (e) {
-        return { status: 'unknown', title: '', eventCount: 0, detail: `第 ${i + 1} 行 JSON 解析失败` }
+        return { status: 'unknown', title: '', eventCount: 0, active, detail: `第 ${i + 1} 行 JSON 解析失败` }
       }
     }
   } catch (e) {
-    return { status: 'unknown', title: '', eventCount: 0, detail: `解压失败：${e.message}` }
+    return { status: 'unknown', title: '', eventCount: 0, active, detail: `解压失败：${e.message}` }
   }
 
   // 标题提取：首个 session/title 事件（跳过 sourceEventSeqs 修饰的镜像行）
@@ -333,12 +342,12 @@ export function scanSessionHealth(filePath) {
   // 健康判定：与修复分析同一套判定
   const decision = analyzeAndRepair(records)
   if (decision.kind === 'healthy') {
-    return { status: 'healthy', title, eventCount: 0, detail: '' }
+    return { status: 'healthy', title, eventCount: 0, active, detail: '' }
   }
   if (decision.kind === 'repaired' || decision.kind === 'truncated') {
-    return { status: 'needs_repair', title, eventCount: 0, detail: decision.detail }
+    return { status: 'needs_repair', title, eventCount: 0, active, detail: decision.detail }
   }
-  return { status: 'unknown', title, eventCount: 0, detail: decision.detail }
+  return { status: 'unknown', title, eventCount: 0, active, detail: decision.detail }
 }
 
 
@@ -365,31 +374,18 @@ export async function repairSessionFile(filePath) {
     return { ok: false, changed: false, message: `❌ 文件不存在: ${filePath}` }
   }
 
-  // 活跃会话预防：文件在极短时间内被修改（<10s）视为仍被 dsh 写入中，
-  // 直接明确拒绝而非尝试修复（修复必然被下一次 flush 覆盖 → 假成功）。
-  // dsh 的 flush 间隔在秒级（实测 828cfec4 多次在数秒内重写），10s 阈值
-  // 足以覆盖注入竞态窗口，同时静止文件不受影响。
-  // （2026-09-05 实测：对活跃会话修复后 30s 内被 dsh 重写覆盖。）
-  try {
-    const now = Date.now()
-    const st = statSync(filePath)
-    if (st.size > 0 && now - st.mtimeMs < 10000) {
-      return {
-        ok: false,
-        changed: false,
-        message: `⚠️ 会话 ${filePath.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''} 仍被 dsh 写入（活跃会话），为避免修复被覆盖，请稍候片刻再修复。`,
-      }
-    }
-  } catch {
-    /* stat 失败走正常流程 */
-  }
+  // 活跃会话语义（2026-09-05 修订）：dsh 对会话文件的写入是**间歇性 flush**
+  // （实测 828cfec4 分钟级间隔、间隙长达数分钟），按 mtime 阈值预判会误杀
+  // 大量可修窗口（用户点击时恰逢上次 flush 不久 → 永远"活跃"→ 永远修不了）。
+  // 正确判定 = 读取稳定性（readStable 的 stat 前后一致性）+ 写后 stat 复查
+  // （下方已实现）；读取期间持续写入才会被拒绝。
 
   const isZstd = filePath.endsWith('.zstd')
   let original
   try {
     original = readStable(filePath)
   } catch (e) {
-    return { ok: false, changed: false, message: `❌ ${e.message}: ${filePath}` }
+    return { ok: false, changed: false, message: `❌ ${e.message}（会话可能仍在持续写入中，请稍后重试）: ${filePath}` }
   }
 
   if (original.before.size === 0) {
@@ -565,6 +561,7 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
         path: file,
         status: health.status,
         title: health.title || null,
+        active: health.active,
         detail: health.detail || null,
       }
     })
@@ -578,6 +575,13 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     console.log(`共发现 ${files.length} 个会话日志文件。`)
     let failed = 0
     for (const file of files) {
+      // 活跃会话（mtime < 5 分钟）跳过：修复必然被下次 flush 覆盖（假成功），
+      // 全量修复只处理静止/已结束的会话。
+      const s = scanSessionHealth(file)
+      if (s.active) {
+        console.log(`⏭️  跳过活跃会话 ${file.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''}（仍在运行，结束后可修复）。`)
+        continue
+      }
       const res = await repairSessionFile(file)
       console.log(res.message)
       if (!res.ok) failed++
@@ -598,6 +602,13 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
       console.error(`❌ 未找到匹配的会话文件: ${target}`)
       process.exit(1)
     }
+  }
+
+  // 单文件修复：活跃会话（mtime < 5 分钟）明确提示——修复会被下次 flush 覆盖。
+  const health = scanSessionHealth(targetPath)
+  if (health.active) {
+    console.log(`⏭️  会话仍被 dsh 使用（活跃，mtime 距今 <5 分钟）。为避免修复被下一次写入覆盖，请稍后在会话结束后再修复。`)
+    process.exit(1)
   }
 
   const res = await repairSessionFile(targetPath)

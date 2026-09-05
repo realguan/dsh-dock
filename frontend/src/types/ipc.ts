@@ -180,6 +180,8 @@ export interface SessionItem {
   status: "healthy" | "needs_repair" | "unknown"
   /** 健康检查附加信息（异常原因/未修复原因），无异常时不返回 */
   healthDetail?: string
+  /** 可能仍在被 dsh 写入（间歇 flush）——UI 显示「运行中」，不显示修复按钮 */
+  active?: boolean
 }
 
 /// 会话修复结果

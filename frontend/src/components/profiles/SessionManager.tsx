@@ -123,13 +123,16 @@ export function SessionManager({
   }, [refreshKey, loadSessions])
 
   const stats = useMemo(() => {
-    if (!sessions) return { total: 0, healthy: 0, needsRepair: 0, projectsCount: 0 }
+    if (!sessions) return { total: 0, healthy: 0, needsRepair: 0, running: 0, projectsCount: 0 }
     let healthy = 0
     let needsRepair = 0
+    let running = 0
     const projects = new Set<string>()
     for (const s of sessions) {
       projects.add(s.projectDirRaw)
-      if (s.status === "needs_repair") {
+      if (s.active) {
+        running++
+      } else if (s.status === "needs_repair") {
         needsRepair++
       } else if (s.status === "healthy") {
         healthy++
@@ -139,6 +142,7 @@ export function SessionManager({
       total: sessions.length,
       healthy,
       needsRepair,
+      running,
       projectsCount: projects.size,
     }
   }, [sessions])
@@ -232,7 +236,10 @@ export function SessionManager({
     if (!sessions) return []
     const q = searchQuery.toLowerCase().trim()
     return sessions.filter((s) => {
-      if (statusFilter === "needs_repair" && s.status !== "needs_repair") return false
+      if (statusFilter === "needs_repair") {
+        // 仅看异常 = 可修复的异常（活跃会话除外——它不能被修，另行展示）
+        if (!(s.status === "needs_repair" && s.active !== true)) return false
+      }
       if (!q) return true
       return (
         (s.title ?? "").toLowerCase().includes(q) ||
@@ -273,8 +280,10 @@ export function SessionManager({
   const renderSessionRow = (sess: SessionItem) => {
     const isBusy = repairingTarget === sess.id
     const isDeleting = deletingTarget === sess.id
-    const isNeedsRepair = sess.status === "needs_repair"
-    const isHealthy = sess.status === "healthy"
+    const isActive = sess.active === true
+    // 活跃会话（运行中）不参与「需自愈」：修复会被 dsh 下次 flush 覆盖。
+    const isNeedsRepair = sess.status === "needs_repair" && !isActive
+    const isHealthy = sess.status === "healthy" && !isActive
     const meta = statusMeta(sess.status, t)
     const displayName = sessionDisplayName(sess, t.sessions.noTitle)
 
@@ -300,23 +309,33 @@ export function SessionManager({
         <div className="min-w-0 flex-1 space-y-1">
           {/* 首行：状态徽标 + 会话名称（标题为主） */}
           <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
-                isNeedsRepair
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                  : isHealthy
-                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    : "bg-line text-dim"
-              }`}
-              title={meta.desc}
-            >
-              <span className={`size-1.5 rounded-full ${meta.dot}`} />
-              {meta.badge}
-            </span>
+            {isActive ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-600 dark:text-sky-400"
+                title={t.sessions.statusRunningDesc}
+              >
+                <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
+                {t.sessions.statusRunning}
+              </span>
+            ) : (
+              <span
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+                  isNeedsRepair
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : isHealthy
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "bg-line text-dim"
+                }`}
+                title={meta.desc}
+              >
+                <span className={`size-1.5 rounded-full ${meta.dot}`} />
+                {meta.badge}
+              </span>
+            )}
 
             <span
               className="truncate text-[13px] font-semibold text-ink"
-              title={isNeedsRepair ? displayName : displayName}
+              title={displayName}
             >
               {displayName}
             </span>
@@ -369,7 +388,15 @@ export function SessionManager({
 
         {/* 操作区：修复按钮仅非健康显示；健康显示状态描述 */}
         <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
-          {isNeedsRepair ? (
+          {isActive ? (
+            <span
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-sky-500/20 bg-sky-500/[0.06] px-2.5 text-[11px] text-sky-600 dark:text-sky-400"
+              title={t.sessions.statusRunningDesc}
+            >
+              <LoaderCircle className="size-3 animate-spin" />
+              {t.sessions.statusRunning}
+            </span>
+          ) : isNeedsRepair ? (
             <Button
               size="sm"
               onClick={() => handleRepairSingle(sess)}
@@ -485,8 +512,8 @@ export function SessionManager({
           </div>
         </div>
 
-        {/* 统计指标：健康 / 异常 / 总数 三色探针 */}
-        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        {/* 统计指标：项目 / 总数 / 健康 / 运行中 / 待修复 */}
+        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
           <div className="rounded-xl border border-line bg-bg p-3">
             <span className="text-[11px] text-faint">工作区项目数</span>
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.projectsCount}</div>
@@ -502,6 +529,15 @@ export function SessionManager({
             </span>
             <div className="mt-1 font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
               {stats.healthy}
+            </div>
+          </div>
+          <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-3">
+            <span className="flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400">
+              <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
+              运行中
+            </span>
+            <div className="mt-1 font-mono text-base font-bold text-sky-600 dark:text-sky-400">
+              {stats.running}
             </div>
           </div>
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
