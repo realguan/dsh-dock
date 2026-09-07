@@ -360,19 +360,84 @@ pub fn runtime_set_node(
     ))
 }
 
-/// `pnpm shim add node`：激活 node 到 PNPM_HOME/bin（硬链，spike 0003 §2.2）。
+/// 查找 pnpm runtime set 下载并解包的实际 Node 二进制文件。
+pub fn find_runtime_node_bin(data_dir: &Path) -> Option<PathBuf> {
+    let base = pnpm_home(data_dir).join("node_modules");
+    let name = if cfg!(windows) { "node.exe" } else { "node" };
+    // 1. 标准软链路径：node_modules/node/bin/node
+    let direct = base.join("node").join("bin").join(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    // 2. 虚拟 store 扫描：node_modules/.pnpm/node@runtime+*/node_modules/node/bin/node
+    let pnpm_dir = base.join(".pnpm");
+    if let Ok(entries) = std::fs::read_dir(&pnpm_dir) {
+        for entry in entries.flatten() {
+            let n = entry.file_name();
+            if n.to_string_lossy().starts_with("node@runtime") {
+                let cand = entry
+                    .path()
+                    .join("node_modules")
+                    .join("node")
+                    .join("bin")
+                    .join(name);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 固化实际 Node 二进制到 `PNPM_HOME/bin/node`。
+/// 原因：pnpm v12 的 `pnpm shim add node` 生成的是带有上下文检查的 shim dispatcher，
+/// 全局安装（pnpm add -g）执行 postinstall 脚本（如 protobufjs/koffi）时，
+/// 因子目录 package.json 无 devEngines 声明而报 ERR_PNPM_SHIM_NO_TARGET 退出 1。
+/// 直接将真实的 Node 二进制链接/复制到 `bin/node`，确保生命周期脚本透明直接执行。
+pub fn link_real_node_binary(data_dir: &Path) -> Result<()> {
+    let real_bin = find_runtime_node_bin(data_dir)
+        .ok_or_else(|| anyhow!("未在引擎 node_modules 中找到实际 Node 二进制文件"))?;
+    let target = engine_bin_dir(data_dir).join(if cfg!(windows) { "node.exe" } else { "node" });
+    let _ = std::fs::remove_file(&target);
+
+    #[cfg(unix)]
+    {
+        if std::os::unix::fs::symlink(&real_bin, &target).is_ok() {
+            return Ok(());
+        }
+    }
+    if std::fs::hard_link(&real_bin, &target).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(&real_bin, &target).with_context(|| {
+        format!(
+            "复制 Node 二进制从 {} 到 {}",
+            real_bin.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+/// `pnpm shim add node` 并固化实际 Node 二进制到 `PNPM_HOME/bin/node`。
 pub fn shim_add_node(data_dir: &Path, path_env: &str) -> Result<()> {
-    run_engine_pnpm(
+    let _ = run_engine_pnpm(
         data_dir,
         path_env,
         &["shim".to_string(), "add".to_string(), "node".to_string()],
         &[],
-    )
+    );
+    if let Err(e) = link_real_node_binary(data_dir) {
+        tracing::warn!("固化实际 Node 二进制未命中（回退 shim）：{e}");
+    }
+    Ok(())
 }
 
 /// `pnpm add -g @deepseek-ai/dsh@<version>`：registry 镜像链逐个尝试
 ///（allow-build 放行沿 ADR-0009/0005 同一口径）。
 pub fn install_dsh_global(data_dir: &Path, version: &str, path_env: &str) -> Result<()> {
+    let _ = link_real_node_binary(data_dir);
     let mut errors = Vec::new();
     for registry in crate::updates::package_registry_bases() {
         let args =
@@ -466,7 +531,11 @@ pub fn bootstrap(
             shim_add_node(data_dir, path_env)?;
             node_switched = true;
             status = probe_engine(data_dir, path_env);
+        } else {
+            let _ = link_real_node_binary(data_dir);
         }
+    } else {
+        let _ = link_real_node_binary(data_dir);
     }
 
     // ④ dsh：缺失才补；目标版本（最新稳定版，dist-tags）惰性解析——已装永不

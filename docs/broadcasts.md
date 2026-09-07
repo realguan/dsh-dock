@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-09-07 快车道直推 · 引擎引导加固：固化真实 node 二进制 + 引导版本口径放宽（rc 可用、alpha 仍拒） —— guan（AI 协作）
+
+- 变更（ADR-0010 引导链修补，附在途复现工具一并入库）：
+  1. **固化真实 node 到 `PNPM_HOME/bin/node`**：pnpm v12 `shim add node` 生成
+     带上下文检查的 shim dispatcher，`pnpm add -g` 执行 postinstall（protobufjs/
+     koffi 等）因子目录无 devEngines 声明报 `ERR_PNPM_SHIM_NO_TARGET` 退出 1。
+     新增 `find_runtime_node_bin` / `link_real_node_binary`（symlink→硬链→复制
+     三级兜底），`shim_add_node` / `install_dsh_global` / `bootstrap` 各环节接线；
+     WSL 客体侧 guest 脚本同构修补（`ln -sf` 真实二进制）。
+  2. **引导版本口径放宽**：`latest_stable_dsh_version` 由「仅稳定版」改为
+     「稳定版或 rc 候选（`is_acceptable_dsh_version`），明确拒绝 alpha 等未
+     稳定前置版」+ 测试——修 rc-only 发布期无引擎可引导的死路；alpha 事故
+     预防口径不变。
+  3. **打包资源补 `resources/pnpm/**/*`**：捆绑 pnpm 压缩包随壳安装包落地
+     （ADR-0010 边界 A），此前缺失会致打包产物首启引导失败。
+  4. 新增 `scripts/repro-boot-scenarios.sh`：引擎目录多场景裁剪复现工具
+     （fresh/no-pnpm 等，只动壳自有资产，红线见脚本头注）。
+- 影响：仅周知。引导行为变化点 = rc 版本可被自动引导；`bin/node` 由 shim
+  变为真实二进制（生命周期脚本执行路径变化）。
+- 凭据：cargo test 159 全绿（含新增 acceptable_dsh_version 用例）+ fmt +
+  clippy（全树在途状态下验证）；真实引擎目录实证引导产物齐全。
+
 ### 2026-09-07 会话维护 · 归档感知 + 运行中复合判据 + 会话元数据透出 —— guan（AI 协作）
 
 - 变更（grilling 共识后 Batch 1，意图 = 会话维护列表准确性）：

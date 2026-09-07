@@ -589,15 +589,27 @@ pub(crate) fn pnpm_allow_build_flags() -> Vec<String> {
         .collect()
 }
 
-/// dsh 引导目标版本：排序最高**稳定版**（排除预发布——ADR-0010 台账
-/// 0.1.2-alpha.2 事故预防；与更新检测「rc 也追」的 H-1 口径分离）。
+/// 判断 dsh 版本是否满足引导要求：
+/// 稳定版（无连字符）与 rc 候选版（包含 -rc）均可接受；
+/// alpha 等未稳定的前置预览版本明确拒绝（防依赖未完整发布等启动事故）。
+pub fn is_acceptable_dsh_version(v: &str) -> bool {
+    let lower = v.to_ascii_lowercase();
+    if lower.contains("alpha") {
+        return false;
+    }
+    !v.contains('-') || lower.contains("-rc") || lower.contains(".rc")
+}
+
+/// dsh 引导目标版本：排序最高可接受版本（稳定版优先；无稳定版时接受 rc，明确排除 alpha 等未稳定版本）。
 pub fn latest_stable_dsh_version() -> Result<String> {
     let packument =
         fetch_packument().context("无法获取官方版本列表（registry 不可达或返回异常）")?;
     parse_versions(&packument)
         .into_iter()
-        .find(|v| !v.contains('-'))
-        .ok_or_else(|| anyhow::anyhow!("官方版本列表无稳定版"))
+        .find(|v| is_acceptable_dsh_version(v))
+        .ok_or_else(|| {
+            anyhow::anyhow!("官方版本列表无可引导版本（需稳定版或 rc 候选版，排除 alpha）")
+        })
 }
 
 /// 引擎引导唯一入口（AGENTS §7「引擎引导」，boot 接线 = resolve_launch 引擎档）。
@@ -733,5 +745,14 @@ mod packument_tests {
     fn malformed_packument_is_none() {
         assert!(parse_packument_versions("not json").is_none());
         assert!(parse_packument_versions(r#"{"versions":{}}"#).is_none());
+    }
+
+    #[test]
+    fn acceptable_dsh_version_accepts_stable_and_rc_rejects_alpha() {
+        assert!(is_acceptable_dsh_version("0.1.2"));
+        assert!(is_acceptable_dsh_version("0.1.2-rc.1"));
+        assert!(is_acceptable_dsh_version("0.1.0-rc.8"));
+        assert!(!is_acceptable_dsh_version("0.1.2-alpha.2"));
+        assert!(!is_acceptable_dsh_version("0.1.2-alpha.5"));
     }
 }

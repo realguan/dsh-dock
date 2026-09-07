@@ -46,7 +46,8 @@
     ],
     "resources": [
       "resources/product.manifest.json",
-      "resources/dsh-snapshot/**/*"
+      "resources/dsh-snapshot/**/*",
+      "resources/pnpm/**/*"
     ],
     "macOS": {
       "signingIdentity": "-",
