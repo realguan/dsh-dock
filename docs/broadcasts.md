@@ -1508,3 +1508,16 @@
 - 凭据：cargo test 177 绿 + fmt/clippy/Windows 交叉 check 过；前端
   typecheck/lint/109 测试全绿。问题记录095 剩余两项（插件边界梳理、
   下载队列）设计中，另批开工。
+
+### 2026-09-08 发版：v0.9.6 —— guan
+
+- 变更：自 v0.9.5 起累积——pnpm 12 构建审批门产品化（安装撞
+  ERR_PNPM_IGNORED_BUILDS → 逐包裁决对话框 → allowBuilds 受控写入
+  （写入例外 #5）→ 自动重试，ADR-0009 第六次修订 + 复现点 12）；
+  会话「进行中」误判回归修复（engine_session_alive 反转 +
+  endState 降噪子句）；MCP 面板失败死循环根治（面板内错误态）与
+  全站刷新按钮语义化治理（删 2/补 2/换 2/留 9）。
+- 影响：发版；存量用户经更新 feed 收提示。挂账：插件中心职责边界
+  （问题记录095 #3/#4）留下个小版本。
+- 凭据：cargo test 177 绿 + fmt/clippy/Windows 交叉 check 过；前端
+  typecheck/lint/109 测试全绿；tag 构建验证随 CI。
