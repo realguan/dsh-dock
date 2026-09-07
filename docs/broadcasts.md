@@ -1461,3 +1461,16 @@
   ③ boot-smoke 的 Windows 作业结果仅作诊断参考，不作为任何合入闸门。
 - 凭据：cargo test 162 绿 / clippy 干净 / fmt 过；node --check 过；macOS
   场景矩阵 10/10；Linux smoke 五连 PASS；build 三平台全绿。
+
+### 2026-09-07 发版：v0.9.5 —— guan
+
+- 变更：自 v0.9.4 起的累积发布——boot 体验批（引擎进度阶段化 + dsh 流式
+  进度 + 99% 卡死修复、步骤链生命周期、启动页撤通栏顶栏）、Windows 潜伏
+  编译错误修复（ensure_guest_engine 归位）、SIGTERM/SIGINT 优雅退出收孤儿、
+  sessions 四项 Windows 单测兼容、托盘缺失降级 warn、修复链 rename EPERM
+  退避重试、CI 闸门修复（失效 pin / fetch pnpm 顺序）与 boot-smoke 三平台
+  冒烟建立（Windows 侧实验性）、repro-boot-scenarios 场景矩阵。详见同日
+  两则落档与 commit 列表（1daf6ad..HEAD）。
+- 影响：发版；tag 构建走签名安装器 + 更新 feed。
+- 凭据：build 三平台全绿（34106505184 起持续）；smoke Linux 五连 PASS；
+  Windows 冒烟实验性（环境层不稳定，见同日补记）。
