@@ -224,6 +224,36 @@ jobs:
             unset APPLE_API_KEY APPLE_API_KEY_PATH
             echo "::warning::未配置 Apple 签名凭据，macOS 产物仅 ad-hoc 签名，不能作为公开分发包"
           fi
+
+          # 公证合规（v0.9.5 发版实证，ADR-0010 spike 发版验收清单项）：notaryd
+          # 会递归解包 tgz/tar，要求内嵌 Mach-O 具备 Developer ID 签名 + 安全
+          # 时间戳 + hardened runtime——捆绑 pnpm（npmmirror 原包未签名）三连拒
+          # 即公证 Invalid。打包前解包重签回填（成员路径不变，运行时 tar -xzf
+          # 消费无感；win/linux tgz 含 PE/ELF 不在公证范围）。tauri 自身的证书
+          # 导入发生在其 bundler 内部，此处重签须自备临时 keychain。
+          if [ -f "src-tauri/resources/pnpm/darwin-arm64.tgz" ] && [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            SIGN_TMP=$(mktemp -d)
+            KEYCHAIN="$SIGN_TMP/sign.keychain-db"
+            KEYCHAIN_PASS=$(openssl rand -hex 16)
+            DEFAULT_KCS=$(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
+            security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN"
+            printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$SIGN_TMP/cert.p12" 2>/dev/null \
+              || printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$SIGN_TMP/cert.p12"
+            security import "$SIGN_TMP/cert.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASS" "$KEYCHAIN" > /dev/null
+            security list-keychains -d user -s "$KEYCHAIN" $DEFAULT_KCS
+            tar -xzf src-tauri/resources/pnpm/darwin-arm64.tgz -C "$SIGN_TMP"
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_SIGNING_IDENTITY" "$SIGN_TMP/package/pnpm"
+            codesign --verify --strict "$SIGN_TMP/package/pnpm"
+            tar -czf src-tauri/resources/pnpm/darwin-arm64.tgz -C "$SIGN_TMP" package
+            security list-keychains -d user -s $DEFAULT_KCS
+            security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+            rm -rf "$SIGN_TMP"
+            echo "::notice::捆绑 pnpm 已重签（Developer ID + hardened runtime + timestamp）"
+          fi
+
           cargo tauri build
 
           if [[ "$has_apple_credentials" == true ]]; then
