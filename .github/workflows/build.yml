@@ -116,7 +116,7 @@ jobs:
       # 前端构建（2026-08-27 前端迁移，ADR-0008；2026-09-04 切 pnpm 12）：beforeBuildCommand 钩子会跑
       # pnpm install --frozen-lockfile && pnpm run build；锁文件 = frontend/pnpm-lock.yaml（node 22 LTS）。
       - name: Setup pnpm
-        uses: pnpm/action-setup@a32e18c50435dda8651a2934a8a3a01662c146ec # v4.1.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "12.3.1"
 
