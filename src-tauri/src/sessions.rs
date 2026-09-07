@@ -806,7 +806,12 @@ mod tests {
         fs::write(&target_file, corrupt_data).unwrap();
         // 模拟静止会话：拨回 mtime 以贴近真实修复场景（修复入口的活跃判据
         // 已是复合式——引擎存活 + mtime<5min，测试恒传 engine_alive=false）。
-        let f = fs::File::open(&target_file).unwrap();
+        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
+        //（os error 5 PermissionDenied）——write 句柄两平台通用。
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .open(&target_file)
+            .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
 
@@ -820,8 +825,10 @@ mod tests {
             std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
             std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
+        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
         #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success, "修复应成功：{}", outcome.message);
@@ -954,8 +961,10 @@ mod tests {
             std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
             std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
+        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
         #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
         let list = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(list.len(), 1);
@@ -1005,7 +1014,12 @@ mod tests {
 {"type":"turn/end","seq":4,"time":3,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
-        let f = fs::File::open(&target_file).unwrap();
+        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
+        //（os error 5 PermissionDenied）——write 句柄两平台通用。
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .open(&target_file)
+            .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
 
@@ -1018,8 +1032,10 @@ mod tests {
             std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
             std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
+        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
         #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
         // 健康扫描必须发现该损坏（旧版判定 healthy 的盲区）。
         let list = scan_sessions(&temp, &temp, false).unwrap();
@@ -1093,7 +1109,12 @@ mod tests {
 "#;
         fs::write(&target_file, healthy_data).unwrap();
         // 同活跃检测语义：拨回 mtime 模拟静止会话，避免误拒。
-        let f = fs::File::open(&target_file).unwrap();
+        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
+        //（os error 5 PermissionDenied）——write 句柄两平台通用。
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .open(&target_file)
+            .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
 
@@ -1106,8 +1127,10 @@ mod tests {
             std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
             std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
+        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
         #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success);
