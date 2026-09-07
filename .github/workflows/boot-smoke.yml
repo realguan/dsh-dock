@@ -35,6 +35,12 @@ jobs:
     name: boot smoke (Windows / 本机引擎档)
     runs-on: windows-latest
     timeout-minutes: 30
+    # 实验性（2026-09-07 裁定）：六轮实证 GitHub hosted Windows runner 对本壳
+    # 的启动存在环境层不稳定——「活着跑 15 分钟」与「boot 起步数秒静默退出」
+    # 随机分布（stderr/WER 干净，排除 panic/崩溃记录；同代码同 env 结果互异，
+    # 与镜像/env 均无关）。continue-on-error：诊断信息照常采集，不挡闸门；
+    # Windows/WSL 确定性验证留待实机或 self-hosted runner（docs/executor.md）。
+    continue-on-error: true
     # 境外 runner 置官方源优先（engines.rs/updates.rs env 接缝）：npmmirror
     # 自美国 Azure 访问可长时间零进度（首跑实证，runtime set 卡 15 分钟无
     # 一条进度行）。Linux 作业保持默认链，继续验证国内镜像路径。
@@ -157,6 +163,8 @@ jobs:
     name: boot smoke (Windows + WSL2 客体引擎链)
     runs-on: windows-latest
     timeout-minutes: 45
+    # 同 windows 作业：hosted runner 环境层不稳定，实验性不挡闸门。
+    continue-on-error: true
     env:
       DISTRO: Ubuntu-24.04
       # 同 windows 作业：客体引导的镜像/registry 链由壳 env 接缝统一下发。
