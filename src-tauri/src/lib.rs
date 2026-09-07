@@ -2191,8 +2191,14 @@ pub fn run() {
                 *state.update_status.lock().unwrap() = Some(status.clone());
                 // 非 macOS：托盘在 setup 早期创建（含初始菜单），之后统一走
                 // refresh_app_menu 刷新；macOS 则在此时设置应用菜单。
+                // 边界澄清（2026-09-07 维护者裁定）：托盘不可用（无 dbus 会话
+                // 总线 / 无 StatusNotifier 宿主，如 i3/sway/精简桌面）降级 warn
+                // 不阻断启动——常驻更新入口缺失可接受，应用不可用不可接受；
+                // ADR-0007 边界澄清，落档 broadcasts。
                 #[cfg(not(target_os = "macos"))]
-                setup_update_tray(&app_handle)?;
+                if let Err(e) = setup_update_tray(&app_handle) {
+                    tracing::warn!("托盘初始化失败（常驻更新入口缺失，应用继续）：{e}");
+                }
                 refresh_app_menu(&app_handle, &state);
                 emit_update(&app_handle, &status);
             }
