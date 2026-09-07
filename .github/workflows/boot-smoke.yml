@@ -1,0 +1,371 @@
+# boot-smoke —— 三平台 boot 端到端冒烟（2026-09-07）。
+#
+# 动机：维护者只有 macOS 实机，Linux/Windows/WSL 的真实 boot 此前只能靠
+# 三平台 CI 的编译/单测覆盖（cfg 分叉行为零覆盖，且 windows 侧曾红四天未觉）。
+# 本 workflow 在 runner 真机环境跑完整 boot 链，断言 shell.log 终态：
+#   - windows-boot-smoke：本机引擎档 boot（release 语义：前端预构建 + 资源随
+#     exe 落位，见 resolve_resources_dir 的 executable_dir/resources 兜底链）；
+#   - wsl-guest-boot-smoke：预置 defaultMode=wsl → 客体投递 + 客体引擎链
+#     （WSL2 安装流程沿用 spike-0003-verify 已实证的 windows-latest 步骤）；
+#   - linux-boot-smoke：WebKitGTK + xvfb 虚拟显示（dbus-run-session 供托盘
+#     初始化的 session bus——setup_update_tray 当前失败会中断 setup）。
+#
+# 断言口径：shell.log 出现「已进入工作台」（boot:step step=4 done）即通过；
+# WSL 作业额外断言 WSL 标记，防止静默落回 local 模式。失败/超时把壳日志
+# 上传为 artifact 供判读。
+
+# 触发：仅手动 dispatch（2026-09-07 裁定）——Windows 计费 2x 且全链路 boot
+# 耗时，重大变更（引擎引导/平台分叉/打包面）后由维护者显式触发；日常 push、
+# tag、release 一律不自动跑（发版闸门归 build.yml）。
+
+name: boot-smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: boot-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ID: io.github.realguan.dsh-dock
+
+jobs:
+  windows-boot-smoke:
+    name: boot smoke (Windows / 本机引擎档)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a32e18c50435dda8651a2934a8a3a01662c146ec # v4.1.0
+        with:
+          version: "12.3.1"
+
+      - name: Setup node for frontend
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # 宿主引擎份 + WSL 客体份（客体份本作业不消费，与 build.yml 同口径拉全）
+      - name: Fetch bundled pnpm binary (engine bootstrap)
+        shell: bash
+        run: scripts/fetch-pnpm-bundle.sh win32-x64 linux-x64
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      # release 二进制 = 生产语义（debug_assertions 关闭，资源走 exe 旁路）
+      - name: Build shell (release)
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Stage resources next to binary
+        shell: bash
+        run: cp -r src-tauri/resources src-tauri/target/release/resources
+
+      - name: Prepare app data dir
+        shell: bash
+        run: mkdir -p "$APPDATA/${{ env.APP_ID }}"
+
+      - name: Launch shell
+        shell: pwsh
+        run: >
+          Start-Process -FilePath "target\release\dsh-dock.exe"
+          -WorkingDirectory "src-tauri"
+          -RedirectStandardOutput "$env:RUNNER_TEMP\dsh-dock-stdout.log"
+          -RedirectStandardError "$env:RUNNER_TEMP\dsh-dock-stderr.log"
+
+      - name: Poll boot completion (≤15 min)
+        shell: bash
+        timeout-minutes: 16
+        run: |
+          LOG="$APPDATA/${{ env.APP_ID }}/shell.log"
+          for i in $(seq 1 90); do
+            if [ -f "$LOG" ] && grep -q "已进入工作台" "$LOG" 2>/dev/null; then
+              echo "BOOT SMOKE PASS"
+              grep -q "引擎引导完成" "$LOG" || { echo "❌ 到达工作台但未见引擎引导完成标记"; exit 1; }
+              tail -20 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "BOOT SMOKE TIMEOUT"
+          tail -80 "$LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+          exit 1
+
+      - name: Dump logs
+        if: always()
+        shell: bash
+        run: |
+          tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
+          tail -40 "$APPDATA/${{ env.APP_ID }}/dsh-shell.log" 2>/dev/null || true
+          tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+
+      - name: Upload boot logs
+        if: always()
+        uses: actions/upload-artifact@v4 # Dependabot 固化 SHA
+        with:
+          name: boot-logs-windows
+          path: |
+            ${{ runner.temp }}/dsh-dock-stdout.log
+          if-no-files-found: ignore
+
+      - name: Stop shell
+        if: always()
+        shell: pwsh
+        run: Stop-Process -Name dsh-dock -Force -ErrorAction SilentlyContinue
+
+  wsl-guest-boot-smoke:
+    name: boot smoke (Windows + WSL2 客体引擎链)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      DISTRO: Ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Ensure WSL2 + Ubuntu guest
+        shell: pwsh
+        run: |
+          $raw = (wsl --list --quiet 2>$null) -replace "`0", ""
+          $list = $raw | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          Write-Host "现有发行版：$($list -join ', ')"
+          if ($list -notcontains $env:DISTRO) {
+            wsl --install -d $env:DISTRO --no-launch
+            if ($LASTEXITCODE -ne 0) { throw "wsl --install 失败（exit $LASTEXITCODE）" }
+          }
+          wsl -d $env:DISTRO -u root -e cat /etc/os-release
+          if ($LASTEXITCODE -ne 0) { throw "客体不可用（exit $LASTEXITCODE）" }
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a32e18c50435dda8651a2934a8a3a01662c146ec # v4.1.0
+        with:
+          version: "12.3.1"
+
+      - name: Setup node for frontend
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Fetch bundled pnpm binary (engine bootstrap)
+        shell: bash
+        run: scripts/fetch-pnpm-bundle.sh win32-x64 linux-x64
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build shell (release)
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Stage resources next to binary
+        shell: bash
+        run: cp -r src-tauri/resources src-tauri/target/release/resources
+
+      # 预置 defaultMode=wsl（settings.rs camelCase 键 + lowercase 值），
+      # boot 线程据此走 WslExecutor——客体投递与客体引擎链全链路。
+      - name: Seed settings for WSL boot mode
+        shell: bash
+        run: |
+          mkdir -p "$APPDATA/${{ env.APP_ID }}"
+          printf '{"defaultMode":"wsl"}' > "$APPDATA/${{ env.APP_ID }}/settings.json"
+
+      - name: Launch shell
+        shell: pwsh
+        run: >
+          Start-Process -FilePath "target\release\dsh-dock.exe"
+          -WorkingDirectory "src-tauri"
+          -RedirectStandardOutput "$env:RUNNER_TEMP\dsh-dock-stdout.log"
+          -RedirectStandardError "$env:RUNNER_TEMP\dsh-dock-stderr.log"
+
+      - name: Poll boot completion (≤20 min)
+        shell: bash
+        timeout-minutes: 21
+        run: |
+          LOG="$APPDATA/${{ env.APP_ID }}/shell.log"
+          for i in $(seq 1 120); do
+            if [ -f "$LOG" ] && grep -q "已进入工作台" "$LOG" 2>/dev/null; then
+              echo "WSL BOOT SMOKE PASS"
+              # 防静默落回 local：必须看到 WSL 探测/启动标记
+              grep -q "WSL2 环境检测通过" "$LOG" || { echo "❌ 未见 WSL 探测标记（可能回退 local）"; exit 1; }
+              grep -q "内 DSH 已启动" "$LOG" || { echo "❌ 未见客体 DSH 启动标记"; exit 1; }
+              tail -25 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "WSL BOOT SMOKE TIMEOUT"
+          tail -80 "$LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+          exit 1
+
+      - name: Dump logs
+        if: always()
+        shell: bash
+        run: |
+          tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
+          tail -60 "$APPDATA/${{ env.APP_ID }}/dsh-wsl.log" 2>/dev/null || true
+          tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+
+      - name: Upload boot logs
+        if: always()
+        uses: actions/upload-artifact@v4 # Dependabot 固化 SHA
+        with:
+          name: boot-logs-wsl
+          path: |
+            ${{ runner.temp }}/dsh-dock-stdout.log
+
+      - name: Stop shell
+        if: always()
+        shell: pwsh
+        run: Stop-Process -Name dsh-dock -Force -ErrorAction SilentlyContinue
+
+  linux-boot-smoke:
+    name: boot smoke (Linux / xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+
+      # Tauri v2 Linux 系统依赖（与 build.yml 同清单）+ dbus/xvfb（冒烟运行时）
+      - name: Ubuntu system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            dbus \
+            xvfb
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a32e18c50435dda8651a2934a8a3a01662c146ec # v4.1.0
+        with:
+          version: "12.3.1"
+
+      - name: Setup node for frontend
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Fetch bundled pnpm binary (engine bootstrap)
+        shell: bash
+        run: scripts/fetch-pnpm-bundle.sh
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build shell (release)
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Stage resources next to binary
+        shell: bash
+        run: cp -r src-tauri/resources src-tauri/target/release/resources
+
+      - name: Prepare app data dir
+        shell: bash
+        run: mkdir -p "$HOME/.local/share/${{ env.APP_ID }}"
+
+      # dbus-run-session：托盘 setup 需要会话总线（无它 setup_update_tray 的
+      # `?` 会中断启动）；xvfb 提供 WebKitGTK 所需显示。DMABUF 渲染在虚拟
+      # 显示上常见崩溃，按 webkitgtk CI 惯例禁用。
+      - name: Launch shell under xvfb
+        shell: bash
+        run: |
+          cd src-tauri
+          nohup dbus-run-session -- xvfb-run -a \
+            env WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+            ./target/release/dsh-dock > "$RUNNER_TEMP/dsh-dock-stdout.log" 2>&1 &
+
+      - name: Poll boot completion (≤15 min)
+        shell: bash
+        timeout-minutes: 16
+        run: |
+          LOG="$HOME/.local/share/${{ env.APP_ID }}/shell.log"
+          for i in $(seq 1 90); do
+            if [ -f "$LOG" ] && grep -q "已进入工作台" "$LOG" 2>/dev/null; then
+              echo "BOOT SMOKE PASS"
+              grep -q "引擎引导完成" "$LOG" || { echo "❌ 到达工作台但未见引擎引导完成标记"; exit 1; }
+              tail -20 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "BOOT SMOKE TIMEOUT"
+          tail -80 "$LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+          exit 1
+
+      - name: Dump logs
+        if: always()
+        shell: bash
+        run: |
+          tail -80 "$HOME/.local/share/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
+          tail -40 "$HOME/.local/share/${{ env.APP_ID }}/dsh-shell.log" 2>/dev/null || true
+          tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+
+      - name: Upload boot logs
+        if: always()
+        uses: actions/upload-artifact@v4 # Dependabot 固化 SHA
+        with:
+          name: boot-logs-linux
+          path: |
+            ${{ runner.temp }}/dsh-dock-stdout.log
+
+      - name: Stop shell
+        if: always()
+        shell: bash
+        run: pkill -f target/release/dsh-dock || true
