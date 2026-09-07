@@ -149,6 +149,29 @@ fn parse_size(text: &str) -> Option<u64> {
     Some((value * multiplier) as u64)
 }
 
+/// 解析 pnpm 非 TTY 安装进度行（`add -g` 的 default reporter），如
+/// `Progress: resolved 53, reused 48, downloaded 4, added 3`；实测（2026-09-07，
+/// pnpm 12.3.1）行首可带安装目录标签前缀
+/// `.../global/v11/<hash>   | Progress: resolved 2, …`——按 `Progress:`
+/// 分隔符定位，兼容裸行与前缀行。返回 (已下载包数, resolved 总数)。
+pub fn parse_package_progress(line: &str) -> Option<(u64, u64)> {
+    let rest = line.trim().split_once("Progress:")?.1;
+    let mut resolved = None;
+    let mut downloaded = None;
+    for part in rest.split(',') {
+        let part = part.trim();
+        if let Some(n) = part.strip_prefix("resolved ") {
+            resolved = n.parse().ok();
+        } else if let Some(n) = part.strip_prefix("downloaded ") {
+            downloaded = n.parse().ok();
+        }
+    }
+    match (downloaded, resolved) {
+        (Some(done), Some(total)) if total > 0 => Some((done, total)),
+        _ => None,
+    }
+}
+
 // ---------- 就绪判定 ----------
 
 /// 引擎三件状态（引擎 bin 内真实执行 `--version` 的结果）。
@@ -271,71 +294,52 @@ fn run_engine_pnpm(
     Ok(())
 }
 
-/// `pnpm runtime set node <version>`：镜像链（npmmirror → 官方）逐个尝试；
-/// 非 TTY 字节进度行经回调上抛（映射 boot:progress）。cwd = 引擎目录——
-/// runtime set 为项目作用域，单目录方案恰好把 node 装进引擎（spike 0003 §2.2）。
-pub fn runtime_set_node(
+/// 引擎 pnpm 子进程流式执行：stdout 逐行经 `on_line` 上抛（调用方解析进度），
+/// stderr 并发排水并收集尾部；失败时取 stderr 尾 8 行并入错误详情。
+/// 镜像/registry 循环与进度语义归调用方。
+fn run_engine_pnpm_streaming(
     data_dir: &Path,
-    version: &str,
     path_env: &str,
-    progress: &mut dyn FnMut(u64, Option<u64>),
+    args: &[String],
+    extra_env: &[(String, String)],
+    on_line: &mut dyn FnMut(&str),
 ) -> Result<()> {
-    let mut errors = Vec::new();
-    for base in [NODE_MIRROR_PRIMARY, NODE_MIRROR_FALLBACK] {
-        tracing::info!("runtime set node {version}（镜像 {base}）…");
-        let pnpm = engine_pnpm_bin(data_dir);
-        let mut cmd = crate::child_cmd(&pnpm);
-        cmd.args(["runtime", "set", "node", version])
-            .current_dir(pnpm_home(data_dir))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (k, v) in pnpm_process_env(data_dir, path_env) {
-            cmd.env(k, v);
-        }
-        let (mk, mv) = node_mirrors_env(base);
-        cmd.env(mk, mv);
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(format!("{base}: spawn 失败 {e}"));
-                continue;
-            }
-        };
-        // stderr 并发排水：管道塞满（64KB）会让子进程写阻塞、stdout 永不 EOF，
-        // 与「先排干 stdout 再 wait」互锁成死等（无超时）。行进 debug 日志，
-        // 失败时取尾部并入错误详情。
-        let stderr = child.stderr.take();
-        let stderr_thread = std::thread::spawn(move || {
-            let mut all = String::new();
-            if let Some(s) = stderr {
-                for line in BufReader::new(s).lines().map_while(Result::ok) {
-                    tracing::debug!("[pnpm-runtime] {line}");
-                    all.push_str(&line);
-                    all.push('\n');
-                }
-            }
-            all
-        });
-        let mut progress_lines = 0usize;
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                match parse_download_progress(&line) {
-                    Some(p) => {
-                        if progress_lines == 0 {
-                            tracing::info!(
-                                "node v{} 下载中（进度经 boot:progress 实时推进）",
-                                p.node_version
-                            );
-                        }
-                        progress_lines += 1;
-                        progress(p.downloaded, Some(p.total));
-                    }
-                    None => tracing::debug!("[pnpm-runtime] {line}"),
-                }
+    let mut cmd = crate::child_cmd(&engine_pnpm_bin(data_dir));
+    cmd.args(args)
+        .current_dir(pnpm_home(data_dir))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in pnpm_process_env(data_dir, path_env) {
+        cmd.env(k, v);
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().context("spawn 引擎 pnpm 失败")?;
+    // stderr 并发排水：管道塞满（64KB）会让子进程写阻塞、stdout 永不 EOF，
+    // 与「先排干 stdout 再 wait」互锁成死等（无超时）。行进 debug 日志，
+    // 失败时取尾部并入错误详情。
+    let stderr = child.stderr.take();
+    let stderr_thread = std::thread::spawn(move || {
+        let mut all = String::new();
+        if let Some(s) = stderr {
+            for line in BufReader::new(s).lines().map_while(Result::ok) {
+                tracing::debug!("[pnpm-runtime] {line}");
+                all.push_str(&line);
+                all.push('\n');
             }
         }
-        let status = child.wait().context("等待 runtime set node 退出失败")?;
-        let stderr_tail: String = stderr_thread
+        all
+    });
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            tracing::debug!("[pnpm-runtime] {line}");
+            on_line(&line);
+        }
+    }
+    let status = child.wait().context("等待引擎 pnpm 子进程退出失败")?;
+    if !status.success() {
+        let detail: String = stderr_thread
             .join()
             .unwrap_or_default()
             .lines()
@@ -346,13 +350,71 @@ pub fn runtime_set_node(
             .rev()
             .collect::<Vec<_>>()
             .join("\n");
-        if status.success() {
-            tracing::info!("node v{version} 就位（{progress_lines} 行下载进度）");
-            return Ok(());
+        bail!("pnpm {} 失败：{}", args.join(" "), detail.trim());
+    }
+    Ok(())
+}
+
+/// `pnpm runtime set node <version>`：镜像链（npmmirror → 官方）逐个尝试；
+/// 非 TTY 字节进度行经回调上抛（映射 boot:progress，阶段 = Node）。
+/// cwd = 引擎目录——runtime set 为项目作用域，单目录方案恰好把 node 装进
+/// 引擎（spike 0003 §2.2）。
+pub fn runtime_set_node(
+    data_dir: &Path,
+    version: &str,
+    path_env: &str,
+    progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
+) -> Result<()> {
+    let mut errors = Vec::new();
+    for base in [NODE_MIRROR_PRIMARY, NODE_MIRROR_FALLBACK] {
+        tracing::info!("runtime set node {version}（镜像 {base}）…");
+        let (mk, mv) = node_mirrors_env(base);
+        let mut progress_lines = 0usize;
+        let mut last: Option<(u64, u64)> = None;
+        let result = run_engine_pnpm_streaming(
+            data_dir,
+            path_env,
+            &[
+                "runtime".to_string(),
+                "set".to_string(),
+                "node".to_string(),
+                version.to_string(),
+            ],
+            &[(mk, mv)],
+            &mut |line| {
+                if let Some(p) = parse_download_progress(line) {
+                    if progress_lines == 0 {
+                        tracing::info!(
+                            "node v{} 下载中（进度经 boot:progress 实时推进）",
+                            p.node_version
+                        );
+                    }
+                    progress_lines += 1;
+                    last = Some((p.downloaded, p.total));
+                    progress(
+                        crate::updates::ProgressStage::Node,
+                        p.downloaded,
+                        Some(p.total),
+                    );
+                }
+            },
+        );
+        match result {
+            Ok(()) => {
+                tracing::info!("node v{version} 就位（{progress_lines} 行下载进度）");
+                // 关单：pnpm 下完最后一段字节后转入 SHASUMS 校验/解包，不再输出
+                // 进度行——末行常停在 99%，按满额补发一次完成事件（字节确已下完），
+                // 前端据此收起下载卡（boot:progress 桥对完成事件不节流）。
+                if let Some((_, total)) = last {
+                    progress(crate::updates::ProgressStage::Node, total, Some(total));
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!("runtime set node（{base}）失败：{e}");
+                errors.push(format!("{base}: {e}"));
+            }
         }
-        let detail = stderr_tail.trim().to_string();
-        errors.push(format!("{base}: {detail}"));
-        tracing::warn!("runtime set node（{base}）失败：{detail}");
     }
     Err(anyhow!(
         "node 引导失败（镜像均不可达）：{}",
@@ -435,16 +497,43 @@ pub fn shim_add_node(data_dir: &Path, path_env: &str) -> Result<()> {
 }
 
 /// `pnpm add -g @deepseek-ai/dsh@<version>`：registry 镜像链逐个尝试
-///（allow-build 放行沿 ADR-0009/0005 同一口径）。
-pub fn install_dsh_global(data_dir: &Path, version: &str, path_env: &str) -> Result<()> {
+///（allow-build 放行沿 ADR-0009/0005 同一口径）。非 TTY 安装进度行
+///（`Progress: resolved N, … downloaded M`）经回调上抛（阶段 = Dsh，
+/// 包计数）。
+pub fn install_dsh_global(
+    data_dir: &Path,
+    version: &str,
+    path_env: &str,
+    progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
+) -> Result<()> {
     let _ = link_real_node_binary(data_dir);
     let mut errors = Vec::new();
     for registry in crate::updates::package_registry_bases() {
         let args =
             crate::updates::pnpm_install_args(registry, &format!("@deepseek-ai/dsh@{version}"));
         tracing::info!("pnpm add -g @deepseek-ai/dsh@{version}（registry {registry}）…");
-        match run_engine_pnpm(data_dir, path_env, &args, &[]) {
-            Ok(()) => return Ok(()),
+        let mut progress_lines = 0usize;
+        let mut last: Option<(u64, u64)> = None;
+        let result = run_engine_pnpm_streaming(data_dir, path_env, &args, &[], &mut |line| {
+            if let Some((done, total)) = parse_package_progress(line) {
+                if progress_lines == 0 {
+                    tracing::info!("dsh 包下载中（进度经 boot:progress 实时推进）");
+                }
+                progress_lines += 1;
+                last = Some((done, total));
+                progress(crate::updates::ProgressStage::Dsh, done, Some(total));
+            }
+        });
+        match result {
+            Ok(()) => {
+                tracing::info!("dsh v{version} 就位（{progress_lines} 行安装进度）");
+                // 关单：末条 Progress 行可能停在 downloaded < resolved，成功
+                // 返回即全部就位，按满额补发一次完成事件。
+                if let Some((_, total)) = last {
+                    progress(crate::updates::ProgressStage::Dsh, total, Some(total));
+                }
+                return Ok(());
+            }
             Err(e) => {
                 tracing::warn!("dsh 引导安装（{registry}）失败：{e}");
                 errors.push(format!("{registry}: {e}"));
@@ -479,7 +568,7 @@ pub fn bootstrap(
     pnpm_bundle: &Path,
     node_resolve: &mut dyn FnMut() -> Result<String>,
     dsh_resolve: &mut dyn FnMut() -> Result<String>,
-    progress: &mut dyn FnMut(u64, Option<u64>),
+    progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
 ) -> Result<BootstrapOutcome> {
     // ① pnpm 随壳 pin：每次 boot 重铺（幂等覆盖，版本不再参与判定）
     tracing::info!("引擎引导：重铺捆绑 pnpm…");
@@ -545,7 +634,7 @@ pub fn bootstrap(
         let dsh_version =
             dsh_resolve().map_err(|e| anyhow!("dsh 引导失败（缺失）：目标版本解析失败：{e}"))?;
         tracing::info!("dsh 目标版本：{dsh_version}，开始全局安装…");
-        install_dsh_global(data_dir, &dsh_version, path_env)?;
+        install_dsh_global(data_dir, &dsh_version, path_env, progress)?;
         dsh_installed = true;
         status = probe_engine(data_dir, path_env);
     }
@@ -599,6 +688,38 @@ mod tests {
         assert!(parse_download_progress("Progress: resolved 1, reused 0, downloaded 0").is_none());
         assert!(parse_download_progress("Done in 7.6s using pnpm v12.3.1").is_none());
         assert!(parse_download_progress("").is_none());
+    }
+
+    #[test]
+    fn parse_package_progress_handles_reporter_lines() {
+        let p = parse_package_progress("Progress: resolved 53, reused 48, downloaded 4, added 3")
+            .expect("pnpm 安装进度行应可解析");
+        assert_eq!(p, (4, 53));
+        let prefixed = parse_package_progress(
+            ".../global/v11/881f-18d2f7834c8abb48-0   | Progress: resolved 2, reused 0, downloaded 2, added 2, done",
+        )
+        .expect("带目录标签前缀的实机样本应可解析（2026-09-07 pnpm 12.3.1 实测）");
+        assert_eq!(prefixed, (2, 2));
+        let first =
+            parse_package_progress("Progress: resolved 52, reused 0, downloaded 0, added 0")
+                .unwrap();
+        assert_eq!(
+            first,
+            (0, 52),
+            "首行 downloaded 0 也应给出总数（驱动包计数进度）"
+        );
+    }
+
+    #[test]
+    fn parse_package_progress_ignores_other_lines() {
+        assert!(parse_package_progress("Done in 7.6s using pnpm v12.3.1").is_none());
+        assert!(parse_package_progress("Packages: +52").is_none());
+        assert!(parse_package_progress("").is_none());
+        assert!(
+            parse_package_progress("Progress: resolved 0, reused 0, downloaded 0, added 0")
+                .is_none(),
+            "resolved 0 时总数未知，不产出进度（防除零/误导性 0%）"
+        );
     }
 
     #[test]
@@ -765,7 +886,7 @@ mod tests {
                 dsh_called = true;
                 Ok("0.1.1".to_string())
             },
-            &mut |_, _| {},
+            &mut |_, _, _| {},
         )
         .unwrap();
         assert_eq!(outcome.status.pnpm.as_deref(), Some("12.3.1"));
@@ -809,7 +930,7 @@ mod tests {
             &bundle,
             &mut || Err(anyhow!("registry 不可达")),
             &mut || panic!("dsh 已装时不应解析目标版本"),
-            &mut |_, _| {},
+            &mut |_, _, _| {},
         )
         .unwrap();
         assert!(!outcome.node_switched);

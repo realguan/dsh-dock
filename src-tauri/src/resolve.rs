@@ -822,7 +822,7 @@ mod tests {
         let manifest_path = root.join("product.manifest.json");
         std::fs::write(&manifest_path, json).unwrap();
         let m = ProductManifest::load(&manifest_path).unwrap();
-        let spec = resolve_launch(&m, &res, "", &root, &mut |_, _| {}).unwrap();
+        let spec = resolve_launch(&m, &res, "", &root, &mut |_, _, _| {}).unwrap();
         assert_eq!(spec.tier, TierKind::Bundle);
         assert_eq!(spec.profile, "desktop-demo");
         assert!(spec.node_bin.ends_with("dsh-snapshot/node/bin/dsh-node"));
@@ -866,7 +866,7 @@ mod tests {
             Path::new("/res"),
             "",
             Path::new("/tmp/none"),
-            &mut |_, _| {},
+            &mut |_, _, _| {},
         )
         .unwrap_err();
         assert!(err.to_string().contains("档序为空"));

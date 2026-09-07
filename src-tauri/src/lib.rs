@@ -2359,10 +2359,13 @@ fn boot_sink(app: &tauri::AppHandle) -> impl FnMut(usize, &str, &str) + use<'_> 
 }
 
 /// 下载进度 → `boot:progress` 事件的桥接（updates 模块保持零 tauri 依赖）。
-/// 节流：≥100ms 一次；完成（current ≥ total）必发。
-fn download_progress_bridge(app: &tauri::AppHandle) -> impl FnMut(u64, Option<u64>) + use<'_> {
+/// 节流：≥100ms 一次；完成（current ≥ total）必发。量的单位随阶段：
+/// Node = 字节，Dsh = 包计数（前端按 kind 分形态展示）。
+fn download_progress_bridge(
+    app: &tauri::AppHandle,
+) -> impl FnMut(crate::updates::ProgressStage, u64, Option<u64>) + use<'_> {
     let mut last: Option<std::time::Instant> = None;
-    move |current, total| {
+    move |stage, current, total| {
         let now = std::time::Instant::now();
         let done = total.map(|t| current >= t).unwrap_or(false);
         let throttled = last
@@ -2376,7 +2379,7 @@ fn download_progress_bridge(app: &tauri::AppHandle) -> impl FnMut(u64, Option<u6
         let _ = app.emit(
             "boot:progress",
             serde_json::json!({
-                "kind": "node",
+                "kind": stage.as_str(),
                 "current": current,
                 "total": total,
             }),

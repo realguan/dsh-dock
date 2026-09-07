@@ -23,9 +23,27 @@ use crate::resolve;
 const NODE_VERSION: &str = "v24.18.0";
 /// 元数据请求整体超时（秒）：registry 拉包清单等小响应，整体限时合理。
 const NET_TIMEOUT_SECS: u64 = 60;
-/// 下载进度回调：`(已传输字节, 总字节)`；服务器未报长度时总字节为 None。
-/// updates 模块保持零 tauri 依赖——进度经回调上抛，由 lib.rs 桥接为事件。
-pub type DownloadProgress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
+/// 下载进度阶段（ui `boot:progress` 的 kind 字段）：Node = `runtime set`
+/// 的下载字节；Dsh = `add -g` 的包计数（downloaded / resolved）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressStage {
+    Node,
+    Dsh,
+}
+
+impl ProgressStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProgressStage::Node => "node",
+            ProgressStage::Dsh => "dsh",
+        }
+    }
+}
+
+/// 下载进度回调：`(阶段, 已完成量, 总量)`；总量未知时为 None。
+/// 阶段决定量的单位——Node 为字节，Dsh 为包数。updates 模块保持零 tauri
+/// 依赖——进度经回调上抛，由 lib.rs 桥接为事件。
+pub type DownloadProgress<'a> = &'a mut dyn FnMut(ProgressStage, u64, Option<u64>);
 /// pnpm v10 默认会阻止依赖的 install/postinstall；dsh 的 native/helper 依赖必须放行。
 const PNPM_BUILD_PACKAGES: [&str; 5] = [
     "@deepseek-ai/dsh-subprocess-local",
@@ -528,7 +546,8 @@ pub fn upgrade_engine_dsh(data_dir: &Path, resources_dir: &Path, path_env: &str)
         crate::engines::stage_pnpm_from_bundle(&engine_pnpm_bundle(resources_dir), data_dir)
             .context("引擎 pnpm 重铺失败")?;
     }
-    crate::engines::install_dsh_global(data_dir, &version, path_env)?;
+    // 升级入口有自己的 busy 呈现（更新按钮），不消费 boot 进度卡——空回调。
+    crate::engines::install_dsh_global(data_dir, &version, path_env, &mut |_, _, _| {})?;
     tracing::info!(version = %version, "dsh 升级完成");
     Ok(version)
 }

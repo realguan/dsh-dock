@@ -51,9 +51,11 @@ impl ExecutorKind {
 /// 启动/探测阶段的进度回传（step, state, detail）——与 ui `boot:step` 协议同构。
 pub type BootSink<'a> = &'a mut dyn FnMut(usize, &str, &str);
 
-/// 下载字节进度回调（与 updates.rs 的 DownloadProgress 同构；保持零 tauri 依赖）。
-/// 本机 download 档补齐 Node/dsh 时经它上抛字节进度（ui `boot:progress`）。
-pub type DownloadProgress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
+/// 下载进度回调（与 updates.rs 的 DownloadProgress 同构；保持零 tauri 依赖）。
+/// 本机引擎引导补齐 node/dsh 时经它上抛（ui `boot:progress`）：node 上抛
+/// 字节，dsh 上抛包计数——阶段枚举见 updates::ProgressStage。
+pub type DownloadProgress<'a> =
+    &'a mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>);
 
 /// `probe` 之后的状态：可直接 `start`，或需要用户先选 profile（F-b 选择器）。
 pub enum ProbeOutcome {
