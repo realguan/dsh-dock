@@ -1122,6 +1122,30 @@ export function scanSessionHealth(filePath) {
   })
 }
 
+/** 同步休眠（Node 主线程允许 Atomics.wait；退避重试用）。 */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Windows 韧性 rename（2026-09-07 维护者裁定：重试+退避）：Windows 上
+ * rename 不能替换仍被任何进程打开的文件（EPERM -4048，杀软/索引器/备份
+ * 工具瞬态锁）——退避重试 3 次（200/500/1000ms）穷尽才上抛；非 EPERM
+ * 原样抛。失败无损：原文件未动，tmp 留修好内容可重试。
+ */
+function renameWithRetry(tmp, dest) {
+  const backoffs = [200, 500, 1000]
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(tmp, dest)
+      return
+    } catch (e) {
+      if (e?.code !== 'EPERM' || attempt >= backoffs.length) throw e
+      sleepSync(backoffs[attempt])
+    }
+  }
+}
+
 /** 原子替换：写临时文件 → 覆盖（Windows 先删目标，POSIX rename 原子）。 */
 function writeAtomic(filePath, bytes) {
   const tmp = `${filePath}.dsh-repair-tmp`
@@ -1319,7 +1343,7 @@ export async function repairSessionFile(filePath) {
     } catch { /* ignore */ }
     return { ok: false, changed: false, message: `❌ 修复产物未通过加载器语义校验，已放弃写入（原文件未动）：${verifyErr}` }
   }
-  renameSync(tmpPath, filePath)
+  renameWithRetry(tmpPath, filePath)
 
   // 写后竞态复查：确认磁盘上的文件正是本次写入的字节（而非期间被其他进程
   // 改写——活跃会话会在修复期间继续追加）。
