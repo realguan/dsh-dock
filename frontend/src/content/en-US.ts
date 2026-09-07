@@ -21,6 +21,7 @@ export const enUS: AppCopy = {
     copyDetail: "Copy details",
     copied: "Copied",
     progressAria: "Startup progress: {done} of {total}",
+    dlPackages: "{done} / {total} packages",
     wslOpen: "Open in WSL",
     wslOpenTip: "Run DSH inside WSL2 distro (requires Windows + WSL2)",
     wslFailed: "Failed to switch to WSL",

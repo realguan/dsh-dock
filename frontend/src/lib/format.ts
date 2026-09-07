@@ -24,6 +24,8 @@ export function fmtSpeed(bytesPerSec: number | null): string | null {
 /** 秒 → 剩余时间文本（mm:ss；超一小时进位 h）；无效输入返回 null。 */
 export function fmtEta(seconds: number | null): string | null {
   if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return null
+  // 不足 1 秒 = 即将完成：显示 00:00 读起来像卡死，直接隐藏（调用方不渲染芯片）。
+  if (seconds < 1) return null
   const s = Math.round(seconds)
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)

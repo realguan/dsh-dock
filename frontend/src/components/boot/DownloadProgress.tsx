@@ -1,13 +1,18 @@
 // 下载主角位（原 index/selector 的 .dl 区块升级迁移）：大百分比 + 进度条 +
-// 字节/速度/剩余时间；total 未知时切不确定动画。
+// 字节/速度/剩余时间；total 未知时切不确定动画。kind=dsh 时量的单位是包计数
+// （engines.rs parse_package_progress），不展示字节速率（样本是包/秒）。
 import { motion } from "framer-motion"
 import { DownloadCloud, Zap, Clock, ShieldCheck } from "lucide-react"
 import { fmtBytes, fmtEta, fmtSpeed } from "@/lib/format"
 import { useBootStore } from "@/stores/bootStore"
+import { useI18n } from "@/stores/i18nStore"
 
 export function DownloadProgress() {
+  const { t } = useI18n()
   const progress = useBootStore((s) => s.progress)
   if (!progress) return null
+
+  const isDsh = progress.kind === "dsh"
 
   const pct =
     progress.total !== null && progress.total > 0
@@ -45,7 +50,7 @@ export function DownloadProgress() {
         </div>
 
         <div className="flex items-center gap-2">
-          {fmtSpeed(progress.speed) && (
+          {!isDsh && fmtSpeed(progress.speed) && (
             <span className="inline-flex items-center gap-1 rounded-lg border border-brand/20 bg-wash px-2 py-0.5 font-mono text-[11px] font-medium text-brand-deep shadow-2xs">
               <Zap className="size-3" />
               {fmtSpeed(progress.speed)}
@@ -71,7 +76,11 @@ export function DownloadProgress() {
           </div>
           <span className="font-mono text-xs font-medium text-dim tabular-nums">
             {progress.total !== null
-              ? `${fmtBytes(progress.current)} / ${fmtBytes(progress.total)}`
+              ? isDsh
+                ? t.boot.dlPackages
+                    .replace("{done}", String(progress.current))
+                    .replace("{total}", String(progress.total))
+                : `${fmtBytes(progress.current)} / ${fmtBytes(progress.total)}`
               : `已传输 ${fmtBytes(progress.current)}`}
           </span>
         </div>

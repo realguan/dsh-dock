@@ -24,6 +24,7 @@ export const t = {
     copyDetail: "复制详情",
     copied: "已复制",
     progressAria: "启动进度：{done} / {total}",
+    dlPackages: "{done} / {total} 个包",
     wslOpen: "在 WSL 中打开",
     wslOpenTip: "在 WSL2 发行版内运行 DSH（需 Windows + WSL2）",
     wslFailed: "WSL 切换失败",

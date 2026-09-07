@@ -48,6 +48,10 @@ describe("fmtEta", () => {
     expect(fmtEta(-5)).toBeNull()
     expect(fmtEta(Number.POSITIVE_INFINITY)).toBeNull()
   })
+  it("不足 1 秒 null（即将完成，不展示 00:00）", () => {
+    expect(fmtEta(0.4)).toBeNull()
+    expect(fmtEta(0)).toBeNull()
+  })
 })
 
 describe("fmtPercent", () => {

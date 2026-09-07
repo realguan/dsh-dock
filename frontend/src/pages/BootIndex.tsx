@@ -4,16 +4,14 @@
 // （徽标 + 当前状态 + 分段进度），步骤列表讲述「到哪了」；下载进度经 banner
 // 槽位入卡；出错时卡头转警示态、ErrorCard 就地展开。
 import { useEffect, useState } from "react"
-import { TerminalSquare, SlidersHorizontal } from "lucide-react"
+import { TerminalSquare } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
-import { resource } from "@/lib/resource"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import { normalizeError, normalizeStep } from "@/lib/events"
 import { useBootStore } from "@/stores/bootStore"
-import { VersionChip } from "@/components/boot/VersionChip"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
 import { ErrorCard } from "@/components/boot/ErrorCard"
@@ -37,7 +35,6 @@ export function BootIndex() {
   const activeStep = useBootStore((s) => s.activeStep)
   const error = useBootStore((s) => s.error)
   const progress = useBootStore((s) => s.progress)
-  const setVersions = useBootStore((s) => s.setVersions)
   const clearError = useBootStore((s) => s.clearError)
 
   const shownError: BootErrorEvent | null = localError ?? error
@@ -51,17 +48,6 @@ export function BootIndex() {
   useEffect(() => {
     if (activeStep >= 0) setLastRunning(activeStep)
   }, [activeStep])
-
-  // 播种版本快照（顶栏芯片立即可用；后续靠 boot:update 推送刷新）
-  useEffect(() => {
-    let alive = true
-    resource.updateStatus().then((v) => {
-      if (alive && v) setVersions(v)
-    })
-    return () => {
-      alive = false
-    }
-  }, [setVersions])
 
   // 播种早期启动状态与错误（规避 WebView 挂载前事件丢失的竞态）
   useEffect(() => {
@@ -142,62 +128,43 @@ export function BootIndex() {
       {/* 顶部环境渐变光晕 */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,color-mix(in_srgb,var(--color-brand)_12%,transparent),transparent_70%)]" />
 
-      {/* 顶栏：轻量工作台徽标 + 版本芯片 + WSL 切换 + 控制中心入口 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/75 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
-        <div data-tauri-drag-region className="flex flex-1 items-center gap-2 select-none">
-          <span className="flex size-2 rounded-full bg-brand ring-4 ring-brand/10" />
-          <span className="font-mono text-xs font-semibold tracking-wider text-ink/90">DSH DOCK</span>
-          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">DESKTOP</span>
+      {/* WSL 模式切换（仅 Windows 渲染）：悬浮胶囊。boot 页不再渲染通栏顶栏
+          ——原生标题栏之下再来一条导航条视觉上叠加成「双下巴」，且徽标/版本
+          芯片/控制中心入口在 boot 期均无消费场景（错误卡兜底诊断入口）。 */}
+      {can.bootWsl && (
+        <div className="absolute right-6 top-4 z-20">
+          <button
+            type="button"
+            title={isWsl ? t.boot.localOpenTip : t.boot.wslOpenTip}
+            disabled={wslBusy}
+            onClick={() => {
+              setWslBusy(true)
+              const target = isWsl ? "local" : "wsl"
+              api
+                .chooseMode(target, false)
+                .catch((e) =>
+                  setLocalError({
+                    title: isWsl ? t.boot.localFailed : t.boot.wslFailed,
+                    detail: String(e instanceof Error ? e.message : e),
+                  }),
+                )
+                .finally(() => setWslBusy(false))
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs backdrop-blur-md transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs disabled:cursor-default disabled:opacity-50"
+          >
+            <TerminalSquare className="size-3.5 text-brand" />
+            {isWsl ? t.boot.localOpen : t.boot.wslOpen}
+          </button>
         </div>
-
-        <div className="flex items-center gap-2.5">
-          {maxStepSeen >= 4 && (
-            <button
-              type="button"
-              title={t.boot.controlCenterTip}
-              onClick={() => api.openProfilesWindow().catch(() => {})}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
-            >
-              <SlidersHorizontal className="size-3.5 text-brand" />
-              {t.boot.controlCenter}
-            </button>
-          )}
-          <VersionChip />
-          {/* 模式切换：感知当前模式，双向切换（2026-09-01 修复硬编码） */}
-          {can.bootWsl && (
-            <button
-              type="button"
-              title={isWsl ? t.boot.localOpenTip : t.boot.wslOpenTip}
-              disabled={wslBusy}
-              onClick={() => {
-                setWslBusy(true)
-                const target = isWsl ? "local" : "wsl"
-                api
-                  .chooseMode(target, false)
-                  .catch((e) =>
-                    setLocalError({
-                      title: isWsl ? t.boot.localFailed : t.boot.wslFailed,
-                      detail: String(e instanceof Error ? e.message : e),
-                    }),
-                  )
-                  .finally(() => setWslBusy(false))
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs disabled:cursor-default disabled:opacity-50"
-            >
-              <TerminalSquare className="size-3.5 text-brand" />
-              {isWsl ? t.boot.localOpen : t.boot.wslOpen}
-            </button>
-          )}
-        </div>
-      </header>
+      )}
 
       {/* 升级提示条：非阻断浮层（ADR-0010 升级呈现；忽略同版本不再弹） */}
-      <div className="pointer-events-none absolute inset-x-0 top-14 z-10 flex justify-center px-6">
+      <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center px-6">
         <UpdateBanner />
       </div>
 
       {/* 主工作区：控制台卡即页面主角 */}
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-24 pb-12">
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
         <section className="w-full max-w-xl">
           <BootTimeline
             title={title}
