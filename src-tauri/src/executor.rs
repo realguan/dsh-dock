@@ -17,6 +17,10 @@
 //! SSH 为预留：SshConfig 形状先定型（本期不实现），执行逻辑留后续版本。
 
 use std::path::PathBuf;
+// WSL 客体链（cfg(windows) 专属）用 &Path 形参——macOS 侧 cfg 剥离后不可见，
+// 缺导入只在 Windows 编译时暴露（windows-gnu target check 的存在意义）。
+#[cfg(windows)]
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -54,8 +58,7 @@ pub type BootSink<'a> = &'a mut dyn FnMut(usize, &str, &str);
 /// 下载进度回调（与 updates.rs 的 DownloadProgress 同构；保持零 tauri 依赖）。
 /// 本机引擎引导补齐 node/dsh 时经它上抛（ui `boot:progress`）：node 上抛
 /// 字节，dsh 上抛包计数——阶段枚举见 updates::ProgressStage。
-pub type DownloadProgress<'a> =
-    &'a mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>);
+pub type DownloadProgress<'a> = &'a mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>);
 
 /// `probe` 之后的状态：可直接 `start`，或需要用户先选 profile（F-b 选择器）。
 pub enum ProbeOutcome {
@@ -689,75 +692,14 @@ impl WslExecutor {
             forced_profile: None,
         }
     }
-}
-
-#[cfg(windows)]
-impl Executor for WslExecutor {
-    fn kind(&self) -> ExecutorKind {
-        ExecutorKind::Wsl
-    }
-
-    fn probe(
-        &mut self,
-        sink: BootSink<'_>,
-        progress: DownloadProgress<'_>,
-    ) -> Result<ProbeOutcome, String> {
-        let _ = progress; // WSL 迭代 v1 不在客体内下载，无字节进度
-                          // 消费强制目标（管理器切换/重试，4.3⑥）：guest 世界恒为用户 WSL home。
-        if let Some(p) = self.forced_profile.take() {
-            self.profile = p;
-        }
-        sink(0, "running", "正在检查 WSL2 环境");
-        let distros = wsl_distros()?;
-        if distros.is_empty() {
-            sink(0, "error", "未检测到 WSL 发行版");
-            return Err(
-                "未检测到 WSL 发行版。请先在 Windows 安装 WSL2 并装一个发行版（`wsl --install`）。"
-                    .to_string(),
-            );
-        }
-        if let Some(name) = self.cfg.distro.as_deref() {
-            if !distros.iter().any(|d| d.name == name) {
-                sink(0, "error", "指定的发行版不存在");
-                let avail = distros
-                    .iter()
-                    .map(|d| d.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(format!("发行版 {name} 不存在；本机可用：{avail}"));
-            }
-        }
-        let target = select_wsl2_distro(&self.cfg.distro, &distros).ok_or_else(|| {
-            sink(0, "error", "无可用 WSL2 发行版");
-            "WSL 模式需要 WSL2 发行版（WSL1 不具备 localhost 端口转发，Windows 侧无法直达）。\
-             请升级到 WSL2：`wsl --set-version <发行版> 2`。"
-                .to_string()
-        })?;
-        // 与本机档同口径：环境检测到发行版选定即收口，客体引擎补齐全程归
-        // 「准备引擎」独占（防下载期间双步骤同挂「运行中」）。
-        sink(0, "done", "WSL2 环境检测通过");
-        sink(1, "running", &format!("正在检查 {target} 内的运行组件"));
-        match probe_guest_in_distro(&target) {
-            Ok(first) => {
-                // 引擎链补齐（客体同构 ADR-0010）：逐环修复并复查直到 READY。
-                let installed = self.ensure_guest_engine(&target, first, sink)?;
-                self.installed_dsh = installed;
-                self.selected = Some(target);
-                Ok(ProbeOutcome::Ready)
-            }
-            Err(e) => {
-                sink(1, "error", &e);
-                Err(e)
-            }
-        }
-    }
 
     /// 引擎链补齐（客体同构 ADR-0010，2026-09-04）：按探测到的第一缺口逐环
     /// 修复并复查直到 READY——pnpm 缺 → Windows 侧投递捆绑包（\\wsl$ 主通道，
     /// stdin base64 兜底）+ 客体内落位；node 缺 → 客体内 runtime set（镜像链
     /// 同 host 口径）；dsh 缺 → 客体内 add -g。返回是否补装过 dsh（→ 壳刷新
     /// 版本状态）。musl 发行版不支持，出可行动错误（ADR-0010 台账裁定）。
-    #[cfg(windows)]
+    /// 固有 impl（非 trait 方法）——曾误置于 `impl Executor` 内，Windows 侧
+    /// 编译即 E0407（2026-09-07 本地 windows-gnu target check 抓出并归位）。
     fn ensure_guest_engine(
         &mut self,
         target: &str,
@@ -839,6 +781,68 @@ impl Executor for WslExecutor {
             }
             // 复查 → 下一缺口 or READY（每次修复后重新探测，保持单一状态源）
             state = probe_guest_in_distro(target)?;
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Executor for WslExecutor {
+    fn kind(&self) -> ExecutorKind {
+        ExecutorKind::Wsl
+    }
+
+    fn probe(
+        &mut self,
+        sink: BootSink<'_>,
+        progress: DownloadProgress<'_>,
+    ) -> Result<ProbeOutcome, String> {
+        let _ = progress; // WSL 迭代 v1 不在客体内下载，无字节进度
+                          // 消费强制目标（管理器切换/重试，4.3⑥）：guest 世界恒为用户 WSL home。
+        if let Some(p) = self.forced_profile.take() {
+            self.profile = p;
+        }
+        sink(0, "running", "正在检查 WSL2 环境");
+        let distros = wsl_distros()?;
+        if distros.is_empty() {
+            sink(0, "error", "未检测到 WSL 发行版");
+            return Err(
+                "未检测到 WSL 发行版。请先在 Windows 安装 WSL2 并装一个发行版（`wsl --install`）。"
+                    .to_string(),
+            );
+        }
+        if let Some(name) = self.cfg.distro.as_deref() {
+            if !distros.iter().any(|d| d.name == name) {
+                sink(0, "error", "指定的发行版不存在");
+                let avail = distros
+                    .iter()
+                    .map(|d| d.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!("发行版 {name} 不存在；本机可用：{avail}"));
+            }
+        }
+        let target = select_wsl2_distro(&self.cfg.distro, &distros).ok_or_else(|| {
+            sink(0, "error", "无可用 WSL2 发行版");
+            "WSL 模式需要 WSL2 发行版（WSL1 不具备 localhost 端口转发，Windows 侧无法直达）。\
+             请升级到 WSL2：`wsl --set-version <发行版> 2`。"
+                .to_string()
+        })?;
+        // 与本机档同口径：环境检测到发行版选定即收口，客体引擎补齐全程归
+        // 「准备引擎」独占（防下载期间双步骤同挂「运行中」）。
+        sink(0, "done", "WSL2 环境检测通过");
+        sink(1, "running", &format!("正在检查 {target} 内的运行组件"));
+        match probe_guest_in_distro(&target) {
+            Ok(first) => {
+                // 引擎链补齐（客体同构 ADR-0010）：逐环修复并复查直到 READY。
+                let installed = self.ensure_guest_engine(&target, first, sink)?;
+                self.installed_dsh = installed;
+                self.selected = Some(target);
+                Ok(ProbeOutcome::Ready)
+            }
+            Err(e) => {
+                sink(1, "error", &e);
+                Err(e)
+            }
         }
     }
 
