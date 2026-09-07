@@ -21,7 +21,10 @@
 #                                 # --deep 再连 node-map 缓存（离线降级实验用）
 #   ./repro-boot-scenarios.sh scenario <名> [--dry]  # 构造场景（--dry 只预览）
 #   ./repro-boot-scenarios.sh watch                  # tail shell.log + dsh-shell.log
-#   ./repro-boot-scenarios.sh full <名>              # kill → scenario → 后台 dev → 跟日志
+#   ./repro-boot-scenarios.sh full <名> [--dry]      # kill → scenario → 后台 dev → 跟日志
+#   ./repro-boot-scenarios.sh <场景名> [--dry]       # 等价于 full <名>（便捷形式）
+#   ./repro-boot-scenarios.sh auto [场景…]           # 全矩阵自动化：kill → 构造 →
+#                                                    # boot → 日志断言 → 收尾，逐场景报 PASS/FAIL
 #
 # 场景一览（引导分支锚点 = engines.rs::bootstrap / resolve.rs::resolve_launch）：
 #   fresh        删除整个 engines/          → 完整首启链：重铺 pnpm → runtime set
@@ -31,8 +34,16 @@
 #   no-node      删 bin/node + node 运行时  → 只重下 node（runtime set）。
 #   stale-node   bin/node 换成假 v24.17.0   → 「版本不符 → 幂等切换」分支。
 #   corrupt-node bin/node 换成退出非 0 假体 → 探测失败按缺失处理的分支。
+#   no-runtime   删 node_modules 真实 node（bin/node 留实拷贝）→ 固化回退路径
+#                                           （link_real_node_binary 未命中静默
+#                                           降级，boot 应照常成功）。
+#   corrupt-dsh  bin/dsh 换成退出非 0 假体  → dsh 探测失败按缺失重装。
 #   no-dsh       删 global/ + bin/dsh       → 只重装 dsh（dist-tags 惰性解析）。
 #   ready        不做任何改动（对照组）     → 就绪引擎幂等快启、零网络。
+#   readonly     engines 目录只读           → 捆绑 pnpm 重铺失败 → 硬错误卡
+#                                           （staging 出口，覆盖「引擎目录异常」
+#                                           错误分支；跑完务必恢复权限，
+#                                           clean 已自动处理）。
 #
 # 离线语义实验（脚本不断网，手动关 Wi-Fi 后跑）：
 #   ready + --deep（连 node-map 缓存一起清）→ node-map 解析失败 → 用已装 node
@@ -88,7 +99,10 @@ kill_app() {
   if [ "$(uname -s)" = "Darwin" ]; then
     osascript -e 'tell application "DSH Dock" to quit' >/dev/null 2>&1 || true
   fi
+  # dev 进程 cmdline 是相对路径（cargo tauri dev 以 src-tauri 为 cwd），
+  # pkill -f 绝对路径匹配不到——精确按进程名补一刀。
   pkill -f "$DEV_BIN" 2>/dev/null && echo "  已退出 dev 壳" || true
+  pkill -x "dsh-dock" 2>/dev/null || true
   # 本仓库专属的 tauri dev 监护与 vite dev server（端口 1420）
   pgrep -fl "tauri dev" 2>/dev/null | grep -i "dsh-dock" | awk '{print $1}' | xargs kill 2>/dev/null || true
   lsof -ti :1420 2>/dev/null | xargs kill 2>/dev/null || true
@@ -129,6 +143,8 @@ cmd_clean() {
   done
   [ -d "$ENGINES" ] || die "$ENGINES 不存在，无需清理"
   app_running && die "应用正在运行，先执行 kill 再清理"
+  # readonly 场景可能留下只读 engines：删除前先恢复写权限。
+  chmod -R u+w "$ENGINES" 2>/dev/null
   info "删除 ${ENGINES}（例外册：可丢失可重建，缺失走引导）"
   rm -rf "$ENGINES"
   if [ "$with_cache" = 1 ]; then
@@ -172,7 +188,7 @@ cmd_scenario() {
   local name="${1:-}"
   local dry=0
   [ "${2:-}" = "--dry" ] && dry=1
-  [ -n "$name" ] || die "用法：scenario <fresh|no-pnpm|no-node|stale-node|corrupt-node|no-dsh|ready> [--dry]"
+  [ -n "$name" ] || die "用法：scenario <fresh|no-pnpm|no-node|no-runtime|stale-node|corrupt-node|corrupt-dsh|no-dsh|ready|readonly> [--dry]"
   [ -d "$ENGINES" ] || die "$ENGINES 不存在——先用 scenario fresh（即等价于 clean）"
   if [ "$dry" = 0 ] && [ "$name" != "ready" ]; then
     app_running && die "应用正在运行，先执行 kill 再构造场景"
@@ -210,6 +226,37 @@ echo "v24.17.0"'
 echo "simulated corrupted node binary" >&2
 exit 1'
       ;;
+    no-runtime)
+      info "场景 no-runtime：删 node_modules 真实 node（bin/node 留实拷贝）→ 固化回退路径"
+      if [ "$dry" = 1 ]; then
+        echo "  [dry] 将执行：cp -L node_modules/node/bin/node → bin/node；删 node_modules/node 与 .pnpm/node@runtime*"
+      else
+        [ -f "$ENGINES/node_modules/node/bin/node" ] || die "node_modules/node 不存在（先跑一次 ready 重建）"
+        rm -f "$BIN/node"
+        cp -L "$ENGINES/node_modules/node/bin/node" "$BIN/node"
+        rm -rf "$ENGINES/node_modules/node"
+        for d in "$ENGINES/node_modules/.pnpm/"node@runtime*; do
+          rm -rf "$d"
+        done
+        echo "  已构造：bin/node 为真实拷贝，node_modules 内运行时已删"
+      fi
+      ;;
+    corrupt-dsh)
+      info "场景 corrupt-dsh：bin/dsh 退出非 0 → dsh 探测失败按缺失重装"
+      write_fake_bin "$dry" dsh '#!/bin/sh
+echo "simulated corrupted dsh binary" >&2
+exit 1'
+      ;;
+    readonly)
+      info "场景 readonly：engines 只读 → 捆绑 pnpm 重铺失败 → 硬错误卡"
+      if [ "$dry" = 1 ]; then
+        echo "  [dry] 将执行：chmod -R a-w $ENGINES"
+      else
+        app_running && die "应用正在运行，先执行 kill"
+        chmod -R a-w "$ENGINES" && echo "  已只读化：$ENGINES"
+        echo "  ⚠ 跑完本场景后需恢复写权限：chmod -R u+w \"$ENGINES\"（或执行 clean）"
+      fi
+      ;;
     no-dsh)
       info "场景 no-dsh：删 global/ 与 bin/dsh → 只重装 dsh（dist-tags 解析 + pnpm add -g，需联网）"
       apply_rm "$dry" "$ENGINES/global" "$BIN/dsh"
@@ -218,7 +265,7 @@ exit 1'
       info "场景 ready：不做任何改动（对照组：就绪引擎幂等快启、零网络）"
       ;;
     *)
-      die "未知场景：${name}（可选：fresh|no-pnpm|no-node|stale-node|corrupt-node|no-dsh|ready）"
+      die "未知场景：${name}（可选：fresh|no-pnpm|no-node|no-runtime|stale-node|corrupt-node|corrupt-dsh|no-dsh|ready|readonly）"
       ;;
   esac
 
@@ -238,9 +285,22 @@ cmd_watch() {
 
 # kill → scenario → 后台 cargo tauri dev → 跟 dev stdout（debug 构建日志双写
 # stdout，init_tracing TeeWriter：dev 终端/本日志即 boot 第一现场）。
+# --dry：只预览将执行的动作（场景用 dry 模式），不动应用、不启动 dev。
 cmd_full() {
-  local name="${1:-}"
-  [ -n "$name" ] || die "用法：full <场景名>"
+  local name="" dry=0
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --dry) dry=1 ;;
+      *) name="$a" ;;
+    esac
+  done
+  [ -n "$name" ] || die "用法：full <场景名> [--dry]"
+  if [ "$dry" = 1 ]; then
+    info "[dry] 将执行：kill_app → scenario ${name} --dry → 后台 cargo tauri dev（日志 /tmp/dsh-dock-dev-${name}.log）→ tail -F"
+    cmd_scenario "$name" --dry
+    return
+  fi
   kill_app
   cmd_scenario "$name"
   local out="/tmp/dsh-dock-dev-$name.log"
@@ -252,6 +312,87 @@ cmd_full() {
   tail -F "$out"
 }
 
+# ---------- 自动化矩阵（auto）：逐场景 kill → 构造 → boot → 日志断言 ----------
+
+AUTO_TIMEOUT="${AUTO_TIMEOUT:-240}"
+
+# run_one <场景> <ok|error> <断言模式…>：在本次 boot 的新增日志行中匹配断言
+# （前缀 ! 为反断言：命中即 FAIL）。终态：ok = step4 done；error = 任意 step error。
+run_one() {
+  local s="$1" expect="$2"
+  shift 2
+  local patterns=("$@")
+  kill_app
+  cmd_scenario "$s" >/dev/null
+  local before=0
+  [ -f "$SHELL_LOG" ] && before=$(wc -l < "$SHELL_LOG")
+  local devlog="/tmp/dsh-dock-auto-$s.log"
+  ( cd "$REPO" && nohup cargo tauri dev > "$devlog" 2>&1 & )
+  local deadline=$(( $(date +%s) + AUTO_TIMEOUT )) hit=""
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    local newlog
+    newlog=$(tail -n +"$((before + 1))" "$SHELL_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+    if [ "$expect" = "error" ]; then
+      printf '%s\n' "$newlog" | grep -q "state=error" && { hit="error"; break; }
+    else
+      printf '%s\n' "$newlog" | grep -q "step=4 state=done 已进入工作台" && { hit="ok"; break; }
+    fi
+    sleep 3
+  done
+  local result=PASS
+  if [ -z "$hit" ]; then
+    result=FAIL
+    echo "    超时（${AUTO_TIMEOUT}s）未见预期终态（expect=${expect}）"
+  else
+    local p
+    for p in "${patterns[@]}"; do
+      case "$p" in
+        !*)
+          if printf '%s\n' "$(tail -n +"$((before + 1))" "$SHELL_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')" | grep -qF "${p#!}"; then
+            result=FAIL
+            echo "    反断言命中：${p#!}"
+          fi
+          ;;
+        *)
+          if ! printf '%s\n' "$(tail -n +"$((before + 1))" "$SHELL_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')" | grep -qF "$p"; then
+            result=FAIL
+            echo "    断言未命中：$p"
+          fi
+          ;;
+      esac
+    done
+  fi
+  kill_app
+  printf '%-14s 期望=%-5s 实测=%s\n' "$s" "$expect" "$result"
+  [ "$result" = "PASS" ]
+}
+
+# 全矩阵：fresh 放最前（唯一冷 store 全链路），ready 靠后作对照，readonly 收尾
+# （以硬错误结束，跑完立即恢复权限）。
+cmd_auto() {
+  local failed=0
+  info "场景自动化矩阵开始（每场景 kill → 构造 → dev → 日志断言 → 收尾）"
+  run_one fresh ok "（node 切换=true，dsh 补装=true）" "dsh 包下载中" || failed=1
+  run_one no-pnpm ok "（node 切换=false，dsh 补装=false）" || failed=1
+  run_one no-node ok "（node 切换=true，dsh 补装=false）" || failed=1
+  run_one stale-node ok "（node 切换=true，dsh 补装=false）" || failed=1
+  run_one corrupt-node ok "（node 切换=true，dsh 补装=false）" || failed=1
+  run_one no-runtime ok "（node 切换=false，dsh 补装=false）" || failed=1
+  run_one corrupt-dsh ok "（node 切换=false，dsh 补装=true）" || failed=1
+  run_one no-dsh ok "（node 切换=false，dsh 补装=true）" "dsh 包下载中" || failed=1
+  run_one ready ok "（node 切换=false，dsh 补装=false）" "!runtime set node" || failed=1
+  run_one readonly error "创建暂存目录" || failed=1
+  # readonly 收尾恢复（防后续场景被只读目录卡死）。
+  [ -d "$ENGINES" ] && chmod -R u+w "$ENGINES" 2>/dev/null
+  echo
+  if [ "$failed" = 0 ]; then
+    info "全部 PASS（10 场景）"
+  else
+    info "存在 FAIL（明细见上）"
+  fi
+  return "$failed"
+}
+
 case "${1:-}" in
   status)   cmd_status ;;
   kill)     kill_app ;;
@@ -259,9 +400,13 @@ case "${1:-}" in
   scenario) shift; cmd_scenario "$@" ;;
   watch)    cmd_watch ;;
   full)     shift; cmd_full "$@" ;;
+  auto)     shift; cmd_auto "$@" ;;
+  # 裸场景名 = full <名>（便捷形式）；未知名落到 *) 报错，不会先执行 kill。
+  fresh|no-pnpm|no-node|no-runtime|stale-node|corrupt-node|corrupt-dsh|no-dsh|ready|readonly)
+            cmd_full "$@" ;;
   ""|-h|--help|help)
     # 打印头部说明：到「布局锚点」分隔线或首个非注释行为止（不依赖行号）。
     awk 'NR==1{next} /^# ----------/{exit} !/^#/{exit} {sub(/^# ?/,""); print}' "$0"
     ;;
-  *) die "未知命令：$1（可选：status|kill|clean|scenario|watch|full，help 看用法）" ;;
+  *) die "未知命令：$1（可选：status|kill|clean|scenario|watch|full|auto，或直接给场景名：fresh|no-pnpm|no-node|no-runtime|stale-node|corrupt-node|corrupt-dsh|no-dsh|ready|readonly）" ;;
 esac
