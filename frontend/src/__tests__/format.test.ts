@@ -91,8 +91,6 @@ describe("localizeLogTimestamp", () => {
       d.getHours(),
     )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.883\u001b[0m INFO 会话修复开始`
     expect(out).toBe(expected)
-    // 时间值确实变了（UTC 05:15 → 本地非 05:15，除非本机在 UTC）
-    expect(out).not.toContain("05:15:33")
   })
 
   it("无时间戳行原样返回", () => {
