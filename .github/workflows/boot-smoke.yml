@@ -87,7 +87,7 @@ jobs:
       - name: Launch shell
         shell: pwsh
         run: >
-          Start-Process -FilePath "target\release\dsh-dock.exe"
+          Start-Process -FilePath "src-tauri\target\release\dsh-dock.exe"
           -WorkingDirectory "src-tauri"
           -RedirectStandardOutput "$env:RUNNER_TEMP\dsh-dock-stdout.log"
           -RedirectStandardError "$env:RUNNER_TEMP\dsh-dock-stderr.log"
@@ -205,7 +205,7 @@ jobs:
       - name: Launch shell
         shell: pwsh
         run: >
-          Start-Process -FilePath "target\release\dsh-dock.exe"
+          Start-Process -FilePath "src-tauri\target\release\dsh-dock.exe"
           -WorkingDirectory "src-tauri"
           -RedirectStandardOutput "$env:RUNNER_TEMP\dsh-dock-stdout.log"
           -RedirectStandardError "$env:RUNNER_TEMP\dsh-dock-stderr.log"
