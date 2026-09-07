@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
+  DownloadCloud,
   Plus,
   RefreshCw,
   Search,
@@ -229,6 +230,22 @@ export function ProfileManager() {
               <span>{t.profiles.viewConsole}</span>
             </button>
           </div>
+
+          {/* 检查更新冗余入口（与托盘/关于页同源 check_updates）：结果经
+              app:update 广播刷新菜单徽标与关于页卡片，这里只发起 + 提示。 */}
+          <Button
+            size="sm"
+            variant="outline"
+            title={t.profiles.checkUpdatesBtn}
+            aria-label={t.profiles.checkUpdatesBtn}
+            onClick={() => {
+              showToast(t.profiles.updateCheckStarted, "ok")
+              api.checkUpdates().catch(() => showToast(t.error.actionFailed, "warn"))
+            }}
+            className="size-8 p-0"
+          >
+            <DownloadCloud className="size-3.5" />
+          </Button>
 
           <Button
             size="sm"

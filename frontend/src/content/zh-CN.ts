@@ -205,6 +205,7 @@ export const t = {
     pluginOpBusyUpdate: "更新中…",
     // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择
     checkUpdatesBtn: "检查更新",
+    updateCheckStarted: "已发起检查更新，结果见菜单徽标与关于页",
     checkingBtn: "查询中…",
     updateChecked: (r: { checked: number; failed: number }) =>
       `已查 ${r.checked} 个插件${r.failed ? ` · ${r.failed} 个查询失败` : ""}`,

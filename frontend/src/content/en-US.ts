@@ -189,6 +189,7 @@ export const enUS: AppCopy = {
     pluginOpBusyRemove: "Uninstalling…",
     pluginOpBusyUpdate: "Updating…",
     checkUpdatesBtn: "Check Updates",
+    updateCheckStarted: "Update check started — see menu badge & About",
     checkingBtn: "Checking…",
     updateChecked: (r: { checked: number; failed: number }) =>
       `Checked ${r.checked} plugins${r.failed ? ` · ${r.failed} failed` : ""}`,
