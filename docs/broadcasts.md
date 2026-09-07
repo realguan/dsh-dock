@@ -1425,3 +1425,23 @@
   仅周知，无需动作。
 - 凭据：`cargo test` 全绿（89 passed）；diff −36/+6 已逐行人肉复核；本条视为对
   该次宪法修订的知会。
+
+### 2026-09-07 完成通知：boot 链路修复批 + 跨平台测试面建立 —— guan（AI 起草）
+
+- 变更：8 个 commit（`1daf6ad`..`6894bf7`）——① 引导进度回调阶段化（node 字节/
+  dsh 包计数）+ add -g 流式进度解析 + 完成关单补发（修 99% 卡死）；② boot 步骤
+  链生命周期（step0 即刻收口 / step2 done / step3 running，修双「运行中」与
+  前后步倒挂）；③ Windows 潜伏编译错误修复（ensure_guest_engine 归位 + Path
+  导入——master Windows CI 自 0dae87c 起红，本地 windows-gnu target check 抓出）；
+  ④ SIGTERM/SIGINT 优雅退出收会话子进程（修孤儿进程）；⑤ 下载进度卡 dsh 形态 +
+  ETA 亚秒隐藏 + 启动页撤通栏顶栏（双下巴）；⑥ 控制中心冗余检查更新入口；
+  ⑦ repro-boot-scenarios.sh 补 no-runtime/corrupt-dsh/readonly 场景 + auto 全
+  矩阵自动化（macOS 10 场景 PASS）；⑧ 新增 boot-smoke.yml 三平台 boot 端到端
+  冒烟（仅 workflow_dispatch，重大变更后手动跑；日常 push/tag/release 不跑）。
+- 影响：①②⑤ 为用户可感 boot 体验修复；③ 修复后 Windows CI 恢复可绿；
+  ④ 补齐 §6「壳与 dsh 严格 1:1」在信号终止路径的缺口；⑦⑧ 为测试面扩充，
+  非宪法级（AGENTS 未动）；Linux 无托盘宿主时 setup_update_tray 的 `?` 仍会
+  中断启动（CI 侧 dbus-run-session 已绕过）——产品级降级策略待裁定另行开工。
+- 凭据：cargo test 161 绿 / clippy -D warnings 干净 / fmt 过；windows-gnu
+  target check 绿；前端 typecheck/lint/vitest（105）绿；macOS 场景矩阵 10/10
+  PASS；pkill 孤儿检查实证；boot-smoke 三作业首跑待远端验证。
