@@ -4,11 +4,11 @@ import type { AppCopy } from "./zh-CN"
 export const enUS: AppCopy = {
   boot: {
     steps: [
-      { no: "01", name: "Environment Check", hint: "PATH · Engine Gates · Platform" },
-      { no: "02", name: "Prepare Engine", hint: "Engine bootstrap (bundled pnpm · node · dsh)" },
-      { no: "03", name: "Launch Workbench", hint: "--port 0" },
-      { no: "04", name: "Awaiting Ready", hint: "Resolving access URL" },
-      { no: "05", name: "Enter Workbench", hint: "WebView Navigation" },
+      { no: "01", name: "Environment Check", hint: "Making sure your computer is ready to run DSH" },
+      { no: "02", name: "Prepare Engine", hint: "Getting DSH components ready (first run downloads them)" },
+      { no: "03", name: "Launch Workbench", hint: "Starting the DSH service" },
+      { no: "04", name: "Awaiting Ready", hint: "Almost there — first launch can take a moment" },
+      { no: "05", name: "Enter Workbench", hint: "Opening the workbench for you" },
     ],
     headlines: [
       "Checking Runtime Engine",
@@ -17,10 +17,10 @@ export const enUS: AppCopy = {
       "Waiting for Service Ready",
       "Entering Workbench Soon",
     ],
-    consoleTitle: "Startup Console",
     stRunning: "Running",
-    stError: "Error",
-    stReady: "Ready",
+    copyDetail: "Copy details",
+    copied: "Copied",
+    progressAria: "Startup progress: {done} of {total}",
     wslOpen: "Open in WSL",
     wslOpenTip: "Run DSH inside WSL2 distro (requires Windows + WSL2)",
     wslFailed: "Failed to switch to WSL",

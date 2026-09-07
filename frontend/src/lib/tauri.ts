@@ -29,12 +29,18 @@ import type {
   UpdateStatus,
 } from "@/types/ipc"
 
+export interface BootStatusResult {
+  steps: unknown[]
+  error: unknown | null
+}
+
 export const api = {
   // 启动流程
   chooseProfile: (profile: string) => invoke<void>("choose_profile", { profile }),
   chooseMode: (mode: string, setDefault: boolean) =>
     invoke<void>("choose_mode", { mode, setDefault }),
   bootInWsl: () => invoke<void>("boot_in_wsl"),
+  getBootStatus: () => invoke<BootStatusResult>("get_boot_status"),
 
   // 版本状态
   getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),

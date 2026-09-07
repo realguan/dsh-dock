@@ -32,6 +32,27 @@
 
 ## 三、记录
 
+### 2026-09-07 快车道直推 · boot 启动页单主角重构 + 遥测文案去术语化 + get_boot_status 竞态补水 —— guan（AI 协作）
+
+- 变更：
+  1. **启动页单主角重构**：hero 区块撤编（与时间线重复讲述同一状态）——
+     BootTimeline 卡成为唯一主角（卡头 = 徽标 + 当前状态标题/副题 + 分段
+     进度条，danger 态转警示）；步骤行重做（done/pending 收单行 + running
+     行保留完整遥测详情、等宽可选中 + 一键复制；竖向导轨容器层统一绘制，
+     行高变化不再撕裂连接线）；下载进度经 banner 槽位入卡。
+  2. **遥测文案去术语化**：boot.steps 五步 hint、executor/lib 的 sink/
+     emit_step 遥测、崩溃守护与升级提示全部改为面向用户的可行动文案
+     （PATH/spawn/tier/WebView/code= 等内部词汇不再外露；tier 经
+     `tier_label` 映射「内置引擎/内置离线副本」）。
+  3. **get_boot_status IPC 三处同步**（COMMANDS 登记 + handler +
+     capability，AGENTS §7 登记）：BootIndex 挂载时播种缓存中的启动状态
+     与错误（normalizeStep/normalizeError 入 bootStore）——修 WebView
+     挂载前事件丢失的竞态；ErrorCard 动作触发前 clearError 防旧错残留。
+- 影响：仅周知。`t.boot` 删除 consoleTitle/stError/stReady 三键（消费方
+  已随重构移除）；新增 copyDetail/copied/progressAria。
+- 凭据：cargo test 159 全绿 + fmt + clippy；前端 typecheck + oxlint +
+  104 测试（全树在途状态下验证）；IPC 三处同步经 ipc.rs gate_tests 闸门。
+
 ### 2026-09-07 快车道直推 · 引擎引导加固：固化真实 node 二进制 + 引导版本口径放宽（rc 可用、alpha 仍拒） —— guan（AI 协作）
 
 - 变更（ADR-0010 引导链修补，附在途复现工具一并入库）：

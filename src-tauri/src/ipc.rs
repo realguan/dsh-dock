@@ -65,6 +65,7 @@ pub const COMMANDS: &[&str] = &[
     "fetch_market_registry",
     "open_profiles_window",
     "focus_main_window",
+    "get_boot_status",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

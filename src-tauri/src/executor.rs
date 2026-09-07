@@ -228,11 +228,11 @@ impl Executor for LocalExecutor {
         sink: BootSink<'_>,
         progress: DownloadProgress<'_>,
     ) -> Result<ProbeOutcome, String> {
-        sink(0, "running", "扫描用户环境（PATH · 版本闸）");
+        sink(0, "running", "正在检查系统环境");
         sink(
             1,
             "running",
-            "解析宿主档位（首次使用需下载运行时，请耐心等候）",
+            "正在准备运行环境（首次使用需自动下载组件，请耐心等候）",
         );
         let launch = crate::resolve::resolve_launch(
             &self.manifest,
@@ -245,9 +245,13 @@ impl Executor for LocalExecutor {
             sink(1, "error", &e.to_string());
             e.to_string()
         })?;
-        sink(1, "running", "宿主解析完成，准备环境依赖");
-        sink(0, "done", "环境扫描完成");
-        sink(1, "done", &format!("命中档位：{:?}", launch.tier));
+        sink(1, "running", "环境准备完成，即将启动");
+        sink(0, "done", "环境检测通过");
+        sink(
+            1,
+            "done",
+            &format!("环境已就绪（{}）", tier_label(launch.tier)),
+        );
         let home = crate::resolve::user_dsh_home();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
         // 4.3④ defaultProfile 消费（2026-08-28）：用户设过默认且在 webUi 候选
@@ -311,7 +315,7 @@ impl Executor for LocalExecutor {
         sink(
             2,
             "running",
-            &format!("spawn DSH（{} · tier={:?}）", launch.profile, launch.tier),
+            &format!("正在启动「{}」工作台", launch.profile),
         );
         let dsh = crate::shell::spawn_dsh(&launch, &self.data_dir).map_err(|e| e.to_string())?;
         self.proc = Some(dsh);
@@ -346,6 +350,14 @@ impl Executor for LocalExecutor {
             crate::shell::stop_dsh(&mut p.child, Duration::from_secs(3));
         }
         Ok(())
+    }
+}
+
+/// 档位 → 用户可读标签（boot 遥测文案；内部术语 tier=Engine/Bundle 不外露）。
+fn tier_label(tier: crate::manifest::TierKind) -> &'static str {
+    match tier {
+        crate::manifest::TierKind::Engine => "内置引擎",
+        crate::manifest::TierKind::Bundle => "内置离线副本",
     }
 }
 
@@ -688,7 +700,7 @@ impl Executor for WslExecutor {
         if let Some(p) = self.forced_profile.take() {
             self.profile = p;
         }
-        sink(0, "running", "探测 WSL（wsl.exe · WSL2 发行版）");
+        sink(0, "running", "正在检查 WSL2 环境");
         let distros = wsl_distros()?;
         if distros.is_empty() {
             sink(0, "error", "未检测到 WSL 发行版");
@@ -714,11 +726,7 @@ impl Executor for WslExecutor {
              请升级到 WSL2：`wsl --set-version <发行版> 2`。"
                 .to_string()
         })?;
-        sink(
-            1,
-            "running",
-            &format!("探测 {target} 内的壳引擎（pnpm / node / dsh）"),
-        );
+        sink(1, "running", &format!("正在检查 {target} 内的运行组件"));
         match probe_guest_in_distro(&target) {
             Ok(first) => {
                 // 引擎链补齐（客体同构 ADR-0010）：逐环修复并复查直到 READY。
@@ -751,7 +759,7 @@ impl Executor for WslExecutor {
             match state {
                 GuestProbeState::Ready => {
                     sink(0, "done", "WSL2 环境就绪");
-                    sink(1, "done", &format!("{target} 内引擎三件就绪"));
+                    sink(1, "done", &format!("{target} 内组件已就绪"));
                     return Ok(installed_dsh);
                 }
                 GuestProbeState::MuslUnsupported => {
@@ -763,14 +771,10 @@ impl Executor for WslExecutor {
                     return Err(msg);
                 }
                 GuestProbeState::PnpmMissing => {
-                    sink(
-                        1,
-                        "running",
-                        "投递捆绑 pnpm（\\wsl$ 主通道，失败自动转 stdin 兜底）…",
-                    );
+                    sink(1, "running", &format!("正在向 {target} 传送内置组件…"));
                     let bundle = crate::updates::guest_pnpm_bundle(&self.resources_dir);
                     deliver_pnpm_bundle(target, &bundle)?;
-                    sink(1, "running", "客体内落位 pnpm 到引擎目录…");
+                    sink(1, "running", &format!("正在 {target} 内安装组件…"));
                     let out = run_wsl_capture(
                         Some(target),
                         &["-e", "bash", "-c", GUEST_STAGE_PNPM],
@@ -786,9 +790,7 @@ impl Executor for WslExecutor {
                     sink(
                         1,
                         "running",
-                        &format!(
-                            "{target} 内下载并激活 node v{version}（客体内下载，可能需要几分钟）…"
-                        ),
+                        &format!("{target} 内下载 node v{version}（可能需要几分钟）…"),
                     );
                     let script = guest_bootstrap_node_script(&version);
                     let out = run_wsl_capture(

@@ -147,6 +147,7 @@
   `delete_session`（会话删除，2026-08-31）。
   `fetch_market_registry`（社区插件市场 Registry 拉取，2026-08-31）。
   `open_profiles_window` `focus_main_window`（控制中心与主工作台窗口双向切换，2026-09-01）。
+  `get_boot_status`（读取启动阶段缓存的状态与错误，防早期事件竞态丢失，2026-09-04）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update` / `app:settings-changed`
   （仅 main/about/profiles，capability 授权）。

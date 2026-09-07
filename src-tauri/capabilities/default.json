@@ -66,6 +66,7 @@
     "allow-delete-session",
     "allow-fetch-market-registry",
     "allow-open-profiles-window",
-    "allow-focus-main-window"
+    "allow-focus-main-window",
+    "allow-get-boot-status"
   ]
 }

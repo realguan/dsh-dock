@@ -2,14 +2,16 @@
 // STEPS 三元组逐字取自 ui/index.html（第三列 hint 是步骤旁灰色说明，
 // 不可丢弃）；headlines 是另一套独立文案（与步骤名不同文），两者不得
 // 互相推断。未知错误动作 id 回退展示 id 原文——新宿主/新失败模式无需改组件。
+// 2026-09-07：boot 面向广泛用户去术语化（PATH/spawn/tier/WebView 等内部
+// 词汇不再外露；headlines 仍被 BootSelector 消费，仅微调）。
 export const t = {
   boot: {
     steps: [
-      { no: "01", name: "环境检测", hint: "PATH · 引擎闸 · 平台" },
-      { no: "02", name: "准备引擎", hint: "引擎引导（内置 pnpm · node · dsh）" },
-      { no: "03", name: "启动工作台", hint: "--port 0" },
-      { no: "04", name: "等待就绪", hint: "解析访问地址（慢速冷启动可稍候）" },
-      { no: "05", name: "进入工作台", hint: "WebView 导航" },
+      { no: "01", name: "环境检测", hint: "检查电脑环境是否满足运行条件" },
+      { no: "02", name: "准备引擎", hint: "准备 DSH 运行所需组件（首次使用需下载）" },
+      { no: "03", name: "启动工作台", hint: "正在启动 DSH 服务" },
+      { no: "04", name: "等待就绪", hint: "即将可用，首次启动可能较慢" },
+      { no: "05", name: "进入工作台", hint: "马上为你打开工作台界面" },
     ],
     headlines: [
       "检查运行引擎",
@@ -18,10 +20,10 @@ export const t = {
       "等待服务就绪",
       "即将进入工作台",
     ],
-    consoleTitle: "启动控制台",
-    stRunning: "进行中",
-    stError: "异常",
-    stReady: "就绪",
+    stRunning: "运行中",
+    copyDetail: "复制详情",
+    copied: "已复制",
+    progressAria: "启动进度：{done} / {total}",
     wslOpen: "在 WSL 中打开",
     wslOpenTip: "在 WSL2 发行版内运行 DSH（需 Windows + WSL2）",
     wslFailed: "WSL 切换失败",

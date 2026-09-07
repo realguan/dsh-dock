@@ -228,11 +228,11 @@ fn run_executor_session(
                 // 会话先退出了：真失败，立即报错（不等满上限）。
                 let detail = read_error_detail(&log);
                 let tail = read_log_tail(&log);
-                emit_step(&app, 3, "error", &format!("DSH 进程退出（code={code}）"));
+                emit_step(&app, 3, "error", &format!("DSH 意外退出（代码 {code}）"));
                 let _ = teardown_session(&state);
                 emit_boot_error(
                     &app,
-                    &format!("DSH 进程已退出（code={code}）{detail}"),
+                    &format!("DSH 进程已退出（代码 {code}）{detail}"),
                     &tail,
                 );
             }
@@ -243,7 +243,7 @@ fn run_executor_session(
                 // 进程活着但长时间未就绪：停掉旧会话再报错，重试不残留孤儿。
                 let detail = read_error_detail(&log);
                 let tail = read_log_tail(&log);
-                emit_step(&app, 3, "error", "等待超时");
+                emit_step(&app, 3, "error", "等待服务响应超时");
                 let _ = teardown_session(&state);
                 emit_boot_error(&app, &format!("DSH 未在预期时间内就绪{detail}"), &tail);
             }
@@ -255,8 +255,8 @@ fn run_executor_session(
                     Ok(url) => {
                         tracing::info!("DSH 已就绪，进入 {url}");
                         *state.workbench_url.lock().unwrap() = Some(url.clone());
-                        emit_step(&app, 3, "done", &format!("DSH 已就绪：{url}"));
-                        emit_step(&app, 4, "running", "导航到工作台界面");
+                        emit_step(&app, 3, "done", &format!("DSH 已就绪，地址：{url}"));
+                        emit_step(&app, 4, "running", "正在打开工作台界面");
                         let navigate_url = match authenticate_workbench_session(&state.window, &url)
                         {
                             Ok(Some(clean_url)) => clean_url,
@@ -273,7 +273,7 @@ fn run_executor_session(
                         guard_session(&app, &state, &log, epoch);
                     }
                     Err(e) => {
-                        emit_step(&app, 3, "error", "无效地址");
+                        emit_step(&app, 3, "error", "服务地址无效");
                         emit_boot_error(&app, &format!("DSH 报告了无效地址（{raw}）：{e}"), "");
                         let _ = teardown_session(&state);
                     }
@@ -416,7 +416,9 @@ fn guard_session(
                     let _ = teardown_session(state);
                     emit_boot_error(
                         app,
-                        &format!("DSH 连续崩溃（已触发 60s 内 3 次熔断保护）：code={code}{detail}"),
+                        &format!(
+                            "DSH 连续崩溃（60 秒内 3 次，已暂停自动重启）：代码 {code}{detail}"
+                        ),
                         &tail,
                     );
                     return;
@@ -426,12 +428,7 @@ fn guard_session(
                 drop(crashes);
 
                 tracing::info!("崩溃守护触发：正在自动拉起 DSH 会话...");
-                emit_step(
-                    app,
-                    2,
-                    "running",
-                    "检测到会话异常退出，崩溃守护正在自动拉起...",
-                );
+                emit_step(app, 2, "running", "检测到 DSH 意外退出，正在自动重启…");
 
                 let handle = app.clone();
                 let state_clone = Arc::clone(state);
@@ -1357,12 +1354,7 @@ fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> 
         let only = action == "upgrade_only";
         if only || action == "upgrade" {
             emit_upgrade(&handle, "running", "");
-            emit_step(
-                &handle,
-                2,
-                "running",
-                "升级官方 DSH（引擎内 add -g，最新稳定版）…",
-            );
+            emit_step(&handle, 2, "running", "正在升级官方 DSH 到最新稳定版…");
             // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
             // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
             let resources_dir = resolve_resources_dir(&handle);

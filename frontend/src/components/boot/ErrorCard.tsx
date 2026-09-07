@@ -16,6 +16,7 @@ import { api } from "@/lib/tauri"
 import type { TerminalAction } from "@/types/ipc"
 import type { BootErrorEvent } from "@/types/events"
 import { useI18n } from "@/stores/i18nStore"
+import { useBootStore } from "@/stores/bootStore"
 import { Button } from "@/components/ui/button"
 
 const INVOKABLE: ReadonlySet<string> = new Set(["retry", "upgrade", "upgrade_only"])
@@ -50,6 +51,7 @@ export function ErrorCard({
     if (!INVOKABLE.has(id)) return
     setPending(id)
     setActionError(null)
+    useBootStore.getState().clearError()
     api
       .terminalAction(id as TerminalAction)
       .catch((e) => {
