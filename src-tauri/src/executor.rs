@@ -231,6 +231,9 @@ impl Executor for LocalExecutor {
         progress: DownloadProgress<'_>,
     ) -> Result<ProbeOutcome, String> {
         sink(0, "running", "正在检查系统环境");
+        // 环境检测（清单/布局/三件探测）毫秒级，即刻收口——引擎引导全程归
+        // 「准备引擎」独占，避免下载期间双步骤同挂「运行中」。
+        sink(0, "done", "环境检测通过");
         sink(
             1,
             "running",
@@ -248,7 +251,6 @@ impl Executor for LocalExecutor {
             e.to_string()
         })?;
         sink(1, "running", "环境准备完成，即将启动");
-        sink(0, "done", "环境检测通过");
         sink(
             1,
             "done",
@@ -321,6 +323,9 @@ impl Executor for LocalExecutor {
         );
         let dsh = crate::shell::spawn_dsh(&launch, &self.data_dir).map_err(|e| e.to_string())?;
         self.proc = Some(dsh);
+        // spawn 成功即收口（等待就绪归 step3）：否则 step2 永挂「运行中」，
+        // 而后发的 step3/4 done 会让时间线出现「后步完成、前步 loading」的倒挂。
+        sink(2, "done", &format!("「{}」工作台已启动", launch.profile));
         Ok(())
     }
 
@@ -728,6 +733,9 @@ impl Executor for WslExecutor {
              请升级到 WSL2：`wsl --set-version <发行版> 2`。"
                 .to_string()
         })?;
+        // 与本机档同口径：环境检测到发行版选定即收口，客体引擎补齐全程归
+        // 「准备引擎」独占（防下载期间双步骤同挂「运行中」）。
+        sink(0, "done", "WSL2 环境检测通过");
         sink(1, "running", &format!("正在检查 {target} 内的运行组件"));
         match probe_guest_in_distro(&target) {
             Ok(first) => {
@@ -760,7 +768,6 @@ impl Executor for WslExecutor {
         loop {
             match state {
                 GuestProbeState::Ready => {
-                    sink(0, "done", "WSL2 环境就绪");
                     sink(1, "done", &format!("{target} 内组件已就绪"));
                     return Ok(installed_dsh);
                 }
@@ -876,6 +883,8 @@ impl Executor for WslExecutor {
             .spawn()
             .map_err(|e| format!("spawn wsl.exe 失败：{e}"))?;
         self.child = Some(child);
+        // 与本机档同口径：spawn 成功即收口（等待就绪归 step3）。
+        sink(2, "done", &format!("WSL（{target}）内 DSH 已启动"));
         Ok(())
     }
 

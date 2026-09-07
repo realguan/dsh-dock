@@ -219,6 +219,10 @@ fn run_executor_session(
                 .as_mut()
                 .and_then(|e| e.read_ready_marker())
         };
+        // 等待期运转指示：step2 已在 spawn 成功后收口，step3 从未发过 running
+        // ——时间线上「启动工作台」永挂 loading 而「等待就绪」凭空 done（倒挂）。
+        // 发 running 让卡头在等待期正确显示「等待就绪」。
+        emit_step(&app, 3, "running", "等待 DSH 服务就绪…");
         match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT)
         {
             shell::ReadyOutcome::Exited(code) => {
