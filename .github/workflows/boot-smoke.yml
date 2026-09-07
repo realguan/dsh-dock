@@ -129,8 +129,12 @@ jobs:
           tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
           tail -40 "$APPDATA/${{ env.APP_ID }}/dsh-shell.log" 2>/dev/null || true
           tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+          echo "--- 壳 stderr（panic/原生崩溃痕迹）---"
+          tail -40 "$RUNNER_TEMP/dsh-dock-stderr.log" 2>/dev/null || echo "（空或不存在）"
           echo "--- 进程状态 ---"
-          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table"
+          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table" || true
+          echo "--- WER 崩溃事件（近 5 条）---"
+          powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001} -MaxEvents 5 -ErrorAction SilentlyContinue | Format-List TimeCreated,FaultingApplicationName,FaultingModuleName" || true
           echo "--- 应用数据目录 ---"
           ls -la "$APPDATA/${{ env.APP_ID }}" 2>/dev/null || true
 
@@ -141,6 +145,7 @@ jobs:
           name: boot-logs-windows
           path: |
             ${{ runner.temp }}/dsh-dock-stdout.log
+            ${{ runner.temp }}/dsh-dock-stderr.log
           if-no-files-found: ignore
 
       - name: Stop shell
@@ -262,10 +267,14 @@ jobs:
           tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
           tail -60 "$APPDATA/${{ env.APP_ID }}/dsh-wsl.log" 2>/dev/null || true
           tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+          echo "--- 壳 stderr（panic/原生崩溃痕迹）---"
+          tail -40 "$RUNNER_TEMP/dsh-dock-stderr.log" 2>/dev/null || echo "（空或不存在）"
           echo "--- 进程状态 ---"
-          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table"
+          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table" || true
           echo "--- WSL 发行版状态 ---"
           powershell -NoProfile -Command "wsl -l -v" 2>/dev/null || true
+          echo "--- WER 崩溃事件（近 5 条）---"
+          powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001} -MaxEvents 5 -ErrorAction SilentlyContinue | Format-List TimeCreated,FaultingApplicationName,FaultingModuleName" || true
           echo "--- 应用数据目录 ---"
           ls -la "$APPDATA/${{ env.APP_ID }}" 2>/dev/null || true
 
@@ -276,6 +285,7 @@ jobs:
           name: boot-logs-wsl
           path: |
             ${{ runner.temp }}/dsh-dock-stdout.log
+            ${{ runner.temp }}/dsh-dock-stderr.log
 
       - name: Stop shell
         if: always()
