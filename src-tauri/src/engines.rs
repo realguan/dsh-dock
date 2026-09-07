@@ -355,6 +355,17 @@ fn run_engine_pnpm_streaming(
     Ok(())
 }
 
+/// node 下载镜像链（2026-09-07）：`DSH_DOCK_NODE_MIRRORS`（逗号分隔）覆盖
+/// 顺序——默认链（npmmirror → 官方）面向最终用户网络；境外 CI 冒烟置官方源
+/// 优先（npmmirror 自美国 Azure 访问可长时间零进度，smoke 首轮实证）。仅调整
+/// §7「引擎引导」用途内的源顺序，不新增网络面。
+pub fn node_mirror_chain() -> Vec<String> {
+    crate::updates::parse_chain(
+        &std::env::var("DSH_DOCK_NODE_MIRRORS").unwrap_or_default(),
+        &[NODE_MIRROR_PRIMARY, NODE_MIRROR_FALLBACK],
+    )
+}
+
 /// `pnpm runtime set node <version>`：镜像链（npmmirror → 官方）逐个尝试；
 /// 非 TTY 字节进度行经回调上抛（映射 boot:progress，阶段 = Node）。
 /// cwd = 引擎目录——runtime set 为项目作用域，单目录方案恰好把 node 装进
@@ -366,9 +377,9 @@ pub fn runtime_set_node(
     progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
 ) -> Result<()> {
     let mut errors = Vec::new();
-    for base in [NODE_MIRROR_PRIMARY, NODE_MIRROR_FALLBACK] {
+    for base in node_mirror_chain() {
         tracing::info!("runtime set node {version}（镜像 {base}）…");
-        let (mk, mv) = node_mirrors_env(base);
+        let (mk, mv) = node_mirrors_env(&base);
         let mut progress_lines = 0usize;
         let mut last: Option<(u64, u64)> = None;
         let result = run_engine_pnpm_streaming(
@@ -508,9 +519,9 @@ pub fn install_dsh_global(
 ) -> Result<()> {
     let _ = link_real_node_binary(data_dir);
     let mut errors = Vec::new();
-    for registry in crate::updates::package_registry_bases() {
+    for registry in crate::updates::registry_chain() {
         let args =
-            crate::updates::pnpm_install_args(registry, &format!("@deepseek-ai/dsh@{version}"));
+            crate::updates::pnpm_install_args(&registry, &format!("@deepseek-ai/dsh@{version}"));
         tracing::info!("pnpm add -g @deepseek-ai/dsh@{version}（registry {registry}）…");
         let mut progress_lines = 0usize;
         let mut last: Option<(u64, u64)> = None;

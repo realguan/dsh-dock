@@ -61,6 +61,31 @@ pub(crate) fn package_registry_bases() -> [&'static str; 2] {
     ]
 }
 
+/// registry 链消费口（2026-09-07）：`DSH_DOCK_NPM_REGISTRIES`（逗号分隔）覆盖
+/// 顺序——默认链（npmmirror → 官方）面向最终用户网络；境外 CI 冒烟置官方源
+/// 优先。仅调整 §7 已登记用途内的源顺序，不新增网络面。
+pub(crate) fn registry_chain() -> Vec<String> {
+    parse_chain(
+        &std::env::var("DSH_DOCK_NPM_REGISTRIES").unwrap_or_default(),
+        &package_registry_bases(),
+    )
+}
+
+/// 纯函数：逗号分隔解析（去空白、滤空项）；空输入回退 defaults。
+pub(crate) fn parse_chain(spec: &str, defaults: &[&str]) -> Vec<String> {
+    let parsed: Vec<String> = spec
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    if parsed.is_empty() {
+        defaults.iter().map(|s| s.to_string()).collect()
+    } else {
+        parsed
+    }
+}
+
 /// 随壳捆绑的 pnpm 版本（ADR-0010：resources/pnpm/<platform>.tgz 经
 /// scripts/fetch-pnpm-bundle.sh 打包期取得，该脚本从本常量推导版本，防两处
 /// 漂移）。升级必过 ADR-0010 升级清单（runtime set / add -g / spawnSync
@@ -70,12 +95,11 @@ pub(crate) fn package_registry_bases() -> [&'static str; 2] {
 #[allow(dead_code)]
 pub const PINNED_PNPM_VERSION: &str = "12.3.1";
 
-fn npm_registry_urls() -> [String; 2] {
-    let bases = package_registry_bases();
-    [
-        format!("{}/@deepseek-ai%2Fdsh", bases[0]),
-        format!("{}/@deepseek-ai%2Fdsh", bases[1]),
-    ]
+fn npm_registry_urls() -> Vec<String> {
+    registry_chain()
+        .iter()
+        .map(|base| format!("{base}/@deepseek-ai%2Fdsh"))
+        .collect()
 }
 /// 固定 Node 发行包的官方 SHA-256；镜像只负责分发，二进制仍必须过校验。
 /// 更新 NODE_VERSION 时必须同步更新本表，值来自 nodejs.org 的 SHASUMS256.txt。
@@ -225,7 +249,7 @@ fn fetch_node_map() -> Option<(Vec<u8>, String)> {
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
         .build();
-    for base in package_registry_bases() {
+    for base in registry_chain() {
         // scoped 包在 registry URL 里必须把 `/` 编码为 %2F（与 npm CLI 行为一致）。
         let packument_url = format!("{base}/{}", NODE_MAP_PACKAGE.replace('/', "%2F"));
         let Ok(resp) = agent.get(&packument_url).call() else {
@@ -676,7 +700,7 @@ pub fn npm_packument_versions(package: &str) -> Result<(String, Vec<String>), St
         .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
         .build();
     let mut last_err = String::from("镜像链均不可达");
-    for base in package_registry_bases() {
+    for base in registry_chain() {
         let url = format!("{base}/{}", package.replace('/', "%2F"));
         let resp = match agent.get(&url).call() {
             Ok(r) => r,
@@ -742,6 +766,29 @@ pub fn fetch_market_registry() -> Result<String, String> {
 #[cfg(test)]
 mod packument_tests {
     use super::*;
+
+    #[test]
+    fn parse_chain_splits_trims_and_falls_back_to_defaults() {
+        assert_eq!(
+            parse_chain(" https://a , ,https://b ", &["https://x"]),
+            vec!["https://a".to_string(), "https://b".to_string()]
+        );
+        assert_eq!(
+            parse_chain("", &["https://d1", "https://d2"]),
+            vec!["https://d1".to_string(), "https://d2".to_string()],
+            "空输入回退默认链"
+        );
+        assert_eq!(
+            parse_chain("  , , ", &["https://d"]),
+            vec!["https://d".to_string()],
+            "全空白同样回退默认链"
+        );
+        assert_eq!(
+            parse_chain("https://only", &[]),
+            vec!["https://only".to_string()],
+            "单项链合法（CI 常用：官方源优先去重）"
+        );
+    }
 
     #[test]
     fn parses_packument_latest_and_sorted_versions() {

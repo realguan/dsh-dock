@@ -35,6 +35,12 @@ jobs:
     name: boot smoke (Windows / 本机引擎档)
     runs-on: windows-latest
     timeout-minutes: 30
+    # 境外 runner 置官方源优先（engines.rs/updates.rs env 接缝）：npmmirror
+    # 自美国 Azure 访问可长时间零进度（首跑实证，runtime set 卡 15 分钟无
+    # 一条进度行）。Linux 作业保持默认链，继续验证国内镜像路径。
+    env:
+      DSH_DOCK_NODE_MIRRORS: "https://nodejs.org/download/release/,https://npmmirror.com/mirrors/node/"
+      DSH_DOCK_NPM_REGISTRIES: "https://registry.npmjs.org,https://registry.npmmirror.com"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -138,6 +144,9 @@ jobs:
     timeout-minutes: 45
     env:
       DISTRO: Ubuntu-24.04
+      # 同 windows 作业：客体引导的镜像/registry 链由壳 env 接缝统一下发。
+      DSH_DOCK_NODE_MIRRORS: "https://nodejs.org/download/release/,https://npmmirror.com/mirrors/node/"
+      DSH_DOCK_NPM_REGISTRIES: "https://registry.npmjs.org,https://registry.npmmirror.com"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

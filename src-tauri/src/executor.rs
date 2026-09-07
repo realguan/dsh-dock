@@ -602,20 +602,19 @@ const GUEST_STAGE_PNPM: &str = concat!(
 #[cfg(any(windows, test))]
 #[allow(dead_code)]
 fn guest_bootstrap_node_script(version: &str) -> String {
-    let m1 = format!(
-        "{{\"release\":\"{}\"}}",
-        crate::engines::NODE_MIRROR_PRIMARY
-    );
-    let m2 = format!(
-        "{{\"release\":\"{}\"}}",
-        crate::engines::NODE_MIRROR_FALLBACK
-    );
+    // 镜像链走 node_mirror_chain()（env 接缝）：境外 CI 置官方源优先，客体与
+    // host 同口径（ADR-0010 台账「客体镜像主权」）。
+    let mirrors = crate::engines::node_mirror_chain()
+        .iter()
+        .map(|m| format!("{{\"release\":\"{m}\"}}"))
+        .collect::<Vec<_>>()
+        .join("' '");
     format!(
         concat!(
             "ENGINES=\"$HOME/.dsh-dock/engines\"; LOG=/tmp/dsh-dock-node.log;",
             "cd \"$ENGINES\" || {{ echo NODE_FAILED; echo 引擎目录不存在; exit 0; }};",
             "export PNPM_HOME=\"$ENGINES\" PATH=\"$ENGINES/bin:$PATH\";",
-            "for M in '{m1}' '{m2}'; do",
+            "for M in '{mirrors}'; do",
             " if PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS=\"$M\" pnpm runtime set node {ver} >\"$LOG\" 2>&1 &&",
             "    pnpm shim add node >>\"$LOG\" 2>&1; then",
             "    REAL_NODE=$(find \"$ENGINES/node_modules\" -path \"*/node/bin/node\" -type f 2>/dev/null | head -n 1);",
@@ -624,8 +623,7 @@ fn guest_bootstrap_node_script(version: &str) -> String {
             " fi;",
             "done; echo NODE_FAILED; tail -c 2000 \"$LOG\"; exit 0",
         ),
-        m1 = m1,
-        m2 = m2,
+        mirrors = mirrors,
         ver = sh_quote(version),
     )
 }
@@ -760,13 +758,17 @@ impl WslExecutor {
                     let version = crate::updates::latest_stable_dsh_version()
                         .map_err(|e| format!("无法确定 dsh 引导目标版本：{e}"))?;
                     sink(1, "running", &format!("{target} 内安装 dsh v{version}…"));
-                    let registries = crate::updates::package_registry_bases();
+                    let registries = crate::updates::registry_chain();
                     let allow = crate::updates::pnpm_allow_build_flags()
                         .iter()
                         .map(|f| sh_quote(f))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    let script = guest_install_dsh_script(&version, &registries, &allow);
+                    let script = guest_install_dsh_script(
+                        &version,
+                        &registries.iter().map(String::as_str).collect::<Vec<_>>(),
+                        &allow,
+                    );
                     let out = run_wsl_capture(
                         Some(target),
                         &["-e", "bash", "-c", &script],
