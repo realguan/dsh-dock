@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-09-07 建档 · Spike 0004：DeepSeek Harness SDK 能力源码调研 —— guan（AI 会话协作）
+
+- 变更：新建 `docs/spikes/0004-dsh-sdk-capabilities-research.md`（+297 行，
+  只读调研不触运行时）。核心结论：dsh 外部 SDK 是「本机进程集成边界」
+  （stdio JSON-RPC 2.0 驱动完整 `dsh --profile` 子进程），不是托管 HTTP
+  API；agent/工具/凭据/持久化/安全策略由 profile 决定，SDK 本身无会话
+  存储层访问能力——会话修复等管理功能不能经 SDK 实现，维持文件层校验器
+  路线（与 2026-09-07 会话维护两笔裁定互证）。
+- 影响：仅周知；后续「经 SDK 集成」类诉求先读此档再立项。
+- 凭据：纯文档；事实主张均锚 dsh 源码位置（d347e70，0.1.3-alpha.1）。
+
 ### 2026-09-07 快车道直推 · boot 启动页单主角重构 + 遥测文案去术语化 + get_boot_status 竞态补水 —— guan（AI 协作）
 
 - 变更：
