@@ -24,6 +24,7 @@
 | 9 | 复制/重命名的 `name` 一致化改写 | `profiles.rs`（`rewrite_manifest_name`；红线 3 允许的三件套写入） | `initProfile` 写 `name: dsh-profile-<basename>`（@ 353）；该前缀无外部消费处（Spike B §2.2），改写为一致性保持 | 2026-08-28 |
 | 10 | profile 切换（webUi 重启语义）+ WSL guest 脚本参数化 | `lib.rs`（`switch_profile` / `forced_profile` 注入 probe）、`executor.rs`（`guest_boot_script(profile)` + `sh_quote` 单引号进参，ADR-0009 §4 第三次修订） | dsh CLI 旗标面：launcher 只认 `--profile`/`--patch`/config dumps，其余原样转发给 app 树（dsh-cmdline @ 4-9）；web 命令族自带 `--host`/`--port`/`--no-open`/`--trusted-host`（dsh-web-app startup.js @ 16-44），**`--port 0` = OS 选空闲端口（help 明文）**；bundles 进程启动时挂载，无运行时切换/热加载能力 | 2026-08-29 |
 | 11 | 插件运行时清单（4.4 前置，Spike B） | 壳侧回环调用（实施时落位；仅会话在跑时 `POST http://127.0.0.1:<port>/api/pluginInventory/list`，信封 `{type:"client-request",rpcId,method,payload:{args:{}}}`，见 `docs/spikes/0002-plugin-inventory.md`） | unary 调用兼走普通 HTTP POST（`dsh-client-connection` callUnary @ 6203-6211：`postJson("/api/${method}")`）；`payload` 恰一 plain-object `args` 字段；响应 `{entries:[{entryId,moduleName,enabled,fiberPhase}]}`（`dsh-host-plugin-inventory/typert.host.js` schema；FiberState→phase 映射 index.js @ 33-46，disposed→null）；回环无鉴权门（伪造 Host 仍 200，2026-08-29 实测）；patch/配置行 id ≠ entryId（无组前缀 vs `include:*` 树路径），patch 写入 id 以 `--dump-config` 行 id 为准 | 2026-08-29 |
+| 12 | pnpm 12 构建脚本审批门（4.4② 插件操作失败的主新因） | `build_approvals.rs`（`parse_ignored_builds` 解析被点名包 + `set_profile_build_approvals` 受控改写 allowBuilds，写入例外 #5 / ADR-0009 第六次修订） | pnpm ≥12（本机 12.3.1 实测 2026-09-07）：`pnpm add` 装完全部包后，依赖树存在未获批安装脚本的包 → 追加 `allowBuilds: {包名: "set this to true or false"}` 模板进项目 `pnpm-workspace.yaml`（占位串在 pnpm 二进制内，非 dsh 生成）+ `ERR_PNPM_IGNORED_BUILDS` **退出 1**；`allowBuilds.<pkg>: false` = 显式忽略→退出 0；`true` = 真跑脚本（本机无 node-gyp 时 cpu-features 类包 127 失败——true 并非总可行）。dsh `runPlugin`（`@deepseek-ai/dsh` 0.1.2-rc.1 `lib/plugin-F7ZVfRyo.js`）= 裸 `spawnSync("pnpm", args, cwd=profile目录)` 透传退出码，非 0 跳过 reconcile → 半安装态（包已落盘/manifest 已写/bundles 未更）；其错误提示明示人工出路 = 编辑 pnpm-workspace.yaml allowBuilds 后重跑。dsh 全局安装目录的 allowBuilds 由 dsh 侧自填 true（核心原生依赖自带 prebuilds），**插件依赖树的包 dsh 不预批**——每次装/更新插件都可能撞门。**升级复核项**：pnpm 升级后占位模板/错误码措辞变化、dsh 升级后 runPlugin 是否自带审批处理 | 2026-09-07 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
@@ -76,3 +77,10 @@
   装不上的版本——已知边界：失败现经 `dsh:upgrade` 事件对用户可见（含 pnpm 输出
   尾部）；根治需检查侧可安装性预校验（每依赖一查，成本高）或口径改 dist-tag 优先
   （裁定事项，未动）。
+- 2026-09-07 复现点 12 入册：v0.9.5 引擎档（pnpm 12.3.1）上线当日用户装
+  dsh-web-all 报「dsh 退出码 1」——实机取证链条：plugin-op.log 全文（added 240
+  done 后 ERR_PNPM_IGNORED_BUILDS）→ dsh 转发源码（runPlugin 裸 spawnSync pnpm）
+  → pnpm 二进制 strings（占位模板/allowBuilds 语义）→ /tmp 双向复现（无裁决
+  必败 exit 1 + 写模板；false 退出 0；true 无工具链 127）。修复 = 壳内裁决流
+  （ADR-0009 第六次修订/写入例外 #5 + IPC set_profile_build_approvals），用户
+  实机 true/false 取值留给对话框逐包裁决。

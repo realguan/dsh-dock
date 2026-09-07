@@ -1474,3 +1474,20 @@
 - 影响：发版；tag 构建走签名安装器 + 更新 feed。
 - 凭据：build 三平台全绿（34106505184 起持续）；smoke Linux 五连 PASS；
   Windows 冒烟实验性（环境层不稳定，见同日补记）。
+
+### 2026-09-07 宪法外登记：pnpm 12 构建审批门产品化（ADR-0009 第六次修订）—— guan
+
+- 背景：v0.9.5 引擎档 pnpm 12.3.1 上线当日，插件安装撞
+  `ERR_PNPM_IGNORED_BUILDS`——pnpm 12 装完包后对未获批安装脚本的依赖硬失败
+  退出 1，并把 allowBuilds 裁决模板写进 profile 的 pnpm-workspace.yaml；
+  dsh 转发链透传退出码并跳过 bundle 调和（复现点 12 已入册）。
+- 裁定（维护者选项 A）：壳把 dsh/pnpm 文档化的人工出路产品化——失败解析被
+  点名包 → 前端逐包裁决框（默认跳过）→ 新 IPC `set_profile_build_approvals`
+  受控改写 allowBuilds 单键（pnpm-workspace.yaml **写入例外 #5**，非三件套
+  成员；非裁决条目逐字节保留，流式/嵌套/引号键拒绝写入）→ 自动重试原操作。
+  AGENTS §6 不变量行 + §7 IPC 清单已同步登记。
+- 影响：插件安装/更新/卸载失败面收敛为可自愈流程；allowBuilds 成为壳的第
+  五个 profile 受控写点；真实 true/false 取值是用户供应链决定，壳不预填。
+- 凭据：cargo test 176 绿（含真实 web profile yaml 全文 fixture）+ clippy
+  干净 + fmt 过 + Windows 交叉 check 过；前端 typecheck/lint/test 全绿
+  （buildApprovals 纯逻辑 4 例）。

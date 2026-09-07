@@ -212,6 +212,25 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 配置复制独立 IPC `copy_plugin_config`（文件层 + 一次 dump-config spawn），
 > 聚合查询新 IPC `list_all_plugins`；两者均 spawn_blocking。变更生效同 #3：
 > 不热生效，重启承接。**npm 搜索（roadmap 4.4⑤）维持挂账**，本修订不涉及。
+> **2026-09-07 第六次执行细则修订（范围扩展：pnpm 12 构建审批门裁决，
+> 4.4② 补全）——pnpm-workspace.yaml 写入例外 #5**。引擎档 pnpm 12 起默认
+> 拦截依赖安装脚本：`pnpm add` 装完全部包后若依赖树存在未获批脚本，写
+> `allowBuilds: {包名: "set this to true or false"}` 裁决模板进 profile 的
+> `pnpm-workspace.yaml` 并以 `ERR_PNPM_IGNORED_BUILDS` **硬失败退出 1**
+> （复现点 12；dsh `runPlugin` 只透传退出码，非 0 即跳过 bundle 调和——
+> 插件文件落盘但不激活的「半安装态」）。dsh 自身出路（错误提示明示）与
+> pnpm 设计意图都是**人工编辑 allowBuilds**；壳把它产品化：mutate_plugin_blocking
+> 失败路径解析被点名包名随 PluginOpOutcome.ignored_builds 返回
+> → 前端弹逐包裁决框（默认**跳过** = 显式忽略，安装必成；允许 = 用户显式
+> 开启）→ 新 IPC `set_profile_build_approvals` 受控改写 → 前端重试原操作
+> （重试走既有转发链，dsh exit 0 补做 reconcile，半安装态自愈）。**写入
+> 例外 #5 边界**（同类先例 = #2/#3/#4 单键受控写）：ⅰ 用户在对话框显式
+> 裁决触发；ⅱ 只改写 pnpm 自己生成的 allowBuilds 块（或文件无该键时追加
+> 块），**非裁决条目与其余内容逐字节保留**；ⅲ 行式解析只认平面 `键: 标量`，
+> 流式/引号键/嵌套/Tab 一律拒绝写入——宁可不自动化不写坏用户文件；ⅳ 包名
+> 键过 npm 裸名校验（防 YAML 键注入），原子写 tmp+rename；Ⅴ 无变化零写入。
+> 实现 `build_approvals.rs`（纯函数 + 真实文件 fixture 测试）；真实 profile
+> 的 true/false 取值是用户供应链决定，壳不预填不预判。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
 - 失败模式（2026-08-28 口径 2 统一）：创建/插件操作前防御性检测 pnpm（基准 = `effective_path` 注入后的 PATH——壳注入什么 dsh 就能看见什么，Spike A §3.4 同链）→ 缺失则同步补齐（`npm i -g pnpm`，复用 boot 同一函数）→ 补齐失败才降级为 dsh 自带文案（exit 127）+ 壳侧平台化安装建议；网络失败 → 提示检查 npm registry 镜像可达性（ADR-0006）。boot 期同一补齐失败 = 阻断启动 + 可行动文案。
 
