@@ -1445,3 +1445,19 @@
 - 凭据：cargo test 161 绿 / clippy -D warnings 干净 / fmt 过；windows-gnu
   target check 绿；前端 typecheck/lint/vitest（105）绿；macOS 场景矩阵 10/10
   PASS；pkill 孤儿检查实证；boot-smoke 三作业首跑待远端验证。
+
+### 2026-09-07 补记 · 三项裁定落档：boot-smoke 实验性 + 托盘降级 + 修复链 Windows 韧性 —— guan（AI 起草）
+
+- 变更：boot-smoke 六轮实证 GitHub hosted Windows runner 环境层启动不稳定
+  （stderr/WER 干净、同代码同 env 结果随机），Windows 双作业标
+  continue-on-error 实验性不挡闸门（`d4c3adf`）；Linux 作业四连 PASS 维持
+  有效闸门。连带裁定三项：① `repair-session.mjs` 主修复路径 rename 加
+  EPERM 退避重试（杀软/索引器瞬态锁，重试+退避，穷尽才报错）；② Linux
+  托盘初始化失败降级 warn 不阻断启动（i3/sway/精简桌面可正常用壳，
+  ADR-0007 边界澄清：托盘是首选常驻更新入口，但入口缺失 ≠ 应用不可用）；
+  ③ Windows/WSL 确定性 boot 验证暂缓——走 docs/executor.md 手动清单，
+  逻辑层由三平台 build 覆盖，待实机或 self-hosted runner 再收口。
+- 影响：② 为 ADR-0007 的边界澄清（非推翻：托盘仍是首选入口），仅周知；
+  ③ boot-smoke 的 Windows 作业结果仅作诊断参考，不作为任何合入闸门。
+- 凭据：cargo test 162 绿 / clippy 干净 / fmt 过；node --check 过；macOS
+  场景矩阵 10/10；Linux smoke 五连 PASS；build 三平台全绿。
