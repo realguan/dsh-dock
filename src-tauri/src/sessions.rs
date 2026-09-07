@@ -39,8 +39,9 @@ pub struct SessionItem {
     pub status: SessionStatus,
     /// 健康检查附加信息（异常原因/未修复原因），无异常时为空。
     pub health_detail: Option<String>,
-    /// 可能仍在被 dsh 写入（复合判据，2026-09-07：dsh 引擎进程存活 **且**
-    /// mtime < 5 分钟，引擎未运行时恒 false）——仅 UI 提示「运行中」，
+    /// 可能仍在被 dsh 写入（复合判据，2026-09-07 立法；2026-09-08 降噪增订：
+    /// dsh 引擎进程存活 **且** mtime < 5 分钟 **且** 脚本侧未见正常收尾
+    /// endState === 'open'，引擎未运行时恒 false）——仅 UI 提示「运行中」，
     /// 不参与健康判定；活跃会话不应在运行时修复。
     pub active: bool,
     /// 已归档（dsh `workspace.json` 的 `archivedSessionIds`，2026-09-07）：
@@ -750,6 +751,94 @@ mod tests {
         assert!(after.is_empty());
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn scan_sessions_active_requires_unfinished_end_state() {
+        // 「运行中」降噪（2026-09-08，问题记录095 #5）：引擎存活 + mtime 新鲜
+        // 时，正常收尾（turn/end）的会话不再标 active；未见收尾才标。回归锚：
+        // lib.rs engine_session_alive 曾被 is_none_or 反转（无会话=存活），
+        // 与本判据叠加产生「死会话标运行中」——修复以本测试 + is_some_and 锁定。
+        let temp = std::env::temp_dir().join(format!("dsh-sess-active-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        // 健康扫描的 node 来源 = engine_node_bin(data_dir)（引擎档）。测试在
+        // 临时 data_dir 下铺 engines/bin/node shim 指向系统 node；找不到系统
+        // node 则跳过（降级路径已有其他测试覆盖）。
+        let data_dir = temp.join("data");
+        let bin_dir = data_dir.join("engines").join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let system_node = find_system_node();
+        if let Some(real) = &system_node {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(real, bin_dir.join("node")).unwrap();
+            #[cfg(windows)]
+            fs::write(
+                bin_dir.join("node.cmd"),
+                format!("@\"{}\" %*\r\n", real.display()),
+            )
+            .unwrap();
+        }
+
+        let header = r#"{"type":"session","version":1,"id":"s-1","createdAt":1700000000000,"delegationDepth":0}"#;
+        let mk = |id: &str, body: &str| {
+            let d = data_dir
+                .join("home")
+                .join("sessions")
+                .join("--demo--")
+                .join(id);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("session.jsonl"), body).unwrap();
+        };
+        mk("session-closed", &format!("{header}\n{{\"type\":\"turn/end\",\"data\":{{\"reason\":{{\"kind\":\"stop\"}}}}}}\n"));
+        mk("session-open", &format!("{header}\n"));
+
+        let home = data_dir.join("home");
+        let list = scan_sessions(&home, &data_dir, true).unwrap();
+        if system_node.is_none() {
+            assert!(
+                list.iter().all(|i| !i.active),
+                "node 缺失 = 健康降级，active 恒 false"
+            );
+            eprintln!("跳过降噪断言：系统未找到 node");
+            let _ = fs::remove_dir_all(&temp);
+            return;
+        }
+        assert_eq!(list.len(), 2);
+        let closed = list.iter().find(|i| i.id == "session-closed").unwrap();
+        let open = list.iter().find(|i| i.id == "session-open").unwrap();
+        assert!(!closed.active, "正常收尾（stop）的会话不得标「运行中」");
+        assert_eq!(closed.end_state.as_deref(), Some("stop"));
+        assert!(
+            open.active,
+            "未见收尾（open）的会话 mtime 新鲜 + 引擎存活 = 运行中"
+        );
+
+        // 引擎未运行时恒 false（反转修复的另一半：None ≠ 存活）
+        let list = scan_sessions(&home, &data_dir, false).unwrap();
+        assert!(
+            list.iter().all(|i| !i.active),
+            "引擎未运行时任何会话都不得标「运行中」"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    /// 测试辅助：沿 PATH 探测系统 node（健康扫描 shim 的落点）。
+    #[cfg(unix)]
+    fn find_system_node() -> Option<std::path::PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|d| d.join("node"))
+            .find(|p| p.is_file())
+    }
+
+    #[cfg(windows)]
+    fn find_system_node() -> Option<std::path::PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|d| d.join("node.exe"))
+            .find(|p| p.is_file())
     }
 
     #[test]

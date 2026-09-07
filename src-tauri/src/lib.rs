@@ -350,7 +350,9 @@ fn session_is_current(state: &ShellState, epoch: u64) -> bool {
 /// 会话存活代理，同一判定覆盖。
 fn engine_session_alive(state: &ShellState) -> bool {
     let mut session = state.session.lock().unwrap();
-    session.as_mut().is_none_or(|e| e.check_exited().is_none())
+    // 2026-09-08 修复：is_none_or 会在无会话时误报存活（19ec36e 机械改写引入，
+    // 问题记录095 #5——死会话标「进行中」+ 运行态回环查询必败），恢复 None=false。
+    session.as_mut().is_some_and(|e| e.check_exited().is_none())
 }
 
 /// 取出并清理当前会话（幂等）：错误卡 / 模式切换共用。

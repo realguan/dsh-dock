@@ -1003,9 +1003,13 @@ function healthOut(status, extra = {}) {
  * - endState：最后一条 `turn/end` 的 reason.kind（stop/interrupted…），
  *   无 turn/end = 'open'（未正常收尾，常见于崩溃尾）；不可解析为 null；
  * - subagent / agentPreset：header.origin === 'subagent' / header.agentPreset；
- * - active（运行中）：复合判据（2026-09-07）= 引擎存活（engineAlive()，Rust
- *   注入 DSH_ENGINE_ALIVE）**且** mtime 距今 <5 分钟（dsh 批量写间隔分钟级，
- *   可能仍 flush）。仅作 UI 徽标与修复预拦，不参与健康判定。
+ * - active（运行中）：复合判据（2026-09-07 立法；2026-09-08 降噪增订）=
+ *   引擎存活（engineAlive()，Rust 注入 DSH_ENGINE_ALIVE）**且** mtime 距今
+ *   <5 分钟（dsh 批量写间隔分钟级，可能仍 flush）**且** endState === 'open'
+ *   （正常收尾过的会话即使 mtime 新鲜也不再标运行中——排除「刚结束但末次
+ *   flush 还在窗口内」的假阳性；已知代价：活跃会话两轮对话间隙末条也是
+ *   stop，存在漏标，裁定接受，见问题记录095 #5）。仅作 UI 徽标与修复
+ *   预拦，不参与健康判定。
  */
 export function scanSessionHealth(filePath) {
   const isZstd = filePath.endsWith('.zstd')
@@ -1022,8 +1026,9 @@ export function scanSessionHealth(filePath) {
     return healthOut('unknown', { detail: '文件为空' })
   }
 
-  // 活跃标志：复合判据，见函数头注释。
-  const active = engineAlive() && st !== null && Date.now() - st.mtimeMs < 5 * 60 * 1000
+  // 活跃标志前半（引擎存活 + mtime 新鲜）：复合判据见函数头注释。终值在
+  // endState 解析后合成（末尾 active = activeBase && endState === 'open'）。
+  const activeBase = engineAlive() && st !== null && Date.now() - st.mtimeMs < 5 * 60 * 1000
 
   let headerLine
   let records
@@ -1032,27 +1037,27 @@ export function scanSessionHealth(filePath) {
     const rawText = isZstd ? decompressZstd(buffer).toString('utf8') : buffer.toString('utf8')
     const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
     if (lines.length === 0) {
-      return healthOut('unknown', { active, detail: '文件为空' })
+      return healthOut('unknown', { active: activeBase, detail: '文件为空' })
     }
     headerLine = lines[0]
     try {
       header = JSON.parse(headerLine)
     } catch {
-      return healthOut('unknown', { active, detail: 'header 非法' })
+      return healthOut('unknown', { active: activeBase, detail: 'header 非法' })
     }
     if (!isSessionHeader(header)) {
-      return healthOut('unknown', { active, detail: 'header 非法' })
+      return healthOut('unknown', { active: activeBase, detail: 'header 非法' })
     }
     records = []
     for (let i = 1; i < lines.length; i++) {
       try {
         records.push(JSON.parse(lines[i]))
       } catch (e) {
-        return healthOut('unknown', { active, detail: `第 ${i + 1} 行 JSON 解析失败` })
+        return healthOut('unknown', { active: activeBase, detail: `第 ${i + 1} 行 JSON 解析失败` })
       }
     }
   } catch (e) {
-    return healthOut('unknown', { active, detail: `解压失败：${e.message}` })
+    return healthOut('unknown', { active: activeBase, detail: `解压失败：${e.message}` })
   }
 
   // 元数据透出（2026-09-07）：header 派生字段。
@@ -1093,6 +1098,9 @@ export function scanSessionHealth(filePath) {
       if (typeof kind === 'string' && kind) endState = kind
     }
   }
+
+  // 活跃终值：正常收尾（turn/end 存在）的会话不再标运行中（降噪，2026-09-08）。
+  const active = activeBase && endState === 'open'
 
   const meta = { title, eventCount, active, createdAt, endState, subagent, agentPreset }
 
@@ -1464,9 +1472,9 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     console.log(`共发现 ${files.length} 个会话日志文件。`)
     let failed = 0
     for (const file of files) {
-      // 活跃会话（引擎存活 + mtime < 5 分钟，复合判据）跳过：修复必然被下次
-      // flush 覆盖（假成功）；dsh 未运行时不可能有写入，mtime 不参与判定。
-      // 全量修复只处理静止/已结束的会话。
+      // 活跃会话（引擎存活 + mtime < 5 分钟 + 未正常收尾，复合判据）跳过：
+      // 修复必然被下次 flush 覆盖（假成功）；dsh 未运行时不可能有写入，
+      // mtime 不参与判定。全量修复只处理静止/已结束的会话。
       const s = scanSessionHealth(file)
       if (s.active) {
         console.log(`⏭️  跳过活跃会话 ${file.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''}（dsh 运行中且近期有写入，结束后可修复）。`)
@@ -1494,11 +1502,11 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     }
   }
 
-  // 单文件修复：活跃会话（引擎存活 + mtime < 5 分钟，复合判据）明确提示——
-  // 修复会被下次 flush 覆盖；dsh 未运行时 mtime 新鲜不再构成活跃。
+  // 单文件修复：活跃会话（引擎存活 + mtime < 5 分钟 + 未正常收尾，复合判据）
+  // 明确提示——修复会被下次 flush 覆盖；dsh 未运行时 mtime 新鲜不再构成活跃。
   const health = scanSessionHealth(targetPath)
   if (health.active) {
-    console.log(`⏭️  会话仍被 dsh 使用（运行中且 mtime 距今 <5 分钟）。为避免修复被下一次写入覆盖，请稍后在会话结束后再修复。`)
+    console.log(`⏭️  会话仍被 dsh 使用（运行中且近期有写入、未见正常收尾）。为避免修复被下一次写入覆盖，请稍后在会话结束后再修复。`)
     process.exit(1)
   }
 
