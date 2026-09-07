@@ -39,9 +39,27 @@ pub struct SessionItem {
     pub status: SessionStatus,
     /// 健康检查附加信息（异常原因/未修复原因），无异常时为空。
     pub health_detail: Option<String>,
-    /// 可能仍在被 dsh 写入（间歇 flush，mtime < 5 分钟）——仅 UI 提示「运行中」，
+    /// 可能仍在被 dsh 写入（复合判据，2026-09-07：dsh 引擎进程存活 **且**
+    /// mtime < 5 分钟，引擎未运行时恒 false）——仅 UI 提示「运行中」，
     /// 不参与健康判定；活跃会话不应在运行时修复。
     pub active: bool,
+    /// 已归档（dsh `workspace.json` 的 `archivedSessionIds`，2026-09-07）：
+    /// dsh 侧栏对所有分组与搜索隐藏已归档会话，壳同口径默认隐藏，仅
+    /// 「已归档」筛选档展示；归档会话仍可加载可修复。
+    pub archived: bool,
+    /// 会话创建时间（header.createdAt，毫秒 epoch；脚本不可用时 0）。
+    pub created_at: u64,
+    /// 展开后的事件总数（信息性统计；不可解析时 0）。
+    pub event_count: u64,
+    /// 结束状态：最后一条 `turn/end` 的 reason.kind（stop/interrupted…）；
+    /// 无 turn/end 记 `open`（未正常收尾，常见于崩溃尾）；不可解析为 None。
+    pub end_state: Option<String>,
+    /// 子代理会话（header.origin = 'subagent'）。dsh 侧栏同样隐藏此类。
+    pub subagent: bool,
+    /// 会话代理预设（header.agentPreset，如 standard）。
+    pub agent_preset: Option<String>,
+    /// 健康判定所用校验器（`dsh-session@版本` / fallback），供 UI 透明展示。
+    pub validator: Option<String>,
 }
 
 /// 修复操作结果
@@ -145,7 +163,14 @@ pub fn decode_project_dir_name(raw: &str) -> String {
 /// 健康检查与标题提取经引擎 node 运行内置脚本 `--scan`（只读，不解压进 Rust
 /// ——Rust 无 zstd 依赖；脚本与 dsh 加载器语义对齐）。node 不可用时降级：
 /// 健康状态标记为 Unknown、标题为空（列表仍可用，修复入口保留）。
-pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, String> {
+/// `engine_alive`（2026-09-07）：dsh 引擎进程存活标志（壳持有的子进程
+/// try_wait），注入脚本作为「运行中」复合判据前半——dsh 未运行时 mtime
+/// 新鲜不再构成活跃（归档/重命名会刷新 mtime，裸 mtime 判据误标 5 分钟）。
+pub fn scan_sessions(
+    home: &Path,
+    data_dir: &Path,
+    engine_alive: bool,
+) -> Result<Vec<SessionItem>, String> {
     let sessions_dir = home.join("sessions");
     if !sessions_dir.is_dir() {
         return Ok(Vec::new());
@@ -245,6 +270,13 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
                     status: SessionStatus::Unknown, // 由 --scan 结果填充
                     health_detail: None,
                     active: false,
+                    archived: false, // 由 workspace.json 归档集合填充
+                    created_at: 0,
+                    event_count: 0,
+                    end_state: None,
+                    subagent: false,
+                    agent_preset: None,
+                    validator: None,
                 });
             }
         }
@@ -253,8 +285,15 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
     // 按最后修改时间倒序排列（最新活跃在前）
     items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
 
+    // 归档标志（2026-09-07）：读 dsh 工作区存储域的归档会话集合。与脚本
+    // 健康检查相互独立——node 缺失降级时归档标记仍然生效。
+    let archived = read_archived_session_ids(home);
+    for item in &mut items {
+        item.archived = archived.contains(&item.id);
+    }
+
     // 引擎 node 健康扫描：填充 title 与 status。失败时保持 Unknown 降级。
-    if let Ok(health_map) = scan_health_via_script(home, data_dir) {
+    if let Ok(health_map) = scan_health_via_script(home, data_dir, engine_alive) {
         for item in &mut items {
             if let Some(h) = health_map.get(&item.file_path) {
                 item.title = h.title.clone().unwrap_or_default();
@@ -265,11 +304,49 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
                 };
                 item.health_detail = h.detail.clone();
                 item.active = h.active;
+                item.created_at = h.created_at.unwrap_or(0);
+                item.event_count = h.event_count.unwrap_or(0);
+                item.end_state = h.end_state.clone();
+                item.subagent = h.subagent;
+                item.agent_preset = h.agent_preset.clone();
+                item.validator = h.validator.clone();
             }
         }
     }
 
     Ok(items)
+}
+
+/// 读取 dsh 工作区存储域的归档会话集合：`~/.dsh/storages/workspace.json` 的
+/// `global.archivedSessionIds`（裸会话 ID 数组；2026-09-07 实证结构：
+/// `{unit:{name,version}, global:{initialized,workspaceIds,archivedSessionIds},
+/// tables:{workspaces:{…}}}`，归档动作只原子重写这一个文件、不触碰会话日志）。
+/// 容错口径：文件缺失 / JSON 损坏 / 字段缺失一律视为「无归档」——归档信息
+/// 缺失只影响默认隐藏，不得阻断列表本身。
+fn read_archived_session_ids(home: &Path) -> std::collections::HashSet<String> {
+    let path = home.join("storages").join("workspace.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        // 文件不存在 = 归档功能未使用/未生成：正常路径，不告警。
+        Err(_) => return Default::default(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("workspace.json 解析失败（按无归档处理）：{e}");
+            return Default::default();
+        }
+    };
+    parsed
+        .get("global")
+        .and_then(|g| g.get("archivedSessionIds"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 会话日志文件名判定（与脚本 `SESSION_LOG_FILENAME` 同口径）：
@@ -304,6 +381,7 @@ fn session_log_generation(file_path: &str) -> u32 {
 /// 否则任一 null 字段会让整批反序列化失败（2026-09-05 实测：
 /// 一个 title:null 即致全列表降级 Unknown）。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ScriptHealthEntry {
     path: String,
     status: String,
@@ -313,6 +391,20 @@ struct ScriptHealthEntry {
     active: bool,
     #[serde(default)]
     detail: Option<String>,
+    // 元数据透出（2026-09-07 扩展项1）：全部 Option/默认值容忍 null 与缺字段
+    //（同一批次里混有早退路径的缺省形态，单个 null 不得致整批反序列化失败）。
+    #[serde(default)]
+    created_at: Option<u64>,
+    #[serde(default)]
+    event_count: Option<u64>,
+    #[serde(default)]
+    end_state: Option<String>,
+    #[serde(default)]
+    subagent: bool,
+    #[serde(default)]
+    agent_preset: Option<String>,
+    #[serde(default)]
+    validator: Option<String>,
 }
 
 /// 进程内临时脚本命名计数器：并行线程的时间戳可能同纳秒（cargo test 并行
@@ -335,6 +427,7 @@ fn unique_script_path(prefix: &str) -> PathBuf {
 fn scan_health_via_script(
     home: &Path,
     data_dir: &Path,
+    engine_alive: bool,
 ) -> Result<std::collections::HashMap<String, ScriptHealthEntry>, String> {
     let script_content = include_str!("../../scripts/repair-session.mjs");
     let script_path = unique_script_path("dsh-dock-scan-session");
@@ -350,6 +443,8 @@ fn scan_health_via_script(
     // 恢复层校验用引擎档 @deepseek-ai/dsh-session 本尊（与加载该会话的 dsh
     // 同版本，校验结论零漂移）；缺包时脚本内部降级 fallback fold。
     cmd.env("DSH_DOCK_ENGINES", crate::engines::pnpm_home(data_dir));
+    // 「运行中」复合判据前半（2026-09-07）：显式 1/0，避免「未设 = 不明」歧义。
+    cmd.env("DSH_ENGINE_ALIVE", if engine_alive { "1" } else { "0" });
 
     let output = cmd
         .output()
@@ -379,6 +474,7 @@ pub fn run_repair(
     target: Option<&str>,
     home: &Path,
     data_dir: &Path,
+    engine_alive: bool,
 ) -> Result<RepairOutcome, String> {
     let script_content = include_str!("../../scripts/repair-session.mjs");
     // 脚本路径含 PID + 时间戳 + 进程内自增序号：并发修复（多窗口/并行单测）
@@ -400,6 +496,8 @@ pub fn run_repair(
     cmd.env("DSH_HOME", home);
     // 与 --scan 同源：恢复层校验定位引擎档 dsh-session（ADR-0010 资产）。
     cmd.env("DSH_DOCK_ENGINES", crate::engines::pnpm_home(data_dir));
+    // 活跃跳过判据与 --scan 同源（复合判据，2026-09-07）。
+    cmd.env("DSH_ENGINE_ALIVE", if engine_alive { "1" } else { "0" });
 
     if let Some(t) = target {
         cmd.arg(t);
@@ -481,6 +579,117 @@ mod tests {
     }
 
     #[test]
+    fn script_health_entry_parses_extended_metadata() {
+        // 扩展项1（2026-09-07）：脚本 --scan 新增元数据字段的反序列化契约——
+        // 完整形态、null 形态与缺字段形态混批，单个缺失/ null 不得致整批失败。
+        let fixture = r#"[
+          {"path":"/a/session.jsonl.zstd","status":"healthy","title":null,"detail":null,
+           "createdAt":1788507561510,"eventCount":42,"endState":"stop","subagent":false,
+           "agentPreset":"standard","validator":"dsh-session@0.1.2-rc.1"},
+          {"path":"/b/session.jsonl.zstd","status":"unknown","title":null,"detail":"header 非法",
+           "createdAt":null,"eventCount":0,"endState":null,"subagent":true,"agentPreset":null},
+          {"path":"/c/session.jsonl.zstd","status":"needs_repair","title":"t","detail":null}
+        ]"#;
+        let entries: Vec<ScriptHealthEntry> = serde_json::from_str(fixture).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].created_at, Some(1_788_507_561_510));
+        assert_eq!(entries[0].event_count, Some(42));
+        assert_eq!(entries[0].end_state.as_deref(), Some("stop"));
+        assert!(!entries[0].subagent);
+        assert_eq!(entries[0].agent_preset.as_deref(), Some("standard"));
+        assert_eq!(
+            entries[0].validator.as_deref(),
+            Some("dsh-session@0.1.2-rc.1")
+        );
+        assert!(entries[1].created_at.is_none());
+        assert_eq!(entries[1].end_state, None);
+        assert!(entries[1].subagent);
+        assert!(entries[1].agent_preset.is_none());
+        // 缺字段形态：默认值生效
+        assert_eq!(entries[2].created_at, None);
+        assert!(!entries[2].subagent);
+        assert!(entries[2].validator.is_none());
+    }
+
+    #[test]
+    fn read_archived_session_ids_tolerates_missing_and_malformed() {
+        // 容错口径（2026-09-07）：缺失/损坏/字段缺失一律「无归档」，不阻断列表。
+        let temp = std::env::temp_dir().join(format!("dsh-sess-arch-parse-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        let home = temp.join("home");
+        fs::create_dir_all(&home).unwrap();
+
+        // ① 文件缺失（归档功能未使用）
+        assert!(read_archived_session_ids(&home).is_empty());
+
+        // ② JSON 损坏
+        let storages = home.join("storages");
+        fs::create_dir_all(&storages).unwrap();
+        fs::write(storages.join("workspace.json"), "{ not json").unwrap();
+        assert!(read_archived_session_ids(&home).is_empty());
+
+        // ③ 字段缺失（旧版 schema / zod default 未落盘）
+        fs::write(
+            storages.join("workspace.json"),
+            r#"{"unit":{"name":"workspace","version":2},"global":{"initialized":true},"tables":{}}"#,
+        )
+        .unwrap();
+        assert!(read_archived_session_ids(&home).is_empty());
+
+        // ④ 正常形态（锚 2026-09-07 实证结构）
+        fs::write(
+            storages.join("workspace.json"),
+            r#"{"unit":{"name":"workspace","version":2},"global":{"initialized":true,"workspaceIds":["w0"],"archivedSessionIds":["session-a","session-b"]},"tables":{}}"#,
+        )
+        .unwrap();
+        let ids = read_archived_session_ids(&home);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("session-a"));
+        assert!(ids.contains("session-b"));
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn scan_sessions_marks_archived_from_workspace_json() {
+        // 归档标记（2026-09-07）：workspace.json 中的会话在列表上带 archived=true；
+        // 标记与脚本健康检查相互独立（此处 node 缺失降级 Unknown，归档仍生效）。
+        let temp = std::env::temp_dir().join(format!("dsh-sess-arch-scan-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let home = temp.join("home");
+        let sess_dir = home
+            .join("sessions")
+            .join("--demo--")
+            .join("session-archived-1");
+        fs::create_dir_all(&sess_dir).unwrap();
+        fs::write(sess_dir.join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
+        let live_dir = home
+            .join("sessions")
+            .join("--demo--")
+            .join("session-live-2");
+        fs::create_dir_all(&live_dir).unwrap();
+        fs::write(live_dir.join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
+
+        let storages = home.join("storages");
+        fs::create_dir_all(&storages).unwrap();
+        fs::write(
+            storages.join("workspace.json"),
+            r#"{"unit":{"name":"workspace","version":2},"global":{"initialized":true,"workspaceIds":[],"archivedSessionIds":["session-archived-1"]},"tables":{}}"#,
+        )
+        .unwrap();
+
+        let list = scan_sessions(&home, &temp, false).unwrap();
+        assert_eq!(list.len(), 2);
+        let archived = list.iter().find(|i| i.id == "session-archived-1").unwrap();
+        let live = list.iter().find(|i| i.id == "session-live-2").unwrap();
+        assert!(archived.archived, "归档集合中的会话应标记 archived");
+        assert!(!live.archived, "未归档会话不应误标");
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn decode_project_dir_extracts_basename() {
         assert_eq!(decode_project_dir_name("----"), "root");
         assert_eq!(decode_project_dir_name("--my-project--"), "my-project");
@@ -510,7 +719,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
 
-        let list = scan_sessions(&temp, &temp).unwrap();
+        let list = scan_sessions(&temp, &temp, false).unwrap();
         assert!(list.is_empty());
 
         let _ = fs::remove_dir_all(&temp);
@@ -529,7 +738,7 @@ mod tests {
         fs::write(sess_dir.join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
 
         // node 缺失时降级：状态 Unknown、标题空（该目录布局样例无引擎档）。
-        let list = scan_sessions(&temp, &temp).unwrap();
+        let list = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "session-12345");
         assert_eq!(list[0].project_name, "my-app");
@@ -537,7 +746,7 @@ mod tests {
 
         // 测试删除
         remove_session(&temp, &list[0].file_path).unwrap();
-        let after = scan_sessions(&temp, &temp).unwrap();
+        let after = scan_sessions(&temp, &temp, false).unwrap();
         assert!(after.is_empty());
 
         let _ = fs::remove_dir_all(&temp);
@@ -595,8 +804,8 @@ mod tests {
 {"type":"turn/end","seq":5,"time":6,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, corrupt_data).unwrap();
-        // 模拟静止会话：修复脚本的活跃检测（10s 内 mtime 更新 = 活跃）会拒绝
-        // 刚写入的文件，这里把 mtime 拨回过去以测试真实修复路径。
+        // 模拟静止会话：拨回 mtime 以贴近真实修复场景（修复入口的活跃判据
+        // 已是复合式——引擎存活 + mtime<5min，测试恒传 engine_alive=false）。
         let f = fs::File::open(&target_file).unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
@@ -614,7 +823,7 @@ mod tests {
         #[cfg(not(unix))]
         std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
-        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success, "修复应成功：{}", outcome.message);
 
         // 验证备份文件已创建
@@ -690,7 +899,7 @@ mod tests {
         )
         .unwrap();
 
-        let list = scan_sessions(&temp, &temp).unwrap();
+        let list = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(
             list.len(),
             1,
@@ -748,7 +957,7 @@ mod tests {
         #[cfg(not(unix))]
         std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
-        let list = scan_sessions(&temp, &temp).unwrap();
+        let list = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             list[0].status,
@@ -813,7 +1022,7 @@ mod tests {
         std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
         // 健康扫描必须发现该损坏（旧版判定 healthy 的盲区）。
-        let list = scan_sessions(&temp, &temp).unwrap();
+        let list = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             list[0].status,
@@ -828,7 +1037,7 @@ mod tests {
         );
 
         // 修复：悬空 replace → append，内容与 seq 原样。
-        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success, "修复应成功：{}", outcome.message);
         assert!(sess_dir.join("session.jsonl.bak").is_file(), "应创建备份");
 
@@ -844,7 +1053,7 @@ mod tests {
         );
 
         // 修复后再扫描 = 健康（同一套恢复层校验闭环）。
-        let after = scan_sessions(&temp, &temp).unwrap();
+        let after = scan_sessions(&temp, &temp, false).unwrap();
         assert_eq!(
             after[0].status,
             SessionStatus::Healthy,
@@ -900,7 +1109,7 @@ mod tests {
         #[cfg(not(unix))]
         std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
 
-        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success);
 
         // 文件未被改写（无备份、内容字节一致）

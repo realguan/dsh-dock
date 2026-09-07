@@ -32,6 +32,36 @@
 
 ## 三、记录
 
+### 2026-09-07 会话维护 · 归档感知 + 运行中复合判据 + 会话元数据透出 —— guan（AI 协作）
+
+- 变更（grilling 共识后 Batch 1，意图 = 会话维护列表准确性）：
+  1. **运行中误判修复（bug）**：active 判据由裸 `mtime<5min` 升级为复合式
+     ——dsh 引擎进程存活（壳持有的会话执行器 `try_wait`，WSL 客体以
+     wsl.exe 存活代理）**且** mtime<5min。Rust 经 `DSH_ENGINE_ALIVE=1/0`
+     注入脚本（scan/repair 同源）。dsh 未运行时不再误判——修复了用户实测
+     「归档/重命名会话被误标进行中 5 分钟、修不了」。残余竞态已评估并锚定：
+     dsh 追加为逐批 `open("a")→write→fsync→close`（persistence-jsonl@0.1.2-rc.1
+     appendLines），不持长驻 fd，失败批次回滚+游标重试，修复与写入竞争
+     最坏情形 = dsh 稍后重放批次，无永久丢数据。
+  2. **归档感知（bug/扩展）**：dsh 归档 = 仅原子重写 `~/.dsh/storages/
+     workspace.json` 的 `global.archivedSessionIds`（2026-09-07 实证结构，
+     会话日志零改动、仍可加载可修复；dsh 侧栏客户端过滤、无取消归档 API）。
+     壳同口径：`SessionItem.archived` + 容错解析（缺失/损坏按无归档不阻断），
+     默认隐藏 + 新增「已归档」筛选档；归档会话照常体检可修；统计卡/搜索
+     跟随可见性（2026-09-07 口径 6 条）。
+  3. **元数据透出（扩展项1）**：`--scan` 新增 createdAt（毫秒，实证真实日志）、
+     eventCount（填实原恒 0 死字段）、endState（最后一条 turn/end 的
+     reason.kind，真实语料全集 completed/aborted/error/open；无 turn/end 记
+     open（未收尾））、subagent（dsh 侧栏亦隐藏子代理，壳标注展示不隐藏）、
+     agentPreset；validator（校验器版本）透出到状态徽标 tooltip（0.1.3
+     过渡期有用）。前端会话行新增元数据副行与三类徽标。
+- 影响：仅周知。`list_sessions` 载荷扩展（无新 IPC 命令、不触 §7）；
+  dsh 升级日「已归档集合经 workspace.json 读取」不受世代迁移影响。
+- 凭据：cargo test 159 全绿 + fmt + clippy；前端 typecheck/oxlint/104 测试；
+  真实语料 9 会话双态扫描（alive=1/0 复合判据行为正确）；fake-engines
+  catalog 分支回归（原始损坏快照 needs_repair 检出）；同批工作区含另一在途
+  boot 文案流改动，本次提交经 hunk 级摘取只含本意图 7 文件。
+
 ### 2026-09-07 会话维护补强 · dsh 0.1.3 格式世代前瞻适配（catalog 迁移管线 + 版本路由） —— guan（AI 协作）
 
 - 变更（`scripts/repair-session.mjs` + `src-tauri/src/sessions.rs`；本条与该改动同

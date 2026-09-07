@@ -180,8 +180,22 @@ export interface SessionItem {
   status: "healthy" | "needs_repair" | "unknown"
   /** 健康检查附加信息（异常原因/未修复原因），无异常时不返回 */
   healthDetail?: string
-  /** 可能仍在被 dsh 写入（间歇 flush）——UI 显示「运行中」，不显示修复按钮 */
+  /** 可能仍在被 dsh 写入（复合判据：引擎存活且 mtime<5min）——UI 显示「运行中」，不显示修复按钮 */
   active?: boolean
+  /** 已归档（dsh workspace.json archivedSessionIds）——默认隐藏，仅「已归档」筛选档可见 */
+  archived?: boolean
+  /** 会话创建时间（header.createdAt，毫秒 epoch；未知为 0） */
+  createdAt?: number
+  /** 展开后的事件总数（信息性统计；不可解析为 0） */
+  eventCount?: number
+  /** 结束状态：stop=正常结束 / interrupted=回合中断 / open=未收尾；不可解析为 null */
+  endState?: string | null
+  /** 子代理会话（header.origin=subagent） */
+  subagent?: boolean
+  /** 会话代理预设（如 standard） */
+  agentPreset?: string | null
+  /** 健康判定所用校验器（dsh-session@版本 / fallback） */
+  validator?: string | null
 }
 
 /// 会话修复结果

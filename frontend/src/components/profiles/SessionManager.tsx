@@ -3,13 +3,19 @@ import { motion } from "framer-motion"
 import {
   AlertTriangle,
   Archive,
+  Bot,
+  CalendarClock,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Clipboard,
   Clock,
   Copy,
+  CircleX,
   ExternalLink,
+  FileArchive,
   FileCode,
   Folder,
   HardDrive,
@@ -54,6 +60,19 @@ function sessionDisplayName(s: SessionItem, noTitle: string): string {
   return s.title?.trim() ? s.title.trim() : noTitle
 }
 
+/** 结束状态展示文案：已知 kind 有专名（真实语料实证全集 completed/aborted/
+ * error/open，2026-09-07；stop/interrupted 为文档词汇），其余按「未收尾」兜底。 */
+function endStateLabel(
+  endState: string,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (endState === "stop" || endState === "completed") return t.sessions.endStateStop
+  if (endState === "interrupted") return t.sessions.endStateInterrupted
+  if (endState === "aborted") return t.sessions.endStateAborted
+  if (endState === "error") return t.sessions.endStateError
+  return t.sessions.endStateOpen
+}
+
 /** 状态视觉映射：色点 + 徽标 + 描述。 */
 function statusMeta(
   status: SessionItem["status"],
@@ -93,7 +112,7 @@ export function SessionManager({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
-  const [statusFilter, setStatusFilter] = useState<"all" | "needs_repair">("all")
+  const [statusFilter, setStatusFilter] = useState<"all" | "needs_repair" | "archived">("all")
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
@@ -123,12 +142,20 @@ export function SessionManager({
   }, [refreshKey, loadSessions])
 
   const stats = useMemo(() => {
-    if (!sessions) return { total: 0, healthy: 0, needsRepair: 0, running: 0, projectsCount: 0 }
+    if (!sessions)
+      return { total: 0, healthy: 0, needsRepair: 0, running: 0, projectsCount: 0, archived: 0 }
     let healthy = 0
     let needsRepair = 0
     let running = 0
+    let archived = 0
     const projects = new Set<string>()
     for (const s of sessions) {
+      if (s.archived) {
+        // 归档会话不计入默认世界统计（默认隐藏，2026-09-07 口径）；
+        // 数量单独展示在「已归档」筛选档上。
+        archived++
+        continue
+      }
       projects.add(s.projectDirRaw)
       if (s.active) {
         running++
@@ -139,11 +166,12 @@ export function SessionManager({
       }
     }
     return {
-      total: sessions.length,
+      total: sessions.length - archived,
       healthy,
       needsRepair,
       running,
       projectsCount: projects.size,
+      archived,
     }
   }, [sessions])
 
@@ -235,7 +263,11 @@ export function SessionManager({
   const filteredSessions = useMemo(() => {
     if (!sessions) return []
     const q = searchQuery.toLowerCase().trim()
+    const inArchiveView = statusFilter === "archived"
     return sessions.filter((s) => {
+      // 归档可见性（2026-09-07，对齐 dsh 侧栏默认隐藏口径）：默认视图不含
+      // 已归档会话；「已归档」档只看归档。搜索跟随可见性。
+      if (inArchiveView !== (s.archived === true)) return false
       if (statusFilter === "needs_repair") {
         // 仅看异常 = 可修复的异常（活跃会话除外——它不能被修，另行展示）
         if (!(s.status === "needs_repair" && s.active !== true)) return false
@@ -326,10 +358,32 @@ export function SessionManager({
                       ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                       : "bg-line text-dim"
                 }`}
-                title={meta.desc}
+                title={`${meta.desc}${sess.validator ? t.sessions.validatorHint(sess.validator) : ""}`}
               >
                 <span className={`size-1.5 rounded-full ${meta.dot}`} />
                 {meta.badge}
+              </span>
+            )}
+
+            {/* 已归档徽标：仅归档视图可见（默认视图已隐藏） */}
+            {sess.archived && (
+              <span
+                className="flex shrink-0 items-center gap-1 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400"
+                title={t.sessions.archivedTagDesc}
+              >
+                <Archive className="size-2.5" />
+                {t.sessions.archivedTag}
+              </span>
+            )}
+
+            {/* 子代理会话：dsh 侧栏隐藏此类，维护工具标注展示 */}
+            {sess.subagent && (
+              <span
+                className="flex shrink-0 items-center gap-1 rounded-md bg-line px-1.5 py-0.5 text-[10px] font-medium text-dim"
+                title={t.sessions.subagentTagDesc}
+              >
+                <Bot className="size-2.5" />
+                {t.sessions.subagentTag}
               </span>
             )}
 
@@ -342,7 +396,7 @@ export function SessionManager({
 
             {sess.hasBackup && (
               <span className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                <Archive className="size-2.5" />
+                <FileArchive className="size-2.5" />
                 {t.sessions.backupTag}
               </span>
             )}
@@ -376,6 +430,44 @@ export function SessionManager({
               <Folder className="size-3" />
               <span className="max-w-[220px] truncate font-mono">{sess.projectName}</span>
             </span>
+            {/* 元数据副行（2026-09-07 扩展项1）：创建时间 / 事件数 / 结束状态 / 预设 */}
+            {sess.createdAt ? (
+              <span
+                className="inline-flex items-center gap-1"
+                title={`${t.sessions.createdAtTitle}：${new Date(sess.createdAt).toLocaleString()}`}
+              >
+                <CalendarClock className="size-3" />
+                {formatRelativeTime(sess.createdAt)}
+              </span>
+            ) : null}
+            {sess.eventCount ? (
+              <span className="inline-flex items-center gap-1" title={t.sessions.eventCountTitle}>
+                <Layers className="size-3" />
+                {sess.eventCount}
+              </span>
+            ) : null}
+            {sess.endState && (
+              <span
+                className="inline-flex items-center gap-1"
+                title={endStateLabel(sess.endState, t)}
+              >
+                {sess.endState === "stop" || sess.endState === "completed" ? (
+                  <CheckCircle2 className="size-3 text-emerald-500/70" />
+                ) : sess.endState === "error" ? (
+                  <CircleX className="size-3 text-rose-500/70" />
+                ) : sess.endState === "interrupted" || sess.endState === "aborted" ? (
+                  <CircleAlert className="size-3 text-amber-500/70" />
+                ) : (
+                  <HelpCircle className="size-3" />
+                )}
+                {endStateLabel(sess.endState, t)}
+              </span>
+            )}
+            {sess.agentPreset && (
+              <span className="font-mono" title={t.sessions.agentPresetTitle}>
+                @{sess.agentPreset}
+              </span>
+            )}
           </div>
 
           {/* 异常详情（非健康时展示原因） */}
@@ -593,6 +685,23 @@ export function SessionManager({
               </span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter("archived")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              statusFilter === "archived"
+                ? "bg-panel text-violet-600 dark:text-violet-400 shadow-xs"
+                : "text-dim hover:text-ink"
+            }`}
+          >
+            <Archive className="size-3.5" />
+            <span>{t.sessions.filterArchived}</span>
+            {stats.archived > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-500/15 px-1 font-mono text-[10px] text-violet-600 dark:text-violet-400">
+                {stats.archived}
+              </span>
+            )}
+          </button>
         </div>
 
         <div className="hidden items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs sm:flex">
@@ -629,7 +738,7 @@ export function SessionManager({
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel py-12 text-center">
           <FileCode className="text-faint size-8" />
           <p className="text-ink mt-2 text-xs font-medium">
-            {searchQuery || statusFilter === "needs_repair"
+            {searchQuery || statusFilter !== "all"
               ? t.sessions.emptyFilter
               : t.sessions.emptyList}
           </p>

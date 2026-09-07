@@ -76,6 +76,17 @@ function getDshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
 }
 
+/**
+ * 引擎存活标志（Rust 侧注入 DSH_ENGINE_ALIVE=1/0）：以壳持有的 dsh 子进程
+ * try_wait 为准（WSL 客体形态下 wsl.exe 子进程即会话存活代理）。
+ * 「运行中」复合判据的前半（2026-09-07）：dsh 未运行时任何会话文件都不可能
+ * 再被写入——mtime 新鲜不再构成「运行中」。旧版裸 mtime 判据会把归档/重命名
+ * （均会刷新 mtime）误标成「运行中」5 分钟。
+ */
+function engineAlive() {
+  return process.env.DSH_ENGINE_ALIVE === '1'
+}
+
 /** 与 dsh 加载器 scanZstdFrames 语义一致的结构扫描。 */
 function scanZstdFrames(buffer) {
   const frames = []
@@ -962,14 +973,39 @@ function readStable(filePath) {
   throw new Error('文件在读取期间持续被写入（活跃会话），无法稳定读取')
 }
 
+/** 统一健康结果形态：早退路径无 header/不可解析时元数据取缺省值。 */
+function healthOut(status, extra = {}) {
+  return {
+    status,
+    title: '',
+    eventCount: 0,
+    active: false,
+    createdAt: null,
+    endState: null,
+    subagent: false,
+    agentPreset: null,
+    detail: '',
+    ...extra,
+  }
+}
+
 /**
- * 只读健康检查（不写回、不备份）：返回 { status, title, eventCount, detail }。
+ * 只读健康检查（不写回、不备份）：
  * status ∈ healthy | needs_repair | unknown。
  * - healthy：存储层 seq 连续 **且** 恢复层（dsh fromRestore / fallback fold）通过；
  * - needs_repair：存储层存在可安全修复的重放重叠/缺口，或恢复层失败但属
  *   可最小变异的 surface/出处链损坏；
  * - unknown：无法解析/不可安全修复/读取失败。
- * 标题取自**最新** `session/title` 事件（跳过 sourceEventSeqs 修饰的镜像行）。
+ * 元数据字段（2026-09-07 扩展项1，均信息性、不参与健康判定）：
+ * - title：最新 `session/title` 事件（跳过 sourceEventSeqs 镜像行）；
+ * - createdAt：header.createdAt（毫秒 epoch，2026-09-07 实证真实日志量级）；
+ * - eventCount：展开后事件总数（chunk 行按 payload 展开；损坏行不计入）；
+ * - endState：最后一条 `turn/end` 的 reason.kind（stop/interrupted…），
+ *   无 turn/end = 'open'（未正常收尾，常见于崩溃尾）；不可解析为 null；
+ * - subagent / agentPreset：header.origin === 'subagent' / header.agentPreset；
+ * - active（运行中）：复合判据（2026-09-07）= 引擎存活（engineAlive()，Rust
+ *   注入 DSH_ENGINE_ALIVE）**且** mtime 距今 <5 分钟（dsh 批量写间隔分钟级，
+ *   可能仍 flush）。仅作 UI 徽标与修复预拦，不参与健康判定。
  */
 export function scanSessionHealth(filePath) {
   const isZstd = filePath.endsWith('.zstd')
@@ -980,39 +1016,58 @@ export function scanSessionHealth(filePath) {
     buffer = stable.buffer
     st = stable.before
   } catch (e) {
-    return { status: 'unknown', title: '', eventCount: 0, active: false, detail: `读取失败：${e.message}` }
+    return healthOut('unknown', { detail: `读取失败：${e.message}` })
   }
   if (buffer.length === 0) {
-    return { status: 'unknown', title: '', eventCount: 0, active: false, detail: '文件为空' }
+    return healthOut('unknown', { detail: '文件为空' })
   }
 
-  // 活跃标志（仅 UI 提示，不参与健康判定）：mtime 距今 <5 分钟视为可能仍在
-  // 被 dsh 间歇 flush（dsh 批量写间隔分钟级）。用于前端显示「运行中」徽标，
-  // 与「需自愈」区分——活跃会话不能修（修了会被下次 flush 覆盖）。
-  const active = st !== null && Date.now() - st.mtimeMs < 5 * 60 * 1000
+  // 活跃标志：复合判据，见函数头注释。
+  const active = engineAlive() && st !== null && Date.now() - st.mtimeMs < 5 * 60 * 1000
 
   let headerLine
   let records
+  let header = null
   try {
     const rawText = isZstd ? decompressZstd(buffer).toString('utf8') : buffer.toString('utf8')
     const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean)
     if (lines.length === 0) {
-      return { status: 'unknown', title: '', eventCount: 0, active, detail: '文件为空' }
+      return healthOut('unknown', { active, detail: '文件为空' })
     }
     headerLine = lines[0]
-    if (!isSessionHeader(JSON.parse(headerLine))) {
-      return { status: 'unknown', title: '', eventCount: 0, active, detail: 'header 非法' }
+    try {
+      header = JSON.parse(headerLine)
+    } catch {
+      return healthOut('unknown', { active, detail: 'header 非法' })
+    }
+    if (!isSessionHeader(header)) {
+      return healthOut('unknown', { active, detail: 'header 非法' })
     }
     records = []
     for (let i = 1; i < lines.length; i++) {
       try {
         records.push(JSON.parse(lines[i]))
       } catch (e) {
-        return { status: 'unknown', title: '', eventCount: 0, active, detail: `第 ${i + 1} 行 JSON 解析失败` }
+        return healthOut('unknown', { active, detail: `第 ${i + 1} 行 JSON 解析失败` })
       }
     }
   } catch (e) {
-    return { status: 'unknown', title: '', eventCount: 0, active, detail: `解压失败：${e.message}` }
+    return healthOut('unknown', { active, detail: `解压失败：${e.message}` })
+  }
+
+  // 元数据透出（2026-09-07）：header 派生字段。
+  const createdAt = typeof header.createdAt === 'number' ? header.createdAt : null
+  const subagent = header.origin === 'subagent'
+  const agentPreset = typeof header.agentPreset === 'string' ? header.agentPreset : null
+
+  // 事件数：展开后的事件总数（chunk 行按 payload 长度展开）。损坏行不计入
+  //（健康状态另行判定），此处仅信息性统计。
+  let eventCount = 0
+  for (const r of records) {
+    try {
+      const span = expandSpan(r)
+      if (span) eventCount += span.hi - span.lo + 1
+    } catch { /* 损坏行不计入 */ }
   }
 
   // 标题提取：会话标题以**最新** `session/title` 事件为准（dsh 标题体系：
@@ -1029,34 +1084,42 @@ export function scanSessionHealth(filePath) {
     }
   }
 
+  // 结束状态：最后一条 turn/end 的 reason.kind（最后者胜，跳过镜像行）；
+  // 无 turn/end = 'open'（未正常收尾）。
+  let endState = 'open'
+  for (const r of records) {
+    if (r?.type === 'turn/end' && !('sourceEventSeqs' in r)) {
+      const kind = r?.data?.reason?.kind
+      if (typeof kind === 'string' && kind) endState = kind
+    }
+  }
+
+  const meta = { title, eventCount, active, createdAt, endState, subagent, agentPreset }
+
   // 第一层（存储层）：与修复分析同一套判定
   const decision = analyzeAndRepair(records)
   if (decision.kind === 'unrepairable') {
-    return { status: 'unknown', title, eventCount: 0, active, detail: decision.detail }
+    return healthOut('unknown', { ...meta, detail: decision.detail })
   }
   if (decision.kind !== 'healthy') {
-    return { status: 'needs_repair', title, eventCount: 0, active, detail: decision.detail }
+    return healthOut('needs_repair', { ...meta, detail: decision.detail })
   }
 
   // 第二层（恢复层）：dsh 打开会话的确切路径（或 fallback）
-  const header = JSON.parse(headerLine)
   const validate = makeRestoreValidator(dshValidator)
   const restoreErr = validate(header, records)
   if (!restoreErr) {
-    return { status: 'healthy', title, eventCount: 0, active, detail: '' }
+    return healthOut('healthy', meta)
   }
   if (restoreErr.unsupportedVersion) {
     // 本构建不支持的格式版本（存储比已装 dsh 新 / 迁移器拒绝 / fallback 无迁移
     // 管线）：不是损坏，不可修复——归类 unknown 并给升级提示，避免误导用户点修复。
-    return { status: 'unknown', title, eventCount: 0, active, detail: `存储格式版本不受支持（不可修复，需升级适配）：${restoreErr.message}` }
+    return healthOut('unknown', { ...meta, detail: `存储格式版本不受支持（不可修复，需升级适配）：${restoreErr.message}` })
   }
-  return {
-    status: 'needs_repair',
-    title,
-    eventCount: 0,
-    active,
+  return healthOut('needs_repair', {
+    ...meta,
     detail: `恢复校验失败（dsh 打开将报错）：${restoreErr.message}`,
-  }
+  })
 }
 
 /** 原子替换：写临时文件 → 覆盖（Windows 先删目标，POSIX rename 原子）。 */
@@ -1082,11 +1145,15 @@ export async function repairSessionFile(filePath) {
     return { ok: false, changed: false, message: `❌ 文件不存在: ${filePath}` }
   }
 
-  // 活跃会话语义（2026-09-05 修订）：dsh 对会话文件的写入是**间歇性 flush**
-  // （实测 828cfec4 分钟级间隔、间隙长达数分钟），按 mtime 阈值预判会误杀
-  // 大量可修窗口（用户点击时恰逢上次 flush 不久 → 永远"活跃"→ 永远修不了）。
-  // 正确判定 = 读取稳定性（readStable 的 stat 前后一致性）+ 写后 stat 复查
-  // （下方已实现）；读取期间持续写入才会被拒绝。
+  // 活跃会话语义（2026-09-05 修订；2026-09-07 复合判据前置见 scanSessionHealth）：
+  // dsh 对会话文件的写入是**间歇性 flush**（实测 828cfec4 分钟级间隔、间隙长达
+  // 数分钟），按 mtime 阈值预判会误杀大量可修窗口。正确判定 = 读取稳定性
+  //（readStable 的 stat 前后一致性）+ 写后 stat 复查（下方已实现）；读取期间
+  // 持续写入才会被拒绝。
+  // 残余竞态评估（2026-09-07，锚引擎档 dsh-session-persistence-jsonl@0.1.2-rc.1
+  // lib/index.js appendLines）：dsh 追加为逐批 open("a") → write → fsync →
+  // close，不持长驻 fd；失败批次回滚到旧尺寸且游标不变（下一批重试）。故修复
+  // 与写入竞争的最坏情形 = dsh 稍后重放其事件批次，不会永久丢数据。
 
   const isZstd = filePath.endsWith('.zstd')
   let original
@@ -1356,6 +1423,11 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
         active: health.active,
         detail: health.detail || null,
         validator: dshValidator ? `dsh-session@${dshValidator.version}${dshValidator.hasCatalog ? '+catalog' : ''}` : 'fallback',
+        createdAt: health.createdAt,
+        eventCount: health.eventCount,
+        endState: health.endState,
+        subagent: health.subagent,
+        agentPreset: health.agentPreset,
       }
     })
     console.log(JSON.stringify(out))
@@ -1368,11 +1440,12 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     console.log(`共发现 ${files.length} 个会话日志文件。`)
     let failed = 0
     for (const file of files) {
-      // 活跃会话（mtime < 5 分钟）跳过：修复必然被下次 flush 覆盖（假成功），
+      // 活跃会话（引擎存活 + mtime < 5 分钟，复合判据）跳过：修复必然被下次
+      // flush 覆盖（假成功）；dsh 未运行时不可能有写入，mtime 不参与判定。
       // 全量修复只处理静止/已结束的会话。
       const s = scanSessionHealth(file)
       if (s.active) {
-        console.log(`⏭️  跳过活跃会话 ${file.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''}（仍在运行，结束后可修复）。`)
+        console.log(`⏭️  跳过活跃会话 ${file.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || ''}（dsh 运行中且近期有写入，结束后可修复）。`)
         continue
       }
       const res = await repairSessionFile(file)
@@ -1397,10 +1470,11 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     }
   }
 
-  // 单文件修复：活跃会话（mtime < 5 分钟）明确提示——修复会被下次 flush 覆盖。
+  // 单文件修复：活跃会话（引擎存活 + mtime < 5 分钟，复合判据）明确提示——
+  // 修复会被下次 flush 覆盖；dsh 未运行时 mtime 新鲜不再构成活跃。
   const health = scanSessionHealth(targetPath)
   if (health.active) {
-    console.log(`⏭️  会话仍被 dsh 使用（活跃，mtime 距今 <5 分钟）。为避免修复被下一次写入覆盖，请稍后在会话结束后再修复。`)
+    console.log(`⏭️  会话仍被 dsh 使用（运行中且 mtime 距今 <5 分钟）。为避免修复被下一次写入覆盖，请稍后在会话结束后再修复。`)
     process.exit(1)
   }
 
