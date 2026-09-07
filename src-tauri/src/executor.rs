@@ -991,15 +991,18 @@ fn classify_guest_probe(out: &str) -> Option<GuestProbeState> {
 }
 
 /// 在指定发行版内探测壳引擎链（固定脚本模板；guest_prep 定位引擎目录）。
-/// Windows 专属。
+/// Windows 专属。探测前后各一条 info（2026-09-07 smoke 判读：第四轮客体探测
+/// 后 20 分钟零日志——无打点则 hang 定位只能靠猜）。
 #[cfg(windows)]
 fn probe_guest_in_distro(target: &str) -> Result<GuestProbeState, String> {
+    tracing::info!("WSL 探测 {target}（10s 超时）…");
     let out = run_wsl_capture(
         Some(target),
         &["-e", "bash", "-lic", GUEST_PROBE],
         Duration::from_secs(10),
-    )
-    .ok_or_else(|| format!("{target} 内探测命令不可用（wsl.exe 调用失败）"))?;
+    );
+    tracing::info!("WSL 探测 {target} 返回：{}", out.is_some());
+    let out = out.ok_or_else(|| format!("{target} 内探测命令不可用（wsl.exe 调用失败）"))?;
     classify_guest_probe(&out).ok_or_else(|| {
         // 输出无法识别（警报/横幅/翻译杂讯）→ 视为异常，给可行动信息。
         tracing::warn!("WSL 探测输出无法识别: {out}");

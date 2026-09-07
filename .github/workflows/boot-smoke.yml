@@ -110,6 +110,12 @@ jobs:
               tail -20 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'
               exit 0
             fi
+            # 进程早亡快查：壳进程不在了就不必等满 15 分钟
+            if ! tasklist //FI "IMAGENAME eq dsh-dock.exe" 2>/dev/null | grep -qi dsh-dock; then
+              echo "❌ 壳进程已退出（未达工作台）——即时失败"
+              if [ -f "$LOG" ]; then tail -40 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'; else echo "（shell.log 尚未创建——进程死于 setup 早期）"; fi
+              exit 1
+            fi
             sleep 10
           done
           echo "BOOT SMOKE TIMEOUT"
@@ -123,6 +129,10 @@ jobs:
           tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
           tail -40 "$APPDATA/${{ env.APP_ID }}/dsh-shell.log" 2>/dev/null || true
           tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+          echo "--- 进程状态 ---"
+          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table"
+          echo "--- 应用数据目录 ---"
+          ls -la "$APPDATA/${{ env.APP_ID }}" 2>/dev/null || true
 
       - name: Upload boot logs
         if: always()
@@ -233,6 +243,12 @@ jobs:
               tail -25 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'
               exit 0
             fi
+            # 进程早亡快查（同 windows 作业）
+            if ! tasklist //FI "IMAGENAME eq dsh-dock.exe" 2>/dev/null | grep -qi dsh-dock; then
+              echo "❌ 壳进程已退出（未达工作台）——即时失败"
+              if [ -f "$LOG" ]; then tail -40 "$LOG" | sed 's/\x1b\[[0-9;]*m//g'; else echo "（shell.log 尚未创建——进程死于 setup 早期）"; fi
+              exit 1
+            fi
             sleep 10
           done
           echo "WSL BOOT SMOKE TIMEOUT"
@@ -246,6 +262,12 @@ jobs:
           tail -80 "$APPDATA/${{ env.APP_ID }}/shell.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
           tail -60 "$APPDATA/${{ env.APP_ID }}/dsh-wsl.log" 2>/dev/null || true
           tail -40 "$RUNNER_TEMP/dsh-dock-stdout.log" 2>/dev/null || true
+          echo "--- 进程状态 ---"
+          powershell -NoProfile -Command "Get-Process dsh-dock -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table"
+          echo "--- WSL 发行版状态 ---"
+          powershell -NoProfile -Command "wsl -l -v" 2>/dev/null || true
+          echo "--- 应用数据目录 ---"
+          ls -la "$APPDATA/${{ env.APP_ID }}" 2>/dev/null || true
 
       - name: Upload boot logs
         if: always()
