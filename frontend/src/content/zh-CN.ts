@@ -320,6 +320,8 @@ export const t = {
     mcpSubtitle: "管理当前 Profile 的 Model Context Protocol 工具与外部服务扩展",
     mcpEmpty: "当前 Profile 尚未配置任何 MCP 服务",
     mcpAddBtn: "添加 MCP 服务",
+    mcpLoadFailed: "MCP 配置读取失败",
+    mcpRetry: "重试",
     mcpEditBtn: "编辑",
     mcpDeleteBtn: "删除",
     mcpDeleteConfirm: (name: string) => `确定移除 MCP 服务「${name}」？\n\n将从当前 Profile 的 cordis.patch.yml 中安全删除。`,
@@ -411,6 +413,8 @@ export const t = {
     pathCopied: "会话路径已复制",
   },
   console: {
+    pullLatestLogs: "拉取最新日志",
+    rereadCredentials: "重新读取凭据",
     title: "系统控制台与诊断",
     subtitle: "偏好设置、模型凭据、DSH 引擎配置、崩溃自动守护、健康大盘与实时日志",
     tabPreferences: "偏好与守护",

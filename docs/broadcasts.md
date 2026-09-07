@@ -1491,3 +1491,20 @@
 - 凭据：cargo test 176 绿（含真实 web profile yaml 全文 fixture）+ clippy
   干净 + fmt 过 + Windows 交叉 check 过；前端 typecheck/lint/test 全绿
   （buildApprovals 纯逻辑 4 例）。
+
+### 2026-09-08 问题记录095 批 1：会话误判回归修复 + 控制中心反馈面治理—— guan
+
+- 修复 ①：engine_session_alive 被 19ec36e（SIGTERM 批）机械改写为
+  is_none_or 致语义反转（无会话=存活），叠加 mtime 窗口把刚收尾会话误标
+  「进行中」；恢复 is_some_and + 脚本侧 active 增订 endState==='open'
+  降噪子句（漏标两轮间隙的代价经裁定接受）。
+- 修复 ②：MCP 面板「无限刷新 + 报错轰炸」——onNotice 内联引用不稳 +
+  effect 依赖 loadData + catch 弹 toast 构成失败循环；改面板内错误态 +
+  重试，运行态快照降级为辅助信息，删除无价值的刷新按钮。
+- 治理 ③：全站刷新按钮清单裁定——删 2（Profile 顶栏/MCP）、补语义标签
+  2（日志拉取/凭据重读，去硬编码走 i18n）、换图标 2（检查更新/更新插件
+  停用 RefreshCw 防混淆），其余 9 处保留（错误重试/强刷绕缓存/编辑器
+  重载均有真实语义）。
+- 凭据：cargo test 177 绿 + fmt/clippy/Windows 交叉 check 过；前端
+  typecheck/lint/109 测试全绿。问题记录095 剩余两项（插件边界梳理、
+  下载队列）设计中，另批开工。

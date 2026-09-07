@@ -295,6 +295,8 @@ export const enUS: AppCopy = {
     mcpSubtitle: "Manage Model Context Protocol external tools and services for this profile",
     mcpEmpty: "No MCP servers configured in this profile yet",
     mcpAddBtn: "Add MCP Server",
+    mcpLoadFailed: "Failed to load MCP configuration",
+    mcpRetry: "Retry",
     mcpEditBtn: "Edit",
     mcpDeleteBtn: "Delete",
     mcpDeleteConfirm: (name: string) => `Remove MCP server "${name}"?\n\nThis will be safely removed from cordis.patch.yml.`,
@@ -386,6 +388,8 @@ export const enUS: AppCopy = {
     pathCopied: "Session path copied",
   },
   console: {
+    pullLatestLogs: "Fetch latest logs",
+    rereadCredentials: "Re-read credentials",
     title: "System Console & Diagnostics",
     subtitle: "Preferences, LLM credentials, DSH engine settings, auto-recovery guardian, telemetry, and live logs",
     tabPreferences: "Preferences & Guardian",

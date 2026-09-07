@@ -175,6 +175,8 @@ export function LogViewerPane({
           <Button
             size="sm"
             variant="outline"
+            title={t.console.pullLatestLogs}
+            aria-label={t.console.pullLatestLogs}
             disabled={loading}
             onClick={() => fetchLogs(source)}
             className="size-8 p-0"

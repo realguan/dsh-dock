@@ -247,17 +247,6 @@ export function ProfileManager() {
             <DownloadCloud className="size-3.5" />
           </Button>
 
-          <Button
-            size="sm"
-            variant="outline"
-            title={loading ? t.profiles.refreshing : t.profiles.refresh}
-            aria-label={t.profiles.refresh}
-            onClick={refreshAll}
-            className="size-8 p-0"
-          >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
-          </Button>
-
           {/* 返回 DSH 主工作台操作入口 */}
           <QuickDshSwitcher />
         </div>
@@ -373,7 +362,7 @@ export function ProfileManager() {
               onDelete={() =>
                 currentSelectedProfile && setDeleteTarget(currentSelectedProfile.name)
               }
-              onNotice={(msg, kind) => showToast(msg, kind)}
+              onNotice={showToast}
             />
           </section>
         </div>

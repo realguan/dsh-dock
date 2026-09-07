@@ -12,7 +12,6 @@ import {
   LoaderCircle,
   Plus,
   PlusCircle,
-  RefreshCw,
   Server,
   Sparkles,
   Terminal,
@@ -93,6 +92,7 @@ export function McpManager({
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [copiedName, setCopiedName] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // 新建/编辑 Dialog 状态
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -104,19 +104,29 @@ export function McpManager({
   const [saving, setSaving] = useState(false)
   const [deletingName, setDeletingName] = useState<string | null>(null)
 
+  // 2026-09-08（问题记录095 #1）：主数据失败改面板内错误态（原 catch 走
+  // onNotice toast——onNotice 是父组件内联箭头，引用不稳，effect 依赖
+  // loadData 形成「失败→toast→重渲染→再加载」死循环）。运行态快照是辅助
+  // 信息：失败静默降级为空（回环查询仅在 dsh 运行时可达，非配置错误）。
   const loadData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const list = await api.listMcpServers(profileName)
       setServers(list)
-      const rt = await api.getPluginRuntime()
-      setRuntime(rt)
     } catch (e) {
-      onNotice?.(String(e), "warn")
+      setServers(null)
+      setLoadError(String(e))
+      setLoading(false)
+      return
     } finally {
       setLoading(false)
     }
-  }, [profileName, onNotice])
+    api
+      .getPluginRuntime()
+      .then(setRuntime)
+      .catch(() => setRuntime(null))
+  }, [profileName])
 
   useEffect(() => {
     void loadData()
@@ -250,17 +260,6 @@ export function McpManager({
         <div className="flex items-center gap-2">
           <Button
             size="sm"
-            variant="outline"
-            onClick={loadData}
-            disabled={loading}
-            className="gap-1 text-xs"
-          >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
-            <span>刷新</span>
-          </Button>
-
-          <Button
-            size="sm"
             onClick={openCreateDialog}
             className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
           >
@@ -271,7 +270,17 @@ export function McpManager({
       </div>
 
       {/* 已配置的 MCP 服务器列表 */}
-      {loading && !servers ? (
+      {loadError ? (
+        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/5 py-10 text-center">
+          <Server className="size-7 text-rose-500/70" />
+          <p className="text-xs font-medium text-ink">{t.profiles.mcpLoadFailed}</p>
+          <p className="max-w-md break-all text-[11px] text-faint">{loadError}</p>
+          <Button size="sm" variant="outline" onClick={() => void loadData()} className="mt-1 gap-1 text-xs">
+            <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
+            <span>{t.profiles.mcpRetry}</span>
+          </Button>
+        </div>
+      ) : loading && !servers ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-panel py-12 text-center">
           <LoaderCircle className="size-6 animate-spin text-brand" />
           <span className="text-faint mt-2 text-xs">正在读取 MCP 服务配置...</span>

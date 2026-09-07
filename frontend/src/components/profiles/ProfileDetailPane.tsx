@@ -10,8 +10,8 @@ import {
   LoaderCircle,
   Package,
   Plus,
-  RefreshCw,
   Search,
+  SearchCheck,
   Star,
   Trash2,
 } from "lucide-react"
@@ -484,9 +484,11 @@ export function ProfileDetailPane({
                   onClick={runUpdateCheck}
                   className="size-8 p-0"
                 >
-                  <RefreshCw
-                    className={`size-3.5 ${checkState === "busy" ? "animate-spin text-brand" : ""}`}
-                  />
+                  {checkState === "busy" ? (
+                    <LoaderCircle className="size-3.5 animate-spin text-brand" />
+                  ) : (
+                    <SearchCheck className="size-3.5" />
+                  )}
                 </Button>
               </div>
             </div>
@@ -676,7 +678,7 @@ export function ProfileDetailPane({
                               onClick={() => runOp("update", p.name)}
                               className="text-faint hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
                             >
-                              <RefreshCw className="size-3.5" />
+                              <ArrowUpCircle className="size-3.5" />
                             </button>
 
                             <button

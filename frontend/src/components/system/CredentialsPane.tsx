@@ -130,7 +130,7 @@ export function CredentialsPane({
             className="gap-1.5 text-xs"
           >
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
-            <span>刷新</span>
+            <span>{t.console.rereadCredentials}</span>
           </Button>
         </div>
       </div>

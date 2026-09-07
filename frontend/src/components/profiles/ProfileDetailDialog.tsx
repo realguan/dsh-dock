@@ -6,7 +6,7 @@
 // 全程 busy 态；结果文案（成功含「重启后生效」、失败附 dsh 输出尾部）由
 // 后端给，前端只分箱展示。spec 预检镜像后端校验（validatePluginSpec）。
 import { useCallback, useEffect, useState } from "react"
-import { ArrowUpCircle, Import, LoaderCircle, Plus, Power, RefreshCw, Trash2 } from "lucide-react"
+import { ArrowUpCircle, Import, LoaderCircle, Plus, Power, SearchCheck, Trash2 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
@@ -350,9 +350,11 @@ export function ProfileDetailDialog({
                   aria-label={t.profiles.checkUpdatesBtn}
                   className="border-line text-dim hover:border-brand hover:text-brand inline-flex size-7 shrink-0 items-center justify-center rounded-lg border bg-white transition-colors disabled:pointer-events-none disabled:opacity-40"
                 >
-                  <RefreshCw
-                    className={`size-3.5 ${checkState === "busy" ? "animate-spin" : ""}`}
-                  />
+                  {checkState === "busy" ? (
+                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <SearchCheck className="size-3.5" aria-hidden />
+                  )}
                 </button>
               </div>
 
@@ -541,7 +543,7 @@ export function ProfileDetailDialog({
                                   onClick={() => runOp("update", p.name)}
                                   className="hover:bg-wash hover:text-ink inline-flex size-6 items-center justify-center rounded-md transition-colors disabled:opacity-40"
                                 >
-                                  <RefreshCw className="size-3.5" />
+                                  <ArrowUpCircle className="size-3.5" aria-hidden />
                                 </button>
                                 <button
                                   type="button"
