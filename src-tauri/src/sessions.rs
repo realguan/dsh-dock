@@ -183,14 +183,34 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
                     .unwrap_or("")
                     .to_string();
 
-                let zstd_file = s_path.join("session.jsonl.zstd");
-                let jsonl_file = s_path.join("session.jsonl");
-
-                let (target_file, is_compressed) = if zstd_file.is_file() {
-                    (zstd_file, true)
-                } else if jsonl_file.is_file() {
-                    (jsonl_file, false)
-                } else {
+                // 会话日志文件发现（2026-09-07 世代感知）：dsh ≥0.1.3 采用不可变
+                // 世代模型——v0 源（session.jsonl[.zstd]）与迁移世代
+                //（session.vN.jsonl[.zstd]）可能并存，dsh 经 findLog 读取**最高
+                // 世代**。同目录多文件时只保留最高世代，保证列表展示与修复入口
+                // 对准 dsh 实际读取的文件。
+                let mut selected: Option<(PathBuf, bool)> = None;
+                if let Ok(log_entries) = fs::read_dir(&s_path) {
+                    for log_entry in log_entries.flatten() {
+                        let name = log_entry.file_name();
+                        let name = name.to_string_lossy();
+                        if !is_session_log_filename(&name) {
+                            continue;
+                        }
+                        let candidate = s_path.join(name.as_ref());
+                        let better = match &selected {
+                            None => true,
+                            Some((current, _)) => {
+                                session_log_generation(&candidate.to_string_lossy())
+                                    > session_log_generation(&current.to_string_lossy())
+                            }
+                        };
+                        if better {
+                            let compressed = name.ends_with(".zstd");
+                            selected = Some((candidate, compressed));
+                        }
+                    }
+                }
+                let Some((target_file, is_compressed)) = selected else {
                     continue;
                 };
 
@@ -250,6 +270,33 @@ pub fn scan_sessions(home: &Path, data_dir: &Path) -> Result<Vec<SessionItem>, S
     }
 
     Ok(items)
+}
+
+/// 会话日志文件名判定（与脚本 `SESSION_LOG_FILENAME` 同口径）：
+/// `session.jsonl(.zstd)` 与 `session.vN.jsonl(.zstd)`。
+fn is_session_log_filename(name: &str) -> bool {
+    let base = name.strip_suffix(".zstd").unwrap_or(name);
+    if base == "session.jsonl" {
+        return true;
+    }
+    base.strip_prefix("session.v")
+        .and_then(|rest| rest.strip_suffix(".jsonl"))
+        .is_some_and(|v| !v.is_empty() && v.parse::<u32>().is_ok())
+}
+
+/// 解析会话日志文件名的格式世代：`session.v2.jsonl(.zstd)` → 2；
+/// `session.jsonl(.zstd)`（v0 源世代）→ 0。命名方案锚 dsh session-format
+/// filename.ts（CANONICAL_LOG_FILENAME，2026-09-07 对照 v0.1.3-alpha.1）。
+fn session_log_generation(file_path: &str) -> u32 {
+    let name = Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let base = name.strip_suffix(".zstd").unwrap_or(name);
+    base.strip_prefix("session.v")
+        .and_then(|rest| rest.strip_suffix(".jsonl"))
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 /// `--scan` 健康检查的 JSON 行（脚本 `scanSessionHealth` 的结构）。
@@ -609,6 +656,110 @@ mod tests {
             seqs,
             vec![0, 1, 2, 3, 4, 5],
             "重放块 seq 应原样保留（不重编号）"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn session_log_generation_parses_generation_filenames() {
+        // 锚 dsh session-format filename.ts：v0 保持 session.jsonl，v1+ 带 .vN。
+        assert_eq!(session_log_generation("/a/session.jsonl"), 0);
+        assert_eq!(session_log_generation("/a/session.jsonl.zstd"), 0);
+        assert_eq!(session_log_generation("/a/session.v2.jsonl"), 2);
+        assert_eq!(session_log_generation("/a/session.v2.jsonl.zstd"), 2);
+        assert_eq!(session_log_generation("/a/session.v10.jsonl.zstd"), 10);
+        // 非规范名按 v0 处理（去重保守侧：不误删任何条目）。
+        assert_eq!(session_log_generation("/a/session.v0.jsonl"), 0);
+        assert_eq!(session_log_generation("/a/other.jsonl"), 0);
+    }
+
+    #[test]
+    fn scan_sessions_prefers_highest_generation_per_session_dir() {
+        // dsh ≥0.1.3 世代并存：v0 源与 v2 迁移世代同目录时，dsh 读最高世代，
+        // 列表必须只保留该条目（否则同一会话出现两行、修复打在 dsh 不读的文件上）。
+        let temp = std::env::temp_dir().join(format!("dsh-test-sess-gen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let sess_dir = temp.join("sessions").join("--demo--").join("sess-gen");
+        fs::create_dir_all(&sess_dir).unwrap();
+        fs::write(sess_dir.join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
+        fs::write(
+            sess_dir.join("session.v2.jsonl"),
+            "{\"type\":\"session\"}\n",
+        )
+        .unwrap();
+
+        let list = scan_sessions(&temp, &temp).unwrap();
+        assert_eq!(
+            list.len(),
+            1,
+            "同目录多世代应去重：{:?}",
+            list.iter().map(|i| i.file_path.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            session_log_generation(&list[0].file_path),
+            2,
+            "应保留 dsh 实际读取的最高世代"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn scan_sessions_classifies_newer_generation_as_unknown_not_repair() {
+        // 版本路由回归（2026-09-07）：dsh ≥0.1.3 世代文件（version:2）在旧引擎
+        // （无 catalog，fallback 校验）下必须归 unknown + 升级提示——不是
+        // needs_repair（不可修复，不允许用户点了修复被拒）。
+        let node_available = crate::child_cmd(Path::new("node"))
+            .arg("-v")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !node_available {
+            return;
+        }
+
+        let temp = std::env::temp_dir().join(format!("dsh-test-sess-v2-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let sess_dir = temp.join("sessions").join("--demo--").join("sess-v2");
+        fs::create_dir_all(&sess_dir).unwrap();
+        fs::write(
+            sess_dir.join("session.v2.jsonl"),
+            concat!(
+                r#"{"type":"session","version":2,"id":"sess-v2","createdAt":1,"cwd":"/tmp","delegationDepth":0,"isSeeded":false}"#,
+                "\n",
+                r#"{"type":"turn/end","seq":0,"time":1,"data":{"turn":1,"reason":{"kind":"stop"}}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let engine_bin = temp.join("engines/bin");
+        std::fs::create_dir_all(&engine_bin).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = engine_bin.join("node");
+            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+
+        let list = scan_sessions(&temp, &temp).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list[0].status,
+            SessionStatus::Unknown,
+            "v2 文件应归 unknown：{:?}",
+            list[0].health_detail
+        );
+        let detail = list[0].health_detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("版本不受支持"),
+            "detail 应提示版本不受支持：{detail}"
         );
 
         let _ = fs::remove_dir_all(&temp);

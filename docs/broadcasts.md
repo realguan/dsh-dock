@@ -32,6 +32,35 @@
 
 ## 三、记录
 
+### 2026-09-07 会话维护补强 · dsh 0.1.3 格式世代前瞻适配（catalog 迁移管线 + 版本路由） —— guan（AI 协作）
+
+- 变更（`scripts/repair-session.mjs` + `src-tauri/src/sessions.rs`；本条与该改动同
+  commit 落盘）：
+  1. **背景**：dsh 0.1.3（当前 alpha.1）将 `SESSION_FORMAT_VERSION` 0→2，存储改
+     「不可变世代」模型——v0 源与 `session.vN.jsonl[.zstd]` 迁移世代并存，读取经
+     `session-format-catalog` 迁移管线（decode → migrate → encode → 发布 v2 世代）。
+     逐字核查其 jsonl 后端 / catalog / chain / filename 源码后提前适配。
+  2. **校验器版本路由**：恢复层发现引擎档 `dsh-session-format-catalog`（与
+     dsh-session 同代安装，`currentVersion` 须一致）时复刻真实读路径：readHeader
+     分类 → decodeRecoverableArtifact → migrate → encodeCurrent → **迁移后表示**
+     走同一条扫描+prepareCore 链；无 catalog（0.1.2 代）时维持「存储版本==已装
+     版本」直通链。修复谓词跑在迁移后表示上，修复动作仍落在源世代表示。
+  3. **语义修正**：存储版本比已装 dsh 新 / 迁移器拒绝 / fallback 遇 vN → 一律
+     `unknown` + 升级提示（unsupportedVersion 标记），**不再误归 needs_repair**
+     （与 dsh `refuseForeignFormatVersion` 同语义；修复入口对该类直接如实拒绝）。
+  4. **世代文件族发现**：脚本 `findSessionFiles` 与 Rust `scan_sessions` 均识别
+     `session.vN.jsonl[.zstd]`；同目录多世代只保留 dsh 实际读取的最高世代
+    （列表单条目，修复入口不打在 dsh 不读的文件上）。
+- 影响：dsh 升级 0.1.3 后存量 v0 会话不再被误判（迁移管线校验，闸门语义不变
+  「通过 = dsh 一定能加载」）；本脚本无需随 dsh 升级改代码。**遗留一项升级日
+  实测**：修复 v0 源后已发布 v2 世代的失效/重发布机制（generation.ts 源身份
+  守卫）需装上 0.1.3 后实证；当前口径 = 各世代文件独立校验/修复。仅周知。
+- 凭据：cargo test 156 全绿（+3：世代文件名解析、同目录最高世代选择、v2→
+  unknown 分类回归）+ fmt + clippy；catalog 分支经高保真 stub 管道端到端验证
+  （API 契约逐字锚 0.1.3-alpha.1 源码）——真实语料 9 会话双引擎路径全绿、
+  原始 8650d6f2 损坏快照经 catalog 分支检出并修复、手造 v2 文件三模式
+  （真引擎/有 catalog/fallback）一致归 unknown。
+
 ### 2026-09-07 会话维护 · 健康检测对齐 dsh 本尊恢复校验——surface 悬空 replace 可检可修 —— guan（AI 协作）
 
 - 变更（`scripts/repair-session.mjs` + `src-tauri/src/sessions.rs`；本条与该改动同 commit 落盘）：

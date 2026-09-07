@@ -36,6 +36,18 @@
  *   引擎档缺包时降级为内置 fold 移植（锚 surface.ts v0.1.2-rc.1），宁可
  *   降级也不回退到只看 seq 连续性——那正是本 bug 存活的缝隙。
  *
+ * 格式版本路由（2026-09-07 二次修订）：
+ * - dsh ≥0.1.3 起存储为「不可变世代」模型（v0 源 + session.vN 迁移产物并存，
+ *   SESSION_FORMAT_VERSION=2），读取经 session-format-catalog 迁移管线。校验器
+ *   检测到引擎档 catalog 时复刻同一路径：readHeader 分类 → decodeRecoverable
+ *   Artifact → migrate → encodeCurrent → 迁移后 v2 表示走同一条扫描+恢复链；
+ * - 存储版本比已装 dsh 新（或迁移器拒绝）→ 归类 unknown + 升级提示，**不是**
+ *   needs_repair（不可修复、不尝试变异，与 dsh refuseForeignFormatVersion 同语义）；
+ * - 无 catalog（0.1.2 代）时要求存储版本与已装 dsh 一致，其余版本同样归 unknown；
+ * - fallback fold 仅锚 v0；v1+ 文件在 fallback 下同样归 unknown。
+ * - 同一会话目录可能同时存在 v0 源与 vN 世代：本脚本按文件独立校验/修复
+ *   （dsh 实际读取哪个世代由其 findLog 决定，壳端扫描展示时取最高世代）。
+ *
  * 安全约束：
  * - 修复输出必须通过「存储层校验 + 恢复层校验」双闸门；任一失败 → 用内存中
  *   的原始字节回滚，退出码非 0；
@@ -141,8 +153,8 @@ function compareVersions(a, b) {
   return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0
 }
 
-/** 在引擎档 global 树的 .pnpm 目录里找 @deepseek-ai/dsh-session，取最高版本。 */
-function findDshSessionModuleSync() {
+/** 在引擎档 global 树的 .pnpm 目录里找 @deepseek-ai/<name>，取最高版本。 */
+function findEnginePackageSync(packageName) {
   const engines = process.env.DSH_DOCK_ENGINES
   if (!engines) return null
   const globalV11 = join(engines, 'global', 'v11')
@@ -152,6 +164,7 @@ function findDshSessionModuleSync() {
   } catch {
     return null
   }
+  const dirName = `@deepseek-ai+${packageName}@`
   const candidates = []
   for (const entry of entries) {
     const pnpmDir = join(globalV11, entry, 'node_modules', '.pnpm')
@@ -162,9 +175,9 @@ function findDshSessionModuleSync() {
       continue
     }
     for (const name of names) {
-      if (!name.startsWith('@deepseek-ai+dsh-session@')) continue
-      const version = name.slice('@deepseek-ai+dsh-session@'.length).split('_')[0]
-      candidates.push({ version, dir: join(pnpmDir, name, 'node_modules', '@deepseek-ai', 'dsh-session') })
+      if (!name.startsWith(dirName)) continue
+      const version = name.slice(dirName.length).split('_')[0]
+      candidates.push({ version, dir: join(pnpmDir, name, 'node_modules', '@deepseek-ai', packageName) })
     }
   }
   if (candidates.length === 0) return null
@@ -172,29 +185,43 @@ function findDshSessionModuleSync() {
   return candidates[0]
 }
 
-let dshSession = undefined // undefined=未解析 null=已解析但不可用 {mod,version}=可用
+let dshValidator = undefined // undefined=未解析 null=已解析但不可用 {dsh,catalog,version,hasCatalog}
 
 /**
- * 解析并 import 引擎档 dsh-session（进程内缓存）。返回 null 表示不可用——
- * 调用方必须走 fallback，且不得把 fallback 结论冒充 dsh 结论。
+ * 解析引擎档校验器（进程内缓存）：
+ * - dsh-session 本尊（必需）：Session 恢复链；
+ * - dsh-session-format-catalog（可选，dsh ≥0.1.3 才存在）：世代格式解码/迁移/
+ *   编码管线。currentVersion 必须与 dsh-session 的 SESSION_FORMAT_VERSION
+ *   一致（同代安装；不一致视为不可用，走无迁移路径）。
+ * 返回 null 表示不可用——调用方必须走 fallback，且不得把 fallback 结论冒充 dsh 结论。
  */
-async function getDshSession() {
-  if (dshSession !== undefined) return dshSession
-  const found = findDshSessionModuleSync()
-  if (!found) {
-    dshSession = null
-    return dshSession
-  }
+async function getDshValidator() {
+  if (dshValidator !== undefined) return dshValidator
+  dshValidator = null
+  const foundSession = findEnginePackageSync('dsh-session')
+  if (!foundSession) return dshValidator
   try {
-    const mod = await import(pathToFileURL(join(found.dir, 'lib', 'index.js')).href)
+    const mod = await import(pathToFileURL(join(foundSession.dir, 'lib', 'index.js')).href)
     for (const key of ['Session', 'SESSION_FORMAT_VERSION', 'KNOWN_SESSION_EVENT_TYPES', 'decodeSeqRanges', 'decodeStorageRecord', 'interruptedTurnClosers']) {
       if (mod[key] === undefined) throw new Error(`export missing: ${key}`)
     }
-    dshSession = { mod, version: found.version }
+    const entry = { dsh: mod, version: foundSession.version, catalog: null, hasCatalog: false }
+    const foundCatalog = findEnginePackageSync('dsh-session-format-catalog')
+    if (foundCatalog) {
+      try {
+        const catalogMod = await import(pathToFileURL(join(foundCatalog.dir, 'lib', 'index.js')).href)
+        const catalog = catalogMod.sessionFormatCatalog
+        if (catalog && catalog.currentVersion === mod.SESSION_FORMAT_VERSION) {
+          entry.catalog = catalog
+          entry.hasCatalog = true
+        }
+      } catch { /* catalog 缺失/不兼容：无迁移路径 */ }
+    }
+    dshValidator = entry
   } catch {
-    dshSession = null
+    dshValidator = null
   }
-  return dshSession
+  return dshValidator
 }
 
 // ---------------------------------------------------------------------------
@@ -443,11 +470,10 @@ function logicalMetaFromHeader(header) {
 }
 
 /**
- * dsh 模式：按加载器 consumeEventLine 语义把存储行展开为事件流（含出处链
- * 解码、延迟 issue 语义），再走 prepareCore 同款恢复链。任何一步失败即返回
- * 携带 dsh 原始报错的 Error——与用户在 dsh 里看到的错误逐字一致。
+ * 加载器扫描复刻（consumeEventLine 语义）：存储行 → 事件流。含出处链解码、
+ * 延迟 issue 语义（缺口在下一个 turn/end 才抛）。返回 { events, issue }。
  */
-function restoreThroughDsh(dsh, meta, inheritedEventCount, records) {
+function scanRecordsToEvents(dsh, records) {
   const events = []
   let issue
   for (let i = 0; i < records.length; i++) {
@@ -463,7 +489,7 @@ function restoreThroughDsh(dsh, meta, inheritedEventCount, records) {
       continue
     }
     if (issue !== undefined) {
-      if (decoded.some((e) => e.type === 'turn/end')) return issue
+      if (decoded.some((e) => e.type === 'turn/end')) return { events, issue }
       continue
     }
     const rowStart = events.length
@@ -477,10 +503,17 @@ function restoreThroughDsh(dsh, meta, inheritedEventCount, records) {
       }
       events.push(event)
     }
-    if (gapInRow && decoded.some((c) => c.type === 'turn/end')) return issue
+    if (gapInRow && decoded.some((c) => c.type === 'turn/end')) return { events, issue }
   }
-  if (issue !== undefined) return issue // 存储层健康时不可达；防御性兜底（宁可报修不可放行）
+  return { events, issue }
+}
 
+/**
+ * prepareCore 恢复链：词汇表闸门 → adoptSessionEvent → interruptedTurnClosers
+ * 补尾 → Session.fromRestore（含 surface fold 全量重放）。
+ * 成功返回 null；失败返回携带 dsh 原始报错的 Error。
+ */
+function prepareCoreChain(dsh, meta, inheritedEventCount, events) {
   for (const event of events) {
     if (!dsh.KNOWN_SESSION_EVENT_TYPES.has(event.type) && event.ignorable !== true) {
       return new Error(`session contains event type "${event.type}" (seq ${event.seq}) unknown to this harness and not marked ignorable`)
@@ -498,6 +531,71 @@ function restoreThroughDsh(dsh, meta, inheritedEventCount, records) {
   } catch (e) {
     return e instanceof Error ? e : new Error(String(e))
   }
+}
+
+/** 版本不被本构建支持的错误（比对「已装 dsh 更新的存储格式」与「迁移器拒绝」
+ * 都归此类）：不可修复、不可变异，健康分类应为 unknown + 升级提示，而非
+ * needs_repair。 */
+function unsupportedVersionError(message) {
+  const err = new Error(message)
+  err.unsupportedVersion = true
+  return err
+}
+
+/**
+ * dsh 无 catalog 模式（0.1.2 代）：存储版本必须与已装 dsh 完全一致，走直接
+ * 恢复链。catalog 存在时的版本路由在 makeRestoreValidator 里。
+ */
+function restoreThroughDshLegacy(dsh, header, records) {
+  if (header.version !== dsh.SESSION_FORMAT_VERSION) {
+    return unsupportedVersionError(
+      `stored Session format is v${header.version}; installed dsh writes v${dsh.SESSION_FORMAT_VERSION}`,
+    )
+  }
+  let meta
+  try {
+    meta = logicalMetaFromHeader(header)
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e))
+  }
+  const { events, issue } = scanRecordsToEvents(dsh, records)
+  if (issue !== undefined) return issue // 存储层健康时不可达；防御性兜底（宁可报修不可放行）
+  return prepareCoreChain(dsh, meta, header.seedLength ?? 0, events)
+}
+
+/**
+ * dsh + catalog 模式（0.1.3+）：复刻真实读路径——readHeader 版本分类 →
+ * decodeRecoverableArtifact → migrate → encodeCurrent（世代发布语义）→
+ * 用迁移后的 v2 表示走与 0.1.2 相同的扫描 + 恢复链。迁移内部本就含
+ * restoreCurrent 的 fromRestore 全量校验；末段再用扫描+恢复链兜一道。
+ * 注意 v2 物理行与 v0 不同（一行一事件、header 直接带 isSeeded），存储层
+ * v0 锚定代码不适用于迁移产物——所以必须在迁移后表示上判定。
+ */
+function restoreThroughDshCatalog(entry, header, records) {
+  const { dsh, catalog } = entry
+  const classified = catalog.readHeader(header)
+  if (classified.status === 'unsupported') {
+    return unsupportedVersionError(classified.reason || 'stored Session format is not supported by this build')
+  }
+  if (classified.status === 'malformed') {
+    return new Error(`corrupt session log: ${classified.reason || 'malformed header'}`)
+  }
+  let migrated
+  try {
+    const decoded = catalog.decodeRecoverableArtifact(header, records)
+    migrated = catalog.migrate(decoded)
+  } catch (e) {
+    // SessionFormatUnsupportedMigrationError = 迁移器拒绝（与「更新版本」同类，
+    // 不可修复）；其余按损坏处理（可修复性由修复循环裁定）。
+    if (e && (e.name === 'SessionFormatUnsupportedMigrationError' || String(e.constructor?.name ?? '') === 'SessionFormatUnsupportedMigrationError')) {
+      return unsupportedVersionError(e.message)
+    }
+    return e instanceof Error ? e : new Error(String(e))
+  }
+  const encoded = catalog.encodeCurrent(migrated)
+  const { events, issue } = scanRecordsToEvents(dsh, encoded.rows)
+  if (issue !== undefined) return issue
+  return prepareCoreChain(dsh, migrated.header, migrated.inheritedEventCount ?? 0, events)
 }
 
 // ----- fallback：surface fold 移植（锚 dsh v0.1.2-rc.1
@@ -689,8 +787,15 @@ function assertEnvelope(event, index) {
  * 与 dsh 模式的差异：不做 interruptedTurnClosers 补尾（裸前缀 fold 严格于
  * dsh 的平衡后校验，方向保守——不会漏报会话损坏，可能对中断尾多报一次可修）。
  */
-function restoreViaFallback(meta, records) {
-  if (meta.version !== 0) throw new Error(`session header version must be 0, got ${String(meta.version)}`)
+function restoreViaFallback(header, records) {
+  // fallback 锚定 v0 存储格式（无迁移管线）：其他版本一律「不支持」而非损坏
+  // ——真实判定必须由引擎档 dsh 本尊做出。
+  if (header.version !== 0) {
+    throw unsupportedVersionError(
+      `stored Session format is v${header.version}; 内置 fallback 校验仅支持 v0（需引擎档 dsh 本尊判定）`,
+    )
+  }
+  const meta = logicalMetaFromHeader(header)
   const state = { nodes: [], generation: 0 }
   const seqToRecord = new Map()
   let next = 0
@@ -740,25 +845,25 @@ function restoreViaFallback(meta, records) {
 
 /**
  * 统一恢复层入口：header + 存储行 → null（可加载）| Error（dsh 打开必失败，
- * message 与 dsh 原始报错一致或为 fallback 移植语义）。
+ * message 与 dsh 原始报错一致或为 fallback 移植语义）。Error 带有
+ * unsupportedVersion 标记时表示「本构建不支持的格式版本」，不可修复。
  */
-function makeRestoreValidator(dsh) {
-  if (dsh) {
-    return (header, records) => {
-      let meta
-      try {
-        meta = logicalMetaFromHeader(header)
-      } catch (e) {
-        return e instanceof Error ? e : new Error(String(e))
+function makeRestoreValidator(entry) {
+  if (entry) {
+    if (entry.hasCatalog) {
+      return (header, records) => {
+        try {
+          return restoreThroughDshCatalog(entry, header, records)
+        } catch (e) {
+          return e instanceof Error ? e : new Error(String(e))
+        }
       }
-      return restoreThroughDsh(dsh.mod, meta, header.seedLength ?? 0, records)
     }
+    return (header, records) => restoreThroughDshLegacy(entry.dsh, header, records)
   }
   return (header, records) => {
-    let meta
     try {
-      meta = logicalMetaFromHeader(header)
-      return restoreViaFallback(meta, records)
+      return restoreViaFallback(header, records)
     } catch (e) {
       return e instanceof Error ? e : new Error(String(e))
     }
@@ -935,10 +1040,15 @@ export function scanSessionHealth(filePath) {
 
   // 第二层（恢复层）：dsh 打开会话的确切路径（或 fallback）
   const header = JSON.parse(headerLine)
-  const validate = makeRestoreValidator(dshSession)
+  const validate = makeRestoreValidator(dshValidator)
   const restoreErr = validate(header, records)
   if (!restoreErr) {
     return { status: 'healthy', title, eventCount: 0, active, detail: '' }
+  }
+  if (restoreErr.unsupportedVersion) {
+    // 本构建不支持的格式版本（存储比已装 dsh 新 / 迁移器拒绝 / fallback 无迁移
+    // 管线）：不是损坏，不可修复——归类 unknown 并给升级提示，避免误导用户点修复。
+    return { status: 'unknown', title, eventCount: 0, active, detail: `存储格式版本不受支持（不可修复，需升级适配）：${restoreErr.message}` }
   }
   return {
     status: 'needs_repair',
@@ -1020,8 +1130,10 @@ export async function repairSessionFile(filePath) {
   }
 
   const sessionId = JSON.parse(headerLine).id
-  const validate = makeRestoreValidator(dshSession)
-  const validatorName = dshSession ? `dsh-session@${dshSession.version}（引擎档本尊）` : '内置 fold（引擎档缺包降级）'
+  const validate = makeRestoreValidator(dshValidator)
+  const validatorName = dshValidator
+    ? `dsh-session@${dshValidator.version}（引擎档本尊${dshValidator.hasCatalog ? ` + format-catalog v${dshValidator.catalog.currentVersion}` : ''}）`
+    : '内置 fold（引擎档缺包降级）'
 
   // 第一层：存储层分析（重叠去重 / 缺口截断）
   let decision = analyzeAndRepair(records)
@@ -1054,15 +1166,23 @@ export async function repairSessionFile(filePath) {
   const details = decision.kind === 'healthy' ? [] : [decision.detail]
 
   // 第二层：恢复层校验 + surface 级最小变异修复（2026-09-07，第 4 类）。
+  // unsupportedVersion（存储版本不受本构建支持）不可修复，直接如实报告。
+  const firstRestoreErr = validate(JSON.parse(headerLine), candidate)
+  if (firstRestoreErr?.unsupportedVersion) {
+    return {
+      ok: false,
+      changed: false,
+      message: `❌ 会话 ${sessionId} 存储格式版本不受本构建支持，无法修复（文件未动）：${firstRestoreErr.message}`,
+    }
+  }
   if (decision.kind === 'healthy') {
-    const restoreErr = validate(JSON.parse(headerLine), candidate)
-    if (restoreErr) {
+    if (firstRestoreErr) {
       const loop = repairSurfaceLoop(candidate, (rs) => validate(JSON.parse(headerLine), rs))
       if (!loop.ok) {
         return {
           ok: false,
           changed: false,
-          message: `❌ 会话 ${sessionId} 存储层正常但 dsh 恢复校验失败，且无法安全修复（文件未动）\n  校验器：${validatorName}\n  错误：${restoreErr.message}\n  ${loop.detail}`,
+          message: `❌ 会话 ${sessionId} 存储层正常但 dsh 恢复校验失败，且无法安全修复（文件未动）\n  校验器：${validatorName}\n  错误：${firstRestoreErr.message}\n  ${loop.detail}`,
         }
       }
       candidate = loop.records
@@ -1070,14 +1190,13 @@ export async function repairSessionFile(filePath) {
     }
   } else {
     // 存储层动过（截断/去重）之后同样必须过恢复层——两层都绿才允许写盘。
-    const restoreErr = validate(JSON.parse(headerLine), candidate)
-    if (restoreErr) {
+    if (firstRestoreErr) {
       const loop = repairSurfaceLoop(candidate, (rs) => validate(JSON.parse(headerLine), rs))
       if (!loop.ok) {
         return {
           ok: false,
           changed: false,
-          message: `❌ 会话 ${sessionId} 存储层修复后仍未通过 dsh 恢复校验，已放弃写入（原文件未动）：${restoreErr.message}`,
+          message: `❌ 会话 ${sessionId} 存储层修复后仍未通过 dsh 恢复校验，已放弃写入（原文件未动）：${firstRestoreErr.message}`,
         }
       }
       candidate = loop.records
@@ -1178,6 +1297,10 @@ export async function repairSessionFile(filePath) {
   }
 }
 
+/** 会话日志文件名（含 0.1.3+ 世代文件族）：session.jsonl[.zstd]（v0 源世代）
+ * 与 session.vN.jsonl[.zstd]（v1+ 不可变世代）。 */
+const SESSION_LOG_FILENAME = /^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/
+
 async function findSessionFiles(rootDir) {
   const sessionFiles = []
   function walk(dir) {
@@ -1187,7 +1310,7 @@ async function findSessionFiles(rootDir) {
       const full = join(dir, ent.name)
       if (ent.isDirectory()) {
         walk(full)
-      } else if (ent.isFile() && (ent.name === 'session.jsonl.zstd' || ent.name === 'session.jsonl')) {
+      } else if (ent.isFile() && SESSION_LOG_FILENAME.test(ent.name)) {
         sessionFiles.push(full)
       }
     }
@@ -1216,8 +1339,8 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     process.exit(0)
   }
 
-  // 恢复层校验器先解析（引擎档 dsh-session 或 fallback），全程复用。
-  dshSession = await getDshSession()
+  // 恢复层校验器先解析（引擎档 dsh-session [+ format-catalog] 或 fallback），全程复用。
+  dshValidator = await getDshValidator()
 
   const dshHome = getDshHome()
   const sessionsDir = join(dshHome, 'sessions')
@@ -1232,7 +1355,7 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
         title: health.title || null,
         active: health.active,
         detail: health.detail || null,
-        validator: dshSession ? `dsh-session@${dshSession.version}` : 'fallback',
+        validator: dshValidator ? `dsh-session@${dshValidator.version}${dshValidator.hasCatalog ? '+catalog' : ''}` : 'fallback',
       }
     })
     console.log(JSON.stringify(out))
