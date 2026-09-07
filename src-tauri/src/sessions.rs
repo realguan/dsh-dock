@@ -3,7 +3,8 @@
 //! 职责：
 //! 1. 扫描 `$DSH_HOME/sessions/` 下各项目目录与会话文件；
 //! 2. 统计会话元数据（ID、所属项目、更新时间、大小、备份状态）；
-//! 3. 执行会话修复（调用 Node 运行自愈脚本进行 Turn 归流与 Contiguous Seq 重排）；
+//! 3. 执行会话修复（调用 Node 运行自愈脚本：存储层 seq 修复 + 恢复层
+//!    dsh 本尊 restore 校验与 surface 最小变异，2026-09-07）；
 //! 4. 支持单会话修复与全量自愈。
 
 use serde::{Deserialize, Serialize};
@@ -299,6 +300,9 @@ fn scan_health_via_script(
     cmd.arg(&script_path);
     cmd.arg("--scan");
     cmd.env("DSH_HOME", home);
+    // 恢复层校验用引擎档 @deepseek-ai/dsh-session 本尊（与加载该会话的 dsh
+    // 同版本，校验结论零漂移）；缺包时脚本内部降级 fallback fold。
+    cmd.env("DSH_DOCK_ENGINES", crate::engines::pnpm_home(data_dir));
 
     let output = cmd
         .output()
@@ -347,6 +351,8 @@ pub fn run_repair(
     let mut cmd = crate::child_cmd(&node_bin);
     cmd.arg(&script_path);
     cmd.env("DSH_HOME", home);
+    // 与 --scan 同源：恢复层校验定位引擎档 dsh-session（ADR-0010 资产）。
+    cmd.env("DSH_DOCK_ENGINES", crate::engines::pnpm_home(data_dir));
 
     if let Some(t) = target {
         cmd.arg(t);
@@ -527,13 +533,15 @@ mod tests {
         // 会话中断恢复后，dsh 以相同 seq 重放被中断轮次的真实事件，
         // 磁盘上残留旧占位事件，形成「连续前缀 + 重放块」重叠。
         // 加载器在重叠处报 seq gap 并丢弃重叠点之后全部恢复事件。
+        // 消息形状按 dsh 真实事件补全（id/role/source + surfaceOp）——
+        // 恢复层校验（2026-09-07）会逐事件验 envelope，残缺形状会被判损坏。
         let corrupt_data = r#"{"type":"session","version":0,"id":"sess-fail","createdAt":1,"cwd":"/tmp","delegationDepth":0}
 {"type":"tool/call","seq":0,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
-{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"placeholder"}]}]}}}
+{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"placeholder"}]}]}},"surfaceOp":"append"}
 {"type":"step/end","seq":2,"time":1,"data":{"turn":1,"step":1}}
 {"type":"turn/end","seq":3,"time":1,"data":{"turn":1,"reason":{"kind":"interrupted"}}}
 {"type":"session/end-seed","seq":4,"time":2,"data":{}}
-{"type":"tool/result","seq":1,"time":3,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"real result"}]}]}}}
+{"type":"tool/result","seq":1,"time":3,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m1","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"real result"}]}]}},"surfaceOp":"append"}
 {"type":"step/end","seq":2,"time":3,"data":{"turn":1,"step":1}}
 {"type":"step/start","seq":3,"time":4,"data":{"turn":1,"step":2}}
 {"type":"assistant/chunk","seq":4,"time":5,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"hi"}}}
@@ -607,6 +615,96 @@ mod tests {
     }
 
     #[test]
+    fn repair_session_heals_dangling_surface_replace() {
+        // 回归（2026-09-07，session-8650d6f2）：存储层 seq 连续，但
+        // surfaceOp.replace 的 end 指向 surface 中不存在的节点（历史重编号
+        // 未同步引用）。旧健康检查只看 seq 连续性 → 误判健康；dsh 打开即
+        // `invalid seed event at index N: surface replace: end seq X not
+        // found in surface`。修复 = 悬空 replace 转 append（内容与 seq 保留）。
+        let node_available = crate::child_cmd(Path::new("node"))
+            .arg("-v")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !node_available {
+            return;
+        }
+
+        let temp =
+            std::env::temp_dir().join(format!("dsh-sess-repair-surface-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+
+        let sess_dir = temp.join("sessions").join("--demo--").join("sess-surface");
+        fs::create_dir_all(&sess_dir).unwrap();
+        let target_file = sess_dir.join("session.jsonl");
+        let corrupt_data = r#"{"type":"session","version":0,"id":"sess-surface","createdAt":1,"cwd":"/tmp","delegationDepth":0}
+{"type":"user/message","seq":0,"time":1,"data":{"role":"user","id":"u0","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]},"surfaceOp":"append"}
+{"type":"tool/call","seq":1,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
+{"type":"tool/result","seq":2,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}},"surfaceOp":"append"}
+{"type":"user/message","seq":3,"time":2,"data":{"role":"user","id":"u1","source":{"kind":"user"},"content":[{"type":"text","text":"summary"}]},"surfaceOp":{"op":"replace","start":0,"end":9999}}
+{"type":"turn/end","seq":4,"time":3,"data":{"turn":1,"reason":{"kind":"stop"}}}
+"#;
+        fs::write(&target_file, corrupt_data).unwrap();
+        let f = fs::File::open(&target_file).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+
+        let engine_bin = temp.join("engines/bin");
+        std::fs::create_dir_all(&engine_bin).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = engine_bin.join("node");
+            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::write(engine_bin.join("node.exe"), b"").unwrap();
+
+        // 健康扫描必须发现该损坏（旧版判定 healthy 的盲区）。
+        let list = scan_sessions(&temp, &temp).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list[0].status,
+            SessionStatus::NeedsRepair,
+            "扫描应发现 surface 损坏：{:?}",
+            list[0].health_detail
+        );
+        let detail = list[0].health_detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("surface replace: end seq 9999 not found in surface"),
+            "detail 应携带 dsh 原始校验错误：{detail}"
+        );
+
+        // 修复：悬空 replace → append，内容与 seq 原样。
+        let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp).unwrap();
+        assert!(outcome.success, "修复应成功：{}", outcome.message);
+        assert!(sess_dir.join("session.jsonl.bak").is_file(), "应创建备份");
+
+        let repaired = fs::read_to_string(&target_file).unwrap();
+        let lines: Vec<&str> = repaired.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 6, "修复不得增删记录");
+        let summary: serde_json::Value = serde_json::from_str(lines[4]).unwrap();
+        assert_eq!(summary["seq"], 3);
+        assert_eq!(summary["surfaceOp"], "append", "悬空 replace 应转为 append");
+        assert_eq!(
+            summary["data"]["content"][0]["text"], "summary",
+            "消息内容必须原样保留"
+        );
+
+        // 修复后再扫描 = 健康（同一套恢复层校验闭环）。
+        let after = scan_sessions(&temp, &temp).unwrap();
+        assert_eq!(
+            after[0].status,
+            SessionStatus::Healthy,
+            "{:?}",
+            after[0].health_detail
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn repair_session_healthy_file_stays_untouched() {
         // 健康文件 = 修复是幂等 no-op：不写回、不创建备份、退出码 0。
         let node_available = crate::child_cmd(Path::new("node"))
@@ -625,9 +723,12 @@ mod tests {
         let sess_dir = temp.join("sessions").join("--demo--").join("sess-ok");
         fs::create_dir_all(&sess_dir).unwrap();
         let target_file = sess_dir.join("session.jsonl");
+        // 健康样例 = dsh 真实事件形状（消息带 id/role/source、surface 事件带
+        // surfaceOp）：恢复层校验（2026-09-07）逐事件验 envelope，缺标记会被
+        // 判需修复。
         let healthy_data = r#"{"type":"session","version":0,"id":"sess-ok","createdAt":1,"cwd":"/tmp","delegationDepth":0}
 {"type":"tool/call","seq":0,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
-{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}}}
+{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}},"surfaceOp":"append"}
 {"type":"turn/end","seq":2,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
         fs::write(&target_file, healthy_data).unwrap();

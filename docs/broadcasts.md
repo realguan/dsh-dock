@@ -32,6 +32,32 @@
 
 ## 三、记录
 
+### 2026-09-07 会话维护 · 健康检测对齐 dsh 本尊恢复校验——surface 悬空 replace 可检可修 —— guan（AI 协作）
+
+- 变更（`scripts/repair-session.mjs` + `src-tauri/src/sessions.rs`；本条与该改动同 commit 落盘）：
+  1. **根因**：`session-8650d6f2` 为历代修复脚本的「重编号嵌合体」——压缩摘要
+    （`user/message` + `surfaceOp.replace`）的 start/end 仍指向重编号前的旧 seq，
+    dsh 打开即 `invalid seed event at index 37: surface replace: end seq 1686 not
+    found in surface`；旧健康检查只验存储层 seq 连续性，对此类完全失明（第 4 类损坏）。
+  2. **健康判定升级为两层**：存储层（原有 seq/出处链形检查）+ 恢复层（新增）。
+    恢复层优先动态 import 引擎档 `@deepseek-ai/dsh-session` 本尊（与实际加载该
+    会话的 dsh 同版本），按 `prepareCore` 全链复刻：词汇表闸门 → `adoptSessionEvent`
+    → `interruptedTurnClosers` 补尾 → `Session.fromRestore`（含 surface fold 全量
+    重放）——本层通过 = dsh 一定能加载。引擎缺包降级内置 fold 移植（锚已安装
+    v0.1.2-rc.1 的 `surface.ts`/`index.ts`；注意 0.1.2 允许 assistant/message 携带
+    出处链，与仓库 HEAD 0.1.3 规则不同，勿以后者为锚）。
+  3. **修复策略（第 4 类）**：二分定位首个坏事件 → 最小变异（悬空 replace 转
+    append、剥离失效 `sourceEventSeqs`；绝不重编号/不删事件/不改内容）→ 写盘前
+    对产物字节再过「存储层 + 恢复层」双闸门，任一失败放弃写入。Rust 侧向脚本
+    传 `DSH_DOCK_ENGINES`（引擎档根，ADR-0010 资产定位）。
+- 影响：真实会话 8650d6f2 已修复（6171 事件零丢失，dsh 本尊 `fromRestore` 由
+  失败转通过，重新打开即可用；损坏现场快照另存 /tmp，既有 `.bak` 未覆盖）；
+  「一键检测/修复」此后对 surface 类损坏有检出能力。dsh 升级无需改脚本
+  （校验器运行时解析引擎档最高版本包）。仅周知，无需动作。
+- 凭据：cargo test 153 全绿（含新增回归 `repair_session_heals_dangling_surface_replace`，
+  CI 走 fallback 路径确定性覆盖）+ fmt + clippy；真实语料 9 会话 `--scan` 零误报
+  （dsh/fallback 双模式结论一致）；8650d6f2 修复前后 `Session.fromRestore` 失败→通过。
+
 ### 2026-09-05 会话维护 UI/UX 重构 · 健康检查 + 会话名称 + 日志时区修复 —— guan（AI 协作）
 
 - 变更（commit 9935cdd）：

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * @file repair-session.mjs
- * @description DSH 会话自愈与修复工具（2026-09-04 重写：与上游加载器语义对齐）。
+ * @description DSH 会话自愈与修复工具（2026-09-04 重写：与上游加载器语义对齐；
+ * 2026-09-07 二次修订：健康判定升级为 dsh 本尊恢复校验）。
  *
  * 背景：旧版按 turn 归流 + 全量重编号的修法会破坏 dsh 的 append-only 模型与
  * sourceEventSeqs 出处链，且对「重放重叠」这类真实损坏造成语义混乱；本版只做
@@ -18,14 +19,30 @@
  *    保留连续前缀。修复 = 按加载器语义截断到连续前缀（丢失部分本不可达）。
  * 3. 其他（JSON 不可解析 / 行语义损坏 / zstd 帧结构损坏）：不可安全修复，
  *    文件保持原样，报告失败。
+ * 4. surface 语义损坏（2026-09-07 实测 session-8650d6f2）：存储层 seq 连续，
+ *    但 surfaceOp.replace 的 start/end 指向当前 surface 不存在的节点（历史
+ *    修复重编号未同步引用所致）。dsh 打开即抛
+ *    `invalid seed event at index N: surface replace: end seq X not found in surface`
+ *    ——旧健康检查只看 seq 连续性，对此类完全失明。修复 = 悬空 replace 转
+ *    append + 剥离失效 sourceEventSeqs（消息内容与 seq 全保留）。
+ *
+ * 健康判定（2026-09-07 起的两层模型）：
+ * - 第一层（存储层）：行展开后 seq 从 0 严格连续 + sourceEventSeqs 存储形
+ *   合法（第 1/2/3 类检测，手写、锚加载器语义）；
+ * - 第二层（恢复层）：用 dsh 引擎档自带的 @deepseek-ai/dsh-session（与当前
+ *   安装的 dsh 同版本）执行真实恢复链——词汇表闸门 → adoptSessionEvent →
+ *   interruptedTurnClosers 补尾 → Session.fromRestore（含 surface fold 全量
+ *   重放）。这是 dsh 打开会话的确切路径，本层通过 = dsh 一定能加载。
+ *   引擎档缺包时降级为内置 fold 移植（锚 surface.ts v0.1.2-rc.1），宁可
+ *   降级也不回退到只看 seq 连续性——那正是本 bug 存活的缝隙。
  *
  * 安全约束：
- * - 修复输出必须通过「加载器语义校验」：展开 chunk 行后 seq 严格连续且从 0 起。
- * - 校验失败 → 用内存中的原始字节回滚，退出码非 0。
- * - 无需修复（健康）→ 文件保持原样（不写回），退出码 0。
- * - 任何失败路径退出码非 0（Rust run_repair 以退出码为准，旧版吞错致假成功）。
- * - 写入前先备份（同名 .bak ——与 dsh 加载器/旧版约定一致）；修复期间检测到
- *   文件被其他进程写入（活跃会话）时重试一次，仍竞态则报告失败不写坏文件。
+ * - 修复输出必须通过「存储层校验 + 恢复层校验」双闸门；任一失败 → 用内存中
+ *   的原始字节回滚，退出码非 0；
+ * - 无需修复（健康）→ 文件保持原样（不写回），退出码 0；
+ * - 任何失败路径退出码非 0（Rust run_repair 以退出码为准，旧版吞错致假成功）；
+ * - 写入前先备份（同名 .bak——已存在则沿用，不覆盖更早的备份）；修复期间
+ *   检测到文件被其他进程写入（活跃会话）时保留现场并报告失败。
  *
  * 用法:
  *   node scripts/repair-session.mjs <sessionId 或 session.jsonl(.zstd) 路径>
@@ -35,6 +52,7 @@
 import { existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { zstdCompress, zstdDecompressSync, constants } from 'node:zlib'
 import { promisify } from 'node:util'
 
@@ -99,13 +117,100 @@ async function compressZstdFrames(headerLine, eventLines) {
   return Buffer.concat([headerFrame, eventsFrame])
 }
 
-/** 会话头合法即通过（加载器 parseHeaderRecord 的 isHeaderLine 子集检查）。 */
+// ---------------------------------------------------------------------------
+// 引擎档 dsh-session 本尊解析（2026-09-07）：恢复层校验优先用 dsh 自己的代码，
+// 与实际加载该会话的 dsh 同版本 → 校验结论零漂移。找不到时返回 null（调用方
+// 降级 fallback fold，不静默回到「只看 seq 连续」）。
+// ---------------------------------------------------------------------------
+
+/** 语义化版本比较（足够分辨 0.1.2-rc.1 vs 0.1.2 vs 0.1.10；同版本号 release > 预发布）。 */
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const [core, pre] = v.split('-')
+    const nums = core.split('.').map((n) => parseInt(n, 10) || 0)
+    return { nums, pre: pre ?? null }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  for (let i = 0; i < 3; i++) {
+    if ((pa.nums[i] || 0) !== (pb.nums[i] || 0)) return (pa.nums[i] || 0) - (pb.nums[i] || 0)
+  }
+  if (pa.pre === null && pb.pre !== null) return 1
+  if (pa.pre !== null && pb.pre === null) return -1
+  if (pa.pre === null && pb.pre === null) return 0
+  return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0
+}
+
+/** 在引擎档 global 树的 .pnpm 目录里找 @deepseek-ai/dsh-session，取最高版本。 */
+function findDshSessionModuleSync() {
+  const engines = process.env.DSH_DOCK_ENGINES
+  if (!engines) return null
+  const globalV11 = join(engines, 'global', 'v11')
+  let entries
+  try {
+    entries = readdirSync(globalV11)
+  } catch {
+    return null
+  }
+  const candidates = []
+  for (const entry of entries) {
+    const pnpmDir = join(globalV11, entry, 'node_modules', '.pnpm')
+    let names
+    try {
+      names = readdirSync(pnpmDir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.startsWith('@deepseek-ai+dsh-session@')) continue
+      const version = name.slice('@deepseek-ai+dsh-session@'.length).split('_')[0]
+      candidates.push({ version, dir: join(pnpmDir, name, 'node_modules', '@deepseek-ai', 'dsh-session') })
+    }
+  }
+  if (candidates.length === 0) return null
+  candidates.sort((a, b) => compareVersions(b.version, a.version))
+  return candidates[0]
+}
+
+let dshSession = undefined // undefined=未解析 null=已解析但不可用 {mod,version}=可用
+
+/**
+ * 解析并 import 引擎档 dsh-session（进程内缓存）。返回 null 表示不可用——
+ * 调用方必须走 fallback，且不得把 fallback 结论冒充 dsh 结论。
+ */
+async function getDshSession() {
+  if (dshSession !== undefined) return dshSession
+  const found = findDshSessionModuleSync()
+  if (!found) {
+    dshSession = null
+    return dshSession
+  }
+  try {
+    const mod = await import(pathToFileURL(join(found.dir, 'lib', 'index.js')).href)
+    for (const key of ['Session', 'SESSION_FORMAT_VERSION', 'KNOWN_SESSION_EVENT_TYPES', 'decodeSeqRanges', 'decodeStorageRecord', 'interruptedTurnClosers']) {
+      if (mod[key] === undefined) throw new Error(`export missing: ${key}`)
+    }
+    dshSession = { mod, version: found.version }
+  } catch {
+    dshSession = null
+  }
+  return dshSession
+}
+
+// ---------------------------------------------------------------------------
+// 存储层（行级）分析：行展开、出处链存储形、重叠/缺口。手写、锚加载器语义。
+// ---------------------------------------------------------------------------
+
+/** 会话头合法即通过（对齐 dsh 加载器 parseHeaderRecord 的 isHeaderLine 全量检查）。 */
 function isSessionHeader(value) {
   return (
     typeof value === 'object' && value !== null && value.type === 'session' &&
     typeof value.version === 'number' && typeof value.id === 'string' &&
-    typeof value.createdAt === 'number' && Number.isSafeInteger(value.createdAt) &&
-    typeof value.delegationDepth === 'number' && Number.isSafeInteger(value.delegationDepth)
+    typeof value.createdAt === 'number' && Number.isSafeInteger(value.createdAt) && value.createdAt >= 0 && !Object.is(value.createdAt, -0) &&
+    typeof value.delegationDepth === 'number' && Number.isSafeInteger(value.delegationDepth) && value.delegationDepth >= 0 && !Object.is(value.delegationDepth, -0) &&
+    (value.seedLength === undefined || (typeof value.seedLength === 'number' && Number.isSafeInteger(value.seedLength) && value.seedLength >= 0 && !Object.is(value.seedLength, -0))) &&
+    (value.origin === undefined || value.origin === 'subagent') &&
+    (value.agentPreset === undefined || typeof value.agentPreset === 'string')
   )
 }
 
@@ -164,7 +269,7 @@ function checkSourceEventSeqs(record) {
  * 计算一条存储记录展开后的事件 seq 区间 [lo, hi]。
  * 与 dsh-session chunk-rows validateRow/expandRow 的判据对齐（envelope 精确键、
  * payload 为字符串数组、dt 为安全整数且长度 = payload-1）。
- * 区间之外的语义细节（dt 时间演进安全界等）由写后校验兜底。
+ * 区间之外的语义细节（dt 时间演进安全界等）由恢复层校验兜底。
  */
 function expandSpan(record) {
   const tag = record?.type
@@ -313,6 +418,432 @@ function analyzeAndRepair(records) {
   return { kind: 'unrepairable', detail: '重放重叠嵌套过深，无法安全收敛' }
 }
 
+// ---------------------------------------------------------------------------
+// 恢复层校验（2026-09-07）：dsh 本尊 Session.fromRestore 优先，fallback fold 兜底。
+// 统一入口 validateRecords(header, records) → null | Error。records 为存储行
+// （未展开），两模式内部各自展开。
+// ---------------------------------------------------------------------------
+
+/** 由存储 header 行构造逻辑 SessionHeader（对齐 fromHeaderLine）。 */
+function logicalMetaFromHeader(header) {
+  if (Object.hasOwn(header, 'sandboxMode') || Object.hasOwn(header, 'approvalPolicy')) {
+    throw new Error('session header uses retired policy baseline fields')
+  }
+  return {
+    version: header.version,
+    id: header.id,
+    createdAt: header.createdAt,
+    ...(header.cwd !== undefined ? { cwd: header.cwd } : {}),
+    ...(header.parentSession !== undefined ? { parentSession: header.parentSession } : {}),
+    isSeeded: header.seedLength !== undefined,
+    ...(header.origin !== undefined ? { origin: header.origin } : {}),
+    delegationDepth: header.delegationDepth,
+    ...(header.agentPreset !== undefined ? { agentPreset: header.agentPreset } : {}),
+  }
+}
+
+/**
+ * dsh 模式：按加载器 consumeEventLine 语义把存储行展开为事件流（含出处链
+ * 解码、延迟 issue 语义），再走 prepareCore 同款恢复链。任何一步失败即返回
+ * 携带 dsh 原始报错的 Error——与用户在 dsh 里看到的错误逐字一致。
+ */
+function restoreThroughDsh(dsh, meta, inheritedEventCount, records) {
+  const events = []
+  let issue
+  for (let i = 0; i < records.length; i++) {
+    let decoded
+    try {
+      let parsed = records[i]
+      if (parsed.sourceEventSeqs !== undefined) {
+        parsed = { ...parsed, sourceEventSeqs: dsh.decodeSeqRanges(parsed.sourceEventSeqs, parsed.seq) }
+      }
+      decoded = dsh.decodeStorageRecord(parsed)
+    } catch {
+      issue ??= new Error(`corrupt session log: unparsable committed event at record ${i + 2}`)
+      continue
+    }
+    if (issue !== undefined) {
+      if (decoded.some((e) => e.type === 'turn/end')) return issue
+      continue
+    }
+    const rowStart = events.length
+    let gapInRow = false
+    for (const event of decoded) {
+      if (event.seq !== events.length) {
+        events.length = rowStart
+        issue = new Error(`corrupt session log: seq gap in committed region at record ${i + 2} (expected ${events.length}, got ${event.seq})`)
+        gapInRow = true
+        break
+      }
+      events.push(event)
+    }
+    if (gapInRow && decoded.some((c) => c.type === 'turn/end')) return issue
+  }
+  if (issue !== undefined) return issue // 存储层健康时不可达；防御性兜底（宁可报修不可放行）
+
+  for (const event of events) {
+    if (!dsh.KNOWN_SESSION_EVENT_TYPES.has(event.type) && event.ignorable !== true) {
+      return new Error(`session contains event type "${event.type}" (seq ${event.seq}) unknown to this harness and not marked ignorable`)
+    }
+    try {
+      dsh.adoptSessionEvent(event)
+    } catch (e) {
+      return e instanceof Error ? e : new Error(String(e))
+    }
+  }
+  try {
+    const closers = dsh.interruptedTurnClosers(events)
+    dsh.Session.fromRestore(meta.id, structuredClone([...events, ...closers]), meta, inheritedEventCount)
+    return null
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e))
+  }
+}
+
+// ----- fallback：surface fold 移植（锚 dsh v0.1.2-rc.1
+// packages/core/session/src/{index,surface}.ts，2026-09-07 对照；引擎档缺包时
+// 才使用。行集展开只看 span，不手写 chunk 行解码——fold 对非 surface 事件仅
+// 要求 seq 合法，行内成员 seq 由 expandSpan 保证。） -----
+
+const SURFACE_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'tool/result'])
+
+function isEventSeq(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0)
+}
+
+function isReplaceOp(value) {
+  const op = value
+  return Object.keys(op).length === 3
+    && Object.hasOwn(op, 'op') && Object.hasOwn(op, 'start') && Object.hasOwn(op, 'end')
+    && op.op === 'replace' && isEventSeq(op.start) && isEventSeq(op.end)
+}
+
+/** 事件局部 surface 合法性（对齐 surfaceOpOf）。 */
+function surfaceOpOf(record) {
+  if (!SURFACE_EVENT_TYPES.has(record.type)) {
+    if (record.surfaceOp !== undefined) throw new Error(`session event "${record.type}" is not surface-eligible and cannot carry surfaceOp`)
+    if (record.sourceEventSeqs !== undefined) throw new Error(`session event "${record.type}" is not surface-eligible and cannot carry sourceEventSeqs`)
+    return undefined
+  }
+  const op = record.surfaceOp
+  if (op === undefined) throw new Error(`session event "${record.type}" is surface-eligible and requires a surfaceOp marker`)
+  if (op === 'append') return op
+  if (op === null || typeof op !== 'object' || Array.isArray(op)) {
+    throw new Error(`session event "${record.type}" carries an invalid surfaceOp`)
+  }
+  if (!isReplaceOp(op)) throw new Error(`session event "${record.type}" carries an invalid replace surfaceOp`)
+  return op
+}
+
+/**
+ * 出处链存储形 → 内存形（对齐已安装 dsh v0.1.2-rc.1 decodeSeqRanges：数字与
+ * [start,end] 对混排、maxEntries 上限、含区间时展开整体严格递增）。
+ */
+function decodeSeqRangesFallback(value, maxEntries) {
+  if (!Array.isArray(value)) throw new TypeError('sourceEventSeqs must be an array')
+  const decoded = []
+  let hasRange = false
+  const assertSeq = (v) => {
+    if (!Number.isSafeInteger(v) || v < 0) throw new TypeError('sourceEventSeqs must contain non-negative safe integers')
+  }
+  for (const entry of value) {
+    if (typeof entry === 'number') {
+      assertSeq(entry)
+      if (decoded.length >= maxEntries) throw new TypeError('sourceEventSeqs exceeds its event sequence')
+      decoded.push(entry)
+      continue
+    }
+    if (!Array.isArray(entry) || entry.length !== 2) throw new TypeError('sourceEventSeqs range entries must be [start, end] pairs')
+    const [start, end] = entry
+    assertSeq(start)
+    assertSeq(end)
+    if (end < start) throw new TypeError('sourceEventSeqs ranges require start <= end')
+    if (end - start + 1 > maxEntries - decoded.length) throw new TypeError('sourceEventSeqs range exceeds its event sequence')
+    for (let seq = start; seq <= end; seq += 1) decoded.push(seq)
+    hasRange = true
+  }
+  if (hasRange) {
+    for (let i = 1; i < decoded.length; i++) {
+      if (decoded[i] <= decoded[i - 1]) throw new TypeError('sourceEventSeqs ranges must be strictly increasing')
+    }
+  }
+  return decoded
+}
+
+/** 对齐 v0.1.2-rc.1 assertProvenance（注意：该版本允许 assistant/message 携带
+ * 出处链，仅空数组在非 assistant 类型上非法——勿以仓库 HEAD 0.1.3 的规则为准）。 */
+function assertProvenance(event, shadowedSeqs) {
+  const raw = event.sourceEventSeqs
+  const sources = new Set()
+  if (raw !== undefined) {
+    if (!Array.isArray(raw)) throw new Error(`sourceEventSeqs on event at seq ${event.seq} must be an array when present`)
+    if (raw.length === 0 && event.type !== 'assistant/message') throw new Error('sourceEventSeqs must not be empty except on assistant/message')
+    let nonEarlierSource
+    for (const source of raw) {
+      if (!isEventSeq(source)) throw new Error(`session event "${event.type}" sourceEventSeqs must densely contain non-negative safe integers`)
+      sources.add(source)
+      if (nonEarlierSource === undefined && source >= event.seq) nonEarlierSource = source
+    }
+    if (sources.size !== raw.length) throw new Error('sourceEventSeqs must not contain duplicates')
+    if (nonEarlierSource !== undefined) throw new Error(`sourceEventSeqs must reference earlier events: ${nonEarlierSource} >= current seq ${event.seq}`)
+  }
+  const missing = shadowedSeqs.filter((seq) => !sources.has(seq))
+  if (missing.length > 0) {
+    throw new Error(`surface replace: sourceEventSeqs must include every shadowed surface node; missing ${missing.join(', ')}`)
+  }
+}
+
+function isDeepEqualJson(a, b) {
+  if (a === b) return true
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    return a.every((item, i) => isDeepEqualJson(item, b[i]))
+  }
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  return aKeys.every((key) => Object.hasOwn(b, key) && isDeepEqualJson(a[key], b[key]))
+}
+
+/** 对齐 assertToolResultRewrite：tool/result 替换只允许改内容、只允许一个当前节点。 */
+function assertToolResultRewrite(record, shadowedSeqs, seqToRecord) {
+  if (record.type !== 'tool/result') return
+  if (shadowedSeqs.length !== 1) throw new Error('tool/result surface replacement must rewrite exactly one current node')
+  for (const originalSeq of shadowedSeqs) {
+    const original = seqToRecord.get(originalSeq)
+    if (original?.type !== 'tool/result') throw new Error('tool/result surface replacement must target a current tool/result')
+    const originalRest = { ...original.data }
+    const replacementRest = { ...record.data }
+    const originalResult = original.data.message.content[0]
+    const replacementResult = record.data.message.content[0]
+    originalRest.message = { ...original.data.message, content: [{ ...originalResult, content: null }] }
+    replacementRest.message = { ...record.data.message, content: [{ ...replacementResult, content: null }] }
+    if (!isDeepEqualJson(originalRest, replacementRest)) {
+      throw new Error('tool/result surface replacement may change only content')
+    }
+  }
+}
+
+// ----- fallback：事件 envelope 形状（锚 index.ts assertSessionEventEnvelope /
+// assertCurrentLlmShape / assertMessageEventShape，2026-09-07 对照） -----
+
+function hasProviderModel(value) {
+  return typeof value === 'object' && value !== null
+    && typeof value.provider === 'string' && value.provider.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+}
+
+function assertMessageEventShape(event, subject) {
+  const type = event.type
+  if (type !== 'user/message' && type !== 'assistant/message' && type !== 'tool/result') return
+  const data = event.data
+  const record = typeof data === 'object' && data !== null ? data : undefined
+  const message = type === 'user/message' ? record : record?.message
+  if (typeof message !== 'object' || message === null || typeof message.id !== 'string' || message.id === '') {
+    throw new Error(`${subject} lacks an identified message`)
+  }
+  const expectedRole = type === 'assistant/message' ? 'assistant' : 'user'
+  if (message.role !== expectedRole) throw new Error(`${subject} message must have role "${expectedRole}"`)
+  const source = message.source
+  if (typeof source !== 'object' || source === null || typeof source.kind !== 'string' || source.kind === '') {
+    throw new Error(`${subject} message has invalid source`)
+  }
+  if (!Array.isArray(message.content)) throw new Error(`${subject} message has invalid content`)
+  if (type === 'assistant/message') {
+    if (source.kind !== 'model' || !hasProviderModel(source)) throw new Error(`${subject} message must have model source`)
+    return
+  }
+  if (type !== 'tool/result') return
+  if (source.kind !== 'tool' || typeof source.callId !== 'string' || source.callId === '') {
+    throw new Error(`${subject} message must have tool source`)
+  }
+  const block = message.content[0]
+  if (message.content.length !== 1 || typeof block !== 'object' || block === null || block.type !== 'tool-result' || !Array.isArray(block.content)) {
+    throw new Error(`${subject} message must contain one tool-result block`)
+  }
+  if (block.toolCallId !== source.callId) throw new Error(`${subject} message has mismatched tool call ids`)
+}
+
+function assertEnvelope(event, index) {
+  if (event.type === 'request/header-delta') throw new Error(`seed event at index ${index} uses unsupported legacy request/header-delta format`)
+  for (const key in event) {
+    switch (key) {
+      case 'type': case 'seq': case 'time': case 'data':
+      case 'surfaceOp': case 'sourceEventSeqs': case 'ignorable': break
+      default: throw new Error(`seed event at index ${index} has an invalid event envelope`)
+    }
+  }
+  if (
+    typeof event.type !== 'string' || !isEventSeq(event.seq) || !Number.isSafeInteger(event.time) ||
+    event.data === undefined || (event.ignorable !== undefined && event.ignorable !== true)
+  ) throw new Error(`seed event at index ${index} has an invalid event envelope`)
+  if (event.type === 'request/header') {
+    const header = event.data?.header
+    if (!hasProviderModel(header?.config)) throw new Error(`seed request/header at index ${index} lacks provider/model`)
+  }
+  assertMessageEventShape(event, `seed ${event.type} at index ${index}`)
+}
+
+/**
+ * fallback 校验：行级连续（expandSpan）+ envelope + fold 全量重放。
+ * 与 dsh 模式的差异：不做 interruptedTurnClosers 补尾（裸前缀 fold 严格于
+ * dsh 的平衡后校验，方向保守——不会漏报会话损坏，可能对中断尾多报一次可修）。
+ */
+function restoreViaFallback(meta, records) {
+  if (meta.version !== 0) throw new Error(`session header version must be 0, got ${String(meta.version)}`)
+  const state = { nodes: [], generation: 0 }
+  const seqToRecord = new Map()
+  let next = 0
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+    const span = expandSpan(record)
+    if (span === null) throw new Error(`record ${i + 2} has no seq (loader treats as truncation point)`)
+    if (span.lo !== next) throw new Error(`seq gap at ${next} (record ${i + 2})`)
+    const isRow = record.type === 'text-chunks' || record.type === 'reasoning-chunks' || record.type === 'tool-call-chunks'
+    if (!isRow) {
+      // 出处链先按加载器语义解码到内存形再做 envelope/fold 校验（存储形允许
+      // [start,end] 区间，校验只见数字）。
+      let event = record
+      if (record.sourceEventSeqs !== undefined) {
+        try {
+          event = { ...record, sourceEventSeqs: decodeSeqRangesFallback(record.sourceEventSeqs, isEventSeq(record.seq) ? record.seq : Number.MAX_SAFE_INTEGER) }
+        } catch (e) {
+          throw new Error(`unparsable committed event (record ${i + 2}): ${e.message}`)
+        }
+      }
+      assertEnvelope(event, span.lo)
+      const expectedSeq = span.lo
+      const surfaceOp = surfaceOpOf(event)
+      if (surfaceOp !== undefined) {
+        if (surfaceOp === 'append') {
+          assertProvenance(event, [])
+          state.nodes.push(event.seq)
+        } else {
+          const startIdx = state.nodes.indexOf(surfaceOp.start)
+          if (startIdx === -1) throw new Error(`surface replace: start seq ${surfaceOp.start} not found in surface`)
+          const endIdx = state.nodes.indexOf(surfaceOp.end)
+          if (endIdx === -1) throw new Error(`surface replace: end seq ${surfaceOp.end} not found in surface`)
+          if (startIdx > endIdx) throw new Error(`surface replace: start seq ${surfaceOp.start} (index ${startIdx}) is after end seq ${surfaceOp.end} (index ${endIdx})`)
+          const shadowedSeqs = state.nodes.slice(startIdx, endIdx + 1)
+          assertProvenance(event, shadowedSeqs)
+          assertToolResultRewrite(event, shadowedSeqs, seqToRecord)
+          state.nodes.splice(startIdx, endIdx - startIdx + 1, event.seq)
+          state.generation += 1
+        }
+      }
+      seqToRecord.set(record.seq, record)
+    }
+    next = span.hi + 1
+  }
+  return null
+}
+
+/**
+ * 统一恢复层入口：header + 存储行 → null（可加载）| Error（dsh 打开必失败，
+ * message 与 dsh 原始报错一致或为 fallback 移植语义）。
+ */
+function makeRestoreValidator(dsh) {
+  if (dsh) {
+    return (header, records) => {
+      let meta
+      try {
+        meta = logicalMetaFromHeader(header)
+      } catch (e) {
+        return e instanceof Error ? e : new Error(String(e))
+      }
+      return restoreThroughDsh(dsh.mod, meta, header.seedLength ?? 0, records)
+    }
+  }
+  return (header, records) => {
+    let meta
+    try {
+      meta = logicalMetaFromHeader(header)
+      return restoreViaFallback(meta, records)
+    } catch (e) {
+      return e instanceof Error ? e : new Error(String(e))
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// surface 级修复（第 4 类）：二分定位首个坏记录 → 最小变异 → 全量复验。
+// 绝不改 seq、不删事件、不重排——只动 surfaceOp / sourceEventSeqs 两个元数据
+// 字段（消息内容原样）。
+// ---------------------------------------------------------------------------
+
+/** 单记录最小变异：返回 { record, desc } | null（不可变异）。 */
+function mutateRecord(record) {
+  const eligible = SURFACE_EVENT_TYPES.has(record?.type)
+  if (eligible) {
+    const op = record.surfaceOp
+    if (op !== undefined && op !== 'append') {
+      // 悬空/畸形 replace（含 start/end 引用不存在节点）：转 append 保留消息，
+      // 并剥离失效出处链（其引用的被遮蔽节点已不可达）。
+      const { sourceEventSeqs, ...rest } = record
+      return {
+        record: { ...rest, surfaceOp: 'append' },
+        desc: `seq ${record.seq} 的 replace surfaceOp 引用已不存在的 surface 节点，已转为 append（消息内容与 seq 原样保留，仅失去遮蔽语义）`,
+      }
+    }
+    if (op === undefined) {
+      return {
+        record: { ...record, surfaceOp: 'append' },
+        desc: `seq ${record.seq} 缺少 surfaceOp 标记，已补 append`,
+      }
+    }
+    if ('sourceEventSeqs' in record) {
+      const { sourceEventSeqs, ...rest } = record
+      return {
+        record: rest,
+        desc: `seq ${record.seq} 的 sourceEventSeqs 出处链失效，已剥离该元数据（内容与 seq 原样保留）`,
+      }
+    }
+    return null
+  }
+  if (record && typeof record === 'object' && ('surfaceOp' in record || 'sourceEventSeqs' in record)) {
+    const { surfaceOp, sourceEventSeqs, ...rest } = record
+    return {
+      record: rest,
+      desc: `非 surface 事件（${record.type ?? '?'}）携带了 surface 元数据字段，已剥离`,
+    }
+  }
+  return null
+}
+
+/**
+ * surface 修复循环：反复「全量校验 → 二分找首个坏记录 → 最小变异」，直至
+ * 通过或放弃。返回 { ok, records, changes, detail }。
+ */
+function repairSurfaceLoop(records, validate, maxRounds = 32) {
+  let current = records
+  const changes = []
+  for (let round = 0; round < maxRounds; round++) {
+    const err = validate(current)
+    if (!err) return { ok: true, records: current, changes, detail: changes.join('；') }
+    // 二分定位：validate(prefix) 首个失败长度 = 首个坏记录位置
+    let lo = 1
+    let hi = current.length
+    let bad = current.length
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (validate(current.slice(0, mid))) {
+        bad = mid
+        hi = mid - 1
+      } else {
+        lo = mid + 1
+      }
+    }
+    const target = current[bad - 1]
+    const mutated = mutateRecord(target)
+    if (!mutated) {
+      return { ok: false, records: current, changes, detail: `恢复校验失败且不可安全变异（seq ${target?.seq}）：${err.message}` }
+    }
+    changes.push(mutated.desc)
+    current = [...current.slice(0, bad - 1), mutated.record, ...current.slice(bad)]
+  }
+  return { ok: false, records: current, changes, detail: `surface 损坏嵌套过深（>${maxRounds} 轮），无法安全收敛` }
+}
+
 /** 稳定读取：stat 前后一致（避免读到写一半的文件），最多重试 3 次。 */
 function readStable(filePath) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -329,11 +860,11 @@ function readStable(filePath) {
 /**
  * 只读健康检查（不写回、不备份）：返回 { status, title, eventCount, detail }。
  * status ∈ healthy | needs_repair | unknown。
- * - healthy：seq 严格连续（加载器语义）；
- * - needs_repair：存在可安全修复的重放重叠/缺口（分析器判定 repaired/truncated）；
- * - unknown：无法解析/不可安全修复（unrepairable）/读取失败。
- * 标题取自 `session/title` 事件（dsh 会话摘要，含 sourceEventSeqs 行不取，
- * 取首个非 sourceEventSeqs 的 title 事件）。
+ * - healthy：存储层 seq 连续 **且** 恢复层（dsh fromRestore / fallback fold）通过；
+ * - needs_repair：存储层存在可安全修复的重放重叠/缺口，或恢复层失败但属
+ *   可最小变异的 surface/出处链损坏；
+ * - unknown：无法解析/不可安全修复/读取失败。
+ * 标题取自**最新** `session/title` 事件（跳过 sourceEventSeqs 修饰的镜像行）。
  */
 export function scanSessionHealth(filePath) {
   const isZstd = filePath.endsWith('.zstd')
@@ -393,17 +924,30 @@ export function scanSessionHealth(filePath) {
     }
   }
 
-  // 健康判定：与修复分析同一套判定
+  // 第一层（存储层）：与修复分析同一套判定
   const decision = analyzeAndRepair(records)
-  if (decision.kind === 'healthy') {
-    return { status: 'healthy', title, eventCount: 0, active, detail: '' }
+  if (decision.kind === 'unrepairable') {
+    return { status: 'unknown', title, eventCount: 0, active, detail: decision.detail }
   }
-  if (decision.kind === 'repaired' || decision.kind === 'truncated') {
+  if (decision.kind !== 'healthy') {
     return { status: 'needs_repair', title, eventCount: 0, active, detail: decision.detail }
   }
-  return { status: 'unknown', title, eventCount: 0, active, detail: decision.detail }
-}
 
+  // 第二层（恢复层）：dsh 打开会话的确切路径（或 fallback）
+  const header = JSON.parse(headerLine)
+  const validate = makeRestoreValidator(dshSession)
+  const restoreErr = validate(header, records)
+  if (!restoreErr) {
+    return { status: 'healthy', title, eventCount: 0, active, detail: '' }
+  }
+  return {
+    status: 'needs_repair',
+    title,
+    eventCount: 0,
+    active,
+    detail: `恢复校验失败（dsh 打开将报错）：${restoreErr.message}`,
+  }
+}
 
 /** 原子替换：写临时文件 → 覆盖（Windows 先删目标，POSIX rename 原子）。 */
 function writeAtomic(filePath, bytes) {
@@ -476,14 +1020,14 @@ export async function repairSessionFile(filePath) {
   }
 
   const sessionId = JSON.parse(headerLine).id
+  const validate = makeRestoreValidator(dshSession)
+  const validatorName = dshSession ? `dsh-session@${dshSession.version}（引擎档本尊）` : '内置 fold（引擎档缺包降级）'
+
+  // 第一层：存储层分析（重叠去重 / 缺口截断）
   let decision = analyzeAndRepair(records)
 
-  if (decision.kind === 'healthy') {
-    return { ok: true, changed: false, message: `✅ 会话 ${sessionId} 序列正常，无需修复。` }
-  }
-
   if (decision.kind === 'unrepairable') {
-    // 第 4 类损坏（2026-09-05 实测）：sourceEventSeqs 出处链损坏（旧版重编号
+    // 第 4 类前置（2026-09-05 实测）：sourceEventSeqs 出处链损坏（旧版重编号
     // 遗留——seq 已连续但 sourceEventSeqs 指向旧 seq，展开条目数超限/乱序，
     // dsh expandProvenanceFromStorage 抛 `unparsable committed event`）。
     // 剥离该字段可让记录原样通过加载器（仅失去溯源元数据，不影响内容）。
@@ -506,7 +1050,50 @@ export async function repairSessionFile(filePath) {
     }
   }
 
-  // 修复路径：备份 → 写回 → 加载器语义校验 → 失败回滚。
+  let candidate = decision.records ?? records
+  const details = decision.kind === 'healthy' ? [] : [decision.detail]
+
+  // 第二层：恢复层校验 + surface 级最小变异修复（2026-09-07，第 4 类）。
+  if (decision.kind === 'healthy') {
+    const restoreErr = validate(JSON.parse(headerLine), candidate)
+    if (restoreErr) {
+      const loop = repairSurfaceLoop(candidate, (rs) => validate(JSON.parse(headerLine), rs))
+      if (!loop.ok) {
+        return {
+          ok: false,
+          changed: false,
+          message: `❌ 会话 ${sessionId} 存储层正常但 dsh 恢复校验失败，且无法安全修复（文件未动）\n  校验器：${validatorName}\n  错误：${restoreErr.message}\n  ${loop.detail}`,
+        }
+      }
+      candidate = loop.records
+      details.push(`恢复层修复（校验器 ${validatorName}）：${loop.detail}`)
+    }
+  } else {
+    // 存储层动过（截断/去重）之后同样必须过恢复层——两层都绿才允许写盘。
+    const restoreErr = validate(JSON.parse(headerLine), candidate)
+    if (restoreErr) {
+      const loop = repairSurfaceLoop(candidate, (rs) => validate(JSON.parse(headerLine), rs))
+      if (!loop.ok) {
+        return {
+          ok: false,
+          changed: false,
+          message: `❌ 会话 ${sessionId} 存储层修复后仍未通过 dsh 恢复校验，已放弃写入（原文件未动）：${restoreErr.message}`,
+        }
+      }
+      candidate = loop.records
+      details.push(`恢复层修复（校验器 ${validatorName}）：${loop.detail}`)
+    }
+  }
+
+  // 无任何变更 = 幂等 no-op：不写回、不备份。
+  const changedCount = candidate.length === records.length
+    ? candidate.filter((r, i) => r !== records[i]).length
+    : candidate.length // 截断/去重必然变了行数
+  if (changedCount === 0 && decision.kind === 'healthy') {
+    return { ok: true, changed: false, message: `✅ 会话 ${sessionId} 恢复校验通过（${validatorName}），无需修复。` }
+  }
+
+  // 修复路径：备份 → 写回 → 存储层+恢复层双校验 → 失败放弃（不触原文件）。
   const backupPath = `${filePath}.bak`
   if (!existsSync(backupPath)) {
     try {
@@ -518,7 +1105,7 @@ export async function repairSessionFile(filePath) {
 
   // 重放重叠应保留 header 原样（含 seedLength 语义），截断同理。
   const keptHeaderLine = headerLine
-  const eventLines = decision.records.map((r) => JSON.stringify(r))
+  const eventLines = candidate.map((r) => JSON.stringify(r))
   const repairedBytes = isZstd
     ? await compressZstdFrames(keptHeaderLine, eventLines)
     : Buffer.from(`${keptHeaderLine}\n${eventLines.join('\n')}\n`, 'utf8')
@@ -532,6 +1119,11 @@ export async function repairSessionFile(filePath) {
     const checkText = checkBuf.toString('utf8')
     const checkLines = checkText.split('\n').map((l) => l.trim()).filter(Boolean)
     verifyErr = verifyLoaderSemantics(checkLines[0], checkLines.slice(1).map((l) => JSON.parse(l)))
+    if (verifyErr === null) {
+      // 恢复层闸门：对**写盘字节**再跑一次 dsh 恢复链（防序列化回归）。
+      const gateErr = validate(JSON.parse(checkLines[0]), checkLines.slice(1).map((l) => JSON.parse(l)))
+      if (gateErr) verifyErr = `restore gate: ${gateErr.message}`
+    }
   } catch (e) {
     verifyErr = e.message
   }
@@ -582,7 +1174,7 @@ export async function repairSessionFile(filePath) {
   return {
     ok: true,
     changed: true,
-    message: `✨ 会话 ${sessionId} 已修复（${isZstd ? 'zstd' : 'jsonl'}）。${decision.detail}`,
+    message: `✨ 会话 ${sessionId} 已修复（${isZstd ? 'zstd' : 'jsonl'}，校验器 ${validatorName}）。${details.join('；')}`,
   }
 }
 
@@ -624,6 +1216,9 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     process.exit(0)
   }
 
+  // 恢复层校验器先解析（引擎档 dsh-session 或 fallback），全程复用。
+  dshSession = await getDshSession()
+
   const dshHome = getDshHome()
   const sessionsDir = join(dshHome, 'sessions')
 
@@ -637,6 +1232,7 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
         title: health.title || null,
         active: health.active,
         detail: health.detail || null,
+        validator: dshSession ? `dsh-session@${dshSession.version}` : 'fallback',
       }
     })
     console.log(JSON.stringify(out))
