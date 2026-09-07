@@ -814,6 +814,9 @@ mod tests {
             .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
+        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
+        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
+        drop(f);
 
         // 修复链 node 来源 = 引擎档唯一：预置假体 shim（转发 PATH 上的真 node）
         let engine_bin = temp.join("engines/bin");
@@ -1022,6 +1025,9 @@ mod tests {
             .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
+        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
+        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
+        drop(f);
 
         let engine_bin = temp.join("engines/bin");
         std::fs::create_dir_all(&engine_bin).unwrap();
@@ -1117,6 +1123,9 @@ mod tests {
             .unwrap();
         f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
+        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
+        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
+        drop(f);
 
         let engine_bin = temp.join("engines/bin");
         std::fs::create_dir_all(&engine_bin).unwrap();
