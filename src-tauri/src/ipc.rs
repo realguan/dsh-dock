@@ -45,6 +45,7 @@ pub const COMMANDS: &[&str] = &[
     "get_plugin_runtime",
     "list_all_plugins",
     "copy_plugin_config",
+    "set_profile_build_approvals",
     "list_sessions",
     "repair_session",
     "repair_all_sessions",

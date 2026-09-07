@@ -12,6 +12,7 @@
 //! `window.__TAURI__.event.listen` 接收 `boot:step` / `boot:error` 事件流，
 //! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
+mod build_approvals;
 mod credentials;
 mod diagnostics;
 mod dsh_settings;
@@ -1093,6 +1094,21 @@ async fn copy_plugin_config(
     })
     .await
     .map_err(|e| format!("配置复制任务异常终止：{e}"))?
+}
+
+/// pnpm 12 构建审批门裁决写入（ADR-0009 第六次修订，写入例外 #5）：逐包
+/// 允许/跳过 → 受控改写 profile 的 pnpm-workspace.yaml allowBuilds 单键。
+/// 前端保存后重试原插件操作（重试不经过本命令）。
+#[tauri::command]
+async fn set_profile_build_approvals(
+    profile: String,
+    approvals: Vec<crate::build_approvals::BuildApproval>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::build_approvals::set_profile_build_approvals(&profile, &approvals)
+    })
+    .await
+    .map_err(|e| format!("审批写入任务异常终止：{e}"))?
 }
 
 /// 会话管理与自愈：扫描会话列表（只读文件扫描 + 健康检查/标题提取）
@@ -2327,6 +2343,7 @@ pub fn run() {
             get_plugin_runtime,
             list_all_plugins,
             copy_plugin_config,
+            set_profile_build_approvals,
             list_sessions,
             repair_session,
             repair_all_sessions,

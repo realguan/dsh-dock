@@ -105,9 +105,12 @@ export interface PluginRuntimeSnapshot {
 
 /// 插件安装/卸载/更新结果（4.4②）：ok = dsh 退出 0 且未超时；
 /// detail 为人读文案（失败附 dsh 输出尾部，成功含「重启后生效」提示）。
+/// ignored_builds 非空 = 撞 pnpm 12 构建审批门（ERR_PNPM_IGNORED_BUILDS），
+/// 携带被点名包名 → 弹「构建脚本审批」逐包裁决后重试（2026-09-07）。
 export interface PluginOpOutcome {
   ok: boolean
   detail: string
+  ignored_builds?: string[]
 }
 
 /// 插件行表条目（4.4③，复现点 7/ADR 第四次修订）：行 id 不可从包名推导，

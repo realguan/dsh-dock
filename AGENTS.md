@@ -117,7 +117,9 @@
   形如 `dsh@<ver>`，同键不再弹非阻断提示条）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
-  （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；`.credentials.yaml`
+  （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
+  `pnpm-workspace.yaml` allowBuilds 单键受控改写/追加（写入例外 #5，2026-09-07，
+  pnpm 12 构建审批门裁决，非三件套成员）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
   农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
@@ -139,6 +141,8 @@
   `check_plugin_updates` `list_plugin_versions`。
   `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
   配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
+  `set_profile_build_approvals`（pnpm 12 构建审批门逐包裁决写入
+  pnpm-workspace.yaml，写入例外 #5，ADR-0009 第六次修订 2026-09-07）。
   `list_sessions` `repair_session` `repair_all_sessions`（会话维护与自愈，2026-08-31）。
   `get_shell_settings` `set_shell_settings` `get_system_diagnostics` `get_app_logs`（系统控制台与诊断，2026-08-31）。
   `get_credentials_raw` `save_credentials_raw` `get_credentials_summary` `set_credential_key`（凭据安全管理与脱敏，2026-08-31）。

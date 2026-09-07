@@ -103,6 +103,12 @@ export const api = {
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
+  // pnpm 12 构建审批门：逐包允许/跳过写入 profile pnpm-workspace.yaml 的
+  // allowBuilds（ADR-0009 写入例外 #5）；保存成功后由调用方重试原插件操作
+  setProfileBuildApprovals: (
+    profile: string,
+    approvals: { name: string; allowed: boolean }[],
+  ) => invoke<void>("set_profile_build_approvals", { profile, approvals }),
   // 会话管理与自愈（4.6）
   listSessions: () => invoke<SessionItem[]>("list_sessions"),
   repairSession: (sessionPath: string) =>
