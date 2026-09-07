@@ -349,9 +349,7 @@ fn session_is_current(state: &ShellState, epoch: u64) -> bool {
 /// 会话存活代理，同一判定覆盖。
 fn engine_session_alive(state: &ShellState) -> bool {
     let mut session = state.session.lock().unwrap();
-    session
-        .as_mut()
-        .map_or(false, |e| e.check_exited().is_none())
+    session.as_mut().is_none_or(|e| e.check_exited().is_none())
 }
 
 /// 取出并清理当前会话（幂等）：错误卡 / 模式切换共用。
@@ -2094,6 +2092,14 @@ fn init_tracing(file: std::fs::File) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // unix：SIGTERM/SIGINT 优雅退出（2026-09-07）。RunEvent::Exit 只覆盖优雅
+    // 退出路径——SIGTERM（pkill、`cargo tauri dev` 重编重启）与 SIGINT（终端
+    // Ctrl-C）会直接杀死进程，会话 dsh 子进程无人收（§6 1:1 生命周期被绕过，
+    // 实测留孤儿）。处理器只置原子位（async-signal-safe），监护线程命中后走
+    // app.exit(0) 复用 RunEvent::Exit 的统一 teardown。Windows 无对应信号面
+    // （taskkill/TerminateProcess 本就无清理机会），不装。
+    #[cfg(unix)]
+    install_signal_exit_handler();
     // 日志初始化移入 setup（落 shell.log；dev 另双写 stdout，见 init_tracing）。
     // 测试/外部如需独立日志可自行 try_init（幂等）。
     tauri::Builder::default()
@@ -2232,6 +2238,20 @@ pub fn run() {
                     }
                 }
             });
+            // 信号监护（unix，install_signal_exit_handler 置位）：命中后走
+            // app.exit(0)，让 RunEvent::Exit 的统一 teardown 收干净会话子进程。
+            #[cfg(unix)]
+            {
+                let sig_app = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    if SIGNAL_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
+                        tracing::info!("收到终止信号，优雅退出（收会话子进程）");
+                        sig_app.exit(0);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                });
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -2339,6 +2359,32 @@ pub fn run() {
         });
 }
 
+/// 收到 SIGTERM/SIGINT 的标志位（信号处理器只做原子写，async-signal-safe）。
+#[cfg(unix)]
+static SIGNAL_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn signal_exit_handler(_: i32) {
+    SIGNAL_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 安装 SIGTERM/SIGINT 处理器（unix）：仅置位，复杂动作全部留给监护线程。
+#[cfg(unix)]
+fn install_signal_exit_handler() {
+    use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+    let action = SigAction::new(
+        SigHandler::Handler(signal_exit_handler),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
+    for sig in [Signal::SIGTERM, Signal::SIGINT] {
+        // 覆盖默认终止行为是本函数的意图：命中后由监护线程走优雅退出。
+        unsafe {
+            let _ = sigaction(sig, &action);
+        }
+    }
+}
+
 /// 发射 boot:step 事件（state: pending|running|done|error）。
 fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
     use tauri::Emitter;
@@ -2371,7 +2417,7 @@ fn download_progress_bridge(
     let mut last: Option<std::time::Instant> = None;
     move |stage, current, total| {
         let now = std::time::Instant::now();
-        let done = total.map(|t| current >= t).unwrap_or(false);
+        let done = total.is_some_and(|t| current >= t);
         let throttled = last
             .map(|t| now.duration_since(t) < std::time::Duration::from_millis(100))
             .unwrap_or(false);
