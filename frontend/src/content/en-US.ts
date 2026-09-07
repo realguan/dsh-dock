@@ -524,4 +524,19 @@ export const enUS: AppCopy = {
     expandCategories: (n: number) => `Show All (${n})`,
     collapseCategories: "Show Less",
   },
+  // pnpm 12 build-script approval gate (ERR_PNPM_IGNORED_BUILDS dialog)
+  buildGate: {
+    title: "Build Script Approvals",
+    subtitle:
+      "pnpm 12's security policy blocked the install scripts (postinstall) of these dependencies — decide per package:",
+    allow: "Allow",
+    skip: "Skip",
+    allowHint:
+      "Run its install script: may download binaries over the network or compile locally (requires a toolchain)",
+    skipHint:
+      "Skip the install script: the install will always succeed, but script-provided features may be missing (e.g. the cloudflared tunnel binary)",
+    confirm: "Save & Retry",
+    saving: "Saving…",
+    saveFailed: (msg: string) => `Failed to save approvals: ${msg}`,
+  },
 }

@@ -16,6 +16,7 @@ import {
   getPluginDescription,
   getPluginDisplayName,
 } from "@/lib/market"
+import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -54,6 +55,8 @@ export function MarketInstallDialog({
   const [selectedProfile, setSelectedProfile] = useState<string>("")
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试安装）
+  const [gatePkgs, setGatePkgs] = useState<string[] | null>(null)
 
   // 提取简短展示名与安装源元数据
   const displayName = useMemo(
@@ -92,6 +95,9 @@ export function MarketInstallDialog({
       if (outcome.ok) {
         onSuccess(plugin.name, selectedProfile)
         onClose()
+      } else if (outcome.ignored_builds?.length) {
+        setGatePkgs(outcome.ignored_builds)
+        setError(null)
       } else {
         setError(outcome.detail || "安装失败")
       }
@@ -103,6 +109,7 @@ export function MarketInstallDialog({
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(val) => !installing && !val && onClose()}>
       <DialogContent className="max-w-md rounded-2xl border border-line bg-panel p-6 shadow-xl">
         <DialogHeader>
@@ -255,5 +262,16 @@ export function MarketInstallDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <BuildApprovalDialog
+      profile={selectedProfile}
+      packages={gatePkgs ?? []}
+      open={gatePkgs !== null}
+      onClose={() => setGatePkgs(null)}
+      onApproved={() => {
+        setGatePkgs(null)
+        handleInstall()
+      }}
+    />
+    </>
   )
 }

@@ -27,6 +27,7 @@ import type {
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
+import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
 import { McpManager } from "@/components/profiles/McpManager"
 import {
   Dialog,
@@ -73,6 +74,8 @@ export function ProfileDetailPane({
   // 操作状态
   const [opBusy, setOpBusy] = useState<string | null>(null)
   const [installOpen, setInstallOpen] = useState(false)
+  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（pkgs=被点名包，retry=保存后重试的原操作）
+  const [gate, setGate] = useState<{ pkgs: string[]; retry: () => void } | null>(null)
   const [installSpec, setInstallSpec] = useState("")
   const [installError, setInstallError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -140,6 +143,8 @@ export function ProfileDetailPane({
         if (out.ok) {
           onNotice(out.detail, "ok")
           reload()
+        } else if (out.ignored_builds?.length) {
+          setGate({ pkgs: out.ignored_builds, retry: () => runOp(op, pkg) })
         } else {
           onNotice(out.detail, "warn")
         }
@@ -167,6 +172,8 @@ export function ProfileDetailPane({
           setInstallOpen(false)
           setInstallSpec("")
           reload()
+        } else if (out.ignored_builds?.length) {
+          setGate({ pkgs: out.ignored_builds, retry: () => submitInstall() })
         } else {
           setInstallError(out.detail)
         }
@@ -245,6 +252,8 @@ export function ProfileDetailPane({
           })
           setVersionPick(null)
           reload()
+        } else if (out.ignored_builds?.length) {
+          setGate({ pkgs: out.ignored_builds, retry: () => installVersion(spec) })
         } else {
           setVersionsError(out.detail)
         }
@@ -868,6 +877,21 @@ export function ProfileDetailPane({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试被拦截的原操作 */}
+      {name && (
+        <BuildApprovalDialog
+          profile={name}
+          packages={gate?.pkgs ?? []}
+          open={gate !== null}
+          onClose={() => setGate(null)}
+          onApproved={() => {
+            const retry = gate?.retry
+            setGate(null)
+            retry?.()
+          }}
+        />
+      )}
     </div>
   )
 }

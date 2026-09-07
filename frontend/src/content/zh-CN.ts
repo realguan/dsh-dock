@@ -554,6 +554,18 @@ export const t = {
     expandCategories: (n: number) => `展开全部 (${n})`,
     collapseCategories: "收起分类",
   },
+  // pnpm 12 构建脚本审批门（ERR_PNPM_IGNORED_BUILDS 裁决对话框）
+  buildGate: {
+    title: "构建脚本审批",
+    subtitle: "pnpm 12 安全策略拦截了这些依赖的安装脚本（postinstall），需要你逐包裁决：",
+    allow: "允许运行",
+    skip: "跳过",
+    allowHint: "执行其安装脚本：可能联网下载二进制或本机编译（需要编译工具链）",
+    skipHint: "跳过安装脚本：安装必定成功，但该包依赖脚本的功能可能缺失（如 cloudflared 隧道二进制）",
+    confirm: "保存并重试",
+    saving: "正在保存…",
+    saveFailed: (msg: string) => `审批保存失败：${msg}`,
+  },
 } as const
 
 type RecursiveString<T> = {

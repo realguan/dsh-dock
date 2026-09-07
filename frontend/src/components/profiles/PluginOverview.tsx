@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
 
 const PAGE_SIZE_OPTIONS = [6, 9, 12, 18]
 
@@ -63,6 +64,8 @@ export function PluginOverview({
   const [withConfig, setWithConfig] = useState(false)
   const [distributing, setDistributing] = useState(false)
   const [distributeError, setDistributeError] = useState<string | null>(null)
+  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试分发安装）
+  const [gatePkgs, setGatePkgs] = useState<string[] | null>(null)
 
   const loadData = () => {
     setLoading(true)
@@ -143,6 +146,11 @@ export function PluginOverview({
         `${distributeTarget.pkg}@${distributeTarget.version}`,
       )
       if (!outcome.ok) {
+        if (outcome.ignored_builds?.length) {
+          // pnpm 12 构建审批门：转逐包裁决，保存后由 gate 重试整段分发
+          setGatePkgs(outcome.ignored_builds)
+          return
+        }
         throw new Error(outcome.detail)
       }
 
@@ -506,6 +514,20 @@ export function PluginOverview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试整段分发（含配置迁移） */}
+      {selectedDest && (
+        <BuildApprovalDialog
+          profile={selectedDest}
+          packages={gatePkgs ?? []}
+          open={gatePkgs !== null}
+          onClose={() => setGatePkgs(null)}
+          onApproved={() => {
+            setGatePkgs(null)
+            void handleDistribute()
+          }}
+        />
+      )}
     </div>
   )
 }
