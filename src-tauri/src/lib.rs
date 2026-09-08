@@ -1716,7 +1716,11 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
 
     // DSH 工作台快捷切换悬浮胶囊与全局快捷键（2026-09-01 引入，零遮挡重构）：
     // 1. 全局监听快捷键（默认 Cmd/Ctrl+, 或配置的快捷键）呼出控制中心；
-    // 2. 仅在进入 127.0.0.1 回环工作台后挂载独立 Shadow DOM 磨砂胶囊；
+    // 2. 仅在真正的 DSH 工作台页挂载独立 Shadow DOM 磨砂胶囊——2026-09-08 裁定：
+    //    挂载条件由「hostname 回环」收紧为「与 get_workbench_url 返回的 origin
+    //    精确比对」。macOS 壳自身页面是 tauri://localhost（hostname 恰为
+    //    localhost），旧判断把 selector / 启动页 / 控制中心全部误挂胶囊，
+    //    与页面自带顶栏叠出双排「控制中心」；
     // 3. 默认位置：顶部水平正居中（Top-Center），处于 DSH 顶部天然空白留白区，完全避开 Logo 与按钮；
     // 4. 胶囊文案平时仅展示「控制中心」，鼠标 hover 时平滑展开快捷键徽章（强制 nowrap）；
     // 5. 动态监听 app:settings-changed 广播，实时响应开关（即刻消失/挂载）与快捷键切换；
@@ -1726,6 +1730,7 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       window.__dshDockSwitcherInjected = true;
 
       var currentSettings = null;
+      var workbenchOrigin = null;
 
       function isMacPlatform() {
         return /Mac|iPod|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -1761,6 +1766,31 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         return shortcutKey === 'shift_p' ? (isMac ? '⌘ + ⇧ + P' : 'Ctrl + ⇧ + P') : (isMac ? '⌘ + ,' : 'Ctrl + ,');
       }
 
+      // 2026-09-08 裁定：壳页面在 macOS 是 tauri://localhost、Windows 是
+      // http://tauri.localhost、dev 是 vite 端口——都不是工作台；只有当前
+      // location.origin 与 get_workbench_url 一致（主窗口 navigate 落地后
+      // 本脚本随文档重跑）才允许挂载。origin 未知/未就绪一律不挂。
+      function onWorkbenchPage() {
+        return workbenchOrigin !== null && location.origin === workbenchOrigin;
+      }
+
+      function fetchWorkbenchOrigin() {
+        var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+        if (!tauri) {
+          workbenchOrigin = null;
+          return Promise.resolve();
+        }
+        return tauri('get_workbench_url').then(function (u) {
+          try {
+            workbenchOrigin = u ? new URL(u).origin : null;
+          } catch (e) {
+            workbenchOrigin = null;
+          }
+        }).catch(function () {
+          workbenchOrigin = null;
+        });
+      }
+
       function removeCapsule() {
         var root = document.getElementById('dsh-dock-switcher-root');
         if (root) root.remove();
@@ -1768,8 +1798,7 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
 
       function renderCapsule(settings) {
         if (document.getElementById('dsh-dock-switcher-root')) return;
-        var isLoopback = location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '[::1]';
-        if (!isLoopback) return;
+        if (!onWorkbenchPage()) return;
 
         var isMac = isMacPlatform();
         var host = document.createElement('div');
@@ -1903,15 +1932,16 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
       }
 
       function initSwitcher() {
-        var isLoopback = location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '[::1]';
-        if (!isLoopback) return;
-
         var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
         if (tauri) {
           window.__TAURI__.core.invoke('get_shell_settings').then(function (settings) {
             applySettings(settings);
           }).catch(function () {
             applySettings(null);
+          });
+          // origin 就绪后补一次挂载判定（与 settings 并发到达，晚到者触发挂载）
+          fetchWorkbenchOrigin().then(function () {
+            applySettings(currentSettings);
           });
         } else {
           applySettings(null);

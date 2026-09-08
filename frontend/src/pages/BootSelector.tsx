@@ -1,16 +1,18 @@
 // 工作台选择器页（原 ui/selector.html 升级重构，frontend-migration §4.3）。
 // 两阶段叙事：一问一答（选卡片）→ 选定后原地切启动形态（与启动页同构）；
 // 复用 DownloadProgress / ErrorCard / PulseBar。
+// 2026-09-08 裁定：撤通栏顶栏——原生标题栏之下再叠一条导航视觉上叠加成
+// 「双下巴」（同启动页 af0e3ee 口径）；徽标/版本芯片/控制中心入口经菜单/
+// 托盘/全局快捷键可达，boot 期页面不再重复承载。
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
-import { Layout, ChevronRight, Package, SlidersHorizontal } from "lucide-react"
+import { Layout, ChevronRight, Package } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import { useBootStore } from "@/stores/bootStore"
 import { Emblem } from "@/components/layout/Emblem"
-import { VersionChip } from "@/components/boot/VersionChip"
 import { PulseBar } from "@/components/boot/PulseBar"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { ErrorCard } from "@/components/boot/ErrorCard"
@@ -87,28 +89,7 @@ export function BootSelector() {
       {/* 顶部环境渐变光晕 */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
 
-      {/* 顶栏：wordmark + 版本芯片 */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line/60 bg-panel/75 px-6 py-3 backdrop-blur-md" data-tauri-drag-region>
-        <div data-tauri-drag-region className="flex flex-1 items-center gap-2 select-none">
-          <span className="flex size-2 rounded-full bg-brand ring-4 ring-brand/10" />
-          <span className="font-mono text-xs font-semibold tracking-wider text-ink/90">DSH DOCK</span>
-          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">SELECTOR</span>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            title={t.boot.controlCenterTip}
-            onClick={() => api.openProfilesWindow().catch(() => {})}
-            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
-          >
-            <SlidersHorizontal className="size-3.5 text-brand" />
-            {t.boot.controlCenter}
-          </button>
-          <VersionChip />
-        </div>
-      </header>
-
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-20 pb-12">
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
         {/* Hero */}
         <section className="flex w-full max-w-xl flex-col items-center text-center">
           <div className="relative mb-2">

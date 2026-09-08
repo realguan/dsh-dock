@@ -1546,3 +1546,17 @@
   （问题记录095 #3/#4）留下个小版本。
 - 凭据：cargo test 177 绿 + fmt/clippy/Windows 交叉 check 过；前端
   typecheck/lint/109 测试全绿；tag 构建验证随 CI。
+
+### 2026-09-08 fix(boot)：selector 页双下巴清尾 + 悬浮胶囊误挂壳页面根治 —— guan
+
+- 双下巴残留：af0e3ee 只撤了启动页通栏顶栏，selector 页漏网——原生标题栏
+  之下仍叠一条导航（wordmark/SELECTOR 徽章/控制中心/版本芯片）。同口径
+  撤除；控制中心入口经菜单/托盘/全局快捷键可达，boot 期页面不再重复承载。
+- 根因补刀：截图里 selector 顶上多出的第二颗「控制中心」是 Rust 注入的
+  悬浮胶囊——回环 hostname 判断在 macOS 被壳页面 origin（tauri://localhost，
+  hostname 恰为 localhost）误命中，selector/启动页/控制中心/关于页全部
+  误挂。挂载条件收紧为「location.origin 与 get_workbench_url 精确比对」，
+  origin 未就绪一律不挂；工作台页（http://127.0.0.1:*）行为不变。
+- 凭据：前端 typecheck/lint/112 测试绿；cargo test 182 绿 + fmt/clippy
+  干净（probe_no_open 首跑偶发失败，单跑与全量复跑均过——存量偶发，与
+  本次改动无关，留观）；vite 预览目检 selector 页顶栏已消失。
