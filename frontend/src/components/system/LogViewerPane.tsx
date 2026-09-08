@@ -197,6 +197,7 @@ export function LogViewerPane({
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
             placeholder={t.console.searchPlaceholder}
+            aria-label={t.console.searchPlaceholder}
             className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8 font-mono text-xs outline-none shadow-2xs transition-colors"
           />
         </div>

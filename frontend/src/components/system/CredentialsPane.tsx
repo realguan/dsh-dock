@@ -104,9 +104,9 @@ export function CredentialsPane({
         <div>
           <div className="flex items-center gap-2">
             <KeyRound className="size-4 text-brand" />
-            <h3 className="text-sm font-bold text-ink">
+            <h2 className="text-sm font-bold text-ink">
               {t.console.credentialsTitle}
-            </h3>
+            </h2>
           </div>
           <p className="text-xs text-faint">{t.console.credentialsSubtitle}</p>
         </div>
@@ -269,6 +269,7 @@ export function CredentialsPane({
           <div className="space-y-2 py-2">
             <input
               type="password"
+              aria-label={t.console.keyInputLabel}
               value={inputKey}
               onChange={(e) => setInputKey(e.target.value)}
               placeholder="sk-..."

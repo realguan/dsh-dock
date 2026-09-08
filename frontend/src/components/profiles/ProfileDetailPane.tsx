@@ -309,7 +309,7 @@ export function ProfileDetailPane({
         <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-line-soft text-faint">
           <Package className="size-6" />
         </div>
-        <h3 className="text-ink text-sm font-semibold">{t.profiles.emptySelectTitle}</h3>
+        <h2 className="text-ink text-sm font-semibold">{t.profiles.emptySelectTitle}</h2>
         <p className="text-dim mt-1 max-w-sm text-xs leading-relaxed">
           {t.profiles.emptySelectSubtitle}
         </p>
@@ -454,6 +454,7 @@ export function ProfileDetailPane({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={t.profiles.searchPluginsPlaceholder}
+                  aria-label={t.profiles.searchPluginsPlaceholder}
                   className="border-line bg-bg text-ink placeholder:text-faint focus:border-brand w-full rounded-lg border py-1.5 pr-3 pl-8 font-mono text-xs outline-none transition-colors"
                 />
               </div>
@@ -508,6 +509,7 @@ export function ProfileDetailPane({
                   <input
                     autoFocus
                     disabled={opBusy !== null}
+                    aria-label={t.profiles.pluginInstallPlaceholder}
                     value={installSpec}
                     onChange={(e) => setInstallSpec(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && submitInstall()}

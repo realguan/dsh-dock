@@ -439,6 +439,8 @@ export const t = {
     deleteKey: "清除",
     keyModalTitle: (p: string) => `配置 ${p} API Key`,
     keyModalDesc: "请输入新的 API Key。保存后将写入 .credentials.yaml 并严格维持 0600 权限。",
+    // 输入框无障碍名称（placeholder「sk-...」不足以当标签，2026-09-08 批次 B2）
+    keyInputLabel: "API Key",
     keySaved: "API Key 已成功更新",
     keyRemoved: "API Key 已清除",
     rawYamlToggle: "切换 YAML 原文模式",

@@ -203,6 +203,8 @@ export function PluginOverview({
 
   return (
     <div className="space-y-4">
+      {/* 读屏标题层级：本节标题视觉上由 Tab 承担，补一节 h2 作为卡片标题的父级 */}
+      <h2 className="sr-only">{t.market.subtabInstalled}</h2>
       {/* 顶部搜索、Profile 筛选与分页大小控制栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
@@ -213,6 +215,7 @@ export function PluginOverview({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t.profiles.searchAllPluginsPlaceholder}
+              aria-label={t.profiles.searchAllPluginsPlaceholder}
               className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8.5 font-mono text-xs outline-none transition-colors shadow-2xs"
             />
           </div>
@@ -465,14 +468,17 @@ export function PluginOverview({
             <div className="space-y-4 py-2 text-xs">
               {/* 目标 Profile 选择框（修复宽度截断） */}
               <div className="space-y-1.5">
-                <label className="text-dim font-semibold text-[11px]">
+                <span className="text-dim font-semibold text-[11px]">
                   选择目标 Profile <span className="text-rose-500">*</span>
-                </label>
+                </span>
                 <Select
                   value={selectedDest ?? undefined}
                   onValueChange={(v) => setSelectedDest(v)}
                 >
-                  <SelectTrigger className="h-9 w-full min-w-[240px] rounded-xl border-line bg-bg font-mono text-xs">
+                  <SelectTrigger
+                    aria-label="选择目标 Profile"
+                    className="h-9 w-full min-w-[240px] rounded-xl border-line bg-bg font-mono text-xs"
+                  >
                     <SelectValue placeholder="请选择目标 Profile..." />
                   </SelectTrigger>
                   <SelectContent className="min-w-[240px]">

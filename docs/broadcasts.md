@@ -1709,3 +1709,23 @@
 - 影响：仅周知。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **126 passed**
   （120 → +4 `clipboard` 单测 +2 闸门）。
+
+### 2026-09-08 fix(a11y)：表单标签与标题层级（UI/UX 评审批次 B2）—— guan（AI 起草）
+
+- 表单标签 12 处：8 处搜索框/凭据框只有 placeholder 当标签（placeholder 不是无障碍
+  名称，输入后即消失）→ 补 `aria-label`（搜索框复用同一 i18n 键，凭据框新增
+  `console.keyInputLabel`）；`McpManager` 服务器名/命令/参数 3 处 `<label>` 无
+  `htmlFor` → 补 `id` + `htmlFor`；ENV 组标题与市场安装源只读框的 `<label>` 指向
+  非控件 → 改 `<span>`（ENV 容器加 `role="group"` + `aria-label`）；两处 Radix Select
+  的 `<label>` 无法关联 → `SelectTrigger` 加 `aria-label`。
+- 标题层级：页面 h1 → 面板/节 h2 → 卡片/子块 h3。面板标题 h3→h2（凭据/引擎设置/
+  诊断/偏好×4/会话/MCP/详情空态/客户端更新卡）；`DiagnosticsPane` 5 个指标卡 h4→h3
+  （否则 h2 后跳 h4）；市场与已装总览的卡片 h3 缺父级 h2 → 补 `sr-only` h2。
+  **更正评审原判**：`ProfileDetailPane.tsx:312 h3 先于 :327 h2` 实为空态与选中态两个
+  互斥分支，不存在渲染顺序问题，仅把空态标题对齐到 h2。
+- 机器闸门：`__tests__/formLabels.test.tsx`（`import.meta.glob(?raw)` 扫全量 .tsx）
+  断言每个 `<input>` 至少有 aria-label/aria-labelledby/id/`<label>` 包裹/type=hidden；
+  探针实测被抓出。正则把 `=>` 当整体跳过，避免 onChange 箭头把标签截断。
+- 影响：仅周知。**B2 残留**：tab roving tabindex/aria-controls、prefers-reduced-motion、
+  命中区 <24px、「仅靠 title 命名」15 处。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **128 passed**（126 → +2）。

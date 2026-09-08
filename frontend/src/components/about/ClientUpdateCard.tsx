@@ -80,9 +80,9 @@ export function ClientUpdateCard() {
             <Sparkles className="size-3.5" />
           </div>
           <div>
-            <h3 className="text-ink text-xs font-bold tracking-tight">
+            <h2 className="text-ink text-xs font-bold tracking-tight">
               {t.about.clientLabel}
-            </h3>
+            </h2>
             <p className="text-faint text-[10px]">{t.about.officialChannel}</p>
           </div>
         </div>

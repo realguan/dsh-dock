@@ -202,6 +202,8 @@ export function MarketplaceView({
 
   return (
     <div className="space-y-4">
+      {/* 读屏标题层级：卡片标题是 h3，需要一节 h2 作为父级（视觉无标题，故 sr-only） */}
+      <h2 className="sr-only">{t.market.subtabMarket}</h2>
       {/* 顶部控制舱 */}
       <section className="rounded-2xl border border-line bg-panel p-4 shadow-2xs space-y-3">
         {/* 顶部搜索、排序与刷新栏 */}
@@ -214,6 +216,7 @@ export function MarketplaceView({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t.market.searchPlaceholder}
+              aria-label={t.market.searchPlaceholder}
               className="border-line bg-wash text-ink placeholder:text-faint focus:border-brand focus:bg-panel w-full rounded-xl border py-1.5 pr-8 pl-9 text-xs outline-none shadow-2xs transition-all"
             />
             {searchQuery && (

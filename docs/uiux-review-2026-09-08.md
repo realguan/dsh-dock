@@ -205,8 +205,8 @@
 | 图标按钮无名称 | `McpManager.tsx:348-360`（删除 MCP，**无任何名称**）、`MarketplaceView.tsx:220-227`（清空搜索）、`McpManager.tsx:544-553`（删 ENV 行） | ✅ 已修 |
 | 仅靠 `title` 命名 | 15 处（`ProfileRow.tsx:129` 等）——tooltip 不保证被 AT 读出 | ⬜ 待做 |
 | 未命名 Switch | 7 处：`PreferencesPane.tsx:238,311`、`McpManager.tsx:562`、`LogViewerPane.tsx:144`、`BuildApprovalDialog.tsx:106`、`PluginOverview.tsx:493`、`ProfileDetailPane.tsx:674`（仅 `BootMode.tsx:127` 正确） | ✅ 已修（8 处全带名称 + 类型闸门） |
-| 表单标签 | 11 处 placeholder-only 输入框；`McpManager.tsx:468,481,492,507` 的 `<label>` 与控件无 `htmlFor` 关联；`MarketInstallDialog.tsx:159,198` 同 | ⬜ 待做 |
-| 标题层级 | 每个面板从 `h3` 起（跳过 `h2`）；`ProfileDetailPane.tsx:312` h3 先于 `:327` h2 | ⬜ 待做 |
+| 表单标签 | 11 处 placeholder-only 输入框；`McpManager.tsx:468,481,492,507` 的 `<label>` 与控件无 `htmlFor` 关联；`MarketInstallDialog.tsx:159,198` 同 | ✅ 已修（批次 B2，含源码闸门） |
+| 标题层级 | 每个面板从 `h3` 起（跳过 `h2`）；`ProfileDetailPane.tsx:312` h3 先于 `:327` h2 | ✅ 已修（批次 B2） |
 | tab 语义 | 4 处 `role="tablist"` 无 roving tabindex / `aria-controls`；`SystemConsole.tsx:75-105` 的 `role="tab"` 落在裸 `<nav>` 里 | ⬜ 待做 |
 | 减少动效 | `index.css` 无 `prefers-reduced-motion`；Framer Motion 9 个文件未用 `useReducedMotion`；仅 2 处 `motion-reduce:animate-none` | ⬜ 待做 |
 | 命中区 | <24px：toast 关闭 18×18、`MarketPluginCard` 3 个 22×22、`UpdateBanner` 22×22、MCP 删行 ≈16×16、`Switch` 16×28（高度不足） | ⬜ 待做 |
@@ -274,7 +274,8 @@
 | 批次 | 内容 | 量级 | 状态 |
 |:---|:---|:---|:---|
 | **A（止血）** | U1 引用稳定性；U3 诊断失败不再伪造报告；U4 设置读取失败禁写；U5 配置迁移结果如实通知 | 极小，1 PR | ✅ 已落地（见 §12） |
-| **B（可见性）** | U2 卡片键盘可达；toast 常驻 live region；8 个 Switch 补名称（+类型闸门）；4 个图标按钮补名称 | 小 | ✅ 已落地（见 §13）；余「placeholder-only 输入框 label 关联」「标题层级」留 B2 |
+| **B（可见性）** | U2 卡片键盘可达；toast 常驻 live region；8 个 Switch 补名称（+类型闸门）；4 个图标按钮补名称 | 小 | ✅ B1 已落地（见 §13） |
+| **B2（表单与标题）** | 12 处输入框补名称/关联（+源码闸门）；面板标题层级 h3→h2 并修正子标题 | 小 | ✅ 已落地（见 §14） |
 | **C（视觉达标）** | U6 对比度三改（`faint`→仅装饰、主按钮用 `brand-deep`、原始调色板逐文件替换）；U12 决定 `.dark` 去留 | 中，逐模块 | ⬜ 待做 |
 | **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ⬜ 待做 |
 | **E（一致性）** | U13 图标与动词统一；U15 Select tooltip 补全；i18n 泄漏逐文件收口 | 中，机械但量大 | ⬜ 待做 |
@@ -383,3 +384,26 @@ ADR-0011 §5 三项标记 `[x]`（2026-09-08 hotfix），本评审 16:2x 复核�
 3. 触发一次失败 toast（如断网刷新诊断）→ 读屏应播报整条消息。
 4. 键盘走查 MCP 删除、市场清空搜索、日志自动滚底开关。
 
+
+## 14. 落地记录：批次 B2（2026-09-08，`fix(a11y): 表单标签与标题层级`）
+
+**表单标签（12 处）**
+
+| 类型 | 处 | 修法 |
+|:---|:---|:---|
+| 只有 placeholder 当标签 | 8 处搜索框（`ProfileManager`/`SessionManager`/`LogViewerPane`/`MarketplaceView`/`PluginOverview`/`ProfileDetailPane` 搜索与安装 spec）+ `CredentialsPane` 的 `sk-...` | `aria-label`（搜索框用同一 i18n 键；凭据框新增 `console.keyInputLabel`） |
+| `<label>` 与控件无关联 | `McpManager` 服务器名/命令/参数 ×3 | `htmlFor` + `id`（`mcp-form-*`） |
+| `<label>` 指向非控件 | `McpManager` ENV 组标题、`MarketInstallDialog` 安装源只读框 | 改 `<span>`；ENV 容器加 `role="group"` + `aria-label` |
+| `<label>` 指向 Radix Select | `MarketInstallDialog` 目标 Profile、`PluginOverview` 分发目标 | `SelectTrigger` 加 `aria-label` |
+
+ENV 行的 KEY/VALUE 输入框另加 `aria-label={`${t.profiles.mcpEnv} ${idx+1} KEY`}`（多行可区分）。
+
+**标题层级**：页面 `h1` → 面板/节 `h2` → 卡片/子块 `h3`。
+- 面板标题 `h3`→`h2`：`CredentialsPane`·`DshSettingsPane`·`DiagnosticsPane`·`PreferencesPane`×4·`SessionManager`·`McpManager`·`ProfileDetailPane`（空态）·`ClientUpdateCard`。
+- 子块 `h4`→`h3`：`DiagnosticsPane` 5 个指标卡（否则 `h2` 后跳到 `h4`）。
+- `MarketplaceView`/`PluginOverview` 的卡片标题是 `h3` 但无父级 `h2`（视觉标题由 Tab 承担）→ 补 `sr-only` `h2`。
+- 评审原判「`ProfileDetailPane.tsx:312` h3 先于 `:327` h2」实为**空态与选中态两个互斥分支**，不存在渲染顺序问题；仅把空态标题对齐到 `h2`。
+
+**机器闸门**：`__tests__/formLabels.test.tsx`（`import.meta.glob(?raw)` 扫全量 `.tsx`）
+断言每个 `<input>` 至少有 `aria-label`/`aria-labelledby`/`id`/`<label>` 包裹/`type="hidden"` 之一；
+探针文件实测被抓出。正则把 `=>` 当整体跳过，避免 `onChange` 的箭头把标签截断。

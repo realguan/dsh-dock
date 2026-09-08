@@ -144,9 +144,9 @@ export function PreferencesPane({
             <Globe className="size-4" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-ink">
+            <h2 className="text-sm font-semibold text-ink">
               {t.console.localeLabel}
-            </h3>
+            </h2>
             <p className="text-xs text-faint">{t.console.localeDesc}</p>
           </div>
         </div>
@@ -233,9 +233,9 @@ export function PreferencesPane({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-ink">
+                <h2 className="text-sm font-semibold text-ink">
                   {t.console.autoRestartLabel}
-                </h3>
+                </h2>
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
                     autoRestartActive
@@ -307,9 +307,9 @@ export function PreferencesPane({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-ink">
+                <h2 className="text-sm font-semibold text-ink">
                   {t.console.floatingSwitcherLabel}
-                </h3>
+                </h2>
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
                     floatingSwitcherActive
@@ -347,9 +347,9 @@ export function PreferencesPane({
         <div className="mt-5 border-t border-line/60 pt-4">
           <div className="flex items-center gap-2 mb-2.5">
             <Keyboard className="size-3.5 text-faint" />
-            <h4 className="text-xs font-semibold text-ink">
+            <h2 className="text-xs font-semibold text-ink">
               {t.console.shortcutLabel}
-            </h4>
+            </h2>
             <span className="text-[11px] text-faint">
               ({t.console.shortcutDesc})
             </span>

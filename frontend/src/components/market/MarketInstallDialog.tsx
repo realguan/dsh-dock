@@ -164,7 +164,7 @@ export function MarketInstallDialog({
 
           {/* 目标 Profile 选择 */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-ink flex items-center justify-between">
+            <span className="text-xs font-medium text-ink flex items-center justify-between">
               <span>{t.market.selectProfile}</span>
               {selectedProfile && isAlreadyInstalled && (
                 <span className="text-[10px] text-amber-500 font-mono flex items-center gap-1">
@@ -172,9 +172,12 @@ export function MarketInstallDialog({
                   已在此 Profile 安装（将执行覆盖/重装）
                 </span>
               )}
-            </label>
+            </span>
             <Select value={selectedProfile} onValueChange={setSelectedProfile} disabled={installing}>
-              <SelectTrigger className="w-full h-9 rounded-xl border-line bg-panel text-ink text-xs">
+              <SelectTrigger
+                aria-label={t.market.selectProfile}
+                className="w-full h-9 rounded-xl border-line bg-panel text-ink text-xs"
+              >
                 <SelectValue placeholder={t.market.selectProfile} />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
@@ -203,9 +206,9 @@ export function MarketInstallDialog({
           {/* 安装规范 Spec（只读展示，自动识别 NPM / GitHub） */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-ink">
+              <span className="text-xs font-medium text-ink">
                 {t.market.installSpecLabel}
-              </label>
+              </span>
               {/* 自动识别徽标 */}
               {sourceInfo.type === "npm" ? (
                 <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shadow-2xs">

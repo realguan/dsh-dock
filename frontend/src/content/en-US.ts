@@ -414,6 +414,8 @@ export const enUS: AppCopy = {
     deleteKey: "Clear",
     keyModalTitle: (p: string) => `Configure ${p} API Key`,
     keyModalDesc: "Enter new API Key. Saved directly to .credentials.yaml with 0600 permission.",
+    // Accessible name for the input (placeholder "sk-..." is not a label, batch B2)
+    keyInputLabel: "API Key",
     keySaved: "API Key updated successfully",
     keyRemoved: "API Key cleared",
     rawYamlToggle: "Raw YAML Mode",

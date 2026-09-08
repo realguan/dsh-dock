@@ -287,6 +287,7 @@ export function ProfileManager() {
                 value={profileFilter}
                 onChange={(e) => setProfileFilter(e.target.value)}
                 placeholder={t.profiles.searchPlaceholder}
+                aria-label={t.profiles.searchPlaceholder}
                 className="border-line bg-panel text-ink placeholder:text-faint focus:border-brand w-full rounded-xl border py-1.5 pr-3 pl-8 text-xs outline-none shadow-2xs transition-colors"
               />
             </div>

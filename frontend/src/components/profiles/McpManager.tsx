@@ -250,9 +250,9 @@ export function McpManager({
         <div>
           <div className="flex items-center gap-2">
             <Boxes className="size-4 text-brand" />
-            <h3 className="text-sm font-bold text-ink">
+            <h2 className="text-sm font-bold text-ink">
               {t.profiles.mcpTitle}
-            </h3>
+            </h2>
           </div>
           <p className="text-xs text-faint">{t.profiles.mcpSubtitle}</p>
         </div>
@@ -466,10 +466,11 @@ export function McpManager({
 
           <div className="space-y-3.5 py-2 text-xs">
             <div>
-              <label className="text-faint font-semibold text-[11px]">
+              <label htmlFor="mcp-form-name" className="text-faint font-semibold text-[11px]">
                 {t.profiles.mcpServerName} <span className="text-rose-500">*</span>
               </label>
               <input
+                id="mcp-form-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
                 placeholder="例如 github, filesystem, postgres"
@@ -479,10 +480,11 @@ export function McpManager({
 
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
-                <label className="text-faint font-semibold text-[11px]">
+                <label htmlFor="mcp-form-command" className="text-faint font-semibold text-[11px]">
                   {t.profiles.mcpCommand}
                 </label>
                 <input
+                  id="mcp-form-command"
                   value={formCommand}
                   onChange={(e) => setFormCommand(e.target.value)}
                   placeholder="npx / uvx"
@@ -490,10 +492,11 @@ export function McpManager({
                 />
               </div>
               <div className="col-span-2">
-                <label className="text-faint font-semibold text-[11px]">
+                <label htmlFor="mcp-form-args" className="text-faint font-semibold text-[11px]">
                   {t.profiles.mcpArgs}
                 </label>
                 <input
+                  id="mcp-form-args"
                   value={formArgs}
                   onChange={(e) => setFormArgs(e.target.value)}
                   placeholder="-y @modelcontextprotocol/server-..."
@@ -503,11 +506,11 @@ export function McpManager({
             </div>
 
             {/* 环境变量列表 */}
-            <div>
+            <div role="group" aria-label={t.profiles.mcpEnv}>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-faint font-semibold text-[11px]">
+                <span className="text-faint font-semibold text-[11px]">
                   {t.profiles.mcpEnv}
-                </label>
+                </span>
                 <button
                   type="button"
                   onClick={() => setFormEnv([...formEnv, { key: "", value: "" }])}
@@ -524,6 +527,7 @@ export function McpManager({
                     <div key={idx} className="flex items-center gap-1.5">
                       <input
                         value={item.key}
+                        aria-label={`${t.profiles.mcpEnv} ${idx + 1} KEY`}
                         onChange={(e) => {
                           const next = [...formEnv]
                           next[idx].key = e.target.value
@@ -534,6 +538,7 @@ export function McpManager({
                       />
                       <input
                         value={item.value}
+                        aria-label={`${t.profiles.mcpEnv} ${idx + 1} VALUE`}
                         onChange={(e) => {
                           const next = [...formEnv]
                           next[idx].value = e.target.value

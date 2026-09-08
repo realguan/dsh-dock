@@ -136,9 +136,9 @@ export function DiagnosticsPane({
       {/* 顶部工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-bold text-ink">
+          <h2 className="text-sm font-bold text-ink">
             {t.console.diagnosticsTitle}
-          </h3>
+          </h2>
           <p className="text-xs text-faint">{t.console.diagnosticsSubtitle}</p>
         </div>
 
@@ -191,9 +191,9 @@ export function DiagnosticsPane({
                 {node.isReady ? t.console.statusReady : t.console.statusMissing}
               </span>
             </div>
-            <h4 className="mt-2.5 text-xs font-semibold text-ink">
-              {t.console.nodeCard}
-            </h4>
+            <h3 className="mt-2.5 text-xs font-semibold text-ink">
+
+            </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
               {node.version || "未检出"}
             </p>
@@ -220,9 +220,9 @@ export function DiagnosticsPane({
                 {pnpm.isReady ? t.console.statusReady : t.console.statusMissing}
               </span>
             </div>
-            <h4 className="mt-2.5 text-xs font-semibold text-ink">
-              {t.console.pnpmCard}
-            </h4>
+            <h3 className="mt-2.5 text-xs font-semibold text-ink">
+
+            </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
               {pnpm.isReady ? (pnpm.version ? `v${pnpm.version}` : "已全局就绪") : "缺失"}
             </p>
@@ -249,9 +249,9 @@ export function DiagnosticsPane({
                 {dsh.isReady ? t.console.statusReady : t.console.statusMissing}
               </span>
             </div>
-            <h4 className="mt-2.5 text-xs font-semibold text-ink">
-              {t.console.dshCard}
-            </h4>
+            <h3 className="mt-2.5 text-xs font-semibold text-ink">
+
+            </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
               {dsh.isReady ? (dsh.version ? `v${dsh.version}` : "官方源 (已就绪)") : "官方源 (未检出)"}
             </p>
@@ -272,9 +272,9 @@ export function DiagnosticsPane({
                 {platform.os} ({platform.arch})
               </span>
             </div>
-            <h4 className="mt-2.5 text-xs font-semibold text-ink">
-              {t.console.storageCard}
-            </h4>
+            <h3 className="mt-2.5 text-xs font-semibold text-ink">
+
+            </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
               {formatBytes(storage.totalBytes)}
             </p>
@@ -290,9 +290,9 @@ export function DiagnosticsPane({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Database className="size-4 text-brand" />
-            <h4 className="text-xs font-semibold text-ink">
+            <h3 className="text-xs font-semibold text-ink">
               DSH_HOME 存储空间分布
-            </h4>
+            </h3>
           </div>
           <span className="font-mono text-xs font-medium text-dim">
             {t.console.totalUsage(formatBytes(storage.totalBytes))}
