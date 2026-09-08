@@ -345,6 +345,10 @@ export const t = {
     distributeTitle: (pkg: string) => `将「${pkg}」分发安装到其他 Profile`,
     distributeNote: "选择目标 Profile，将以相同版本执行安装并可连带迁移配置",
     distributeDone: (pkg: string, target: string) => `已成功将「${pkg}」安装至「${target}」`,
+    distributeConfigFailed: (pkg: string, target: string, reason: string) =>
+      `「${pkg}」已安装至「${target}」，但配置迁移失败：${reason}`,
+    distributeConfigSkipped: (pkg: string, target: string) =>
+      `「${pkg}」已安装至「${target}」；目标已有同名配置行，未覆盖`,
     copyPatchSuccess: "Patch YAML 内容已复制到剪贴板",
     rawYamlHint: "此为 dsh 生成的 cordis.patch.yml 权威底层配置（只读查看与诊断）",
     filterAll: "全部",
@@ -474,6 +478,11 @@ export const t = {
     shortcutShiftP: "命令面板风格（⌘ + ⇧ + P / Ctrl + ⇧ + P）",
     saveSuccess: "设置已保存",
     saveFailed: "设置保存失败",
+    // 读取失败时停用写入：settings.json 是整体覆盖写，拿不到真实基线就回写
+    // 会清空其他键（2026-09-08 裁定，见 lib/shellSettings.ts）
+    settingsLoadFailed: "偏好设置读取失败——为避免覆盖写坏其他配置，已停用保存",
+    retryLoad: "重试",
+    diagnosticsLoadFailed: "诊断数据采集失败",
     // 诊断大盘
     diagnosticsTitle: "运行环境诊断大盘",
     diagnosticsSubtitle: "环境健康实时采集 · 真实解析路径与存储分布",

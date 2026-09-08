@@ -1,6 +1,7 @@
 // DiagnosticsPane.tsx —— 运行环境健康诊断与存储大盘（4.11）。
 import { useCallback, useEffect, useState } from "react"
 import {
+  AlertTriangle,
   Check,
   Copy,
   Cpu,
@@ -38,6 +39,7 @@ export function DiagnosticsPane({
   const [loading, setLoading] = useState(
     !cachedReport || Date.now() - lastFetchedAt >= CACHE_TTL_MS,
   )
+  const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const fetchDiagnostics = useCallback(
@@ -53,6 +55,7 @@ export function DiagnosticsPane({
       }
 
       setLoading(true)
+      setError(null)
       api
         .getSystemDiagnostics()
         .then((r) => {
@@ -60,7 +63,12 @@ export function DiagnosticsPane({
           lastFetchedAt = Date.now()
           setReport(r)
         })
-        .catch((e) => onNotice(String(e), "warn"))
+        .catch((e) => {
+          // 2026-09-08 裁定：采集失败**不得**降级成「全缺失」报告——那会让用户
+          // 看到一份伪造的环境损坏结论（Node/pnpm/dsh 全部未检出）。
+          setError(String(e))
+          onNotice(String(e), "warn")
+        })
         .finally(() => setLoading(false))
     },
     [onNotice],
@@ -89,20 +97,30 @@ export function DiagnosticsPane({
     )
   }
 
-  const { node, pnpm, dsh, storage, platform } = report ?? {
-    node: { path: "", version: "", source: "", isReady: false },
-    pnpm: { path: "", version: null, isReady: false },
-    dsh: { path: "", version: null, source: "", isReady: false },
-    storage: {
-      dshHome: "",
-      totalBytes: 0,
-      profilesBytes: 0,
-      sessionsBytes: 0,
-      profilesCount: 0,
-      sessionsCount: 0,
-    },
-    platform: { os: "", arch: "" },
+  // 采集失败且无缓存 → 报错块，绝不渲染伪造的「全部未检出」报告
+  if (!report) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
+        <AlertTriangle className="size-5 text-warn" />
+        <p className="max-w-md text-xs text-dim">
+          {t.console.diagnosticsLoadFailed}
+          <br />
+          <span className="font-mono text-xs break-all text-faint">{error}</span>
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => fetchDiagnostics(true)}
+          className="gap-1 text-xs"
+        >
+          <RefreshCw className="size-3" />
+          <span>{t.console.retryLoad}</span>
+        </Button>
+      </div>
+    )
   }
+
+  const { node, pnpm, dsh, storage, platform } = report
 
   const profilesPercent =
     storage.totalBytes > 0

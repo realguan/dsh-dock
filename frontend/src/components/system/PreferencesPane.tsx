@@ -1,10 +1,12 @@
 // PreferencesPane.tsx —— 界面语言偏好与崩溃高可用守护配置（4.12 & 4.13）。
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
+  AlertTriangle,
   Check,
   Globe,
   Keyboard,
   LoaderCircle,
+  RefreshCw,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -12,8 +14,10 @@ import {
   Sparkles,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { patchShellSettings } from "@/lib/shellSettings"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n, type LocaleKey } from "@/stores/i18nStore"
+import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import type { ShellSettings } from "@/types/ipc"
 
@@ -28,14 +32,27 @@ export function PreferencesPane({
   const [settings, setSettings] = useState<ShellSettings | null>(null)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadSettings = useCallback(() => {
+    setLoading(true)
+    setLoadError(null)
     api
       .getShellSettings()
       .then((s) => setSettings(s))
-      .catch(() => setSettings({}))
+      .catch((e) => {
+        // 2026-09-08 裁定：读取失败**绝不**回退 `{}`。settings.json 是整体覆盖写
+        // （settings.rs::save 序列化全字段），拿空对象当基线回写会把本次没碰过的
+        // 键（defaultProfile / locale / dismissedUpdate…）清空。失败即停用保存。
+        setSettings(null)
+        setLoadError(String(e))
+      })
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
 
   const handleLanguageChange = (key: LocaleKey) => {
     void setLocale(key).then(() => {
@@ -46,13 +63,9 @@ export function PreferencesPane({
   const handleToggleAutoRestart = async (checked: boolean) => {
     if (!settings || saving) return
     setSaving(true)
-    const next: ShellSettings = {
-      ...settings,
-      autoRestart: checked,
-    }
     try {
-      await api.setShellSettings(next)
-      setSettings(next)
+      // 读改写走安全基线：基线来自一次成功读取，patch 只带本次要改的键
+      setSettings(await patchShellSettings({ autoRestart: checked }))
       onNotice(t.console.saveSuccess, "ok")
     } catch (e) {
       onNotice(`${t.console.saveFailed}: ${e}`, "warn")
@@ -64,13 +77,8 @@ export function PreferencesPane({
   const handleToggleFloatingSwitcher = async (checked: boolean) => {
     if (!settings || saving) return
     setSaving(true)
-    const next: ShellSettings = {
-      ...settings,
-      showFloatingSwitcher: checked,
-    }
     try {
-      await api.setShellSettings(next)
-      setSettings(next)
+      setSettings(await patchShellSettings({ showFloatingSwitcher: checked }))
       onNotice(t.console.saveSuccess, "ok")
     } catch (e) {
       onNotice(`${t.console.saveFailed}: ${e}`, "warn")
@@ -82,13 +90,8 @@ export function PreferencesPane({
   const handleChangeShortcut = async (key: string) => {
     if (!settings || saving) return
     setSaving(true)
-    const next: ShellSettings = {
-      ...settings,
-      switcherShortcut: key,
-    }
     try {
-      await api.setShellSettings(next)
-      setSettings(next)
+      setSettings(await patchShellSettings({ switcherShortcut: key }))
       onNotice(t.console.saveSuccess, "ok")
     } catch (e) {
       onNotice(`${t.console.saveFailed}: ${e}`, "warn")
@@ -102,6 +105,28 @@ export function PreferencesPane({
       <div className="flex h-64 items-center justify-center text-xs text-faint">
         <LoaderCircle className="mr-2 size-4 animate-spin text-brand" />
         <span>正在加载偏好设置…</span>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
+        <AlertTriangle className="size-5 text-warn" />
+        <p className="max-w-md text-xs text-dim">
+          {t.console.settingsLoadFailed}
+          <br />
+          <span className="font-mono text-xs break-all text-faint">{loadError}</span>
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={loadSettings}
+          className="gap-1 text-xs"
+        >
+          <RefreshCw className="size-3" />
+          <span>{t.console.retryLoad}</span>
+        </Button>
       </div>
     )
   }

@@ -154,20 +154,44 @@ export function PluginOverview({
         throw new Error(outcome.detail)
       }
 
-      // 2. 如果勾选了带配置迁移，复制 patch 配置行
-      if (withConfig && distributeTarget.sources[0]) {
+      // 2. 如果勾选了带配置迁移，复制 patch 配置行。
+      //    2026-09-08 裁定：迁移结果必须如实通知——失败或未覆盖时**不得**仍弹
+      //    「分发完成」成功提示（用户勾了迁移却只看到成功，会以为配置也过去了）。
+      let notice: { text: string; kind: "ok" | "warn" } = {
+        text: t.profiles.distributeDone(distributeTarget.pkg, selectedDest),
+        kind: "ok",
+      }
+      const sourceProfile = distributeTarget.sources[0]
+      if (withConfig && sourceProfile) {
         try {
-          await api.copyPluginConfig(
-            distributeTarget.sources[0],
+          const outcome = await api.copyPluginConfig(
+            sourceProfile,
             selectedDest,
             distributeTarget.pkg,
           )
-        } catch {
-          // 配置迁移非阻断
+          // copied === 0 且非 skipped 不会出现（来源无配置行时 Rust 侧直接报错）
+          if (outcome.skipped_existing) {
+            notice = {
+              text: t.profiles.distributeConfigSkipped(
+                distributeTarget.pkg,
+                selectedDest,
+              ),
+              kind: "warn",
+            }
+          }
+        } catch (e) {
+          notice = {
+            text: t.profiles.distributeConfigFailed(
+              distributeTarget.pkg,
+              selectedDest,
+              String(e),
+            ),
+            kind: "warn",
+          }
         }
       }
 
-      onNotice?.(t.profiles.distributeDone(distributeTarget.pkg, selectedDest), "ok")
+      onNotice?.(notice.text, notice.kind)
       setDistributeTarget(null)
       loadData()
     } catch (e) {

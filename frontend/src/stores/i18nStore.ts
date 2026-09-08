@@ -1,6 +1,7 @@
 // i18nStore.ts —— 轻量响应式多语言状态机（4.13 i18n 引擎）。
 import { create } from "zustand"
 import { api } from "@/lib/tauri"
+import { patchShellSettings } from "@/lib/shellSettings"
 import { t as zhCN, type AppCopy } from "@/content/zh-CN"
 import { enUS } from "@/content/en-US"
 
@@ -49,13 +50,10 @@ export const useI18nStore = create<I18nState>((set) => ({
       t: dict,
     })
 
-    // 持久化到 settings.json
+    // 持久化到 settings.json：经安全基线读改写（读失败不写，避免清空其他键，
+    // 2026-09-08 裁定，见 lib/shellSettings.ts）
     try {
-      const curr = await api.getShellSettings().catch(() => ({}))
-      await api.setShellSettings({
-        ...curr,
-        locale: pref === "system" ? null : pref,
-      })
+      await patchShellSettings({ locale: pref === "system" ? null : pref })
     } catch {
       // 忽略存储失败，保持内存中生效
     }

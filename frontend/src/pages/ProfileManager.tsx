@@ -252,21 +252,18 @@ export function ProfileManager() {
         </div>
       </header>
 
-      {/* 主视图区 */}
+      {/* 主视图区。
+          2026-09-08 裁定：onNotice 必须传 useCallback 稳定的引用（此处即 showToast
+          本身），禁止写成 `(msg, kind) => showToast(msg, kind)` 内联箭头——内联每次
+          渲染都是新引用，子面板 `useCallback([onNotice])` 随之失效 → `useEffect`
+          重跑 → 加载失败又 onNotice → setToast → 父重渲染 → 死循环（McpManager
+          踩过同坑，见其 `:108` 注释）。传引用，不传包装。 */}
       {view === "console" ? (
-        <SystemConsole
-          onNotice={(msg, kind) => showToast(msg, kind)}
-        />
+        <SystemConsole onNotice={showToast} />
       ) : view === "sessions" ? (
-        <SessionManager
-          refreshKey={overviewTick}
-          onNotice={(msg, kind) => showToast(msg, kind)}
-        />
+        <SessionManager refreshKey={overviewTick} onNotice={showToast} />
       ) : view === "plugins" ? (
-        <PluginHub
-          refreshKey={overviewTick}
-          onNotice={(msg, kind) => showToast(msg, kind)}
-        />
+        <PluginHub refreshKey={overviewTick} onNotice={showToast} />
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           {/* 左侧 List：Profile 列表导航 */}

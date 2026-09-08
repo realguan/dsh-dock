@@ -1585,3 +1585,33 @@
 - 挂账实测：git dep 的安装/更新/卸载需 dev 环境各实测一轮（update 对
   git dep 是否重解析默认分支存疑）。
 - 凭据：cargo test 184 绿 + fmt/clippy 干净；前端 typecheck/lint/117 测试绿。
+
+### 2026-09-08 fix(uiux)：静默失败与引用不稳止血（UI/UX 评审批次 A：U1/U3/U4/U5）—— guan（AI 起草）
+
+- 依据：`docs/uiux-review-2026-09-08.md` 批次 A（「用户看到的与事实相反」类）。
+  ADR-0011 合入 `413570d` 后其文件面占用释放，本批为释放后的首个前端改动。
+- U1 BLOCKER（5 个面板无限重试 + 无限弹 toast）：`ProfileManager` 曾以**内联箭头**
+  传 `onNotice` → 每次渲染新引用 → 子面板 `useCallback([onNotice])` 失效 →
+  `useEffect` 重跑 → 失败又通知 → `setToast` → 父重渲染 → 死循环。三处改传稳定引用
+  `showToast`，并加裁定注释说明为何禁内联（McpManager 已踩过同坑）。
+- U3 HIGH（诊断页伪造结论）：采集失败时 `report ?? {全缺失}` 渲染出「Node/pnpm/dsh
+  全部未检出」的**伪造环境损坏报告**。改为失败且无缓存 → 报错块 + 重试，伪造分支删除。
+- U4 HIGH（settings.json 键丢失）：`set_shell_settings` 是**整体覆盖写**
+  （`settings.rs::save` 序列化全字段、无 merge），而 `PreferencesPane` 与
+  `i18nStore.setLocale` 都在读取失败时以 `{}` 为基线回写 → 清空 `defaultProfile` /
+  `locale` / `dismissedUpdate` 等未参与本次修改的键。抽 `lib/shellSettings.ts`
+  安全基线：基线必须来自一次**成功**读取，读失败即中止（不写）；两处调用点收口；
+  设置页读取失败改为渲染错误块 + 重试并停用保存。
+- U5 HIGH（迁移假成功）：分发时勾了「迁移配置」但 `copyPluginConfig` 失败/未覆盖，
+  仍弹「分发完成」。改为按实际结果通知（失败/未覆盖 → warn 文案）。
+- 影响：仅周知。**遗留两条**已登记问题记录：① `setLocale` 存储失败仍 resolve →
+  设置页会弹「设置已保存」（假成功 toast，批次 B）；② Rust 侧 `set_shell_settings`
+  无 merge 语义，前端安全基线只是止血，任何新调用点仍可能踩坑——建议后续在
+  `settings.rs` 补 merge 或收窄命令面（收窄属契约改动 → 先 ADR）。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **123 passed**
+  （117 → +4 `shellSettings` 纯单测 +2 `onNoticeStability` 源码闸门）。
+  复现先行：安全基线改回 `read().catch(() => ({}))` → 首条即红（已验证）；
+  `onNoticeStability` 对修复前 HEAD 复算命中 `ProfileManager.tsx:258,263,268`，
+  修复后 0 命中（已验证）。U1 缺陷对 tsc/oxlint 不可见（类型一致），故用与
+  `ipc.rs` gate_tests 同口径的源码文本闸门兜底（`?raw` 读入，不引 DOM 测试栈）。
+
