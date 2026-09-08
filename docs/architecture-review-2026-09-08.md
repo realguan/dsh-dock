@@ -145,7 +145,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ✅ 已落地（见 §11/§12/§13） |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
-| 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10；HTTP seam 未做） |
+| 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10/§14；仅 `repair-session.mjs` fixture 欠） |
 
 ## 4. 不建议做
 
@@ -275,9 +275,8 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 补 5 条：未超限原样返回 / 恰好等于上限放行 / 超限报明确文案 / 空体合法 / 非 UTF-8 带上下文报错。
 `updates.rs` 测试 4 → 9 条。
 
-**未做（仍是批次 5 的欠账）**：`updates.rs` 的 **HTTP seam 注入**（把 `ureq::Agent` 调用
-收成可注入闭包，离线覆盖镜像链回退/超时语义）；`repair-session.mjs` fixture 驱动。
-现状：镜像链回退仍只能靠真网络或人工验证。
+**未做（仍是批次 5 的欠账）**：`updates.rs` 的 **HTTP seam 注入**（→ 已于 §14 收口）；
+`repair-session.mjs` fixture 驱动。现状：镜像链回退仍只能靠真网络或人工验证。
 
 ## 11. 批次 2 第一步落地记录（2026-09-08，`refactor(tauri): 拆出 commands 模块`）
 
@@ -354,3 +353,42 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 
 **验证**：`cargo test` 193 绿 · `cargo fmt --check` 干净 · `clippy -D warnings` 干净 ·
 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿（无行为变更，纯搬迁）。
+
+## 14. 批次 5 欠账收口：`updates.rs` HTTP seam（2026-09-08，`test(rust): 网络面 HTTP seam 注入 + 镜像链离线覆盖`）
+
+**P6 的第一条缺口（唯一网络面几乎无测试）就此关闭**：把 `ureq::Agent` 调用收成
+`trait HttpGet`（`get_text` / `get_bytes`，实现方负责超时与体积上限），生产实现
+`UreqGet`，测试注入 `FakeHttp`（URL 子串 → 预置响应 + 调用顺序记录）——不触网、
+不起 mock server，逐条覆盖镜像链编排。
+
+| seam 点 | 生产入口 | 可注入实现 |
+|:---|:---|:---|
+| dsh packument | `fetch_packument` | `fetch_packument_with(urls, http)` |
+| 客户端最新版 | `fetch_client_latest` | `fetch_client_latest_with(http)` |
+| 插件包版本 | `npm_packument_versions` | `npm_packument_versions_with(bases, http, package)` |
+| 市场 Registry | `fetch_market_registry` | `fetch_market_registry_with(http)` |
+| node 映射包 | `fetch_node_map` | `fetch_node_map_with(bases, http)` |
+
+**镜像链列表一并注入**（生产传 `npm_registry_urls()` / `registry_chain()`，测试传固定链）：
+否则用例会跟着 `DSH_DOCK_NPM_REGISTRIES` 环境变量漂移——这正是「测试依赖环境」的老坑。
+
+**新增 11 条离线用例**（`updates.rs` 9 → 20；全仓 Rust 193 → **204 绿**）：坏 JSON 跳过 →
+次镜像 / 传输错误跳过 → 次镜像 / 全失败报最后一个错误 / packument 形状不符回落次镜像 /
+全镜像形状不符报「形状不符 + 镜像名」/ 非法包名零请求 / 市场 CDN 失败回落 GitHub raw /
+市场全失败报末错 / node 映射 packument→tarball 两步且包名 `%2F` 编码 / node 映射首镜像
+失败回落 / node 映射全失败为 `None`。node 映射两条用 `flate2` + `tar` 现造 tarball，
+连「内存解包取 map.json + map.json.sig 双文件」一并覆盖。
+
+**行为差异（有意，且更严）**：旧 `fetch_node_map` 用 `.take(cap)` 静默截断 tarball、
+读失败即整体放弃（`.ok()?`）；现走 `get_bytes` 的显式上限（超限报错）且读失败回落次镜像，
+与 `read_body_capped` 同口径。
+
+**保留未改（记账）**：`fetch_node_map` 内 `dist-tags.latest` / `dist.tarball` 缺失时仍是
+`?` 提前返回 `None`（连带跳过剩余镜像）。属既有语义，本次纯做 seam 不动行为；正常
+packument 不会缺这两键，坏响应路径已被 `continue` 覆盖。
+
+**仍是批次 5 欠账**：`repair-session.mjs` fixture 驱动（P6 第二条缺口的脚本侧；
+`sessions.rs` 侧的硬失败已在 §10② 落地）。
+
+**验证**：`cargo test` 204 绿 · `cargo fmt --check` 干净 · `clippy -D warnings` 干净 ·
+前端 `typecheck`/`oxlint` 0 warning/`test` 135 全绿/`build` 通过（本次未动前端，仅回归确认）。

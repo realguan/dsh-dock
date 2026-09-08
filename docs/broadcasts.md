@@ -1884,3 +1884,23 @@
 - 影响：仅周知，无行为变更（纯搬迁 + 可见性调整）。
 - 凭据：`cargo test` **193 passed** · `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。
+
+### 2026-09-08 test(rust)：网络面 HTTP seam 注入 + 镜像链离线覆盖（架构评审批次 5 欠账收口）—— guan（AI 起草）
+
+- **P6 第一条缺口（唯一网络面几乎无测试）关闭**：`updates.rs` 的 `ureq::Agent` 调用收成
+  `trait HttpGet`（`get_text`/`get_bytes`），生产实现 `UreqGet`，测试注入 `FakeHttp`
+  （URL 子串 → 预置响应 + 调用顺序记录）——不触网、不起 mock server。
+- seam 点 5 处：`fetch_packument_with` / `fetch_client_latest_with` /
+  `npm_packument_versions_with` / `fetch_market_registry_with` / `fetch_node_map_with`。
+  镜像链列表一并注入（生产传 `npm_registry_urls()`/`registry_chain()`，测试传固定链），
+  避免用例跟着 `DSH_DOCK_NPM_REGISTRIES` 漂移。
+- 新增 11 条离线用例：镜像链回退（坏 JSON / 传输错误 / 形状不符）、全失败报末错、
+  非法包名零请求、市场 CDN → GitHub raw 回落、node 映射 packument→tarball 两步
+  与 `%2F` 编码、`flate2`+`tar` 现造 tarball 覆盖双文件解包。
+- **行为差异（有意，更严）**：`fetch_node_map` 旧 `.take(cap)` 静默截断 → 现显式超限报错，
+  读失败回落次镜像（与 `read_body_capped` 同口径）。`dist-tags.latest` 缺失仍是既有
+  `?` 提前返回语义，本次不动（已记账）。
+- 影响：仅周知，无行为变更（对外 IPC / 契约未动）。
+- 凭据：`cargo test` **204 passed**（193 → +11）· `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint` 0 warning/
+  `test` 135 全绿/`build` 通过（未动前端，仅回归确认）。

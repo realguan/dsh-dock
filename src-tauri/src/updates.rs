@@ -246,16 +246,16 @@ fn parse_node_plan(map: &[u8]) -> Option<NodePlan> {
 /// 拉映射包：packument（dist-tags.latest → tarball URL）→ tarball → 内存解包。
 /// 走既有 registry 镜像链，不引入新 CDN 语义。
 fn fetch_node_map() -> Option<(Vec<u8>, String)> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
-        .build();
-    for base in registry_chain() {
+    fetch_node_map_with(&registry_chain(), &UreqGet::new())
+}
+
+/// `fetch_node_map` 的可注入实现（离线覆盖镜像链回退 / 坏响应跳过）。
+/// `bases` = registry 基址链（生产传 `registry_chain()`，测试传固定链）。
+fn fetch_node_map_with(bases: &[String], http: &dyn HttpGet) -> Option<(Vec<u8>, String)> {
+    for base in bases {
         // scoped 包在 registry URL 里必须把 `/` 编码为 %2F（与 npm CLI 行为一致）。
         let packument_url = format!("{base}/{}", NODE_MAP_PACKAGE.replace('/', "%2F"));
-        let Ok(resp) = agent.get(&packument_url).call() else {
-            continue;
-        };
-        let Ok(text) = read_body_capped(resp.into_reader(), PACKUMENT_MAX_BYTES) else {
+        let Ok(text) = http.get_text(&packument_url, PACKUMENT_MAX_BYTES, None) else {
             continue;
         };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
@@ -271,14 +271,9 @@ fn fetch_node_map() -> Option<(Vec<u8>, String)> {
             .and_then(|ver| ver.get("dist"))
             .and_then(|d| d.get("tarball"))
             .and_then(|t| t.as_str())?;
-        let Ok(resp) = agent.get(tarball).call() else {
+        let Ok(tgz) = http.get_bytes(tarball, NODE_MAP_MAX_BYTES) else {
             continue;
         };
-        let mut tgz = vec![];
-        resp.into_reader()
-            .take(NODE_MAP_MAX_BYTES)
-            .read_to_end(&mut tgz)
-            .ok()?;
         if let Some(found) = extract_node_map_files(&tgz) {
             return Some(found);
         }
@@ -383,24 +378,80 @@ fn read_body_capped(reader: impl Read, cap: u64) -> Result<String> {
     Ok(text)
 }
 
+// ---------- HTTP seam（2026-09-08 架构评审批次 5，P6） ----------
+//
+// 本模块是壳的唯一网络面，但「镜像链回退 / 坏响应跳过 / 全失败收敛」这些**编排逻辑**
+// 过去只能靠真网络或人工验证。这里把「取一个 URL」抽成 trait：生产实现走 ureq，
+// 测试注入假体 → 离线覆盖编排分支（不触网、不依赖 mock server）。
+
+/// 单次 HTTP GET 的最小面。实现负责超时与体积上限。
+pub(crate) trait HttpGet {
+    /// 取响应体文本（超过 `cap` 视为失败）。
+    fn get_text(&self, url: &str, cap: u64, user_agent: Option<&str>) -> Result<String>;
+    /// 取响应体字节（tarball 等二进制）。
+    fn get_bytes(&self, url: &str, cap: u64) -> Result<Vec<u8>>;
+}
+
+/// 生产实现：ureq 阻塞客户端（唯一网络面的唯一出口）。
+struct UreqGet {
+    agent: ureq::Agent,
+}
+
+impl UreqGet {
+    fn new() -> Self {
+        Self {
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
+                .build(),
+        }
+    }
+}
+
+impl HttpGet for UreqGet {
+    fn get_text(&self, url: &str, cap: u64, user_agent: Option<&str>) -> Result<String> {
+        let mut req = self.agent.get(url);
+        if let Some(ua) = user_agent {
+            req = req.set("User-Agent", ua);
+        }
+        let resp = req.call().with_context(|| format!("请求 {url} 失败"))?;
+        read_body_capped(resp.into_reader(), cap).with_context(|| format!("{url} 响应体读取失败"))
+    }
+
+    fn get_bytes(&self, url: &str, cap: u64) -> Result<Vec<u8>> {
+        let resp = self
+            .agent
+            .get(url)
+            .call()
+            .with_context(|| format!("请求 {url} 失败"))?;
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .take(cap + 1)
+            .read_to_end(&mut buf)
+            .with_context(|| format!("{url} 响应体读取失败"))?;
+        if buf.len() as u64 > cap {
+            anyhow::bail!("{url} 响应体超过 {cap} 字节上限");
+        }
+        Ok(buf)
+    }
+}
+
 /// 拉取 packument（镜像链逐个尝试，首个成功即返回）。
 fn fetch_packument() -> Result<serde_json::Value> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
-        .build();
+    fetch_packument_with(&npm_registry_urls(), &UreqGet::new())
+}
+
+/// `fetch_packument` 的可注入实现（离线覆盖镜像链回退与坏响应跳过）。
+/// `urls` = 完整 packument URL 链（生产传 `npm_registry_urls()`，测试传固定链）。
+fn fetch_packument_with(urls: &[String], http: &dyn HttpGet) -> Result<serde_json::Value> {
     let mut last_err: Option<anyhow::Error> = None;
-    for url in npm_registry_urls() {
+    for url in urls {
         tracing::info!("读取 dsh 版本列表：{url}");
-        match agent.get(&url).call() {
-            Ok(resp) => match read_body_capped(resp.into_reader(), PACKUMENT_MAX_BYTES) {
-                Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-                    Ok(v) => return Ok(v),
-                    Err(e) => last_err = Some(e.into()),
-                },
-                // read_body_capped 已返回 anyhow::Error，无需再转换
-                Err(e) => last_err = Some(e),
+        match http.get_text(url, PACKUMENT_MAX_BYTES, None) {
+            Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(v) => return Ok(v),
+                Err(e) => last_err = Some(e.into()),
             },
-            Err(e) => last_err = Some(anyhow::anyhow!("{url}: {e}")),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("registry 不可达")))
@@ -473,16 +524,15 @@ fn parse_release_tag(body: &str) -> Option<String> {
 
 /// 客户端最新版（feed 未配置 → None，不触网）。
 fn fetch_client_latest() -> Option<String> {
+    fetch_client_latest_with(&UreqGet::new())
+}
+
+/// `fetch_client_latest` 的可注入实现（离线可测）。
+fn fetch_client_latest_with(http: &dyn HttpGet) -> Option<String> {
     let url = APP_RELEASE_FEED?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
-        .build();
-    let resp = agent
-        .get(url)
-        .set("User-Agent", "dsh-dock-updater")
-        .call()
+    let text = http
+        .get_text(url, 1024 * 1024, Some("dsh-dock-updater"))
         .ok()?;
-    let text = read_body_capped(resp.into_reader(), 1024 * 1024).ok()?;
     parse_release_tag(&text)
 }
 
@@ -693,26 +743,26 @@ fn parse_packument_versions(text: &str) -> Option<(String, Vec<String>)> {
 /// 包名须先过 `plugins::validate_plugin_spec`（调用方把关），此处只做
 /// URL 安全拼装（scoped `/` → `%2F`，与 npm CLI 一致）。
 pub fn npm_packument_versions(package: &str) -> Result<(String, Vec<String>), String> {
+    npm_packument_versions_with(&registry_chain(), &UreqGet::new(), package)
+}
+
+/// `npm_packument_versions` 的可注入实现（离线覆盖镜像链回退）。
+/// `bases` = registry 基址链（生产传 `registry_chain()`，测试传固定链）。
+fn npm_packument_versions_with(
+    bases: &[String],
+    http: &dyn HttpGet,
+    package: &str,
+) -> Result<(String, Vec<String>), String> {
     if package.is_empty() || package.starts_with('-') {
         return Err("包名非法".to_string());
     }
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
-        .build();
     let mut last_err = String::from("镜像链均不可达");
-    for base in registry_chain() {
+    for base in bases {
         let url = format!("{base}/{}", package.replace('/', "%2F"));
-        let resp = match agent.get(&url).call() {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("{base}：{e}");
-                continue;
-            }
-        };
-        let text = match read_body_capped(resp.into_reader(), PACKUMENT_MAX_BYTES) {
+        let text = match http.get_text(&url, PACKUMENT_MAX_BYTES, None) {
             Ok(t) => t,
             Err(e) => {
-                last_err = format!("{base}：读取失败 {e}");
+                last_err = format!("{base}：{e}");
                 continue;
             }
         };
@@ -739,20 +789,15 @@ const MARKET_REGISTRY_MAX_BYTES: u64 = 3 * 1024 * 1024;
 
 /// 拉取社区插件市场目录 JSON（原样透传给前端解析）。
 pub fn fetch_market_registry() -> Result<String, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(NET_TIMEOUT_SECS))
-        .build();
+    fetch_market_registry_with(&UreqGet::new())
+}
+
+/// `fetch_market_registry` 的可注入实现（离线可测镜像链回退）。
+fn fetch_market_registry_with(http: &dyn HttpGet) -> Result<String, String> {
     let mut last_err = String::from("市场 Registry 均不可达");
     for url in MARKET_REGISTRY_URLS {
         tracing::info!("读取插件市场 Registry: {url}");
-        let resp = match agent.get(url).call() {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("{url}: {e}");
-                continue;
-            }
-        };
-        match read_body_capped(resp.into_reader(), MARKET_REGISTRY_MAX_BYTES) {
+        match http.get_text(url, MARKET_REGISTRY_MAX_BYTES, None) {
             Ok(text) => return Ok(text),
             Err(e) => {
                 last_err = format!("{url}: {e}");
@@ -864,5 +909,256 @@ mod packument_tests {
         assert!(is_acceptable_dsh_version("0.1.0-rc.8"));
         assert!(!is_acceptable_dsh_version("0.1.2-alpha.2"));
         assert!(!is_acceptable_dsh_version("0.1.2-alpha.5"));
+    }
+
+    // ---------- HTTP seam（离线，2026-09-08 架构评审批次 5 · P6）----------
+    // 镜像链回退 / 坏响应跳过 / 全失败收敛属于**编排**，过去只能靠真网络或人工验证。
+    // 这里用「URL 子串 → 预置响应」的假体换掉 ureq：不触网、不起 mock server，
+    // 逐条覆盖分支（真网络编排仍走 docs/executor.md 验证清单）。
+
+    /// 离线 HTTP 假体：首个命中的 URL 子串生效；未命中即失败并记录调用顺序。
+    #[derive(Default)]
+    struct FakeHttp {
+        text: Vec<(
+            &'static str,
+            std::result::Result<&'static str, &'static str>,
+        )>,
+        bytes: Vec<(&'static str, Vec<u8>)>,
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl FakeHttp {
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl HttpGet for FakeHttp {
+        fn get_text(&self, url: &str, _cap: u64, _ua: Option<&str>) -> Result<String> {
+            self.calls.borrow_mut().push(url.to_string());
+            match self.text.iter().find(|(k, _)| url.contains(*k)) {
+                Some((_, Ok(body))) => Ok((*body).to_string()),
+                Some((_, Err(msg))) => Err(anyhow::anyhow!(*msg)),
+                None => Err(anyhow::anyhow!("假体未预置该 URL：{url}")),
+            }
+        }
+
+        fn get_bytes(&self, url: &str, _cap: u64) -> Result<Vec<u8>> {
+            self.calls.borrow_mut().push(url.to_string());
+            match self.bytes.iter().find(|(k, _)| url.contains(*k)) {
+                Some((_, body)) => Ok(body.clone()),
+                None => Err(anyhow::anyhow!("假体未预置该 URL：{url}")),
+            }
+        }
+    }
+
+    const PK1: &str = "https://m1.invalid/@deepseek-ai%2Fdsh";
+    const PK2: &str = "https://m2.invalid/@deepseek-ai%2Fdsh";
+    const NM_PK1: &str = "https://m1.invalid/@dsh-dock%2Fnode-map";
+    const GOOD_PACKUMENT: &str =
+        r#"{"dist-tags":{"latest":"0.16.1"},"versions":{"0.16.1":{"dist":{}}}}"#;
+
+    fn bases2() -> Vec<String> {
+        vec![
+            "https://m1.invalid".to_string(),
+            "https://m2.invalid".to_string(),
+        ]
+    }
+
+    fn packument_urls2() -> Vec<String> {
+        vec![PK1.to_string(), PK2.to_string()]
+    }
+
+    #[test]
+    fn packument_chain_skips_bad_json_and_uses_next_mirror() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Ok("<html>502 Bad Gateway</html>")),
+                ("m2.invalid", Ok(GOOD_PACKUMENT)),
+            ],
+            ..Default::default()
+        };
+        let v = fetch_packument_with(&packument_urls2(), &http).unwrap();
+        assert_eq!(v["dist-tags"]["latest"], "0.16.1");
+        assert_eq!(
+            http.calls(),
+            packument_urls2(),
+            "按链序请求：坏 JSON 不终止链，继续下一镜像"
+        );
+    }
+
+    #[test]
+    fn packument_chain_skips_transport_error_and_uses_next_mirror() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Err("连接超时")),
+                ("m2.invalid", Ok(GOOD_PACKUMENT)),
+            ],
+            ..Default::default()
+        };
+        assert!(fetch_packument_with(&packument_urls2(), &http).is_ok());
+        assert_eq!(http.calls().len(), 2, "传输失败同样不终止链");
+    }
+
+    #[test]
+    fn packument_chain_all_mirrors_fail_reports_last_error() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Err("第一镜像挂了")),
+                ("m2.invalid", Err("第二镜像挂了")),
+            ],
+            ..Default::default()
+        };
+        let err = fetch_packument_with(&packument_urls2(), &http).unwrap_err();
+        assert!(
+            err.to_string().contains("第二镜像挂了"),
+            "全失败应报最后一个错误（用户看到的应是最终原因），实测：{err}"
+        );
+    }
+
+    #[test]
+    fn npm_versions_falls_through_shape_mismatch_to_next_mirror() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Ok(r#"{"versions":{}}"#)),
+                ("m2.invalid", Ok(GOOD_PACKUMENT)),
+            ],
+            ..Default::default()
+        };
+        let (latest, versions) =
+            npm_packument_versions_with(&bases2(), &http, "@deepseek-ai/dsh").unwrap();
+        assert_eq!(latest, "0.16.1");
+        assert_eq!(versions, vec!["0.16.1"]);
+        assert_eq!(
+            http.calls()[0],
+            "https://m1.invalid/@deepseek-ai%2Fdsh",
+            "scoped 包的 `/` 必须编码为 %2F（与 npm CLI 一致）"
+        );
+    }
+
+    #[test]
+    fn npm_versions_all_mirrors_shape_mismatch_reports_shape_error() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Ok(r#"{"versions":{}}"#)),
+                ("m2.invalid", Ok("not json")),
+            ],
+            ..Default::default()
+        };
+        let err = npm_packument_versions_with(&bases2(), &http, "dsh-x").unwrap_err();
+        assert!(err.contains("packument 形状不符"), "实测：{err}");
+        assert!(err.contains("m2.invalid"), "实测：{err}");
+    }
+
+    #[test]
+    fn npm_versions_rejects_illegal_package_without_touching_network() {
+        let http = FakeHttp::default();
+        assert_eq!(
+            npm_packument_versions_with(&bases2(), &http, "-x").unwrap_err(),
+            "包名非法"
+        );
+        assert_eq!(
+            npm_packument_versions_with(&bases2(), &http, "").unwrap_err(),
+            "包名非法"
+        );
+        assert!(http.calls().is_empty(), "非法包名不得发起任何请求");
+    }
+
+    #[test]
+    fn market_registry_falls_back_to_github_raw() {
+        let http = FakeHttp {
+            text: vec![
+                ("awesome-dsh-plugin.com", Err("CDN 502")),
+                ("raw.githubusercontent.com", Ok(r#"{"plugins":[]}"#)),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            fetch_market_registry_with(&http).unwrap(),
+            r#"{"plugins":[]}"#
+        );
+        assert_eq!(http.calls().len(), 2);
+    }
+
+    #[test]
+    fn market_registry_all_mirrors_fail_reports_last_error() {
+        let http = FakeHttp {
+            text: vec![
+                ("awesome-dsh-plugin.com", Err("CDN 502")),
+                ("raw.githubusercontent.com", Err("raw 404")),
+            ],
+            ..Default::default()
+        };
+        let err = fetch_market_registry_with(&http).unwrap_err();
+        assert!(err.contains("raw 404"), "实测：{err}");
+    }
+
+    /// 造一个只含 `package/map.json` + `package/map.json.sig` 的 npm tarball。
+    fn node_map_tgz(map: &[u8], sig: &str) -> Vec<u8> {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(&mut gz);
+        for (path, data) in [
+            ("package/map.json", map),
+            ("package/map.json.sig", sig.as_bytes()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, path, data).unwrap();
+        }
+        drop(builder);
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn node_map_follows_packument_then_tarball() {
+        let tgz = node_map_tgz(b"{\"node\":{}}", "sig-hex");
+        let packument = r#"{"dist-tags":{"latest":"1.2.3"},
+            "versions":{"1.2.3":{"dist":{"tarball":"https://cdn.invalid/node-map-1.2.3.tgz"}}}}"#;
+        let http = FakeHttp {
+            text: vec![("m1.invalid", Ok(packument))],
+            bytes: vec![("node-map-1.2.3.tgz", tgz)],
+            ..Default::default()
+        };
+        let (map, sig) = fetch_node_map_with(&bases2(), &http).unwrap();
+        assert_eq!(map, b"{\"node\":{}}");
+        assert_eq!(sig, "sig-hex");
+        assert_eq!(
+            http.calls(),
+            vec![
+                NM_PK1.to_string(),
+                "https://cdn.invalid/node-map-1.2.3.tgz".to_string()
+            ],
+            "首个镜像成功即停；packument → tarball 两步走，且包名按 %2F 编码"
+        );
+    }
+
+    #[test]
+    fn node_map_falls_back_to_next_registry_base() {
+        let tgz = node_map_tgz(b"{}", "sig");
+        let packument = r#"{"dist-tags":{"latest":"1.0.0"},
+            "versions":{"1.0.0":{"dist":{"tarball":"https://cdn.invalid/x.tgz"}}}}"#;
+        let http = FakeHttp {
+            text: vec![("m1.invalid", Err("502")), ("m2.invalid", Ok(packument))],
+            bytes: vec![("x.tgz", tgz)],
+            ..Default::default()
+        };
+        assert!(fetch_node_map_with(&bases2(), &http).is_some());
+        assert_eq!(http.calls()[0], NM_PK1, "先试首镜像");
+        assert!(
+            http.calls()[1].contains("m2.invalid"),
+            "首镜像失败后回落次镜像，实测：{:?}",
+            http.calls()
+        );
+    }
+
+    #[test]
+    fn node_map_all_mirrors_fail_is_none() {
+        let http = FakeHttp {
+            text: vec![("m1.invalid", Err("502")), ("m2.invalid", Err("503"))],
+            ..Default::default()
+        };
+        assert!(fetch_node_map_with(&bases2(), &http).is_none());
     }
 }
