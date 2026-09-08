@@ -547,27 +547,107 @@ pub struct PluginRowState {
     /// 来源自身 cordis.patch.yml 中该 id 的条目数（4.4④ 收口：「连配置」勾选框
     /// 置灰预检——>0 才有可搬移的配置行；复制时后端权威复核，见第五次修订）。
     pub patch_entries: usize,
+    /// 补丁包（无自身行的 bundle）贡献的行 id 列表；普通行为空。
+    /// 2026-09-08 补丁包开关（ADR-0009 第七次执行细则修订）：开关目标 = 普通插件
+    /// 取自身行 id、补丁包取全部贡献行；id 来源仍定死 dump-config 行表（段落注释
+    /// `# == <bundle>` 归属，台账复现点 13），不解析包内 patch 结构（第四次修订）。
+    pub contributed_ids: Vec<String>,
 }
 
-/// 行 id 配对解析（行级扫描，不用 YAML 解析器）：dump-config 输出含 `!!js`
-/// 标签等 serde_yaml 不保证友好的形态；行表形态是机器生成的稳定两行组
+/// 行表解析（带 bundle 段落归属）：dump-config 为每个 bundle 输出顶格段落注释
+/// `# == <bundle 包名>`（机器生成，2026-09-08 实测 dsh 0.1.2-rc.1，台账复现点
+/// 13），段内 `- id:` 行即该 bundle 声明/插入的行——补丁包（`dsh.bundle.patch`
+/// 形态，自身不成行）由此映射「包 → 贡献行」，无需解析包内 patch 结构
+/// （ADR 第四次修订口径）。行级扫描，不用 YAML 解析器：dump-config 输出含
+/// `!!js` 标签等 serde_yaml 不保证友好的形态；行表形态是机器生成的稳定两行组
 /// （`- id: X` 顶格 + `  name: Y` 二行缩进）。带引号的 name 去引号。
-fn parse_dump_rows(text: &str) -> Vec<(String, String)> {
+/// 返回三元组 = (行 id, 行 name, 段 bundle 名)。
+fn parse_dump_rows_with_section(text: &str) -> Vec<(String, String, Option<String>)> {
     let mut rows = Vec::new();
     let mut pending_id: Option<String> = None;
+    let mut section: Option<String> = None;
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("- id: ") {
+        if let Some(rest) = line.strip_prefix("# == ") {
+            let mut name = rest.trim().to_string();
+            // 2026-09-08 实机实测（复现点 13）：段落有 profile patch 命中时，段头
+            // 追加 `, patched by <路径>` 后缀（如 `# == @tt-a1i/archify-dsh, patched
+            // by /…/cordis.patch.yml`）——归属名只取逗号前，否则包名匹配失效。
+            if let Some(idx) = name.find(", patched by ") {
+                name.truncate(idx);
+            }
+            section = Some(name);
+        } else if let Some(rest) = line.strip_prefix("- id: ") {
             pending_id = Some(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("  name: ") {
             if let Some(id) = pending_id.take() {
                 let name = rest.trim().trim_matches('\'').trim_matches('"').to_string();
-                rows.push((id, name));
+                rows.push((id, name, section.clone()));
             }
         } else if !line.starts_with(' ') && !line.is_empty() {
             pending_id = None; // 顶格非空行打断配对（进入其他段落）
         }
     }
     rows
+}
+
+/// 由行表 + 依赖清单 + 自家 patch 状态构建行状态表（纯函数，可单测）。
+/// - 行表条目（含内置 bundle 行）原样输出（现状行为，UI 按包名匹配自身行）；
+/// - 补丁包合成条目：依赖包无自身行、但作为 dump 段落贡献了行 → 追加合成条目
+///   `id` = 第一贡献行（兼容单目标引用）、`shell_disabled` = 贡献行**全部**被
+///   禁用（部分禁用显示为启用，切换一次全量禁用——注释见前端）、
+///   `patch_entries` = 贡献行自家 patch 条目数合计。
+fn build_row_states(
+    rows: &[(String, String, Option<String>)],
+    deps: &[String],
+    patch: &std::collections::BTreeMap<String, (bool, usize)>,
+) -> Vec<PluginRowState> {
+    let mut out: Vec<PluginRowState> = rows
+        .iter()
+        .map(|(id, name, _)| PluginRowState {
+            id: id.clone(),
+            pkg_name: name.clone(),
+            shell_disabled: patch.get(id).map(|(d, _)| *d).unwrap_or(false),
+            patch_entries: patch.get(id).map(|(_, n)| *n).unwrap_or(0),
+            contributed_ids: Vec::new(),
+        })
+        .collect();
+    // 段落归属：bundle 包名 → 该段贡献的行 id（行表内恒有序）。
+    let mut by_bundle: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (id, _, bundle) in rows {
+        if let Some(b) = bundle {
+            by_bundle.entry(b.as_str()).or_default().push(id.as_str());
+        }
+    }
+    // 已由自身行表示的依赖包：不再合成（开关目标 = 自身行）。
+    let own: std::collections::HashSet<&str> = rows
+        .iter()
+        .filter(|(_, name, _)| deps.iter().any(|d| d == name))
+        .map(|(_, name, _)| name.as_str())
+        .collect();
+    for dep in deps {
+        if own.contains(dep.as_str()) {
+            continue;
+        }
+        let ids = match by_bundle.get(dep.as_str()) {
+            Some(ids) if !ids.is_empty() => ids,
+            _ => continue,
+        };
+        let shell_disabled = ids
+            .iter()
+            .all(|id| patch.get(*id).map(|(d, _)| *d).unwrap_or(false));
+        let patch_entries = ids
+            .iter()
+            .map(|id| patch.get(*id).map(|(_, n)| *n).unwrap_or(0))
+            .sum();
+        out.push(PluginRowState {
+            id: ids[0].to_string(),
+            pkg_name: dep.clone(),
+            shell_disabled,
+            patch_entries,
+            contributed_ids: ids.iter().map(|s| s.to_string()).collect(),
+        });
+    }
+    out
 }
 
 /// 读 profile 自家 patch：id -> (含 disabled:true, 条目数)。文件缺失/损坏 →
@@ -605,15 +685,13 @@ fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (boo
 /// 行表查询（阻塞 spawn `dsh --profile <名> --dump-config`，一次拿全量行 id
 /// 与包名配对；行 id 不可从包名推导——ADR 第四次修订）。dump-config 只读，
 /// 复用创建链的 spawn 基建（同 env 注入与超时）。
+/// 2026-09-08 补丁包开关（ADR 第七次修订）：行表之外按依赖清单与 dump 段落
+/// 归属合成补丁包条目（见 [`build_row_states`]），一次 spawn 全量拿到。
 pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<PluginRowState>, String> {
     crate::profiles::validate_profile_name(profile)?;
     let home = crate::resolve::user_dsh_home();
-    if !home
-        .join("profiles")
-        .join(profile)
-        .join("package.json")
-        .is_file()
-    {
+    let manifest_path = home.join("profiles").join(profile).join("package.json");
+    if !manifest_path.is_file() {
         return Err(format!("profile「{profile}」尚未初始化"));
     }
     let run = crate::profiles::run_toolchain_forward(
@@ -636,18 +714,26 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
         ));
     }
     let patch = patch_entry_map(&home.join("profiles").join(profile).join("cordis.patch.yml"));
-    Ok(parse_dump_rows(&run.output)
-        .into_iter()
-        .map(|(id, pkg_name)| {
-            let (shell_disabled, patch_entries) = patch.get(&id).copied().unwrap_or((false, 0));
-            PluginRowState {
-                shell_disabled,
-                patch_entries,
-                id,
-                pkg_name,
-            }
-        })
-        .collect())
+    let deps = manifest_dependency_names(&manifest_path)?;
+    Ok(build_row_states(
+        &parse_dump_rows_with_section(&run.output),
+        &deps,
+        &patch,
+    ))
+}
+
+/// 读 manifest 的 dependencies 键（BTreeMap 字典序，与清单展示一致）。
+fn manifest_dependency_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let text = fs_err(manifest_path)?;
+    let pkg: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    let mut names = Vec::new();
+    if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
+        for name in deps.keys() {
+            names.push(name.clone());
+        }
+    }
+    Ok(names)
 }
 
 /// 读 patch 文件为 (头部注释块, 顶层数组条目)。头部 = 从首行起连续 `#` 行与其
@@ -816,16 +902,193 @@ mod patch_tests {
     #[test]
     fn parse_dump_rows_pairs_id_and_name_lines() {
         let dump = "meta: 1\n- id: llm-pi-ai\n  name: '@deepseek-ai/dsh-llm-pi-ai'\n- id: llm-commandcode\n  name: '@mars-sea/dsh-commandcode-provider'\n  config:\n    apiKeyEnv: X\nsomewhere-else:\n  - id: nested\n    name: not-top\n";
-        let rows = parse_dump_rows(dump);
+        let rows = parse_dump_rows_with_section(dump);
         assert_eq!(
             rows,
             vec![
-                ("llm-pi-ai".into(), "@deepseek-ai/dsh-llm-pi-ai".into()),
+                (
+                    "llm-pi-ai".into(),
+                    "@deepseek-ai/dsh-llm-pi-ai".into(),
+                    None
+                ),
                 (
                     "llm-commandcode".into(),
-                    "@mars-sea/dsh-commandcode-provider".into()
+                    "@mars-sea/dsh-commandcode-provider".into(),
+                    None
                 ),
             ]
+        );
+    }
+
+    /// 补丁包开关（2026-09-08，ADR-0009 第七次修订）：段落注释 `# == <bundle>`
+    /// 归属解析——段内行归该 bundle 所有（含其 insert 贡献的行）。
+    #[test]
+    fn parse_dump_rows_with_section_tracks_bundle_sections() {
+        let dump = "# == @openviking/dsh-memory-plugin\n- id: openviking-memory\n  name: '@deepseek-ai/cordis-plugin-group'\n  group: true\n  config:\n    - id: openviking-memory-runtime\n      name: '@openviking/dsh-memory-plugin'\n# == dsh-better-sidebar\n- id: better-sidebar\n  name: dsh-better-sidebar\n";
+        let rows = parse_dump_rows_with_section(dump);
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "openviking-memory".into(),
+                    "@deepseek-ai/cordis-plugin-group".into(),
+                    Some("@openviking/dsh-memory-plugin".into())
+                ),
+                (
+                    "better-sidebar".into(),
+                    "dsh-better-sidebar".into(),
+                    Some("dsh-better-sidebar".into())
+                ),
+            ]
+        );
+    }
+
+    /// 段落头带 `, patched by <路径>` 后缀（profile patch 命中该段时，2026-09-08
+    /// 实机实测）：归属名取逗号前，否则补丁包匹配失效。
+    #[test]
+    fn parse_dump_rows_with_section_strips_patched_by_suffix() {
+        let dump = "# == @tt-a1i/archify-dsh, patched by /Users/x/profiles/web/cordis.patch.yml\n- id: archify-skill-filesystem\n  name: '@deepseek-ai/dsh-skill-filesystem'\n  disabled: true\n";
+        let rows = parse_dump_rows_with_section(dump);
+        assert_eq!(
+            rows,
+            vec![(
+                "archify-skill-filesystem".into(),
+                "@deepseek-ai/dsh-skill-filesystem".into(),
+                Some("@tt-a1i/archify-dsh".into())
+            )]
+        );
+    }
+
+    /// 补丁包合成：无自身行的依赖包 → 合成条目（id = 第一贡献行、全禁用才
+    /// shell_disabled、patch_entries 合计）；有自身行的依赖与无归属依赖不变。
+    #[test]
+    fn build_row_states_synthesizes_patch_bundles() {
+        let rows = vec![
+            (
+                "agy-link".into(),
+                "dsh-agy-link".into(),
+                Some("dsh-agy-link".into()),
+            ),
+            (
+                "archify-skill-filesystem".into(),
+                "@deepseek-ai/dsh-skill-filesystem".into(),
+                Some("@tt-a1i/archify-dsh".into()),
+            ),
+            (
+                "openviking-memory".into(),
+                "@deepseek-ai/cordis-plugin-group".into(),
+                Some("@openviking/dsh-memory-plugin".into()),
+            ),
+            (
+                "other-insert".into(),
+                "@deepseek-ai/dsh-other".into(),
+                Some("@mars-sea/dsh-commandcode-provider".into()),
+            ),
+        ];
+        let deps = vec![
+            "dsh-agy-link".to_string(),
+            "@tt-a1i/archify-dsh".to_string(),
+            "@openviking/dsh-memory-plugin".to_string(),
+            "@mars-sea/dsh-commandcode-provider".to_string(),
+            "not-installed".to_string(),
+        ];
+        let mut patch = std::collections::BTreeMap::new();
+        patch.insert("archify-skill-filesystem".to_string(), (true, 0usize));
+        patch.insert("openviking-memory".to_string(), (true, 0usize));
+        let states = build_row_states(&rows, &deps, &patch);
+
+        // 普通行（自身行 name == 依赖包）：原有行为不变
+        let agy = states
+            .iter()
+            .find(|s| s.pkg_name == "dsh-agy-link")
+            .unwrap();
+        assert_eq!(agy.id, "agy-link");
+        assert!(agy.contributed_ids.is_empty());
+
+        // 补丁包 A：单贡献行，禁用 → 合成条目禁用
+        let arch = states
+            .iter()
+            .find(|s| s.pkg_name == "@tt-a1i/archify-dsh")
+            .unwrap();
+        assert_eq!(arch.id, "archify-skill-filesystem");
+        assert_eq!(arch.contributed_ids, vec!["archify-skill-filesystem"]);
+        assert!(arch.shell_disabled);
+
+        // 补丁包 B：贡献行被禁用 → 合成条目禁用（组 id 即开关目标）
+        let m = states
+            .iter()
+            .find(|s| s.pkg_name == "@openviking/dsh-memory-plugin")
+            .unwrap();
+        assert_eq!(m.id, "openviking-memory");
+        assert_eq!(m.contributed_ids, vec!["openviking-memory"]);
+        assert!(m.shell_disabled);
+
+        // 贡献行依赖（自身无行）：同样合成（@mars-sea 段内 other-insert 是它的 insert）
+        let mars = states
+            .iter()
+            .find(|s| s.pkg_name == "@mars-sea/dsh-commandcode-provider")
+            .unwrap();
+        assert_eq!(mars.id, "other-insert");
+        assert_eq!(mars.contributed_ids, vec!["other-insert"]);
+        assert!(!mars.shell_disabled);
+
+        // 未安装依赖：无段落归属 → 无条目
+        assert!(states.iter().all(|s| s.pkg_name != "not-installed"));
+    }
+
+    /// 补丁包部分禁用（手改 patch 中间态）：all 语义 = 显示启用，切换一次全量禁用。
+    #[test]
+    fn build_row_states_partial_disabled_counts_as_enabled() {
+        let rows = vec![
+            ("row-a".into(), "pkg-a".into(), Some("@dep/patched".into())),
+            ("row-b".into(), "pkg-b".into(), Some("@dep/patched".into())),
+        ];
+        let deps = vec!["@dep/patched".to_string()];
+        let mut patch = std::collections::BTreeMap::new();
+        patch.insert("row-a".to_string(), (true, 0usize));
+        patch.insert("row-b".to_string(), (false, 0usize));
+        let states = build_row_states(&rows, &deps, &patch);
+        let patched = states
+            .iter()
+            .find(|s| s.pkg_name == "@dep/patched")
+            .unwrap();
+        assert!(!patched.shell_disabled);
+        assert_eq!(patched.contributed_ids, vec!["row-a", "row-b"]);
+        assert_eq!(patched.id, "row-a");
+        // patch_entries 为合计
+        assert_eq!(patched.patch_entries, 0);
+    }
+
+    /// 有自身行的依赖包即使贡献了其他行，也不产生合成条目（开关目标 = 自身行）。
+    #[test]
+    fn build_row_states_own_row_wins_over_section() {
+        let rows = vec![
+            (
+                "llm-commandcode".into(),
+                "@mars-sea/dsh-commandcode-provider".into(),
+                Some("@mars-sea/dsh-commandcode-provider".into()),
+            ),
+            (
+                "other-insert".into(),
+                "@deepseek-ai/dsh-other".into(),
+                Some("@mars-sea/dsh-commandcode-provider".into()),
+            ),
+        ];
+        let deps = vec!["@mars-sea/dsh-commandcode-provider".to_string()];
+        let patch = Default::default();
+        let states = build_row_states(&rows, &deps, &patch);
+        let mars = states
+            .iter()
+            .find(|s| s.pkg_name == "@mars-sea/dsh-commandcode-provider")
+            .unwrap();
+        assert_eq!(mars.id, "llm-commandcode");
+        assert!(mars.contributed_ids.is_empty());
+        assert_eq!(
+            states
+                .iter()
+                .filter(|s| s.pkg_name == "@mars-sea/dsh-commandcode-provider")
+                .count(),
+            1
         );
     }
 }

@@ -115,6 +115,8 @@ export interface PluginOpOutcome {
 
 /// 插件行表条目（4.4③，复现点 7/ADR 第四次修订）：行 id 不可从包名推导，
 /// 来自 dump-config 行表；shell_disabled = 壳 patch toggle 的禁用意图。
+/// 2026-09-08 补丁包开关（ADR 第七次修订）：无自身行的补丁包合成条目
+/// contributed_ids 非空 = 该包贡献的行 id 列表，开关目标 = 全部贡献行。
 export interface PluginRowState {
   id: string
   pkg_name: string
@@ -122,6 +124,9 @@ export interface PluginRowState {
   /** 该 profile 自身 cordis.patch.yml 中此 id 的条目数（连配置勾选的置灰预检，
       4.4④ 收口 / ADR-0009 第五次修订） */
   patch_entries: number
+  /** 补丁包（无自身行的 bundle）贡献的行 id 列表；普通插件为空。
+      id 字段在补丁包上取第一贡献行（兼容单目标引用）。 */
+  contributed_ids: string[]
 }
 
 /// 更新检查报告（4.4④，registry dist-tags.latest 口径）：failed 不计入 checked。

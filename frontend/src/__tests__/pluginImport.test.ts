@@ -16,6 +16,7 @@ const rows = (pkg: string, patchEntries: number): PluginRowState => ({
   pkg_name: pkg,
   shell_disabled: false,
   patch_entries: patchEntries,
+  contributed_ids: [],
 })
 
 describe("pickerCandidates", () => {

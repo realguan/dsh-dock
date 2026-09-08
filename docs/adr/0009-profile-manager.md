@@ -231,6 +231,28 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 键过 npm 裸名校验（防 YAML 键注入），原子写 tmp+rename；Ⅴ 无变化零写入。
 > 实现 `build_approvals.rs`（纯函数 + 真实文件 fixture 测试）；真实 profile
 > 的 true/false 取值是用户供应链决定，壳不预填不预判。
+> **2026-09-08 第七次执行细则修订（范围扩展：补丁包启用/禁用，4.4③ 补全）**。
+> 触发：web 档实测 `@openviking/dsh-memory-plugin`、`@tt-a1i/archify-dsh`
+> 属**补丁包**形态（`dsh.bundle.patch` 纯 `- insert:`，自身不成 Cordis 行，
+> 只贡献行）——清单无自身行 → UI 无开关 → 用户误判「没安装/解析失败」
+> （2026-09-08 当面疑问）。**dsh 侧依据**（复现点 13，dsh 0.1.2-rc.1 实测 +
+> 源码锚定）：① dump-config 为每个 bundle 输出顶格段落注释 `# == <bundle>`，
+> 段内 `- id:` 行即该 bundle 声明/插入的行（含补丁包 insert 的贡献行）；
+> ② include 插件 patch = 浅覆盖（`applyEntryPatches`：`{id, insert, name,
+> ...overrides}` 对匹配行逐键写 overrides，`disabled` 属 overrides）→
+> `- id: <贡献行>\n  disabled: true` 只置禁用位、原行 name/config 不丢；
+> ③ loader 禁用继承（`Group.disabled` = 自身或任意父级禁用）→ 对组贡献行
+> （`openviking-memory`）写一条即组内全禁。**裁定**：① id 来源仍定死
+> dump-config 行表（第四次修订口径不变，**勿自解析包内 patch 结构**）——
+> 新增按段落注释的「包 → 贡献行」归属映射（行级扫描，与行表配对同一解析
+> 通道、同一次 spawn）；② 开关目标 = 普通插件自身行 / 补丁包全部贡献行；
+> 写入复用 #3 写面逐行 `{id, disabled}`，**多行目标串行写**（同一 patch 文件
+> 读改写，并发 IPC 相互覆盖）；③ 状态聚合 = 贡献行**全部**禁用才算禁用
+> （all 语义；手改 patch 的部分禁用中间态显示为启用，切换一次收敛全量）；
+> 合成条目 `id` = 第一贡献行（兼容单目标引用），`PluginRowState` 扩展
+> `contributed_ids`；④ 有自身行的依赖包不合成（普通形态优先），未安装依赖
+> （无段落）无开关；生效语义同 #3：不热生效，重启承接。**不做**：bundle 级
+> 禁用第一类语义（dsh 无该命名空间）、热生效、反向解析补丁包结构。
 - 默认启动 profile（4.3④）持久化到 `settings.json` 新字段 `defaultProfile`（第二最小面例外），落地时同步登记 AGENTS §6；失效回退值**定死为 `web`**（模板名恒可首启，Spike B §3.3 的「或清除」就此关闭）。
 - 失败模式（2026-08-28 口径 2 统一）：创建/插件操作前防御性检测 pnpm（基准 = `effective_path` 注入后的 PATH——壳注入什么 dsh 就能看见什么，Spike A §3.4 同链）→ 缺失则同步补齐（`npm i -g pnpm`，复用 boot 同一函数）→ 补齐失败才降级为 dsh 自带文案（exit 127）+ 壳侧平台化安装建议；网络失败 → 提示检查 npm registry 镜像可达性（ADR-0006）。boot 期同一补齐失败 = 阻断启动 + 可行动文案。
 

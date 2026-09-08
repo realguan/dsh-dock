@@ -18,6 +18,7 @@ import {
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
+import { pluginToggleTargets } from "@/lib/pluginToggle"
 import type {
   PluginEntry,
   PluginRowState,
@@ -182,14 +183,21 @@ export function ProfileDetailPane({
       .finally(() => setOpBusy(null))
   }
 
-  // 启停插件（通过现代 Switch 切换）
+  // 启停插件（通过现代 Switch 切换）；补丁包（ADR 第七次修订）= 全部贡献行，
+  // 同一 patch 文件读改写必须串行（并发 invoke 相互覆盖，2026-09-08）。
   const toggleDisabled = (pkg: string) => {
     if (!name || opBusy) return
     const row = rows?.find((r) => r.pkg_name === pkg)
     if (!row) return
+    const targets = pluginToggleTargets(row)
+    if (targets.length === 0) return
     setOpBusy(`toggle:${pkg}`)
-    api
-      .setPluginDisabled(name, row.id, !row.shell_disabled)
+    const next = !row.shell_disabled
+    targets
+      .reduce<Promise<void>>(
+        (acc, id) => acc.then(() => api.setPluginDisabled(name, id, next)),
+        Promise.resolve(),
+      )
       .then(() => {
         onNotice(
           row.shell_disabled
