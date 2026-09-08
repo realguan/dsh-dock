@@ -813,6 +813,50 @@ mod packument_tests {
         assert!(parse_packument_versions(r#"{"versions":{}}"#).is_none());
     }
 
+    // ---------- 响应体上限（离线，2026-09-08 架构评审批次 5）----------
+    // `read_body_capped` 是网络面里唯一可离线全覆盖的一层：ureq 的 `into_string()`
+    // 自带内部上限且阈值随版本漂移，本函数把它换成显式、可测的实现——此前零测试。
+
+    #[test]
+    fn body_cap_accepts_payload_under_limit() {
+        let body = "a".repeat(100);
+        let out = read_body_capped(std::io::Cursor::new(body.clone()), 1024).unwrap();
+        assert_eq!(out, body, "未超限应原样返回");
+    }
+
+    #[test]
+    fn body_cap_accepts_payload_exactly_at_limit() {
+        let body = "a".repeat(64);
+        let out = read_body_capped(std::io::Cursor::new(body.clone()), 64).unwrap();
+        assert_eq!(out.len(), 64, "恰好等于上限应放行（边界含等号）");
+    }
+
+    #[test]
+    fn body_cap_rejects_payload_over_limit() {
+        let body = "a".repeat(65);
+        let err = read_body_capped(std::io::Cursor::new(body), 64).unwrap_err();
+        assert!(
+            err.to_string().contains("超过 64 字节上限"),
+            "超限应报明确上限文案，实测：{err}"
+        );
+    }
+
+    #[test]
+    fn body_cap_handles_empty_body() {
+        let out = read_body_capped(std::io::Cursor::new(Vec::<u8>::new()), 16).unwrap();
+        assert_eq!(out, "", "空响应体合法（调用方按空串走解析失败路径）");
+    }
+
+    #[test]
+    fn body_cap_rejects_invalid_utf8() {
+        let bytes = vec![0xff, 0xfe, 0xfd];
+        let err = read_body_capped(std::io::Cursor::new(bytes), 16).unwrap_err();
+        assert!(
+            err.to_string().contains("读取响应体失败"),
+            "非 UTF-8 应带上下文报错，实测：{err}"
+        );
+    }
+
     #[test]
     fn acceptable_dsh_version_accepts_stable_and_rc_rejects_alpha() {
         assert!(is_acceptable_dsh_version("0.1.2"));

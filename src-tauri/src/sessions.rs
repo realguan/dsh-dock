@@ -824,6 +824,30 @@ mod tests {
         let _ = fs::remove_dir_all(&temp);
     }
 
+    /// 测试前置：这些用例真跑要 PATH 上的 `node`（引擎 shim 转发）。
+    ///
+    /// 2026-09-08（架构评审批次 5）：原来缺 node 直接 `return` —— 静默变「0 断言通过」，
+    /// CI 上 node 缺失时红灯不亮、绿灯是假的。现在本地允许跳过（打印提示），
+    /// CI 通过 `DSH_TEST_REQUIRE_NODE=1` 强制：缺 node 即 panic。
+    fn require_node_or_skip(test_name: &str) -> bool {
+        let available = crate::child_cmd(Path::new("node"))
+            .arg("-v")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if available {
+            return true;
+        }
+        assert!(
+            std::env::var("DSH_TEST_REQUIRE_NODE").is_err(),
+            "{test_name}：PATH 上找不到 node，但 CI 要求真跑（DSH_TEST_REQUIRE_NODE=1）"
+        );
+        eprintln!(
+            "跳过 {test_name}：系统未找到 node（本地允许跳过；CI 由 DSH_TEST_REQUIRE_NODE 强制）"
+        );
+        false
+    }
+
     /// 测试辅助：沿 PATH 探测系统 node（健康扫描 shim 的落点）。
     #[cfg(unix)]
     fn find_system_node() -> Option<std::path::PathBuf> {
@@ -857,13 +881,7 @@ mod tests {
 
     #[test]
     fn repair_session_cleans_replay_overlap_and_creates_backup() {
-        // CI 单元测试阶段若尚未安装 Node.js 则优雅跳过外部进程执行
-        let node_available = crate::child_cmd(Path::new("node"))
-            .arg("-v")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !node_available {
+        if !require_node_or_skip("repair_session_cleans_replay_overlap_and_creates_backup") {
             return;
         }
 
@@ -1019,12 +1037,8 @@ mod tests {
         // 版本路由回归（2026-09-07）：dsh ≥0.1.3 世代文件（version:2）在旧引擎
         // （无 catalog，fallback 校验）下必须归 unknown + 升级提示——不是
         // needs_repair（不可修复，不允许用户点了修复被拒）。
-        let node_available = crate::child_cmd(Path::new("node"))
-            .arg("-v")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !node_available {
+        if !require_node_or_skip("scan_sessions_classifies_newer_generation_as_unknown_not_repair")
+        {
             return;
         }
 
@@ -1082,12 +1096,7 @@ mod tests {
         // 未同步引用）。旧健康检查只看 seq 连续性 → 误判健康；dsh 打开即
         // `invalid seed event at index N: surface replace: end seq X not
         // found in surface`。修复 = 悬空 replace 转 append（内容与 seq 保留）。
-        let node_available = crate::child_cmd(Path::new("node"))
-            .arg("-v")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !node_available {
+        if !require_node_or_skip("repair_session_heals_dangling_surface_replace") {
             return;
         }
 
@@ -1178,12 +1187,7 @@ mod tests {
     #[test]
     fn repair_session_healthy_file_stays_untouched() {
         // 健康文件 = 修复是幂等 no-op：不写回、不创建备份、退出码 0。
-        let node_available = crate::child_cmd(Path::new("node"))
-            .arg("-v")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !node_available {
+        if !require_node_or_skip("repair_session_healthy_file_stays_untouched") {
             return;
         }
 

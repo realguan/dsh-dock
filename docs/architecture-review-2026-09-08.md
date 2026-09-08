@@ -145,7 +145,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⬜ 待做（先立 ADR） |
-| 5 | `updates.rs` HTTP seam + 6 个离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⬜ 待做 |
+| 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10；HTTP seam 未做） |
 
 ## 4. 不建议做
 
@@ -250,3 +250,31 @@ oxlint 纳管（当前 0 warning）；Vite 只打包被 import 的模块，这�
 
 **验证**：`cargo test` 187 绿（含 `WEBVIEW_MEMORY_POLICY_SCRIPT` 的三条子串断言）·
 `cargo fmt --check` 干净 · `node --check` 三个文件语法通过 · `pnpm lint` 0 warning。
+
+## 10. 批次 5 落地记录（2026-09-08，`test(rust): 去 flaky + 强制 node 用例 + 网络面离线覆盖`）
+
+**① 去 flaky（P8）**：`resolve.rs` 三处挂钟断言过紧，并行全量跑实测挂过一次：
+
+| 用例 | 原断言 | 现断言 | 假体 sleep |
+|:---|:---|:---|:---|
+| `probe_no_open_returns_early_on_hit` | `< 10s` | `< 20s` | 30 → 60s |
+| `probe_no_open_finds_flag_on_stderr` | `< 5s`（**实测挂过**） | `< 20s` | 30 → 60s |
+| `probe_no_open_times_out_when_hung` | `< 3s` | `< 10s` | 60s |
+
+口径：断言只需区分「命中即早退」与「等满自然退出」，故把假体 sleep 拉到 60s、断言留
+3–6× 负载余量——回归形态必超（60s），负载抖动不再误红。
+
+**② 静默跳过 → CI 硬失败（P6）**：`sessions.rs` 4 个修复链用例在缺 `node` 时
+`return`（0 断言通过 = 假绿）。新增 `require_node_or_skip(test_name)`：本地缺 node 允许
+跳过并打印提示，CI 设 `DSH_TEST_REQUIRE_NODE=1` 即 panic。`.github/workflows/build.yml`
+的 Unit tests 步骤已挂该环境变量。**实测**：剥掉 PATH 里的 node + 打开开关 → 立即
+panic（`PATH 上找不到 node，但 CI 要求真跑`）。
+
+**③ 网络面离线覆盖（P6）**：`updates.rs::read_body_capped` 是网络层里唯一可离线全覆盖
+的一环（`ureq` 的 `into_string()` 上限随版本漂移，本函数把它换成显式实现）——此前**零测试**。
+补 5 条：未超限原样返回 / 恰好等于上限放行 / 超限报明确文案 / 空体合法 / 非 UTF-8 带上下文报错。
+`updates.rs` 测试 4 → 9 条。
+
+**未做（仍是批次 5 的欠账）**：`updates.rs` 的 **HTTP seam 注入**（把 `ureq::Agent` 调用
+收成可注入闭包，离线覆盖镜像链回退/超时语义）；`repair-session.mjs` fixture 驱动。
+现状：镜像链回退仍只能靠真网络或人工验证。

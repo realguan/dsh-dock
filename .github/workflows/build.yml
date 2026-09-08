@@ -126,6 +126,11 @@ jobs:
 
       - name: Unit tests
         working-directory: src-tauri
+        # DSH_TEST_REQUIRE_NODE=1（2026-09-08，架构评审批次 5）：sessions 的修复链用例
+        # 依赖 PATH 上的 node 真跑；缺 node 时本地允许跳过，CI 必须硬失败——
+        # 否则「静默 0 断言」会让红灯不亮、绿灯失真。
+        env:
+          DSH_TEST_REQUIRE_NODE: "1"
         run: cargo test
 
       # 前端构建（2026-08-27 前端迁移，ADR-0008；2026-09-04 切 pnpm 12）：beforeBuildCommand 钩子会跑

@@ -1803,3 +1803,18 @@
 - 影响：仅周知。运行期行为不变（脚本内容逐行迁移，仅删死代码与未用参数）。
 - 凭据：`cargo test` 187 绿（含内存策略三条子串断言）· `cargo fmt --check` 干净 ·
   `node --check` ×3 通过 · `pnpm lint` **0 warning**（迁出前这 330 行是 lint 盲区）。
+
+### 2026-09-08 test(rust)：去 flaky + 强制 node 用例 + 网络面离线覆盖（架构评审批次 5）—— guan（AI 起草）
+
+- 去 flaky（P8）：`resolve.rs` 三处挂钟断言过紧（`finds_flag_on_stderr` 的 `< 5s` 并行全量
+  跑实测挂过一次）。口径改为「区分命中早退与等满自然退出」——假体 sleep 拉到 60s，
+  断言留 3–6× 负载余量（10s/20s），回归形态必超。
+- 静默跳过 → CI 硬失败（P6）：`sessions.rs` 4 个修复链用例缺 `node` 时 `return`（0 断言
+  通过 = 假绿）。新增 `require_node_or_skip()`：本地允许跳过并打印提示，CI 由
+  `DSH_TEST_REQUIRE_NODE=1` 强制 panic；`.github/workflows/build.yml` Unit tests 步骤已挂。
+  **实测**：剥掉 PATH 里的 node + 打开开关 → 立即 panic。
+- 网络面离线覆盖（P6）：`updates.rs::read_body_capped`（ureq 上限漂移的显式替代实现）
+  此前零测试 → 补 5 条（未超限/恰好等于上限/超限文案/空体/非 UTF-8 上下文）。4 → 9 条。
+- **欠账**：HTTP seam 注入（离线覆盖镜像链回退/超时）、`repair-session.mjs` fixture 驱动。
+- 凭据：`cargo test` **192 passed**（187 → +5）· `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · `DSH_TEST_REQUIRE_NODE=1` 下全量绿。

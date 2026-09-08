@@ -902,7 +902,7 @@ mod tests {
             r#"#!/bin/sh
 echo "Usage: dsh --profile web [options]"
 echo "  --no-open    do not open the Web UI"
-sleep 30
+sleep 60
 "#,
         );
         let t0 = std::time::Instant::now();
@@ -910,9 +910,11 @@ sleep 30
         cmd.arg(fake_dsh(&dir));
         let hit = probe_no_open_cmd(cmd, std::time::Duration::from_secs(60));
         assert!(hit, "usage 含 --no-open 应判 true");
+        // 2026-09-08 去 flaky：断言只需区分「命中即早退」与「等满自然退出（60s）」，
+        // 20s 相对 60s 留 3× 负载余量；回归形态必超（并行 CI 实测曾因 5s 过紧偶发红）。
         assert!(
-            t0.elapsed() < std::time::Duration::from_secs(10),
-            "命中后应 kill 早退（并行负载容差），实测 {:?}",
+            t0.elapsed() < std::time::Duration::from_secs(20),
+            "命中后应 kill 早退（自然退出需 60s），实测 {:?}",
             t0.elapsed()
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -947,9 +949,11 @@ echo "  --port <port>  listen port"
         cmd.arg(fake_dsh(&dir));
         let hit = probe_no_open_cmd(cmd, std::time::Duration::from_millis(300));
         assert!(!hit, "卡死进程超时应判 false");
+        // 2026-09-08 去 flaky：超时本身 300ms，断言放到 10s 只排除「等满自然退出（60s）」。
         assert!(
-            t0.elapsed() < std::time::Duration::from_secs(3),
-            "超时应及时返回"
+            t0.elapsed() < std::time::Duration::from_secs(10),
+            "超时应及时返回（自然退出需 60s），实测 {:?}",
+            t0.elapsed()
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -964,7 +968,7 @@ echo "  --port <port>  listen port"
             r#"#!/bin/sh
 echo "Usage: dsh ... [options]" >&2
 echo "  --no-open    do not open" >&2
-sleep 30
+sleep 60
 "#,
         );
         let t0 = std::time::Instant::now();
@@ -972,7 +976,12 @@ sleep 30
         cmd.arg(fake_dsh(&dir));
         let hit = probe_no_open_cmd(cmd, std::time::Duration::from_secs(60));
         assert!(hit, "stderr 上的 --no-open 同样应命中");
-        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+        // 2026-09-08 去 flaky：原 5s 在并行全量跑时实测挂过一次；对齐同一口径（20s / 自然退出 60s）。
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(20),
+            "命中后应 kill 早退（自然退出需 60s），实测 {:?}",
+            t0.elapsed()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
