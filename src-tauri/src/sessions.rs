@@ -865,6 +865,305 @@ mod tests {
             .find(|p| p.is_file())
     }
 
+    // ---------- 损坏类别 fixture（2026-09-08 架构评审批次 5 · P6）----------
+    //
+    // `scripts/repair-session.mjs` 1,521 行、是唯一改用户数据的脚本。此前每加一个
+    // 损坏类别都要手抄一遍脚手架（临时目录 + 引擎 shim + mtime 回拨）；这里把脚手架
+    // 收成 fixture 原语，判定改由下面这张表驱动——新增类别 = 表里加一行。
+
+    /// 独立 fixture 根目录（tag + PID + 进程内自增，避免并行用例互踩）。
+    fn fixture_home(tag: &str) -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let home =
+            std::env::temp_dir().join(format!("dsh-sess-{tag}-{}-{seq}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        home
+    }
+
+    /// 写入会话 fixture：`<home>/sessions/--demo--/<sess>/<file>`，mtime 回拨 1h
+    ///（活跃判据 = 引擎存活 + mtime<5min；测试恒传 engine_alive=false）。
+    fn write_session_fixture(home: &Path, sess: &str, file: &str, content: &str) -> PathBuf {
+        let dir = home.join("sessions").join("--demo--").join(sess);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(file);
+        fs::write(&path, content).unwrap();
+        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
+        //（os error 5 PermissionDenied）——write 句柄两平台通用。
+        let f = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
+        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
+        drop(f);
+        path
+    }
+
+    /// 引擎档 node shim（转发 PATH 上的真 node）——修复链的 node 唯一来源。
+    fn install_engine_node_shim(home: &Path) {
+        let engine_bin = home.join("engines/bin");
+        fs::create_dir_all(&engine_bin).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = engine_bin.join("node");
+            fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
+            fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法执行，
+        // 健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
+        #[cfg(not(unix))]
+        fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
+    }
+
+    /// 扫描 fixture 目录，返回唯一会话条目的判定（status, detail）。
+    fn scan_verdict(home: &Path) -> (SessionStatus, String) {
+        let list = scan_sessions(home, home, false).unwrap();
+        assert_eq!(list.len(), 1, "fixture 应恰好产出一个会话条目");
+        (
+            list[0].status.clone(),
+            list[0].health_detail.clone().unwrap_or_default(),
+        )
+    }
+
+    /// 拼会话日志：header + 逐行 body + 结尾换行。
+    fn session_log(header: &str, body: &[&str]) -> String {
+        let mut out = String::from(header);
+        for line in body {
+            out.push('\n');
+            out.push_str(line);
+        }
+        out.push('\n');
+        out
+    }
+
+    /// 修复期望（三态，锚脚本契约）：健康 no-op / 可修复备份写回 / 不可修复拒绝。
+    enum RepairExpect {
+        /// 健康：不写回、不备份、字节不变。
+        Untouched,
+        /// 可修复：备份 + 写回 + 修复后 `--scan` 健康；`dropped` 必须从内容中消失。
+        Repairable { dropped: &'static str },
+        /// 不可修复：退出码非 0、不备份、字节不变。
+        Refused,
+    }
+
+    /// 损坏类别 fixture 行（`scan` / `repair` 两个用例共用同一张表）。
+    struct DamageFixture {
+        /// 用例名（断言失败时指认是哪一行）。
+        name: &'static str,
+        /// 会话文件名（世代路由用例需 `session.vN.jsonl`）。
+        file: &'static str,
+        content: String,
+        /// `--scan` 期望判定。
+        scan: SessionStatus,
+        /// `--scan` 期望 detail 关键子串（空串 = 期望无 detail）。
+        scan_detail: &'static str,
+        repair: RepairExpect,
+    }
+
+    /// 期望值锚 `repair-session.mjs` 顶部「损坏类别」文档 + 实测输出
+    ///（2026-09-08 逐条跑 `--scan` / `--all` 取得，detail 为原文）。
+    fn damage_fixtures() -> Vec<DamageFixture> {
+        let hdr = r#"{"type":"session","version":0,"id":"sess-fx","createdAt":1,"cwd":"/tmp","delegationDepth":0}"#;
+        let hdr_v2 = r#"{"type":"session","version":2,"id":"sess-fx","createdAt":1,"cwd":"/tmp","delegationDepth":0,"isSeeded":false}"#;
+        let call0 = r#"{"type":"tool/call","seq":0,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}"#;
+        let call1 = r#"{"type":"tool/call","seq":1,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}"#;
+        let result1 = r#"{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}},"surfaceOp":"append"}"#;
+        let result2 = r#"{"type":"tool/result","seq":2,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}},"surfaceOp":"append"}"#;
+        let end0 =
+            r#"{"type":"turn/end","seq":0,"time":1,"data":{"turn":1,"reason":{"kind":"stop"}}}"#;
+        let end1 =
+            r#"{"type":"turn/end","seq":1,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}"#;
+        let end2 =
+            r#"{"type":"turn/end","seq":2,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}"#;
+        let end4 =
+            r#"{"type":"turn/end","seq":4,"time":3,"data":{"turn":1,"reason":{"kind":"stop"}}}"#;
+        // 重放重叠（类别 1）：连续前缀 + 相同 seq 的重放块，旧占位被遮蔽。
+        let placeholder = r#"{"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"placeholder"}]}]}},"surfaceOp":"append"}"#;
+        let step_end2 = r#"{"type":"step/end","seq":2,"time":1,"data":{"turn":1,"step":1}}"#;
+        let step_end2b = r#"{"type":"step/end","seq":2,"time":3,"data":{"turn":1,"step":1}}"#;
+        let step_start3 = r#"{"type":"step/start","seq":3,"time":4,"data":{"turn":1,"step":2}}"#;
+        let interrupted3 = r#"{"type":"turn/end","seq":3,"time":1,"data":{"turn":1,"reason":{"kind":"interrupted"}}}"#;
+        let end_seed4 = r#"{"type":"session/end-seed","seq":4,"time":2,"data":{}}"#;
+        let chunk4 = r#"{"type":"assistant/chunk","seq":4,"time":5,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"hi"}}}"#;
+        let end5 =
+            r#"{"type":"turn/end","seq":5,"time":6,"data":{"turn":1,"reason":{"kind":"stop"}}}"#;
+        // 悬空 surface replace（类别 4）：end 指向当前 surface 不存在的节点。
+        let user0 = r#"{"type":"user/message","seq":0,"time":1,"data":{"role":"user","id":"u0","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]},"surfaceOp":"append"}"#;
+        let summary3 = r#"{"type":"user/message","seq":3,"time":2,"data":{"role":"user","id":"u1","source":{"kind":"user"},"content":[{"type":"text","text":"summary"}]},"surfaceOp":{"op":"replace","start":0,"end":9999}}"#;
+        vec![
+            DamageFixture {
+                name: "健康（seq 连续 + envelope 完整）",
+                file: "session.jsonl",
+                content: session_log(hdr, &[call0, end1]),
+                scan: SessionStatus::Healthy,
+                scan_detail: "",
+                repair: RepairExpect::Untouched,
+            },
+            DamageFixture {
+                name: "序列缺失（类别 2：seq 0 → 2 跳变）",
+                file: "session.jsonl",
+                content: session_log(hdr, &[call0, end2]),
+                scan: SessionStatus::NeedsRepair,
+                scan_detail: "第 3 行 seq=2 跳变（期望 1），已按加载器语义截断到连续前缀",
+                repair: RepairExpect::Repairable {
+                    dropped: r#""seq":2"#,
+                },
+            },
+            DamageFixture {
+                name: "重放重叠（类别 1：旧占位被重放块遮蔽）",
+                file: "session.jsonl",
+                content: session_log(
+                    hdr,
+                    &[
+                        call0,
+                        placeholder,
+                        step_end2,
+                        interrupted3,
+                        end_seed4,
+                        result1,
+                        step_end2b,
+                        step_start3,
+                        chunk4,
+                        end5,
+                    ],
+                ),
+                scan: SessionStatus::NeedsRepair,
+                scan_detail: "重放重叠已修复：丢弃被遮蔽的旧事件",
+                repair: RepairExpect::Repairable {
+                    dropped: "placeholder",
+                },
+            },
+            DamageFixture {
+                name: "悬空 surface replace（类别 4）",
+                file: "session.jsonl",
+                content: session_log(hdr, &[user0, call1, result2, summary3, end4]),
+                scan: SessionStatus::NeedsRepair,
+                scan_detail: "surface replace: end seq 9999 not found in surface",
+                repair: RepairExpect::Repairable {
+                    dropped: r#""replace""#,
+                },
+            },
+            DamageFixture {
+                name: "JSON 不可解析（类别 3）",
+                file: "session.jsonl",
+                content: session_log(hdr, &["not json at all"]),
+                scan: SessionStatus::Unknown,
+                scan_detail: "第 2 行 JSON 解析失败",
+                repair: RepairExpect::Refused,
+            },
+            DamageFixture {
+                name: "末行截断（类别 3：无换行 + 半截 JSON）",
+                file: "session.jsonl",
+                content: format!(
+                    "{hdr}\n{}",
+                    r#"{"type":"turn/end","seq":0,"time":1,"data":{"turn":1,"reason":{"kind":"sto"#
+                ),
+                scan: SessionStatus::Unknown,
+                scan_detail: "第 2 行 JSON 解析失败",
+                repair: RepairExpect::Refused,
+            },
+            DamageFixture {
+                name: "空文件",
+                file: "session.jsonl",
+                content: String::new(),
+                scan: SessionStatus::Unknown,
+                scan_detail: "文件为空",
+                repair: RepairExpect::Refused,
+            },
+            DamageFixture {
+                name: "存储版本高于本构建（v2 / fallback 校验）",
+                file: "session.v2.jsonl",
+                content: session_log(hdr_v2, &[end0]),
+                scan: SessionStatus::Unknown,
+                scan_detail: "存储格式版本不受支持",
+                repair: RepairExpect::Refused,
+            },
+        ]
+    }
+
+    #[test]
+    fn scan_classifies_damage_fixtures() {
+        // 每个损坏类别一条 fixture：`--scan` 判定 + detail 锚点。此前只有「重放
+        // 重叠 / 悬空 replace / 健康」三类有覆盖，类别 2/3 与世代路由的判定
+        //（needs_repair vs unknown）无人守住——分类错会让用户点修复被拒，或
+        // 本该可修的会话被标成不可修。
+        if !require_node_or_skip("scan_classifies_damage_fixtures") {
+            return;
+        }
+        for (i, fx) in damage_fixtures().into_iter().enumerate() {
+            let home = fixture_home(&format!("fx-scan-{i}"));
+            write_session_fixture(&home, "sess-fx", fx.file, &fx.content);
+            install_engine_node_shim(&home);
+
+            let (status, detail) = scan_verdict(&home);
+            assert_eq!(status, fx.scan, "[{}] 判定不符，detail：{detail}", fx.name);
+            if fx.scan_detail.is_empty() {
+                assert!(
+                    detail.is_empty(),
+                    "[{}] 健康不应带 detail：{detail}",
+                    fx.name
+                );
+            } else {
+                assert!(
+                    detail.contains(fx.scan_detail),
+                    "[{}] detail 缺锚点「{}」，实测：{detail}",
+                    fx.name,
+                    fx.scan_detail
+                );
+            }
+            let _ = fs::remove_dir_all(&home);
+        }
+    }
+
+    #[test]
+    fn repair_verdict_matches_damage_fixture() {
+        // 同一张表的修复侧：健康幂等 no-op / 可修复备份写回且修复后健康 /
+        // 不可修复必须非 0 退出并原样保留（脚本契约三条，逐类守住）。
+        if !require_node_or_skip("repair_verdict_matches_damage_fixture") {
+            return;
+        }
+        for (i, fx) in damage_fixtures().into_iter().enumerate() {
+            let home = fixture_home(&format!("fx-repair-{i}"));
+            let path = write_session_fixture(&home, "sess-fx", fx.file, &fx.content);
+            install_engine_node_shim(&home);
+            let backup = path.with_file_name(format!("{}.bak", fx.file));
+
+            let result = run_repair(Some(path.to_str().unwrap()), &home, &home, false);
+            let after = fs::read_to_string(&path).unwrap();
+
+            match fx.repair {
+                RepairExpect::Untouched => {
+                    result.unwrap_or_else(|e| panic!("[{}] 健康文件修复应成功：{e}", fx.name));
+                    assert!(!backup.exists(), "[{}] 健康文件不应备份", fx.name);
+                    assert_eq!(after, fx.content, "[{}] 健康文件不应写回", fx.name);
+                }
+                RepairExpect::Repairable { dropped } => {
+                    let outcome = result.unwrap_or_else(|e| panic!("[{}] 应可修复：{e}", fx.name));
+                    assert!(outcome.success, "[{}] {}", fx.name, outcome.message);
+                    assert!(backup.is_file(), "[{}] 可修复必须留备份", fx.name);
+                    assert!(
+                        !after.contains(dropped),
+                        "[{}] 修复后不应残留 {dropped}",
+                        fx.name
+                    );
+                    assert_eq!(
+                        scan_verdict(&home).0,
+                        SessionStatus::Healthy,
+                        "[{}] 修复后应健康",
+                        fx.name
+                    );
+                }
+                RepairExpect::Refused => {
+                    assert!(result.is_err(), "[{}] 不可修复应非 0 退出", fx.name);
+                    assert!(!backup.exists(), "[{}] 不可修复不得备份", fx.name);
+                    assert_eq!(after, fx.content, "[{}] 不可修复必须原样保留", fx.name);
+                }
+            }
+            let _ = fs::remove_dir_all(&home);
+        }
+    }
+
     #[test]
     fn decode_project_dir_to_path_edge_cases() {
         assert_eq!(decode_project_dir_to_path(""), "/");
@@ -885,12 +1184,7 @@ mod tests {
             return;
         }
 
-        let temp = std::env::temp_dir().join(format!("dsh-sess-repair-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp);
-
-        let sess_dir = temp.join("sessions").join("--demo--").join("sess-fail");
-        fs::create_dir_all(&sess_dir).unwrap();
-        let target_file = sess_dir.join("session.jsonl");
+        let temp = fixture_home("repair-replay");
 
         // 复现真实损坏类别（2026-09-04，锚 dsh v0.1.2-rc.1 加载器语义）：
         // 会话中断恢复后，dsh 以相同 seq 重放被中断轮次的真实事件，
@@ -910,35 +1204,9 @@ mod tests {
 {"type":"assistant/chunk","seq":4,"time":5,"data":{"turn":1,"step":2,"chunk":{"type":"text-delta","index":0,"text":"hi"}}}
 {"type":"turn/end","seq":5,"time":6,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
-        fs::write(&target_file, corrupt_data).unwrap();
-        // 模拟静止会话：拨回 mtime 以贴近真实修复场景（修复入口的活跃判据
-        // 已是复合式——引擎存活 + mtime<5min，测试恒传 engine_alive=false）。
-        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
-        //（os error 5 PermissionDenied）——write 句柄两平台通用。
-        let f = fs::OpenOptions::new()
-            .write(true)
-            .open(&target_file)
-            .unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
-            .unwrap();
-        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
-        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
-        drop(f);
-
-        // 修复链 node 来源 = 引擎档唯一：预置假体 shim（转发 PATH 上的真 node）
-        let engine_bin = temp.join("engines/bin");
-        std::fs::create_dir_all(&engine_bin).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let shim = engine_bin.join("node");
-            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
-            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
-        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
-        #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
+        let target_file = write_session_fixture(&temp, "sess-fail", "session.jsonl", corrupt_data);
+        let sess_dir = target_file.parent().unwrap().to_path_buf();
+        install_engine_node_shim(&temp);
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success, "修复应成功：{}", outcome.message);
@@ -1100,13 +1368,8 @@ mod tests {
             return;
         }
 
-        let temp =
-            std::env::temp_dir().join(format!("dsh-sess-repair-surface-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp);
+        let temp = fixture_home("repair-surface");
 
-        let sess_dir = temp.join("sessions").join("--demo--").join("sess-surface");
-        fs::create_dir_all(&sess_dir).unwrap();
-        let target_file = sess_dir.join("session.jsonl");
         let corrupt_data = r#"{"type":"session","version":0,"id":"sess-surface","createdAt":1,"cwd":"/tmp","delegationDepth":0}
 {"type":"user/message","seq":0,"time":1,"data":{"role":"user","id":"u0","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]},"surfaceOp":"append"}
 {"type":"tool/call","seq":1,"time":1,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}
@@ -1114,30 +1377,10 @@ mod tests {
 {"type":"user/message","seq":3,"time":2,"data":{"role":"user","id":"u1","source":{"kind":"user"},"content":[{"type":"text","text":"summary"}]},"surfaceOp":{"op":"replace","start":0,"end":9999}}
 {"type":"turn/end","seq":4,"time":3,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
-        fs::write(&target_file, corrupt_data).unwrap();
-        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
-        //（os error 5 PermissionDenied）——write 句柄两平台通用。
-        let f = fs::OpenOptions::new()
-            .write(true)
-            .open(&target_file)
-            .unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
-            .unwrap();
-        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
-        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
-        drop(f);
-
-        let engine_bin = temp.join("engines/bin");
-        std::fs::create_dir_all(&engine_bin).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let shim = engine_bin.join("node");
-            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
-            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
-        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
+        let target_file =
+            write_session_fixture(&temp, "sess-surface", "session.jsonl", corrupt_data);
+        let sess_dir = target_file.parent().unwrap().to_path_buf();
+        install_engine_node_shim(&temp);
         #[cfg(not(unix))]
         std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
@@ -1191,13 +1434,8 @@ mod tests {
             return;
         }
 
-        let temp =
-            std::env::temp_dir().join(format!("dsh-sess-repair-healthy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&temp);
+        let temp = fixture_home("repair-healthy");
 
-        let sess_dir = temp.join("sessions").join("--demo--").join("sess-ok");
-        fs::create_dir_all(&sess_dir).unwrap();
-        let target_file = sess_dir.join("session.jsonl");
         // 健康样例 = dsh 真实事件形状（消息带 id/role/source、surface 事件带
         // surfaceOp）：恢复层校验（2026-09-07）逐事件验 envelope，缺标记会被
         // 判需修复。
@@ -1206,33 +1444,9 @@ mod tests {
 {"type":"tool/result","seq":1,"time":1,"data":{"turn":1,"step":1,"message":{"role":"user","id":"m0","source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","toolCallId":"c1","content":[{"type":"text","text":"ok"}]}]}},"surfaceOp":"append"}
 {"type":"turn/end","seq":2,"time":2,"data":{"turn":1,"reason":{"kind":"stop"}}}
 "#;
-        fs::write(&target_file, healthy_data).unwrap();
-        // 同活跃检测语义：拨回 mtime 模拟静止会话，避免误拒。
-        // Windows 上 File::open 是只读句柄，set_modified 需要写属性权限
-        //（os error 5 PermissionDenied）——write 句柄两平台通用。
-        let f = fs::OpenOptions::new()
-            .write(true)
-            .open(&target_file)
-            .unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
-            .unwrap();
-        // 立即释放句柄：Windows 上 rename 不能替换仍被打开的文件（EPERM），
-        // 而修复链会把改好的 tmp rename 回原名（unix 无此限制）。
-        drop(f);
-
-        let engine_bin = temp.join("engines/bin");
-        std::fs::create_dir_all(&engine_bin).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let shim = engine_bin.join("node");
-            std::fs::write(&shim, "#!/bin/sh\nexec node \"$@\"\n").unwrap();
-            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        // 与 unix shim 同语义：转发 PATH 上的真 node（空桩在 Windows 上无法
-        // 执行，健康检查走不到「版本不受支持」分支——2026-09-07 CI 实证）。
-        #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
+        let target_file = write_session_fixture(&temp, "sess-ok", "session.jsonl", healthy_data);
+        let sess_dir = target_file.parent().unwrap().to_path_buf();
+        install_engine_node_shim(&temp);
 
         let outcome = run_repair(Some(target_file.to_str().unwrap()), &temp, &temp, false).unwrap();
         assert!(outcome.success);

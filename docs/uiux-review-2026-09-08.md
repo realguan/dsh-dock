@@ -491,3 +491,33 @@ emerald-700 5.48、sky-500 3.0→sky-700 5.93、rose-500 3.4→rose-700 6.29、v
 `McpManager` 15、`ProfileDetailPane` 9、`ErrorCard` 6、`ProfileManager` 1），另有模板串与
 17 个较小文件未计。这批是纯机械抽取（每条约 2 个键 + 1 处替换），但改动面横跨 25+ 文件，
 按 AGENTS §8.1 应单独立项——本次只收口了读屏可感知的 `aria-label` 与用户可见的动词/标签。
+
+## 18. 补充发现：会话 `unknown` 呈现（2026-09-08 架构批次 5 fixture 驱动暴露，**未修，登记**）
+
+`scripts/repair-session.mjs` 的 `--scan` 对「JSON 不可解析 / 末行截断 / 空文件 /
+存储版本高于本构建」一律判 `unknown`（脚本 §994-998 明确口径：`unknown` = 无法解析 /
+不可安全修复 / 读取失败），且 detail 携带**确切原因**：
+
+| fixture | `--scan` detail（实测原文） |
+|:---|:---|
+| JSON 不可解析 | `第 2 行 JSON 解析失败` |
+| 末行截断 | `第 2 行 JSON 解析失败` |
+| 空文件 | `文件为空` |
+| 存储版本高于本构建 | `存储格式版本不受支持（不可修复，需升级适配）：…` |
+
+前端却把这三类与「活跃会话 / 引擎未就绪」混为一谈：
+
+1. **文案误导**：`content/zh-CN.ts:396` `statusUnknownDesc` = 「无法判定健康状态（可能为
+   活跃会话或引擎未就绪）」——对一个明确损坏的文件说「无法判定」，且给出的两个原因都不成立。
+2. **detail 被吞**：`SessionManager.tsx:471` 只在 `isNeedsRepair`（= `needs_repair` 且非活跃）
+   时渲染 `healthDetail`，`unknown` 行的确切原因永不展示。
+
+**建议修法**（小，单独立项，勿与本表批次混提）：
+- `statusUnknown` 拆成「不可修复/需升级」与「状态未知」两种呈现，或按 `healthDetail`
+  是否非空分流；
+- `healthDetail` 对 `unknown` 同样展示（该原因对用户可行动：空文件可删、版本不支持需升级 dsh）；
+- 补一条纯函数映射测试（status + detail → 徽标/描述键），避免再次退化。
+
+**为何没在本批顺手修**：批次 5 的意图是补测试覆盖；此处涉及文案键与呈现分支，属 UI/UX
+面（AGENTS §8.1 一次会话一个意图），且 fixture 表已把 `unknown` 的四类原因钉住——修完
+有机器闸门兜底。

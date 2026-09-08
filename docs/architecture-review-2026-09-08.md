@@ -145,7 +145,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ✅ 已落地（见 §11/§12/§13） |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
-| 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10/§14；仅 `repair-session.mjs` fixture 欠） |
+| 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ✅ 已落地（见 §10/§14/§15） |
 
 ## 4. 不建议做
 
@@ -387,8 +387,44 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 `?` 提前返回 `None`（连带跳过剩余镜像）。属既有语义，本次纯做 seam 不动行为；正常
 packument 不会缺这两键，坏响应路径已被 `continue` 覆盖。
 
-**仍是批次 5 欠账**：`repair-session.mjs` fixture 驱动（P6 第二条缺口的脚本侧；
-`sessions.rs` 侧的硬失败已在 §10② 落地）。
+**仍是批次 5 欠账**：`repair-session.mjs` fixture 驱动（→ 已于 §15 收口）。
 
 **验证**：`cargo test` 204 绿 · `cargo fmt --check` 干净 · `clippy -D warnings` 干净 ·
 前端 `typecheck`/`oxlint` 0 warning/`test` 135 全绿/`build` 通过（本次未动前端，仅回归确认）。
+
+## 15. 批次 5 收口：`repair-session.mjs` 损坏类别 fixture（2026-09-08，`test(sessions): 会话修复脚本损坏类别 fixture 驱动`）
+
+**P6 第二条缺口（唯一改用户数据的脚本靠可跳过测试）补齐**：把散落在 4 个用例里的脚手架
+（临时目录 + 引擎 node shim + mtime 回拨）收成 fixture 原语，判定改由**一张表**驱动——
+`fixture_home` / `write_session_fixture` / `install_engine_node_shim` / `scan_verdict`。
+
+**新增损坏类别表 8 行**（`--scan` 判定 + detail 锚点，`repair` 三态期望）：
+
+| 类别 | `--scan` | detail 锚点（实测原文） | 修复 |
+|:---|:---|:---|:---|
+| 健康（seq 连续 + envelope 完整） | healthy | —（无 detail） | 幂等 no-op |
+| 序列缺失（类别 2：seq 0 → 2） | needs_repair | `第 3 行 seq=2 跳变（期望 1），已按加载器语义截断到连续前缀` | 备份 + 写回 |
+| 重放重叠（类别 1） | needs_repair | `重放重叠已修复：丢弃被遮蔽的旧事件` | 备份 + 写回 |
+| 悬空 surface replace（类别 4） | needs_repair | `surface replace: end seq 9999 not found in surface` | 备份 + 写回 |
+| JSON 不可解析（类别 3） | unknown | `第 2 行 JSON 解析失败` | 拒绝（非 0 + 原样） |
+| 末行截断（类别 3） | unknown | `第 2 行 JSON 解析失败` | 拒绝 |
+| 空文件 | unknown | `文件为空` | 拒绝 |
+| 存储版本高于本构建（v2 / fallback） | unknown | `存储格式版本不受支持` | 拒绝 |
+
+两个用例共用该表：`scan_classifies_damage_fixtures` 断言判定 + detail 锚点，
+`repair_verdict_matches_damage_fixture` 断言脚本契约三条（健康不写回不备份 / 可修复
+备份 + 修复后健康 + 被丢弃内容消失 / 不可修复非 0 退出 + 字节原样）。**新增类别 = 表里加一行。**
+
+期望值取自 2026-09-08 逐条实跑（`--scan` / `--all`）的原文，不靠猜；类别 2/3 与世代路由
+此前无覆盖——分类错会让用户点修复被拒，或把可修会话标成不可修。
+
+**顺带**：三个重用例的脚手架改用 fixture 原语（删 98 行重复、断言一字未改）。
+**暴露的新缺陷已登记**（未修，属 UI/UX 面）：`unknown` 在 UI 上呈现为「状态未知 /
+无法判定健康状态（可能为活跃会话或引擎未就绪）」且**隐藏 detail**，而脚本其实知道确切
+原因（如「第 2 行 JSON 解析失败」）——见 `docs/uiux-review-2026-09-08.md` §18。
+
+**仍是批次 5 欠账**：WSL 路径仍仅手工验证（P6 第三条缺口，`boot-smoke.yml` 仍是
+`workflow_dispatch`）。
+
+**验证**：`cargo test` **206 passed**（204 → +2 表驱动用例）· `cargo fmt --check` 干净 ·
+`clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint`/`test`/`build` 全绿（未动前端）。

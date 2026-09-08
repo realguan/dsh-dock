@@ -1904,3 +1904,25 @@
 - 凭据：`cargo test` **204 passed**（193 → +11）· `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint` 0 warning/
   `test` 135 全绿/`build` 通过（未动前端，仅回归确认）。
+
+### 2026-09-08 test(sessions)：会话修复脚本损坏类别 fixture 驱动（架构评审批次 5 收口）—— guan（AI 起草）
+
+- **P6 第二条缺口（唯一改用户数据的脚本靠可跳过测试）补齐**：`sessions.rs` 测试里的
+  脚手架（临时目录 + 引擎 node shim + mtime 回拨）收成 fixture 原语
+  （`fixture_home` / `write_session_fixture` / `install_engine_node_shim` / `scan_verdict`），
+  判定改由**一张 8 行损坏类别表**驱动：新增类别 = 表里加一行。
+- 表覆盖：健康 / 序列缺失（类别 2）/ 重放重叠（类别 1）/ 悬空 surface replace（类别 4）/
+  JSON 不可解析 / 末行截断 / 空文件 / 存储版本高于本构建。两个用例共用该表——
+  `scan_classifies_damage_fixtures` 断言 `--scan` 判定 + detail 锚点，
+  `repair_verdict_matches_damage_fixture` 断言脚本契约三条（健康不写回不备份 /
+  可修复备份 + 修复后健康 + 被丢弃内容消失 / 不可修复非 0 退出 + 字节原样）。
+  期望值取自 2026-09-08 逐条实跑原文（非推测）。
+- **顺带**：三个重用例脚手架改用 fixture 原语（删 98 行重复，断言一字未改）。
+- **暴露的新缺陷已登记（未修）**：`--scan` 对损坏文件判 `unknown`，前端却呈现为
+  「无法判定健康状态（可能为活跃会话或引擎未就绪）」且**隐藏 detail**，而脚本已给出确切
+  原因（如「第 2 行 JSON 解析失败」）——记 `docs/uiux-review-2026-09-08.md` §18 +
+  问题记录 U16，属 UI/UX 面，按 §8.1 另立项修。
+- **仍是批次 5 欠账**：WSL 路径仍仅手工验证（`boot-smoke.yml` 仍是 `workflow_dispatch`）。
+- 影响：仅周知，无产品行为变更（纯测试 + 文档）。
+- 凭据：`cargo test` **206 passed**（204 → +2 表驱动用例）· `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint`/`test` 135/`build` 全绿。
