@@ -261,6 +261,7 @@ export function PreferencesPane({
 
           <div className="flex items-center gap-2">
             <Switch
+              aria-label={t.console.autoRestartLabel}
               checked={autoRestartActive}
               disabled={saving}
               onCheckedChange={handleToggleAutoRestart}
@@ -334,6 +335,7 @@ export function PreferencesPane({
 
           <div className="flex items-center gap-2">
             <Switch
+              aria-label={t.console.floatingSwitcherLabel}
               checked={floatingSwitcherActive}
               disabled={saving}
               onCheckedChange={handleToggleFloatingSwitcher}

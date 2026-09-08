@@ -2,10 +2,24 @@ import * as React from "react"
 import { Switch as SwitchPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 
-function Switch({
-  className,
-  ...props
-}: React.ComponentProps<typeof SwitchPrimitive.Root>) {
+type SwitchRootProps = React.ComponentProps<typeof SwitchPrimitive.Root>
+
+/**
+ * 无障碍名称强制（2026-09-08 裁定）：开关必须带 `aria-label` 或 `aria-labelledby`。
+ *
+ * 此前 8 处调用中 7 处缺失（`LogViewerPane` / `PreferencesPane`×2 / `PluginOverview` /
+ * `McpManager` / `BuildApprovalDialog` / `ProfileDetailPane`），读屏用户只能听到
+ * 「开关」而不知其义；第 8 处（`BootMode`）靠 `<label>` 包裹关联。
+ * 用**类型闸门**钉住：新调用点漏写即 `pnpm typecheck` 红，不必引入 DOM 测试栈
+ * （AGENTS §5）。文案取自相邻可见标签，勿写与界面不一致的自造名称。
+ */
+export type SwitchProps = SwitchRootProps &
+  (
+    | { "aria-label"?: string; "aria-labelledby": string }
+    | { "aria-label": string; "aria-labelledby"?: string }
+  )
+
+function Switch({ className, ...props }: SwitchProps) {
   return (
     <SwitchPrimitive.Root
       data-slot="switch"

@@ -514,7 +514,11 @@ export function PluginOverview({
                     从首个来源 Profile 的 cordis.patch.yml 原样同步配置条目
                   </p>
                 </div>
-                <Switch checked={withConfig} onCheckedChange={setWithConfig} />
+                <Switch
+                  aria-label="连带复制配置行"
+                  checked={withConfig}
+                  onCheckedChange={setWithConfig}
+                />
               </div>
             </div>
           )}

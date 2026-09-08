@@ -7,14 +7,15 @@
 > ③ 截图 `docs/known-issues/image*.png`（v0.9.0–v0.9.5 期间，**仅用于布局与信息架构**，
 > 单项缺陷一律以代码现状为准）。
 > 实测基线：`pnpm typecheck` 0 err · `pnpm test` 112 passed · `oxlint` 0 warning
-> （批次 A 落地后复测：**123 passed**，含新增 `shellSettings` 4 条 + `onNoticeStability` 2 条）。
+> （批次 A 落地后复测：**125 passed**，含 `shellSettings` 4 条 + `onNoticeStability` 2 条
+> + `switchA11y` 2 条）。
 
 ## 0. 结论摘要（按严重度）
 
 | # | 缺陷 | 严重度 | 状态 | 证据 |
 |:--|:---|:---|:---|:---|
 | U1 | **持久失败时无限重试 + 无限弹 toast**（5 个面板） | BLOCKER | ✅ 已修 | `ProfileManager.tsx:263` 内联 `onNotice` + `SessionManager.tsx:125-141` 等 |
-| U2 | **Profile 卡片键盘不可达**（主操作） | BLOCKER | ⬜ 待做 | `ProfileRow.tsx:63` |
+| U2 | **Profile 卡片键盘不可达**（主操作） | BLOCKER | ✅ 已修 | `ProfileRow.tsx:63` |
 | U3 | **诊断页失败时伪造「环境全缺失」报告** | HIGH | ✅ 已修 | `DiagnosticsPane.tsx:63,92-105` |
 | U4 | **偏好设置读取失败后把默认值写回**，可能清空其他键 | HIGH | ✅ 已修 | `PreferencesPane.tsx:36,54,72,90` + `i18nStore.ts:54` |
 | U5 | **配置迁移失败却提示「分发完成」** | HIGH | ✅ 已修 | `PluginOverview.tsx:165-167,170` |
@@ -23,7 +24,7 @@
 | U8 | **窗口最小宽度 < 布局断点**，主从布局在允许的窗口尺寸下静默塌成单列 | HIGH | ⬜ 待做 | `lib.rs:3012` (860) vs `lg`=1024 |
 | U9 | **破坏性操作无确认**：卸载插件、覆写凭据、覆写引擎设置 | HIGH | ⬜ 待做 | `ProfileDetailPane.tsx:692-700` 等 |
 | U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ⬜ 待做 | 全仓 `sticky` 0 处 |
-| U11 | toast 无 `aria-live`；10 处「已复制」假成功 | MEDIUM | ⬜ 待做 | `ui/toast.tsx:11-61` |
+| U11 | toast 无 `aria-live`；10 处「已复制」假成功 | MEDIUM | ⚠️ 部分（live region 已修；假成功待做） | `ui/toast.tsx:11-61` |
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ⬜ 待做 | `index.css:8` 无 `.dark` 应用点 |
 | U13 | 图标语义错配 3 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ⬜ 待做 | 见 §6 |
 | U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ⬜ 待做 | `SessionManager.tsx:344-360` vs `:477-489` |
@@ -195,18 +196,19 @@
 
 ## 4. 可访问性
 
-| 项 | 结论 |
-|:---|:---|
-| 键盘不可达 | `ProfileRow.tsx:63` 整卡 `div onClick`（**主操作**）；`MarketPluginCard.tsx:66` `<h3 onClick>`；`SessionManager.tsx:757` 分组折叠头 |
-| 图标按钮无名称 | `McpManager.tsx:348-360`（删除 MCP，**无任何名称**）、`MarketplaceView.tsx:220-227`（清空搜索）、`McpManager.tsx:544-553`（删 ENV 行） |
-| 仅靠 `title` 命名 | 15 处（`ProfileRow.tsx:129` 等）——tooltip 不保证被 AT 读出 |
-| 未命名 Switch | 7 处：`PreferencesPane.tsx:238,311`、`McpManager.tsx:562`、`LogViewerPane.tsx:144`、`BuildApprovalDialog.tsx:106`、`PluginOverview.tsx:493`、`ProfileDetailPane.tsx:674`（仅 `BootMode.tsx:127` 正确） |
-| 表单标签 | 11 处 placeholder-only 输入框；`McpManager.tsx:468,481,492,507` 的 `<label>` 与控件无 `htmlFor` 关联；`MarketInstallDialog.tsx:159,198` 同 |
-| 标题层级 | 每个面板从 `h3` 起（跳过 `h2`）；`ProfileDetailPane.tsx:312` h3 先于 `:327` h2 |
-| tab 语义 | 4 处 `role="tablist"` 无 roving tabindex / `aria-controls`；`SystemConsole.tsx:75-105` 的 `role="tab"` 落在裸 `<nav>` 里 |
-| 减少动效 | `index.css` 无 `prefers-reduced-motion`；Framer Motion 9 个文件未用 `useReducedMotion`；仅 2 处 `motion-reduce:animate-none` |
-| 命中区 | <24px：toast 关闭 18×18、`MarketPluginCard` 3 个 22×22、`UpdateBanner` 22×22、MCP 删行 ≈16×16、`Switch` 16×28（高度不足） |
-| 对比度 | 见 §2.2 |
+| 项 | 结论 | 状态 |
+|:---|:---|:---|
+| 键盘不可达 | `ProfileRow.tsx:63` 整卡 `div onClick`（**主操作**）；`MarketPluginCard.tsx:66` `<h3 onClick>`；`SessionManager.tsx:757` 分组折叠头 | ⚠️ ProfileRow 已修；余 2 处待做 |
+| 图标按钮无名称 | `McpManager.tsx:348-360`（删除 MCP，**无任何名称**）、`MarketplaceView.tsx:220-227`（清空搜索）、`McpManager.tsx:544-553`（删 ENV 行） | ✅ 已修 |
+| 仅靠 `title` 命名 | 15 处（`ProfileRow.tsx:129` 等）——tooltip 不保证被 AT 读出 | ⬜ 待做 |
+| 未命名 Switch | 7 处：`PreferencesPane.tsx:238,311`、`McpManager.tsx:562`、`LogViewerPane.tsx:144`、`BuildApprovalDialog.tsx:106`、`PluginOverview.tsx:493`、`ProfileDetailPane.tsx:674`（仅 `BootMode.tsx:127` 正确） | ✅ 已修（8 处全带名称 + 类型闸门） |
+| 表单标签 | 11 处 placeholder-only 输入框；`McpManager.tsx:468,481,492,507` 的 `<label>` 与控件无 `htmlFor` 关联；`MarketInstallDialog.tsx:159,198` 同 | ⬜ 待做 |
+| 标题层级 | 每个面板从 `h3` 起（跳过 `h2`）；`ProfileDetailPane.tsx:312` h3 先于 `:327` h2 | ⬜ 待做 |
+| tab 语义 | 4 处 `role="tablist"` 无 roving tabindex / `aria-controls`；`SystemConsole.tsx:75-105` 的 `role="tab"` 落在裸 `<nav>` 里 | ⬜ 待做 |
+| 减少动效 | `index.css` 无 `prefers-reduced-motion`；Framer Motion 9 个文件未用 `useReducedMotion`；仅 2 处 `motion-reduce:animate-none` | ⬜ 待做 |
+| 命中区 | <24px：toast 关闭 18×18、`MarketPluginCard` 3 个 22×22、`UpdateBanner` 22×22、MCP 删行 ≈16×16、`Switch` 16×28（高度不足） | ⬜ 待做 |
+| 对比度 | 见 §2.2 | ⬜ 待做 |
+| toast 播报 | `ui/toast.tsx` 无 `role`/`aria-live` → 读屏收不到任何确认/错误 | ✅ 已修（常驻 live region） |
 
 ## 5. 图标与文案一致性
 
@@ -269,7 +271,7 @@
 | 批次 | 内容 | 量级 | 状态 |
 |:---|:---|:---|:---|
 | **A（止血）** | U1 引用稳定性；U3 诊断失败不再伪造报告；U4 设置读取失败禁写；U5 配置迁移结果如实通知 | 极小，1 PR | ✅ 已落地（见 §12） |
-| **B（可见性）** | U2 卡片改 `<button>`；toast 加 `aria-live`；7 个 Switch 加 `aria-label`；`McpManager` 删除按钮补名称 | 小 | ⬜ 待做 |
+| **B（可见性）** | U2 卡片键盘可达；toast 常驻 live region；8 个 Switch 补名称（+类型闸门）；4 个图标按钮补名称 | 小 | ✅ 已落地（见 §13）；余「placeholder-only 输入框 label 关联」「标题层级」留 B2 |
 | **C（视觉达标）** | U6 对比度三改（`faint`→仅装饰、主按钮用 `brand-deep`、原始调色板逐文件替换）；U12 决定 `.dark` 去留 | 中，逐模块 | ⬜ 待做 |
 | **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ⬜ 待做 |
 | **E（一致性）** | U13 图标与动词统一；U15 Select tooltip 补全；i18n 泄漏逐文件收口 | 中，机械但量大 | ⬜ 待做 |
@@ -346,4 +348,35 @@ ADR-0011 §5 三项标记 `[x]`（2026-09-08 hotfix），本评审 16:2x 复核�
   （假成功 toast，§3.4 一类）；本次只保证「不再写坏其他键」，通知语义留待批次 B。
 - `set_shell_settings` 仍是整体覆盖写（Rust 侧无 merge 语义）：前端已加安全基线，
   但任何新调用点仍可能踩坑，建议后续在 `settings.rs` 侧补 merge 或收窄命令面。
+
+## 13. 落地记录：批次 B（2026-09-08，`fix(a11y): 键盘与读屏可达性`）
+
+| 条目 | 改动 | 文件 |
+|:---|:---|:---|
+| U2 | 卡片不可整体改 `<button>`（内含启动/更多菜单按钮，嵌套交互元素非法）；改为**名字即主控件**：名字变 `<button>` + `aria-current`，卡片用 `focus-within:ring-2` 呈现整卡焦点环，指针点击行为不变 | `components/profiles/ProfileRow.tsx` |
+| toast 播报 | `role="status" aria-live="polite" aria-atomic` 挂在**常驻**容器上（挂在随 toast 挂载的节点上部分读屏会整条漏播）；消息 `truncate` 补 `title` | `components/ui/toast.tsx` |
+| Switch 名称 | 8 处全部带 `aria-label`（含 `BootMode`，其 `<label>` 包裹仍保留）；文案取自相邻可见标签 | 6 个文件 |
+| 图标按钮名称 | `McpManager` 删 MCP（`删除：<name>`）、删 ENV 行、`MarketplaceView` 清空搜索、`ProfileRow` 重启（原仅 `title`） | 3 个文件 |
+
+**机器闸门（新增，替代「靠人记得加」）**
+- `ui/switch.tsx` 的 `SwitchProps` 改为**类型层强制**：必须带 `aria-label` 或 `aria-labelledby`，
+  否则 `pnpm typecheck` 红。8 处漏写一次性全被点出（已实测）。
+- `__tests__/switchA11y.test.tsx`（2 条）：用 `@ts-expect-error` 钉住闸门存在性——把 `SwitchProps`
+  退回全可选后立即报 `TS2578 Unused '@ts-expect-error' directive`（已验证）。
+- 类型闸门优于源码文本闸门：不误判、不依赖文件路径、覆盖未来所有新调用点。
+
+**未纳入本次（批次 B2）**
+- 11 处 placeholder-only 输入框补 label；`McpManager.tsx:468,481,492,507`、
+  `MarketInstallDialog.tsx:159,198` 的 `<label>` 无 `htmlFor` 关联。
+- 标题层级（面板一律 `h3` 起、跳过 `h2`）、tab roving tabindex / `aria-controls`、
+  `prefers-reduced-motion`、命中区 <24px、「仅靠 `title` 命名」15 处。
+- 本次新增的 `aria-label` 中有 3 条沿用**相邻可见文案的硬编码中文**（`PluginOverview`
+  「连带复制配置行」、`McpManager`「停用该 MCP 服务」、`MarketplaceView`「清空搜索」）——
+  刻意与可见文案逐字一致（WCAG 2.5.3 Label in Name），随批次 E 的 i18n 收口一起改。
+
+**实机验证清单（本次未跑：Tauri 壳需真实窗口，DOM 测试栈按 §5 禁用）**
+1. `Tab` 进 Profile 列表 → 焦点落在名字按钮、整卡显示焦点环 → `Enter` 切换详情。
+2. `Tab` 到启动/重启/更多菜单 → 各自可触发，焦点环不遮内容。
+3. 触发一次失败 toast（如断网刷新诊断）→ 读屏应播报整条消息。
+4. 键盘走查 MCP 删除、市场清空搜索、日志自动滚底开关。
 

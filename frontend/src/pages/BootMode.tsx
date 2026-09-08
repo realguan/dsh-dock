@@ -124,7 +124,11 @@ export function BootMode() {
       {/* 底部：设默认 Switch 行 + 开始 CTA */}
       <div className="mt-7 flex flex-col gap-4 rounded-2xl border border-line bg-panel/80 p-4 shadow-2xs backdrop-blur-xs sm:flex-row sm:items-center sm:justify-between">
         <label className="flex cursor-pointer items-center gap-3 select-none">
-          <Switch checked={setDefault} onCheckedChange={setSetDefault} />
+          <Switch
+            aria-label={t.mode.setDefault}
+            checked={setDefault}
+            onCheckedChange={setSetDefault}
+          />
           <div>
             <span className="block text-xs font-medium text-ink">{t.mode.setDefault}</span>
             <span className="text-[11px] text-faint">随时可在设置或托盘菜单中更改</span>

@@ -104,6 +104,7 @@ export function BuildApprovalDialog({
                 </div>
               </div>
               <Switch
+                aria-label={row.name}
                 checked={row.allowed}
                 disabled={saving}
                 onCheckedChange={(v) =>

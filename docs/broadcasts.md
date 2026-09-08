@@ -1615,3 +1615,29 @@
   修复后 0 命中（已验证）。U1 缺陷对 tsc/oxlint 不可见（类型一致），故用与
   `ipc.rs` gate_tests 同口径的源码文本闸门兜底（`?raw` 读入，不引 DOM 测试栈）。
 
+### 2026-09-08 fix(a11y)：键盘与读屏可达性（UI/UX 评审批次 B1）—— guan（AI 起草）
+
+- 依据：`docs/uiux-review-2026-09-08.md` 批次 B。本次只做「能操作、能听见」两类，
+  表单 label 关联 / 标题层级 / tab 语义 / 动效降级留批次 B2。
+- U2 BLOCKER（主操作键盘不可达）：`ProfileRow` 整卡 `div onClick`。**卡片不能整体
+  改 `<button>`**——内部还有启动/重启/更多菜单按钮，嵌套交互元素既非法又让读屏
+  语义错乱。改为「名字即主控件」：名字变 `<button>` + `aria-current`，卡片用
+  `focus-within:ring-2` 呈现整卡焦点环，指针点击行为不变。
+- toast 播报：`role="status" aria-live="polite" aria-atomic` 必须挂在**常驻**容器上
+  ——挂在随 toast 挂载/卸载的节点上，部分读屏会整条漏播；容器恒在 DOM，动画只作用
+  于内层 motion.div。顺带补 `title`（消息 truncate 到 420px，长错误原本看不全）。
+- 8 个 `Switch` 全部补 `aria-label`（评审记 7 处，实际含 `BootMode` 共 8 处；后者靠
+  `<label>` 包裹关联，仍补显式名称）。
+- 4 个图标按钮补名称：MCP 删除（原**无任何名称**）、MCP 删 ENV 行（原只有「×」）、
+  市场清空搜索、ProfileRow 重启（原仅 `title`）。
+- **机器闸门（新增）**：`ui/switch.tsx` 的 `SwitchProps` 改为类型层强制——开关必须带
+  `aria-label` 或 `aria-labelledby`，漏写即 `pnpm typecheck` 红；`__tests__/switchA11y.test.tsx`
+  用 `@ts-expect-error` 钉住闸门存在性（把类型退回全可选立即报 `TS2578`，已验证）。
+  类型闸门优于源码文本闸门：不误判、不依赖路径、覆盖未来所有新调用点。
+- 影响：仅周知。**实机验证清单待跑**（Tauri 壳需真实窗口，DOM 测试栈按 AGENTS §5 禁用）：
+  Tab 走 Profile 列表 → Enter 切换详情；失败 toast 读屏播报；键盘走查 MCP 删除 /
+  市场清空搜索 / 日志自动滚底开关。清单见评审档 §13。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **125 passed**
+  （123 → +2 `switchA11y` 类型闸门测试）。
+
+

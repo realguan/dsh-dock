@@ -672,6 +672,11 @@ export function ProfileDetailPane({
                                 }
                               >
                                 <Switch
+                                  aria-label={`${p.name}：${
+                                    shellDisabled
+                                      ? t.profiles.pluginEnable
+                                      : t.profiles.pluginDisable
+                                  }`}
                                   checked={!shellDisabled}
                                   disabled={opBusy !== null}
                                   onCheckedChange={() => toggleDisabled(p.name)}

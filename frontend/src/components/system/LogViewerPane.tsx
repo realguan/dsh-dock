@@ -142,6 +142,7 @@ export function LogViewerPane({
             <ArrowDown className="size-3 text-faint" />
             <span className="text-[11px]">{t.console.autoScroll}</span>
             <Switch
+              aria-label={t.console.autoScroll}
               checked={autoScroll}
               onCheckedChange={setAutoScroll}
               className="scale-75"

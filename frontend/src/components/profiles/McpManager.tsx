@@ -348,6 +348,7 @@ export function McpManager({
                       <Button
                         size="sm"
                         variant="outline"
+                        aria-label={`${t.profiles.mcpDeleteBtn}：${s.name}`}
                         onClick={() => handleDeleteServer(s.name)}
                         disabled={isDeleting}
                         className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
@@ -543,6 +544,7 @@ export function McpManager({
                       />
                       <button
                         type="button"
+                        aria-label="删除该环境变量"
                         onClick={() => {
                           const next = formEnv.filter((_, i) => i !== idx)
                           setFormEnv(next)
@@ -559,7 +561,11 @@ export function McpManager({
 
             <div className="flex items-center justify-between pt-2 border-t border-line/60">
               <span className="text-xs text-dim">停用该 MCP 服务</span>
-              <Switch checked={formDisabled} onCheckedChange={setFormDisabled} />
+              <Switch
+                aria-label="停用该 MCP 服务"
+                checked={formDisabled}
+                onCheckedChange={setFormDisabled}
+              />
             </div>
           </div>
 

@@ -59,11 +59,14 @@ export function ProfileRow({
       ].join(` ${t.profiles.metaSep} `)
     : t.profiles.templateHint
 
+  // 2026-09-08 裁定：整卡不可改成 <button>（内部还有启动/更多菜单按钮，嵌套交互元素
+  // 非法且读屏会乱）。改为「名字即主控件」——键盘 Tab 到名字按钮回车即选中，卡片用
+  // focus-within 呈现整卡焦点环，指针点击行为不变。
   return (
     <div
       onClick={onSelect}
       style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
-      className={`page-rise group relative cursor-pointer rounded-xl border p-3 transition-all duration-200 ${
+      className={`page-rise group relative cursor-pointer rounded-xl border p-3 transition-all duration-200 focus-within:ring-2 focus-within:ring-brand/50 ${
         isSelected
           ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
           : "border-line bg-panel/80 hover:border-line hover:bg-panel hover:shadow-xs"
@@ -78,16 +81,22 @@ export function ProfileRow({
 
       <div className="flex items-start justify-between gap-2 pl-1.5">
         <div className="min-w-0 flex-1">
-          {/* 首行：Profile 名字 + 状态徽标 */}
+          {/* 首行：Profile 名字（主控件，键盘可达） + 状态徽标 */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span
-              className={`truncate text-sm font-semibold tracking-tight ${
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelect()
+              }}
+              aria-current={isSelected ? "true" : undefined}
+              title={name}
+              className={`max-w-full truncate rounded-md p-0 text-left text-sm font-semibold tracking-tight outline-none ${
                 isSelected ? "text-brand-deep font-bold" : "text-ink"
               }`}
-              title={name}
             >
               {name}
-            </span>
+            </button>
 
             {/* 运行中：翡翠绿脉动点 */}
             {isRunning && (
@@ -129,6 +138,7 @@ export function ProfileRow({
             <button
               type="button"
               title={busy ? t.profiles.launchWorking : t.profiles.restart}
+              aria-label={busy ? t.profiles.launchWorking : t.profiles.restart}
               disabled={busy}
               onClick={onRestart}
               className="text-dim hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg border border-line bg-white transition-colors disabled:opacity-40"
