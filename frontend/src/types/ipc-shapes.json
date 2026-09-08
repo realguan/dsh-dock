@@ -1,0 +1,102 @@
+{
+  "ShellSettings": [
+    "autoRestart",
+    "defaultMode",
+    "defaultProfile",
+    "dismissedUpdate",
+    "locale",
+    "showFloatingSwitcher",
+    "switcherShortcut"
+  ],
+  "ProfileSummary": [
+    "bundles",
+    "dependencies",
+    "materialized",
+    "name",
+    "web_ui"
+  ],
+  "SessionItem": [
+    "active",
+    "agentPreset",
+    "archived",
+    "createdAt",
+    "decodedProjectPath",
+    "endState",
+    "eventCount",
+    "filePath",
+    "hasBackup",
+    "healthDetail",
+    "id",
+    "isCompressed",
+    "projectDirRaw",
+    "projectName",
+    "sizeBytes",
+    "status",
+    "subagent",
+    "title",
+    "updatedAt",
+    "validator"
+  ],
+  "PluginRowState": [
+    "contributed_ids",
+    "id",
+    "patch_entries",
+    "pkg_name",
+    "shell_disabled"
+  ],
+  "AggregatePlugin": [
+    "description",
+    "name",
+    "sources"
+  ],
+  "AggregateSource": [
+    "profile",
+    "version"
+  ],
+  "CopyConfigOutcome": [
+    "copied",
+    "detail",
+    "skipped_existing"
+  ],
+  "RepairOutcome": [
+    "message",
+    "sessionId",
+    "success"
+  ],
+  "SystemDiagnosticsReport": [
+    "dsh",
+    "node",
+    "platform",
+    "pnpm",
+    "storage"
+  ],
+  "NodeDiagnosticInfo": [
+    "isReady",
+    "path",
+    "source",
+    "version"
+  ],
+  "PnpmDiagnosticInfo": [
+    "isReady",
+    "path",
+    "version"
+  ],
+  "DshDiagnosticInfo": [
+    "isReady",
+    "path",
+    "source",
+    "version"
+  ],
+  "StorageDiagnosticInfo": [
+    "dshHome",
+    "profilesBytes",
+    "profilesCount",
+    "sessionsBytes",
+    "sessionsCount",
+    "totalBytes"
+  ],
+  "PlatformDiagnosticInfo": [
+    "arch",
+    "os"
+  ]
+}

@@ -158,4 +158,376 @@ mod gate_tests {
         );
         assert_eq!(to_kebab("boot_in_wsl"), "boot-in-wsl");
     }
+
+    // ---------- 契约「形状」闸门（2026-09-08，P4）----------
+    //
+    // 此前闸门只覆盖**名字**（handler ↔ COMMANDS ↔ capabilities），**形状**无人管：
+    // 前端 `lib/tauri.ts` 是第 5 个消费面，字段改名/换 casing 两边都不会红，
+    // 只会「编译绿、运行错」。以下三个闸门把形状钉死。
+
+    /// 去注释行后逐行扫描 TS 源（`//` / `*` / `/*` 开头一律跳过）。
+    /// 与 `extract_handler_commands` 同口径：格式漂移即 panic，提示更新解析器。
+    fn ts_code_lines(ts: &str) -> impl Iterator<Item = &str> {
+        ts.lines().filter(|l| {
+            let t = l.trim_start();
+            !(t.starts_with("//") || t.starts_with('*') || t.starts_with("/*"))
+        })
+    }
+
+    /// 从 `frontend/src/lib/tauri.ts` 提取 `invoke(...)` / `invoke<T>(...)` 的命令名。
+    ///
+    /// 非调用位置（如 `import { invoke } from "@tauri-apps/api/core"`、注释里的
+    /// `invoke()`）按标识符边界跳过；**调用位置**格式异常才 panic——解析漏项会退化成
+    /// 名集比对失败，不会静默放过。
+    fn extract_tauri_invoke_names(ts: &str) -> Vec<String> {
+        const KW: &str = "invoke";
+        let mut out = Vec::new();
+        for line in ts_code_lines(ts) {
+            let mut rest = line;
+            while let Some(pos) = rest.find(KW) {
+                let before = rest[..pos].chars().next_back();
+                let after_kw = &rest[pos + KW.len()..];
+                rest = after_kw;
+                // 标识符边界：前面是字母/数字/下划线/点 → 不是本关键字
+                if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                    continue;
+                }
+                let head = after_kw.trim_start();
+                if !(head.starts_with('(') || head.starts_with('<')) {
+                    continue; // 非调用位置（import / 注释等）
+                }
+                // 可选泛型实参：按深度跳过成对尖括号
+                let after_generic = if let Some(g) = head.strip_prefix('<') {
+                    let mut depth = 1usize;
+                    let mut cut = None;
+                    for (i, ch) in g.char_indices() {
+                        match ch {
+                            '<' => depth += 1,
+                            '>' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    cut = Some(i + 1);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let cut = cut.unwrap_or_else(|| {
+                        panic!("tauri.ts 的 invoke 泛型实参未闭合——格式漂移，请更新 ipc.rs 解析器")
+                    });
+                    &g[cut..]
+                } else {
+                    head
+                };
+                let args = after_generic
+                    .trim_start()
+                    .strip_prefix('(')
+                    .unwrap_or_else(|| {
+                        panic!("tauri.ts 的 invoke 调用格式漂移（缺左括号）——请更新 ipc.rs 解析器")
+                    })
+                    .trim_start();
+                let quoted = args.strip_prefix('"').unwrap_or_else(|| {
+                    panic!("tauri.ts 的 invoke 首参不是字符串字面量——请更新 ipc.rs 解析器")
+                });
+                let end = quoted
+                    .find('"')
+                    .unwrap_or_else(|| panic!("tauri.ts 的 invoke 命令名未闭合"));
+                out.push(quoted[..end].to_string());
+                rest = &quoted[end..];
+            }
+        }
+        out
+    }
+
+    /// 递归收集 `frontend/src` 下全部 .ts/.tsx（不含 lib/tauri.ts）。
+    fn frontend_source_files() -> Vec<std::path::PathBuf> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("读 {dir:?} 失败: {e}"));
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("ts") | Some("tsx")
+                ) {
+                    out.push(path);
+                }
+            }
+        }
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/src");
+        let mut out = Vec::new();
+        walk(&root, &mut out);
+        out
+    }
+
+    /// 闸门 1：`tauri.ts` 的 invoke 名集必须与 [`COMMANDS`] 逐字一致。
+    #[test]
+    fn tauri_ts_matches_ipc_commands() {
+        let ts = repo_file("../frontend/src/lib/tauri.ts");
+        let invoked: BTreeSet<String> = extract_tauri_invoke_names(&ts).into_iter().collect();
+        let declared: BTreeSet<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
+
+        let missing: Vec<_> = declared.difference(&invoked).collect();
+        assert!(
+            missing.is_empty(),
+            "命令 {missing:?} 已登记 ipc.rs 但 tauri.ts 未封装——前端第 5 消费面漏了（AGENTS §4.3：组件不直接 invoke）"
+        );
+        let extra: Vec<_> = invoked.difference(&declared).collect();
+        assert!(
+            extra.is_empty(),
+            "tauri.ts 调用了未登记命令 {extra:?}——先登 ipc.rs 与 AGENTS §7"
+        );
+    }
+
+    /// 闸门 2：`invoke` 只允许出现在 `lib/tauri.ts`（AGENTS §4.3 组件内不直接 invoke）。
+    #[test]
+    fn no_direct_invoke_outside_tauri_ts() {
+        let mut offenders = Vec::new();
+        for path in frontend_source_files() {
+            if path.ends_with("lib/tauri.ts") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("读前端源文件失败");
+            for (i, line) in ts_code_lines(&src).enumerate() {
+                if line.contains("invoke(") || line.contains("invoke<") {
+                    offenders.push(format!("{}:{}", path.display(), i + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "以下位置直接调用 invoke——IPC 必须经 lib/tauri.ts 的 api 对象：{offenders:?}"
+        );
+    }
+
+    // ---------- 契约「形状」：跨语言 key 集 fixture ----------
+
+    /// 与前端共享的形状契约：`frontend/src/types/ipc-shapes.json`。
+    /// Rust 侧断言「真实 serde 序列化的 key 集」== fixture；
+    /// 前端侧断言「TS 接口 key 集」== fixture。任一侧改名/换 casing 都会红。
+    const IPC_SHAPES_JSON: &str = include_str!("../../frontend/src/types/ipc-shapes.json");
+
+    fn fixture_keys(name: &str) -> Vec<String> {
+        let doc: serde_json::Value =
+            serde_json::from_str(IPC_SHAPES_JSON).expect("ipc-shapes.json 非法 JSON");
+        let mut keys: Vec<String> = doc
+            .get(name)
+            .unwrap_or_else(|| panic!("ipc-shapes.json 缺 {name} 条目"))
+            .as_array()
+            .unwrap_or_else(|| panic!("ipc-shapes.json 的 {name} 应为字符串数组"))
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .unwrap_or_else(|| panic!("{name} 的键名应为字符串"))
+                    .to_string()
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    fn json_keys<T: serde::Serialize>(sample: &T) -> Vec<String> {
+        let mut keys: Vec<String> = serde_json::to_value(sample)
+            .expect("样本序列化失败")
+            .as_object()
+            .expect("样本应序列化为 JSON 对象")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    macro_rules! assert_shape {
+        ($name:expr, $sample:expr) => {{
+            assert_eq!(
+                json_keys(&$sample),
+                fixture_keys($name),
+                "{} 的 JSON key 集与 frontend/src/types/ipc-shapes.json 不一致——改结构体必须先改该 fixture（Rust 与 TS 两侧同闸）",
+                $name
+            );
+        }};
+    }
+
+    /// 闸门 3：IPC 结构体 key 集（含 casing）与共享 fixture 一致。
+    #[test]
+    fn ipc_struct_shapes_match_fixture() {
+        use crate::diagnostics::{
+            DshDiagnosticInfo, NodeDiagnosticInfo, PlatformDiagnosticInfo, PnpmDiagnosticInfo,
+            StorageDiagnosticInfo, SystemDiagnosticsReport,
+        };
+        use crate::plugins::{AggregatePlugin, AggregateSource, CopyConfigOutcome, PluginRowState};
+        use crate::profiles::ProfileSummary;
+        use crate::sessions::{RepairOutcome, SessionItem, SessionStatus};
+        use crate::settings::ShellSettings;
+
+        assert_shape!(
+            "ShellSettings",
+            ShellSettings {
+                default_mode: None,
+                default_profile: None,
+                locale: None,
+                auto_restart: None,
+                show_floating_switcher: None,
+                switcher_shortcut: None,
+                dismissed_update: None,
+            }
+        );
+        assert_shape!(
+            "ProfileSummary",
+            ProfileSummary {
+                name: String::new(),
+                materialized: false,
+                bundles: Vec::new(),
+                dependencies: Vec::new(),
+                web_ui: false,
+            }
+        );
+        assert_shape!(
+            "SessionItem",
+            SessionItem {
+                id: String::new(),
+                title: String::new(),
+                project_name: String::new(),
+                project_dir_raw: String::new(),
+                decoded_project_path: String::new(),
+                file_path: String::new(),
+                updated_at: 0,
+                size_bytes: 0,
+                is_compressed: false,
+                has_backup: false,
+                status: SessionStatus::Healthy,
+                health_detail: None,
+                active: false,
+                archived: false,
+                created_at: 0,
+                event_count: 0,
+                end_state: None,
+                subagent: false,
+                agent_preset: None,
+                validator: None,
+            }
+        );
+        assert_shape!(
+            "PluginRowState",
+            PluginRowState {
+                id: String::new(),
+                pkg_name: String::new(),
+                shell_disabled: false,
+                patch_entries: 0,
+                contributed_ids: Vec::new(),
+            }
+        );
+        assert_shape!(
+            "AggregatePlugin",
+            AggregatePlugin {
+                name: String::new(),
+                description: None,
+                sources: Vec::new(),
+            }
+        );
+        assert_shape!(
+            "AggregateSource",
+            AggregateSource {
+                profile: String::new(),
+                version: None,
+            }
+        );
+        assert_shape!(
+            "CopyConfigOutcome",
+            CopyConfigOutcome {
+                copied: 0,
+                skipped_existing: false,
+                detail: String::new(),
+            }
+        );
+        assert_shape!(
+            "RepairOutcome",
+            RepairOutcome {
+                session_id: String::new(),
+                success: false,
+                message: String::new(),
+            }
+        );
+        assert_shape!(
+            "NodeDiagnosticInfo",
+            NodeDiagnosticInfo {
+                path: String::new(),
+                version: String::new(),
+                source: String::new(),
+                is_ready: false,
+            }
+        );
+        assert_shape!(
+            "PnpmDiagnosticInfo",
+            PnpmDiagnosticInfo {
+                path: String::new(),
+                version: None,
+                is_ready: false,
+            }
+        );
+        assert_shape!(
+            "DshDiagnosticInfo",
+            DshDiagnosticInfo {
+                path: String::new(),
+                version: None,
+                source: String::new(),
+                is_ready: false,
+            }
+        );
+        assert_shape!(
+            "StorageDiagnosticInfo",
+            StorageDiagnosticInfo {
+                dsh_home: String::new(),
+                total_bytes: 0,
+                profiles_bytes: 0,
+                sessions_bytes: 0,
+                profiles_count: 0,
+                sessions_count: 0,
+            }
+        );
+        assert_shape!(
+            "PlatformDiagnosticInfo",
+            PlatformDiagnosticInfo {
+                os: String::new(),
+                arch: String::new(),
+            }
+        );
+        assert_shape!(
+            "SystemDiagnosticsReport",
+            SystemDiagnosticsReport {
+                node: NodeDiagnosticInfo {
+                    path: String::new(),
+                    version: String::new(),
+                    source: String::new(),
+                    is_ready: false,
+                },
+                pnpm: PnpmDiagnosticInfo {
+                    path: String::new(),
+                    version: None,
+                    is_ready: false,
+                },
+                dsh: DshDiagnosticInfo {
+                    path: String::new(),
+                    version: None,
+                    source: String::new(),
+                    is_ready: false,
+                },
+                storage: StorageDiagnosticInfo {
+                    dsh_home: String::new(),
+                    total_bytes: 0,
+                    profiles_bytes: 0,
+                    sessions_bytes: 0,
+                    profiles_count: 0,
+                    sessions_count: 0,
+                },
+                platform: PlatformDiagnosticInfo {
+                    os: String::new(),
+                    arch: String::new(),
+                },
+            }
+        );
+    }
 }

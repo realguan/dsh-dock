@@ -1640,4 +1640,34 @@
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **125 passed**
   （123 → +2 `switchA11y` 类型闸门测试）。
 
+### 2026-09-08 test(ipc)：契约「形状」跨语言闸门（架构评审批次 1）—— guan（AI 起草）
+
+- 依据：`docs/architecture-review-2026-09-08.md` 批次 1（评审结论：若只做一件就做它）。
+  P4「名字有闸门、形状没有」——Rust 改字段名 → TS 静默 `undefined`，编译绿、测试绿、
+  运行时错，是「编译绿、运行错」的高危面。
+- 新增三个闸门（`ipc.rs::gate_tests`）：
+  1. `tauri_ts_matches_ipc_commands`——`lib/tauri.ts` 的 invoke 名集 ↔ `COMMANDS` 双向。
+     前端是第 5 个消费面，此前完全无闸（今日实测 55/55 手工一致）。
+  2. `no_direct_invoke_outside_tauri_ts`——递归扫 `frontend/src`，`invoke(` / `invoke<`
+     只允许出现在 `lib/tauri.ts`（AGENTS §4.3「组件内不直接 invoke」）。当前 0 命中。
+  3. `ipc_struct_shapes_match_fixture`——14 个 IPC 结构体的**真实 serde 序列化 key 集**
+     ↔ 共享 fixture。
+- **共享 fixture = 唯一事实源**：新增 `frontend/src/types/ipc-shapes.json`。Rust 侧
+  `include_str!` 读入比对真实序列化结果；前端侧 `__tests__/ipcShapes.test.ts` 用
+  `AllKeys<T>`（`Required` 展开 + 多余属性检查）断言 TS 接口 key 集与同一份 fixture
+  一致。**任一侧改名/换 casing 都会红**。
+- 覆盖（14）：`ShellSettings`·`ProfileSummary`·`SessionItem`·`PluginRowState`·
+  `AggregatePlugin`·`AggregateSource`·`CopyConfigOutcome`·`RepairOutcome`·
+  `SystemDiagnosticsReport` + 5 个诊断子结构。
+- 命名风格**保持现状并闸住**：profiles/plugins 域 snake_case（`web_ui`/`pkg_name`/
+  `skipped_existing`），sessions/settings/diagnostics 域 camelCase。统一 `rename_all`
+  属契约变更未做（须先裁定）；但两侧已钉死，再改名必须同时改 fixture。
+- 未纳入：`emit_step` 的 `json!` 手拼 payload 换结构体（随批次 2 拆 `lib.rs` 一并做）。
+- 实测抓漏（复现先行）：改 `tauri.ts` 的 `get_shell_settings` 名 → 闸门 1 红；
+  改 fixture 的 `web_ui`→`webUi` → Rust 闸门 3 红 **且** 前端 `ipcShapes` 红。
+- 凭据：`cargo test` **187 passed**（184 → +3）· `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · `pnpm typecheck` 0 err · `oxlint` 0 warning ·
+  `pnpm test` **131 passed**（125 → +6）。
+
+
 

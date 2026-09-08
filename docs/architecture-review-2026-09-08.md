@@ -67,13 +67,13 @@ mode 编排（254）· tracing（101）· 测试（129）。
 
 ### P4 — Rust↔TS 契约：名字有闸门，形状没有
 
-| 契约面 | 闸门 |
-|:---|:---|
-| 命令名 attribute/handler/COMMANDS/capabilities | ✅ 机器闸门 |
-| 命令名 `frontend/src/lib/tauri.ts` | ❌ 无（今日实测 55/55 手工一致） |
-| 事件名 | ✅ `include_str!` |
-| 事件/返回值**字段形状** | ❌ 无 |
-| 序列化命名风格 | ❌ 无约定：`profiles.rs`/`plugins.rs` 无 `rename_all`（snake_case），`sessions.rs:25`/`settings.rs:39`/`mcp.rs:18`/`diagnostics.rs:13`/`credentials.rs:16` 为 camelCase，TS 在 `types/ipc.ts` 内同时镜像两套（`ipc.ts:56 web_ui` vs `ipc.ts:180 projectName`） |
+| 契约面 | 闸门 | 状态 |
+|:---|:---|:---|
+| 命令名 attribute/handler/COMMANDS/capabilities | ✅ 机器闸门 | — |
+| 命令名 `frontend/src/lib/tauri.ts` | ❌ 无（今日实测 55/55 手工一致） | ✅ 已闸（批次 1） |
+| 事件名 | ✅ `include_str!` | — |
+| 事件/返回值**字段形状** | ❌ 无 | ✅ 已闸（批次 1） |
+| 序列化命名风格 | ❌ 无约定：`profiles.rs`/`plugins.rs` 无 `rename_all`（snake_case），`sessions.rs:25`/`settings.rs:39`/`mcp.rs:18`/`diagnostics.rs:13`/`credentials.rs:16` 为 camelCase，TS 在 `types/ipc.ts` 内同时镜像两套（`ipc.ts:56 web_ui` vs `ipc.ts:180 projectName`） | ✅ 已定契约（批次 1，保持现状并闸住） |
 
 Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时错。
 `emit_step`（`lib.rs:2444`）另以 `serde_json::json!` 手拼 payload，连 Rust 侧结构体约束都没有。
@@ -81,6 +81,9 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 **改造方向**：① `ipc.rs` gate 加第 4 条断言（`tauri.ts` invoke 名 ↔ COMMANDS）；
 ② IPC 结构体序列化 key 集断言 + checked-in fixture；③ `json!` payload 换结构体；
 ④ 统一 `rename_all = "camelCase"`。全部零新依赖。
+
+**批次 1 落地（2026-09-08）**：①② 已做（见 §6）；③④ 未做——④ 属契约变更，
+需先定「统一 camelCase 还是保持混用」的裁定（现状已被闸门钉住，不再是隐患）。
 
 ### P5 — 错误是字符串，UI 决策靠子串匹配
 
@@ -134,14 +137,14 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 
 ## 3. 建议批次（每批可独立合入）
 
-| 批次 | 内容 | 风险 | ADR |
-|:---|:---|:---|:---|
-| 0 | 删 `ProfileDetailDialog`；修 10 处 clipboard promise；修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删 4 个同义反复测试；修正易腐注释 | 无 | 否 |
-| 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 |
-| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） |
-| 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 |
-| 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** |
-| 5 | `updates.rs` HTTP seam + 6 个离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 |
+| 批次 | 内容 | 风险 | ADR | 状态 |
+|:---|:---|:---|:---|:---|
+| 0 | 删 `ProfileDetailDialog`；修 10 处 clipboard promise；修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ⬜ 待做（`ProfileDetailDialog` 归 ADR-0011） |
+| 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
+| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
+| 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ⬜ 待做 |
+| 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⬜ 待做（先立 ADR） |
+| 5 | `updates.rs` HTTP seam + 6 个离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⬜ 待做 |
 
 ## 4. 不建议做
 
@@ -154,3 +157,30 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 
 若只做一件：**批次 1**。零行为风险、不需 ADR、复用既有 `include_str!` 与 gate_tests
 范式，直接封住 P4 的「编译绿、运行错」高危面，并为后续结构重构提供安全网。
+
+## 6. 批次 1 落地记录（2026-09-08，`test(ipc): 契约形状跨语言闸门`）
+
+新增三个闸门（`ipc.rs::gate_tests`，共 6 个测试）：
+
+| 闸门 | 断言 | 实测抓漏 |
+|:---|:---|:---|
+| `tauri_ts_matches_ipc_commands` | `tauri.ts` 的 invoke 名集 ↔ `COMMANDS`（双向） | 改 `get_shell_settings` → `get_shell_settings_renamed` 即红 |
+| `no_direct_invoke_outside_tauri_ts` | 全 `frontend/src` 递归扫描，`invoke(` / `invoke<` 只允许出现在 `lib/tauri.ts`（AGENTS §4.3） | 当前 0 命中 |
+| `ipc_struct_shapes_match_fixture` | 14 个 IPC 结构体的**真实 serde 序列化 key 集** ↔ 共享 fixture | 改 fixture 的 `web_ui`→`webUi` 即红 |
+
+**共享 fixture = 唯一事实源**：`frontend/src/types/ipc-shapes.json`。
+Rust 侧 `include_str!` 读入并比对真实序列化结果；前端侧
+`__tests__/ipcShapes.test.ts` 用 `AllKeys<T>`（`Required` 展开 + 多余属性检查）
+断言 TS 接口 key 集与同一份 fixture 一致。**任一侧改名/换 casing 都会红**。
+
+覆盖结构体（14）：`ShellSettings` · `ProfileSummary` · `SessionItem` · `PluginRowState` ·
+`AggregatePlugin` · `AggregateSource` · `CopyConfigOutcome` · `RepairOutcome` ·
+`SystemDiagnosticsReport` + 5 个诊断子结构。
+
+**命名风格裁定（保持现状并闸住）**：`profiles`/`plugins` 域为 snake_case
+（`web_ui` / `pkg_name` / `skipped_existing`），`sessions`/`settings`/`diagnostics`
+域为 camelCase。批次 1 不统一（属契约变更，须先裁定），但两侧已钉死——
+再改名必须同时改 fixture，无法再「静默 undefined」。
+
+**未纳入**：③ `emit_step` 的 `json!` 手拼 payload 换结构体（`lib.rs:2444`，随批次 2
+拆 `lib.rs` 时一并做）；④ 统一 `rename_all`。
