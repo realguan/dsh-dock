@@ -1834,3 +1834,20 @@
 - 影响：AGENTS §9 索引已加 ADR-0012 一行（宪法级文件，改动即本广播）。**代码未动**——
   §9 要求先立 ADR 再动代码，实施待评审通过后另起一批。
 - 凭据：纯文档（ADR 91 行）。
+
+### 2026-09-08 refactor(tauri)：拆出 commands 模块（架构评审批次 2 第一步）—— guan（AI 起草）
+
+- **`lib.rs` 2,713 → 1,778 行（−935）**：55 个 `#[tauri::command]` 按域迁到
+  `src-tauri/src/commands/`——boot(5) / profile(10) / plugin(12) / console(13) /
+  session(4) / update(5) / link(3) / window(2) / market(1)，共 9 文件 947 行。
+- **先修闸门再搬**：`ipc.rs` 的 handler 解析器原把条目当裸标识符，搬完会变成
+  `commands::profile::list_profiles` 而误判「未登记」→ 先改为取最后一段路径，并补
+  `handler_parser_strips_module_path`（合成源码正反例）。搬完 55 条 handler 全绿。
+- 可见性：`ShellState` 与 17 个被命令调用的辅助函数、`EXTERNAL_URL_HOSTS` 改 `pub(crate)`；
+  命令层只依赖 `crate::…`，不反向依赖 `commands::`（lib.rs 仅菜单回调一处改为全路径）。
+- **未纳入**：`ui/`（create_main_window 352 行 + 菜单/托盘/窗口）与 `boot/`
+  （run() 400+ 行 + 会话守卫 + emit_* 族）。本次只搬叶子层（命令 → 域模块），
+  不动启动管线，回归面可控。
+- 影响：仅周知，无行为变更（纯搬迁；IPC 名集/形状/契约均未动）。
+- 凭据：`cargo test` **193 passed**（192 → +1 解析器用例）· `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。

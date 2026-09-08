@@ -13,6 +13,7 @@
 //! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
 mod build_approvals;
+mod commands;
 mod credentials;
 mod diagnostics;
 mod dsh_settings;
@@ -132,7 +133,7 @@ mod proc_tests {
 }
 
 /// 壳运行时状态：当前执行环境会话（executor）+ 主窗口句柄 + 待选 profile 的会话。
-struct ShellState {
+pub(crate) struct ShellState {
     /// 当前会话的执行器（local / wsl；ssh 预留）。等待/监护线程对它做短锁轮询，
     /// 不独占锁——退出处理器随时能拿到会话做 teardown（同生命周期纪律）。
     session: crate::executor::Session,
@@ -178,7 +179,7 @@ impl ShellState {
 /// 启动当前会话（probe 已完成）：start → 就绪等待 → 导航 → 监护。
 /// 统一入口，与执行环境（local / wsl）无关——具体动作经 BootSink 上抛、
 /// 就绪经 executor::log_path + check_exited 轮询。
-fn run_executor_session(
+pub(crate) fn run_executor_session(
     state: Arc<ShellState>,
     app: tauri::AppHandle,
     mut executor: Box<dyn crate::executor::Executor>,
@@ -348,7 +349,7 @@ fn session_is_current(state: &ShellState, epoch: u64) -> bool {
 /// 「运行中」复合判据前半（会话维护）：dsh 未运行时任何会话文件都不可能
 /// 再被写入，mtime 新鲜不再构成活跃；WSL 客体形态下 wsl.exe 子进程即
 /// 会话存活代理，同一判定覆盖。
-fn engine_session_alive(state: &ShellState) -> bool {
+pub(crate) fn engine_session_alive(state: &ShellState) -> bool {
     let mut session = state.session.lock().unwrap();
     // 2026-09-08 修复：is_none_or 会在无会话时误报存活（19ec36e 机械改写引入，
     // 问题记录095 #5——死会话标「进行中」+ 运行态回环查询必败），恢复 None=false。
@@ -357,7 +358,7 @@ fn engine_session_alive(state: &ShellState) -> bool {
 
 /// 取出并清理当前会话（幂等）：错误卡 / 模式切换共用。
 /// 同时推进代际——旧等待/监护线程据此静默退出（见 run_executor_session）。
-fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {
+pub(crate) fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {
     state.session_epoch.fetch_add(1, Ordering::SeqCst);
     if let Some(mut ex) = state.session.lock().unwrap().take() {
         ex.teardown()?;
@@ -368,7 +369,7 @@ fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {
 /// dsh 就绪后的监护：会话与壳同生命周期——会话退出即错误卡。
 /// 在就绪导航成功后的同一监护线程内持续运行（不新开线程，避免竞态）。
 /// 只监护自己启动的代际：会话被外部切换后立即静默退出（不误监护新会话）。
-fn guard_session(
+pub(crate) fn guard_session(
     app: &tauri::AppHandle,
     state: &Arc<ShellState>,
     log: &std::path::Path,
@@ -480,58 +481,6 @@ fn read_log_tail(log_path: &std::path::Path) -> String {
         .join("\n")
 }
 
-/// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的会话启动。
-#[tauri::command]
-fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let mut executor = state
-        .pending
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| "无待启动任务（请重新打开终端）".to_string())?;
-    executor.select_profile(profile);
-    let handle = app.clone();
-    // 后台线程启动（npm/下载动作不阻塞）
-    std::thread::spawn(move || {
-        if let Err(e) = run_executor_session(state, handle.clone(), executor) {
-            tracing::error!("启动 DSH 失败: {e}");
-        }
-    });
-    Ok(())
-}
-
-/// 读取启动阶段缓存的状态与错误（前端挂载时补水，解决 early emit 竞态丢失事件的问题）。
-#[tauri::command]
-fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
-        let error = shell_state.boot_error.lock().ok().and_then(|e| e.clone());
-        let steps = shell_state
-            .boot_steps
-            .lock()
-            .ok()
-            .map(|s| s.clone())
-            .unwrap_or_default();
-        Ok(serde_json::json!({
-            "steps": steps,
-            "error": error,
-        }))
-    } else {
-        Ok(serde_json::json!({
-            "steps": [],
-            "error": null,
-        }))
-    }
-}
-
-/// 前端/托盘读取最近一次检测结果（即读，不触网）。
-#[tauri::command]
-fn get_update_status(app: tauri::AppHandle) -> Result<crate::updates::UpdateStatus, String> {
-    // 启动清单或宿主解析失败时，前端仍会请求版本状态。这里不能用
-    // `state()`：它在状态尚未注册时会 panic，反而让本应展示错误卡的应用崩溃。
-    Ok(cached_update_status(&app))
-}
-
 /// 无可读更新状态时交给前端的安全初始值。
 fn empty_update_status() -> crate::updates::UpdateStatus {
     let none_component = crate::updates::ComponentUpdate {
@@ -548,7 +497,7 @@ fn empty_update_status() -> crate::updates::UpdateStatus {
 }
 
 /// 读取缓存状态；启动早期尚未注册 ShellState 时必须安全返回默认值。
-fn cached_update_status<R: tauri::Runtime>(
+pub(crate) fn cached_update_status<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> crate::updates::UpdateStatus {
     let cached = app
@@ -564,42 +513,10 @@ fn cached_status_or_default(
     cached.unwrap_or_else(empty_update_status)
 }
 
-/// 手动触发后台检测（异步：立即返回，完成时 boot:update + 托盘刷新）。
-#[tauri::command]
-fn check_updates(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let handle = app.clone();
-    std::thread::spawn(move || refresh_update_ui(&handle, &state));
-    Ok(())
-}
-
-/// 读取桌面客户端自更新状态（即读，不触网；前端初始渲染）。
-#[tauri::command]
-fn get_client_update(app: tauri::AppHandle) -> Result<crate::updater::ClientUpdate, String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    Ok(crate::updater::current(&state))
-}
-
-/// 「检查客户端更新」：后台查 GitHub Releases latest.json，结果经 app:update 回推。
-#[tauri::command]
-fn client_update_check(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    crate::updater::run_check(app, state);
-    Ok(())
-}
-
-/// 「确认安装客户端更新」：下载 → 安装 → 重启（Windows 由安装器接手后退出）。
-#[tauri::command]
-fn client_update_apply(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    crate::updater::run_download_and_install(app, state);
-    Ok(())
-}
-
 /// 外链白名单：只放行 http/https 且主机在白名单内的 URL（壳的 IPC 不应成为
 /// 任意 URL 的跳板）。dsh Web UI 的外链（文档/官网/控制台）都应落在这里；
 /// 未收录的域会被拒绝——需要新域时在此登记。
-const EXTERNAL_URL_HOSTS: &[&str] = &[
+pub(crate) const EXTERNAL_URL_HOSTS: &[&str] = &[
     "commandcode.ai",
     "www.commandcode.ai",
     "api.commandcode.ai",
@@ -613,7 +530,7 @@ const EXTERNAL_URL_HOSTS: &[&str] = &[
 ];
 
 /// 校验外链：仅 http/https，且主机等于或以白名单域结尾（`.example.com` 子域）。
-fn is_allowed_external_url(raw: &str) -> bool {
+pub(crate) fn is_allowed_external_url(raw: &str) -> bool {
     let Ok(url) = tauri::Url::parse(raw) else {
         return false;
     };
@@ -629,96 +546,8 @@ fn is_allowed_external_url(raw: &str) -> bool {
         .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
 }
 
-/// 用系统默认浏览器打开外链或用系统文件管理器打开本地路径。
-/// - 若为 HTTP(S) URL：必须通过白名单校验后打开浏览器；
-/// - 若为本地路径：调用系统文件管理器（Finder / Explorer）打开该目录或文件。
-#[tauri::command]
-fn open_external(url: String) -> Result<(), String> {
-    let trimmed = url.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        if !is_allowed_external_url(trimmed) {
-            return Err(format!("不允许的外链：{url}"));
-        }
-        open::that_detached(trimmed).map_err(|e| format!("打开浏览器失败：{e}"))
-    } else {
-        let p = std::path::Path::new(trimmed);
-        if p.exists() {
-            open::that_detached(trimmed).map_err(|e| format!("打开文件管理器失败：{e}"))
-        } else if let Some(parent) = p.parent() {
-            if parent.exists() {
-                open::that_detached(parent).map_err(|e| format!("打开文件管理器失败：{e}"))
-            } else {
-                Err(format!("目标路径不存在：{url}"))
-            }
-        } else {
-            Err(format!("目标路径不存在：{url}"))
-        }
-    }
-}
-
-/// 用系统默认浏览器打开当前工作台（壳内 WebView → 浏览器；dsh 就绪后可用）。
-#[tauri::command]
-fn open_workbench_in_browser(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let url = state
-        .workbench_url
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "工作台尚未就绪".to_string())?;
-    open::that_detached(url.as_str()).map_err(|e| format!("打开浏览器失败：{e}"))
-}
-
-/// 读取当前工作台地址（关于页/菜单展示用；未就绪返回 null）。
-#[tauri::command]
-fn get_workbench_url(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let url = state.workbench_url.lock().unwrap().clone();
-    Ok(url.map(|u| u.to_string()))
-}
-
-/// Profile 管理器（4.3 只读刀）：列出全部 profile——已物化目录 + 未物化的
-/// 内置模板名（web/headless）两态合并。纯读：零写入、零 dsh 子进程；home
-/// 复用壳既有解析链（resolve::user_dsh_home），范围仅壳侧本地 home。
-#[tauri::command]
-fn list_profiles() -> Result<Vec<crate::profiles::ProfileSummary>, String> {
-    Ok(crate::profiles::scan_profiles(
-        &crate::resolve::user_dsh_home(),
-    ))
-}
-
-/// Profile 管理器（4.3 只读刀）：单个 profile 详情（package.json 关键字段 +
-/// cordis.patch.yml 原文，不解析 YAML）。名字先过 dsh 同款校验（防路径遍历）。
-#[tauri::command]
-fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail, String> {
-    crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
-}
-
-/// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> install`
-/// 半官方转发链创建 profile——dsh 首用 initProfile 写三件套（bundles 声明
-/// 内置插件 dsh-base）→ `pnpm install` 空依赖零网络毫秒级；成功后壳对非模板
-/// 名追加 web-app 单键声明（三件套写入例外 #2，ADR-0009 §4 第二次修订
-/// 2026-08-28：创建即 webUi 候选，可设为默认启动；与出厂 web 模板同构）。
-/// 阻塞动作（系统探测 + 转发链 + 声明补写）全部在 spawn_blocking——同步命令
-/// 跑主线程会冻结 UI（setup 注释同源坑）。
-#[tauri::command]
-async fn create_profile(
-    app: tauri::AppHandle,
-    profile: String,
-) -> Result<crate::profiles::CreateProfileOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::profiles::create_profile_blocking(&profile, &data_dir)
-    })
-    .await
-    .map_err(|e| format!("创建任务异常终止：{e}"))?
-}
-
 /// 读当前会话占用中的 profile（运行中防护比对源；无会话/未启动 = None）。
-fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
+pub(crate) fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
     let state = app.try_state::<Arc<ShellState>>()?;
     let guard = state.session.lock().ok()?;
     guard
@@ -726,629 +555,13 @@ fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
         .and_then(|e| e.active_profile().map(String::from))
 }
 
-/// Profile 管理器（4.3 生命周期刀）：复制 profile——整目录复制排除
-/// node_modules + `name` 一致化改写（Spike B §3.2，红线 3 允许的两处
-/// 三件套写入之一）。阻塞文件操作在 spawn_blocking。
-#[tauri::command]
-async fn copy_profile(
-    source: String,
-    new_name: String,
-) -> Result<crate::profiles::LifecycleOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::profiles::copy_blocker(&home, &source, &new_name)?;
-        let warnings = crate::profiles::copy_profile_tree(
-            &home.join("profiles").join(&source),
-            &home.join("profiles").join(&new_name),
-            &new_name,
-        )?;
-        Ok(crate::profiles::LifecycleOutcome {
-            profile: new_name,
-            warnings,
-        })
-    })
-    .await
-    .map_err(|e| format!("复制任务异常终止：{e}"))?
-}
-
-/// Profile 管理器（4.3 生命周期刀）：重命名——目录 rename + `name` 改写 +
-/// 删 node_modules 让 dsh 自愈（Spike B §3.1）；运行中防护；defaultProfile
-/// 引用同步旧名 → 新名（保持用户意图）。
-#[tauri::command]
-async fn rename_profile(
-    app: tauri::AppHandle,
-    old_name: String,
-    new_name: String,
-) -> Result<crate::profiles::LifecycleOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    let active = active_session_profile(&app);
-    crate::profiles::running_conflict(active.as_deref(), &old_name)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::profiles::rename_blocker(&home, &old_name, &new_name)?;
-        let warnings = crate::profiles::rename_profile_dir(&home, &old_name, &new_name)?;
-        // defaultProfile 引用同步（load-modify-save，防抹掉其他字段）
-        let mut settings = crate::settings::load(&data_dir);
-        if settings.default_profile.as_deref() == Some(old_name.as_str()) {
-            settings.default_profile = Some(new_name.clone());
-            crate::settings::save(&data_dir, &settings)
-                .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
-        }
-        Ok(crate::profiles::LifecycleOutcome {
-            profile: new_name,
-            warnings,
-        })
-    })
-    .await
-    .map_err(|e| format!("重命名任务异常终止：{e}"))?
-}
-
-/// Profile 管理器（4.3 生命周期刀）：删除——整目录删除，不级联 sessions
-/// （dsh 明示）；运行中防护；defaultProfile 指向被删 profile → 清除（读取侧
-/// 兜底 web，ADR-0009 §4）。node_modules 体量大，删除走 spawn_blocking。
-#[tauri::command]
-async fn delete_profile(
-    app: tauri::AppHandle,
-    profile: String,
-) -> Result<crate::profiles::DeleteOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    crate::profiles::validate_profile_name(&profile)?;
-    let active = active_session_profile(&app);
-    crate::profiles::running_conflict(active.as_deref(), &profile)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        if !home.join("profiles").join(&profile).is_dir() {
-            return Err(format!(
-                "profile「{profile}」不存在或尚未物化——无目录可删除"
-            ));
-        }
-        crate::profiles::delete_profile_dir(&home, &profile)?;
-        // 默认启动 profile 引用检查（Spike B §3.3/ADR-0009 §4）：指向被删
-        // profile → 清除；None 读取侧即兜底 web
-        let mut settings = crate::settings::load(&data_dir);
-        let mut default_cleared = false;
-        if settings.default_profile.as_deref() == Some(profile.as_str()) {
-            settings.default_profile = None;
-            crate::settings::save(&data_dir, &settings)
-                .map_err(|e| format!("回退默认 profile 失败：{e}"))?;
-            default_cleared = true;
-        }
-        Ok(crate::profiles::DeleteOutcome {
-            profile,
-            default_cleared,
-        })
-    })
-    .await
-    .map_err(|e| format!("删除任务异常终止：{e}"))?
-}
-
-/// Profile 管理器（4.3④）：设置默认启动 profile（持久化 settings.json
-/// `defaultProfile`，第二最小面例外，AGENTS §6 已登记；None/失效值读取侧
-/// 兜底 web）。
-#[tauri::command]
-fn set_default_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
-    let home = crate::resolve::user_dsh_home();
-    crate::profiles::ensure_default_candidate(&home, &profile)?;
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let mut settings = crate::settings::load(&data_dir);
-    settings.default_profile = Some(profile);
-    crate::settings::save(&data_dir, &settings).map_err(|e| format!("保存默认 profile 失败：{e}"))
-}
-
-/// 读取默认启动 profile（None = 未设置，消费方兜底 web；前端展示当前值用）。
-#[tauri::command]
-fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(crate::settings::load(&data_dir).default_profile)
-}
-
-/// Profile 管理器「启动/切换」（4.3⑥，ADR-0009 §4 三次修订）：停当前会话 →
-/// 以目标 profile 重启（重启语义，dsh 无运行时切换能力；主窗口回壳 boot 屏
-/// 走既有进度，就绪自动进新工作台）。切换**不写** defaultProfile（唯一写入口
-/// = 星标）；失败落错误卡，重试经 forced_profile 延续同一目标，不自动回滚。
-/// 仅 webUi 候选（非 webUi 无工作台 URL 可导航）；bundle 快照档由 probe 内
-/// 档位守卫忽略强制目标。WSL 模式同链路（guest 脚本已参数化）。
-#[tauri::command]
-fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
-    crate::profiles::validate_profile_name(&profile)?;
-    let candidates = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
-    ensure_switchable_profile(&profile, &candidates)?;
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let _ = teardown_session(&state);
-    *state.forced_profile.lock().unwrap() = Some(profile.clone());
-    tracing::info!("切换 profile → {profile}");
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        // 先回壳 boot 屏再启动：事件总线模块加载期装配——晚挂监听吞首发
-        // 遥测（AGENTS §4.3）；就绪后 run_executor_session 导航进新工作台。
-        let _ = state.window.eval("location.assign('/')");
-        lib_boot_again(state, handle, data_dir);
-    });
-    Ok(())
-}
-
-/// 当前会话占用的 profile（None = 无活跃会话）：管理器「运行中」徽标与切换
-/// 确认文案的数据源（读侧，与删除/重命名防护同源 `active_session_profile`）。
-#[tauri::command]
-fn get_active_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    Ok(active_session_profile(&app))
-}
-
-/// 插件清单（4.4①，Spike B 方案）：静态清单 = bundles（官方内置）+
-/// dependencies（第三方，含已装版本/描述）。阻塞文件操作走 spawn_blocking。
-#[tauri::command]
-async fn list_profile_plugins(profile: String) -> Result<Vec<crate::plugins::PluginEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::list_profile_plugins(&home, &profile)
-    })
-    .await
-    .map_err(|e| format!("清单任务异常终止：{e}"))?
-}
-
-/// 插件运行态快照（一次性，不订阅）：仅活跃会话的 profile 有数据——
-/// 无会话返回 `{profile: None, entries: []}`。回环只读查询见 AGENTS §7
-/// 登记与复现点 11；阻塞 HTTP 走 spawn_blocking（2s 超时兜底）。
-#[tauri::command]
-async fn get_plugin_runtime(
-    app: tauri::AppHandle,
-) -> Result<crate::plugins::PluginRuntimeSnapshot, String> {
-    let target = {
-        let state = app.state::<Arc<ShellState>>().inner().clone();
-        let profile = active_session_profile(&app);
-        let origin = state.workbench_url.lock().unwrap().as_ref().map(|u| {
-            format!(
-                "{}://{}{}",
-                u.scheme(),
-                u.host_str().unwrap_or("127.0.0.1"),
-                u.port().map(|p| format!(":{p}")).unwrap_or_default()
-            )
-        });
-        (profile, origin)
-    };
-    match target {
-        (Some(profile), Some(origin)) => {
-            let entries = tauri::async_runtime::spawn_blocking(move || {
-                crate::plugins::fetch_runtime_snapshot(&origin)
-            })
-            .await
-            .map_err(|e| format!("运行态任务异常终止：{e}"))??;
-            Ok(crate::plugins::PluginRuntimeSnapshot {
-                profile: Some(profile),
-                entries,
-            })
-        }
-        _ => Ok(crate::plugins::PluginRuntimeSnapshot {
-            profile: None,
-            entries: Vec::new(),
-        }),
-    }
-}
-
-/// 安装/卸载/更新插件（4.4②）：`dsh plugin --profile <名> add/remove/update`
-/// 转发链（复用创建刀基建，pnpm 防御补齐同源）；阻塞转发走 spawn_blocking，
-/// 超时同创建 600s。ok=false 时 detail 带输出尾部，前端按警示态展示。
-#[tauri::command]
-async fn install_plugin(
-    app: tauri::AppHandle,
-    profile: String,
-    package: String,
-) -> Result<crate::plugins::PluginOpOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
-            crate::plugins::PluginOp::Install,
-            &profile,
-            &package,
-            &data_dir,
-        )
-    })
-    .await
-    .map_err(|e| format!("安装任务异常终止：{e}"))?
-}
-
-#[tauri::command]
-async fn remove_plugin(
-    app: tauri::AppHandle,
-    profile: String,
-    package: String,
-) -> Result<crate::plugins::PluginOpOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
-            crate::plugins::PluginOp::Remove,
-            &profile,
-            &package,
-            &data_dir,
-        )
-    })
-    .await
-    .map_err(|e| format!("卸载任务异常终止：{e}"))?
-}
-
-#[tauri::command]
-async fn update_plugin(
-    app: tauri::AppHandle,
-    profile: String,
-    package: String,
-) -> Result<crate::plugins::PluginOpOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
-            crate::plugins::PluginOp::Update,
-            &profile,
-            &package,
-            &data_dir,
-        )
-    })
-    .await
-    .map_err(|e| format!("更新任务异常终止：{e}"))?
-}
-
-/// 插件行表（4.4③）：`dsh --profile <名> --dump-config` 行 id↔包名配对 +
-/// 壳 patch toggle 态——行 id 不可从包名推导（ADR-0009 第四次修订），一次
-/// spawn 全量拿到。阻塞 spawn 走 spawn_blocking。
-#[tauri::command]
-async fn get_plugin_rows(
-    app: tauri::AppHandle,
-    profile: String,
-) -> Result<Vec<crate::plugins::PluginRowState>, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::plugin_rows_blocking(&profile, &data_dir)
-    })
-    .await
-    .map_err(|e| format!("行表任务异常终止：{e}"))?
-}
-
-/// 禁用/启用切换（4.4③）：patch 写入例外 #3（`{id, disabled}` 单键，
-/// ADR-0009 第四次修订）；运行中会话不热生效，重启承接。
-#[tauri::command]
-async fn set_plugin_disabled(
-    profile: String,
-    row_id: String,
-    disabled: bool,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
-    })
-    .await
-    .map_err(|e| format!("切换任务异常终止：{e}"))?
-}
-/// 更新检查（4.4④）：逐外挂插件查 registry dist-tags.latest（外网经
-/// `updates.rs` 镜像链，§7 已登记）；串行阻塞走 spawn_blocking，按钮触发。
-#[tauri::command]
-async fn check_plugin_updates(
-    profile: String,
-) -> Result<crate::plugins::PluginUpdateReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::check_updates_blocking(&home, &profile)
-    })
-    .await
-    .map_err(|e| format!("更新检查任务异常终止：{e}"))?
-}
-
-/// 版本列表（选版本更新，4.4④）：降序最新在前；外网同镜像链。
-#[tauri::command]
-async fn list_plugin_versions(package: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::plugins::plugin_versions_blocking(&package))
-        .await
-        .map_err(|e| format!("版本查询任务异常终止：{e}"))?
-}
-
-/// 插件总览聚合（4.4④ 收口，ADR-0009 第五次修订）：全部已物化 profile 的第
-/// 三方插件按包名归组。只读纯文件扫描（零 dsh 子进程、零网络），spawn_blocking。
-#[tauri::command]
-async fn list_all_plugins() -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok(crate::plugins::aggregate_plugins_blocking(
-            &crate::resolve::user_dsh_home(),
-        ))
-    })
-    .await
-    .map_err(|e| format!("聚合任务异常终止：{e}"))?
-}
-
-/// 配置行原样复制（4.4④ 收口，patch 写入例外 #4，ADR-0009 第五次修订）：
-/// 来源 patch 中该插件行 id 的全部条目 → 追加到目标 patch（只追加不覆盖，
-/// 目标已有同 id 条目则零写入 skipped）。dump-config spawn + 文件操作走
-/// spawn_blocking。
-#[tauri::command]
-async fn copy_plugin_config(
-    app: tauri::AppHandle,
-    source: String,
-    target: String,
-    package: String,
-) -> Result<crate::plugins::CopyConfigOutcome, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::copy_plugin_config_blocking(
-            &crate::resolve::user_dsh_home(),
-            &source,
-            &target,
-            &package,
-            &data_dir,
-        )
-    })
-    .await
-    .map_err(|e| format!("配置复制任务异常终止：{e}"))?
-}
-
-/// pnpm 12 构建审批门裁决写入（ADR-0009 第六次修订，写入例外 #5）：逐包
-/// 允许/跳过 → 受控改写 profile 的 pnpm-workspace.yaml allowBuilds 单键。
-/// 前端保存后重试原插件操作（重试不经过本命令）。
-#[tauri::command]
-async fn set_profile_build_approvals(
-    profile: String,
-    approvals: Vec<crate::build_approvals::BuildApproval>,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::build_approvals::set_profile_build_approvals(&profile, &approvals)
-    })
-    .await
-    .map_err(|e| format!("审批写入任务异常终止：{e}"))?
-}
-
-/// 会话管理与自愈：扫描会话列表（只读文件扫描 + 健康检查/标题提取）
-#[tauri::command]
-async fn list_sessions(app: tauri::AppHandle) -> Result<Vec<crate::sessions::SessionItem>, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let engine_alive = {
-        let state = app.state::<Arc<ShellState>>();
-        engine_session_alive(&state)
-    };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::scan_sessions(&crate::resolve::user_dsh_home(), &data_dir, engine_alive)
-    })
-    .await
-    .map_err(|e| format!("会话列表扫描任务异常终止：{e}"))?
-}
-
-/// 会话管理与自愈：修复单个指定会话
-#[tauri::command]
-async fn repair_session(
-    app: tauri::AppHandle,
-    session_path: String,
-) -> Result<crate::sessions::RepairOutcome, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let engine_alive = {
-        let state = app.state::<Arc<ShellState>>();
-        engine_session_alive(&state)
-    };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(
-            Some(&session_path),
-            &crate::resolve::user_dsh_home(),
-            &data_dir,
-            engine_alive,
-        )
-    })
-    .await
-    .map_err(|e| format!("单会话修复任务异常终止：{e}"))?
-}
-
-/// 会话管理与自愈：全量体检与自愈修复
-#[tauri::command]
-async fn repair_all_sessions(
-    app: tauri::AppHandle,
-) -> Result<crate::sessions::RepairOutcome, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let engine_alive = {
-        let state = app.state::<Arc<ShellState>>();
-        engine_session_alive(&state)
-    };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(
-            None,
-            &crate::resolve::user_dsh_home(),
-            &data_dir,
-            engine_alive,
-        )
-    })
-    .await
-    .map_err(|e| format!("全量会话自愈任务异常终止：{e}"))?
-}
-
-/// 偏好与设置：读取壳设置（locale、auto_restart、default_mode 等）
-#[tauri::command]
-fn get_shell_settings(app: tauri::AppHandle) -> Result<crate::settings::ShellSettings, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(crate::settings::load(&data_dir))
-}
-
-/// 偏好与设置：保存壳设置并跨窗口广播更新
-#[tauri::command]
-fn set_shell_settings(
-    app: tauri::AppHandle,
-    settings: crate::settings::ShellSettings,
-) -> Result<(), String> {
-    use tauri::Emitter;
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::settings::save(&data_dir, &settings)?;
-    let _ = app.emit("app:settings-changed", &settings);
-    Ok(())
-}
-
-/// 环境健康体检：全量诊断大盘数据采集（4.11）
-#[tauri::command]
-async fn get_system_diagnostics(
-    app: tauri::AppHandle,
-) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::diagnostics::collect_diagnostics(&home, &data_dir)
-    })
-    .await
-    .map_err(|e| format!("诊断报告收集异常终止：{e}"))
-}
-
-/// 运行日志：安全读取指定源的尾部日志（4.11）
-#[tauri::command]
-async fn get_app_logs(
-    app: tauri::AppHandle,
-    source: String,
-    tail_lines: Option<usize>,
-) -> Result<crate::diagnostics::LogQueryResult, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::diagnostics::read_app_logs(&source, &data_dir, &home, tail_lines.unwrap_or(500))
-    })
-    .await
-    .map_err(|e| format!("读取日志任务异常终止：{e}"))?
-}
-
-/// 凭据管理：读取 .credentials.yaml 原文（4.5）
-#[tauri::command]
-async fn get_credentials_raw() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::credentials::read_credentials(&home)
-    })
-    .await
-    .map_err(|e| format!("读取凭据任务异常终止：{e}"))?
-}
-
-/// 凭据管理：保存 .credentials.yaml 原文（4.5，严格 0600 权限与原子写）
-#[tauri::command]
-async fn save_credentials_raw(content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::credentials::write_credentials(&home, &content)
-    })
-    .await
-    .map_err(|e| format!("保存凭据任务异常终止：{e}"))?
-}
-
-/// 凭据管理：获取脱敏后的凭据摘要列表（4.5）
-#[tauri::command]
-async fn get_credentials_summary() -> Result<Vec<crate::credentials::CredentialSummaryItem>, String>
-{
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::credentials::get_credentials_summary(&home)
-    })
-    .await
-    .map_err(|e| format!("读取凭据摘要任务异常终止：{e}"))?
-}
-
-/// 凭据管理：针对指定 Provider 设置 API Key（4.5）
-#[tauri::command]
-async fn set_credential_key(provider: String, key: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::credentials::set_provider_key(&home, &provider, &key)
-    })
-    .await
-    .map_err(|e| format!("保存 Provider 凭据任务异常终止：{e}"))?
-}
-
-/// DSH 引擎设置：读取 settings.yaml 原文（4.5）
-#[tauri::command]
-async fn get_dsh_settings_raw() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::dsh_settings::read_dsh_settings(&home)
-    })
-    .await
-    .map_err(|e| format!("读取 DSH 设置任务异常终止：{e}"))?
-}
-
-/// DSH 引擎设置：保存 settings.yaml 原文（4.5）
-#[tauri::command]
-async fn save_dsh_settings_raw(content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::dsh_settings::write_dsh_settings(&home, &content)
-    })
-    .await
-    .map_err(|e| format!("保存 DSH 设置任务异常终止：{e}"))?
-}
-
-/// MCP 管理：获取指定 profile 的 MCP 服务列表（4.7）
-#[tauri::command]
-async fn list_mcp_servers(profile: String) -> Result<Vec<crate::mcp::McpServerConfig>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::mcp::list_mcp_servers(&home, &profile)
-    })
-    .await
-    .map_err(|e| format!("读取 MCP 服务列表任务异常终止：{e}"))?
-}
-
-/// MCP 管理：保存或更新单个 MCP 服务（4.7）
-#[tauri::command]
-async fn save_mcp_server(
-    profile: String,
-    server: crate::mcp::McpServerConfig,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::mcp::save_mcp_server(&home, &profile, server)
-    })
-    .await
-    .map_err(|e| format!("保存 MCP 服务任务异常终止：{e}"))?
-}
-
-/// MCP 管理：删除指定 MCP 服务（4.7）
-#[tauri::command]
-async fn delete_mcp_server(profile: String, server_name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::mcp::delete_mcp_server(&home, &profile, &server_name)
-    })
-    .await
-    .map_err(|e| format!("删除 MCP 服务任务异常终止：{e}"))?
-}
-
-/// 会话管理：删除指定会话（4.6）
-#[tauri::command]
-async fn delete_session(session_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::sessions::remove_session(&home, &session_path)
-    })
-    .await
-    .map_err(|e| format!("删除会话任务异常终止：{e}"))?
-}
-
-/// 插件市场：拉取社区 Registry 静态 JSON 目录
-#[tauri::command]
-async fn fetch_market_registry() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(crate::updates::fetch_market_registry)
-        .await
-        .map_err(|e| format!("拉取插件市场任务异常终止：{e}"))?
-}
-
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
-fn ensure_switchable_profile(profile: &str, webui_candidates: &[String]) -> Result<(), String> {
+pub(crate) fn ensure_switchable_profile(
+    profile: &str,
+    webui_candidates: &[String],
+) -> Result<(), String> {
     if webui_candidates.iter().any(|c| c == profile) {
         Ok(())
     } else {
@@ -1358,56 +571,9 @@ fn ensure_switchable_profile(profile: &str, webui_candidates: &[String]) -> Resu
     }
 }
 
-/// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
-/// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
-#[tauri::command]
-fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        // upgrade / upgrade_only：动用户全局 dsh（按钮确认即授权，动作在后台线程）。
-        // 4.4⑤：全链路发 `dsh:upgrade` 事件（关于页升级按钮的真实反馈通道）——
-        // 此前失败只发 boot:error，主窗口不在 boot 屏时用户完全看不到：
-        // 2026-08-30 实测 0.1.2-alpha.2 依赖未完整发布，pnpm 两个 registry 均
-        // 失败，错误无任何可见出口，用户视角 = 「点了没反应，等了也没升级」。
-        let only = action == "upgrade_only";
-        if only || action == "upgrade" {
-            emit_upgrade(&handle, "running", "");
-            emit_step(&handle, 2, "running", "正在升级官方 DSH 到最新稳定版…");
-            // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
-            // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
-            let resources_dir = resolve_resources_dir(&handle);
-            let path_env = crate::resolve::effective_path();
-            match crate::updates::upgrade_engine_dsh(&data_dir, &resources_dir, &path_env) {
-                Ok(version) => {
-                    emit_step(&handle, 2, "done", &format!("DSH 已升级到 {version}"));
-                    // 刷新版本状态（托盘/前端 chip）
-                    refresh_update_ui(&handle, &state);
-                    emit_upgrade(&handle, "done", &version);
-                }
-                Err(e) => {
-                    tracing::error!(err = ?e, "dsh 升级失败");
-                    emit_upgrade(&handle, "failed", &format!("{e:#}"));
-                    emit_boot_error(&handle, &format!("升级失败：{e:#}"), "");
-                    return;
-                }
-            }
-            if only {
-                let _ = handle;
-                return;
-            }
-        }
-        // 重新走解析链 + 启动
-        crate::lib_boot_again(state, handle.clone(), data_dir);
-        let _ = handle;
-    });
-    Ok(())
-}
-
 /// probe 完成后的统一分派：NeedsProfile → 出选择器（沿用 F-b）；Ready → 启动会话。
 /// setup 启动线程 / retry 重试 / boot_in_wsl 切换共用——执行环境不感知。
-fn launch_executor_after_probe(
+pub(crate) fn launch_executor_after_probe(
     state: Arc<ShellState>,
     app: tauri::AppHandle,
     mut executor: Box<dyn crate::executor::Executor>,
@@ -1461,7 +627,7 @@ fn launch_executor_after_probe(
 }
 
 /// 按运行环境构建执行器（local/wsl 同等地位的统一入口：首启 / 重试 / 菜单切换共用）。
-fn executor_for_mode(
+pub(crate) fn executor_for_mode(
     mode: settings::Mode,
     app: &tauri::AppHandle,
     data_dir: PathBuf,
@@ -1497,7 +663,7 @@ fn executor_for_mode(
 
 /// retry/upgrade 共用：按**当前会话的运行环境**重建执行器并重新走 probe →
 /// 分派（不再是永远 local——WSL 会话挂掉后重试仍留在 WSL）。
-fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
+pub(crate) fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
     state.clear_boot_cache();
     let mode = state
         .active_mode
@@ -1513,7 +679,7 @@ fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathB
 
 /// 模式切换（菜单/托盘共用）：停掉当前会话（幂等）→ 写默认 → 按新模式启动。
 /// 切换失败或 probe 失败会把主窗口拉回 SPA 根路径 /（壳错误卡在那里渲染）。
-fn switch_mode(
+pub(crate) fn switch_mode(
     app: tauri::AppHandle,
     state: Arc<ShellState>,
     mode: settings::Mode,
@@ -1546,51 +712,6 @@ fn switch_mode(
             Err(e) => emit_boot_error(&app, &e, ""),
         }
     });
-}
-
-/// 「在 WSL 中打开」（顶栏入口；现已记默认 = 与菜单切换同语义）。
-/// 非 Windows：WSL 不存在——防御性拒绝（前端该按钮本就不渲染，这里兜底防
-/// 手工调用 / 旧页面缓存把会话 teardown 后写进脏默认）。
-#[tauri::command]
-fn boot_in_wsl(app: tauri::AppHandle) -> Result<(), String> {
-    if !cfg!(windows) {
-        return Err("WSL 仅支持 Windows 平台。".to_string());
-    }
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        switch_mode(handle, state, settings::Mode::Wsl, data_dir);
-    });
-    Ok(())
-}
-
-/// 首次运行选择落地（壳运行环境页 → 写默认（可选）→ 按所选模式启动；
-/// 2026-08-27 前端迁移后页面为 SPA /mode 路由，回跳主窗口经 React Router）。
-#[tauri::command]
-fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Result<(), String> {
-    let m = settings::Mode::parse(&mode).ok_or_else(|| format!("未知运行环境：{mode}"))?;
-    // 非 Windows：WSL 不存在（mode.html 本就不渲染 WSL 卡，这里兜底防旧页面缓存）。
-    if m == settings::Mode::Wsl && !cfg!(windows) {
-        return Err("WSL 仅支持 Windows 平台。".to_string());
-    }
-    let state = app.state::<Arc<ShellState>>().inner().clone();
-    state.clear_boot_cache();
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    if set_default {
-        // load-modify-save：同 switch_mode，不得抹掉其他已存字段。
-        let mut shell_settings = crate::settings::load(&data_dir);
-        shell_settings.default_mode = Some(m);
-        crate::settings::save(&data_dir, &shell_settings)
-            .map_err(|e| format!("保存默认运行环境失败：{e}"))?;
-    }
-    *state.active_mode.lock().unwrap() = Some(m);
-    let handle = app.clone();
-    std::thread::spawn(move || match executor_for_mode(m, &handle, data_dir) {
-        Ok(executor) => launch_executor_after_probe(state, handle, executor),
-        Err(e) => emit_boot_error(&handle, &e, ""),
-    });
-    Ok(())
 }
 
 /// WebView 渲染内存与样式兜底策略（ADR-0002，2026-08-25 提出，2026-08-26 CSS 注入，2026-08-31 列表裁切与直接子代嵌套修复）：
@@ -1718,7 +839,7 @@ const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 const BOOT_STALL: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
-fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
+pub(crate) fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
     // dev 模式（debug_assertions）：源码树 resources 为最高优先级真理源，
     // 避免 target/debug 复制产物因构建时差或增量缺失导致资源不全。
     #[cfg(debug_assertions)]
@@ -1987,7 +1108,7 @@ pub fn run() {
             let handle = app.clone();
             match event.id().as_ref() {
                 "about" => open_about_window(&handle),
-                "profiles_manager" => open_profiles_window(handle),
+                "profiles_manager" => commands::window::open_profiles_window(handle),
                 "open_in_browser" => {
                     let state = handle.state::<Arc<ShellState>>().inner().clone();
                     let url = state.workbench_url.lock().unwrap().clone();
@@ -2016,61 +1137,61 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            choose_profile,
-            terminal_action,
-            get_update_status,
-            check_updates,
-            get_client_update,
-            client_update_check,
-            client_update_apply,
-            open_external,
-            open_workbench_in_browser,
-            get_workbench_url,
-            boot_in_wsl,
-            choose_mode,
-            list_profiles,
-            get_profile_detail,
-            create_profile,
-            copy_profile,
-            rename_profile,
-            delete_profile,
-            set_default_profile,
-            get_default_profile,
-            switch_profile,
-            get_active_profile,
-            list_profile_plugins,
-            install_plugin,
-            remove_plugin,
-            update_plugin,
-            get_plugin_rows,
-            set_plugin_disabled,
-            check_plugin_updates,
-            list_plugin_versions,
-            get_plugin_runtime,
-            list_all_plugins,
-            copy_plugin_config,
-            set_profile_build_approvals,
-            list_sessions,
-            repair_session,
-            repair_all_sessions,
-            get_shell_settings,
-            set_shell_settings,
-            get_system_diagnostics,
-            get_app_logs,
-            get_credentials_raw,
-            save_credentials_raw,
-            get_credentials_summary,
-            set_credential_key,
-            get_dsh_settings_raw,
-            save_dsh_settings_raw,
-            list_mcp_servers,
-            save_mcp_server,
-            delete_mcp_server,
-            delete_session,
-            fetch_market_registry,
-            open_profiles_window,
-            focus_main_window,
-            get_boot_status,
+            commands::boot::choose_profile,
+            commands::boot::terminal_action,
+            commands::update::get_update_status,
+            commands::update::check_updates,
+            commands::update::get_client_update,
+            commands::update::client_update_check,
+            commands::update::client_update_apply,
+            commands::link::open_external,
+            commands::link::open_workbench_in_browser,
+            commands::link::get_workbench_url,
+            commands::boot::boot_in_wsl,
+            commands::boot::choose_mode,
+            commands::profile::list_profiles,
+            commands::profile::get_profile_detail,
+            commands::profile::create_profile,
+            commands::profile::copy_profile,
+            commands::profile::rename_profile,
+            commands::profile::delete_profile,
+            commands::profile::set_default_profile,
+            commands::profile::get_default_profile,
+            commands::profile::switch_profile,
+            commands::profile::get_active_profile,
+            commands::plugin::list_profile_plugins,
+            commands::plugin::install_plugin,
+            commands::plugin::remove_plugin,
+            commands::plugin::update_plugin,
+            commands::plugin::get_plugin_rows,
+            commands::plugin::set_plugin_disabled,
+            commands::plugin::check_plugin_updates,
+            commands::plugin::list_plugin_versions,
+            commands::plugin::get_plugin_runtime,
+            commands::plugin::list_all_plugins,
+            commands::plugin::copy_plugin_config,
+            commands::plugin::set_profile_build_approvals,
+            commands::session::list_sessions,
+            commands::session::repair_session,
+            commands::session::repair_all_sessions,
+            commands::console::get_shell_settings,
+            commands::console::set_shell_settings,
+            commands::console::get_system_diagnostics,
+            commands::console::get_app_logs,
+            commands::console::get_credentials_raw,
+            commands::console::save_credentials_raw,
+            commands::console::get_credentials_summary,
+            commands::console::set_credential_key,
+            commands::console::get_dsh_settings_raw,
+            commands::console::save_dsh_settings_raw,
+            commands::console::list_mcp_servers,
+            commands::console::save_mcp_server,
+            commands::console::delete_mcp_server,
+            commands::session::delete_session,
+            commands::market::fetch_market_registry,
+            commands::window::open_profiles_window,
+            commands::window::focus_main_window,
+            commands::boot::get_boot_status,
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
@@ -2115,7 +1236,7 @@ fn install_signal_exit_handler() {
 }
 
 /// 发射 boot:step 事件（state: pending|running|done|error）。
-fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
+pub(crate) fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
     use tauri::Emitter;
     tracing::info!("boot:step step={step} state={state} {detail}");
     let payload = serde_json::json!({
@@ -2168,7 +1289,7 @@ fn download_progress_bridge(
 
 /// 发射 `dsh:upgrade` 事件（4.4⑤：DSH 升级链路 running/done/failed，detail =
 /// 失败时安装器错误链含 pnpm 输出尾部；广播全窗口，关于页升级按钮消费）。
-fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
+pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
     use tauri::Emitter;
     let _ = app.emit(
         "dsh:upgrade",
@@ -2177,7 +1298,7 @@ fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
 }
 
 /// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。
-fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
+pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
     use tauri::Emitter;
     let (title, suggestion, actions) = classify_boot_error(detail);
     let payload = serde_json::json!({
@@ -2453,7 +1574,7 @@ fn emit_update(app: &tauri::AppHandle, status: &crate::updates::UpdateStatus) {
 }
 
 /// 后台检测一次并同步应用菜单 + 事件（首启/手动/升级后共用）。
-fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
+pub(crate) fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
     let Ok(data_dir) = app.path().app_data_dir() else {
         return;
     };
@@ -2653,61 +1774,5 @@ fn open_about_window(app: &tauri::AppHandle) {
         }
     }) {
         tracing::error!("调度关于窗口创建到主线程失败：{e}");
-    }
-}
-
-/// Profile 管理器窗口（控制中心）：独立窗口（label=profiles，React 渲染
-/// pages/ProfileManager.tsx）。独立窗口与 about 同理——主窗口 boot 后会
-/// 导航进 dsh 工作台（remote），壳页不可达；管理器要随时可达。
-/// 主线程创建约束同 open_about_window（WebView2 白板坑）。
-#[tauri::command]
-fn open_profiles_window(app: tauri::AppHandle) {
-    let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("profiles") {
-            let _ = win.show();
-            let _ = win.unminimize();
-            let _ = win.set_focus();
-            return;
-        }
-        let platform_script = format!(
-            "window.__DSH_PLATFORM__ = {{ os: '{}', wsl: {} }};",
-            std::env::consts::OS,
-            if cfg!(windows) { "true" } else { "false" }
-        );
-        let builder = tauri::WebviewWindowBuilder::new(
-            &handle,
-            "profiles",
-            tauri::WebviewUrl::App("/".into()),
-        )
-        .title("控制中心")
-        // Master-Detail 双栏工作台：宽 1180 + 高 780，开箱即得宽屏完整双栏布局
-        .inner_size(1180.0, 780.0)
-        .min_inner_size(860.0, 600.0)
-        .resizable(true)
-        .center()
-        .background_color(tauri::utils::config::Color(249, 250, 251, 255))
-        .initialization_script(&platform_script);
-        match builder.build() {
-            Ok(_) => tracing::info!("控制中心窗口已创建"),
-            Err(e) => tracing::error!("创建控制中心窗口失败：{e}"),
-        }
-    }) {
-        tracing::error!("调度控制中心窗口创建到主线程失败：{e}");
-    }
-}
-
-/// 聚焦主工作台窗口（label=main）。
-#[tauri::command]
-fn focus_main_window(app: tauri::AppHandle) {
-    let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("main") {
-            let _ = win.show();
-            let _ = win.unminimize();
-            let _ = win.set_focus();
-        }
-    }) {
-        tracing::error!("调度主窗口聚焦到主线程失败：{e}");
     }
 }

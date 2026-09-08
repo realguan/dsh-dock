@@ -87,6 +87,9 @@ mod gate_tests {
 
     /// 从 lib.rs 源文本提取 `generate_handler![ … ])` 块内的命令标识符。
     /// 格式漂移（找不到标记 / 块未闭合）直接 panic，提示更新本解析器。
+    ///
+    /// 2026-09-08（架构评审批次 2）：handler 列表迁到 `commands/*` 后条目形如
+    /// `commands::profile::list_profiles`——只取最后一段路径作为命令名。
     fn extract_handler_commands(lib_rs: &str) -> Vec<String> {
         const OPEN: &str = "generate_handler![";
         let start = lib_rs.find(OPEN).unwrap_or_else(|| {
@@ -98,8 +101,14 @@ mod gate_tests {
             .unwrap_or_else(|| panic!("generate_handler![ 块未闭合——请更新 ipc.rs 解析器"));
         body[..end]
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim())
             .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.rsplit("::")
+                    .next()
+                    .expect("rsplit 至少产出一段")
+                    .to_string()
+            })
             .collect()
     }
 
@@ -157,6 +166,22 @@ mod gate_tests {
             "open-workbench-in-browser"
         );
         assert_eq!(to_kebab("boot_in_wsl"), "boot-in-wsl");
+    }
+
+    /// 解析器认模块路径（批次 2 拆 `commands/` 后 handler 条目变成全路径）。
+    #[test]
+    fn handler_parser_strips_module_path() {
+        let synthetic = r#"
+        .invoke_handler(tauri::generate_handler![
+            commands::profile::list_profiles,
+            commands::plugin::install_plugin,
+            get_boot_status,
+        ])
+        "#;
+        assert_eq!(
+            extract_handler_commands(synthetic),
+            vec!["list_profiles", "install_plugin", "get_boot_status"]
+        );
     }
 
     // ---------- 契约「形状」闸门（2026-09-08，P4）----------

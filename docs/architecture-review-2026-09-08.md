@@ -142,7 +142,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 0a | 修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删死代码 `ProfileDetailDialog`；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ✅ 已落地（见 §7） |
 | 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ✅ 已落地（见 §8） |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
-| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
+| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⚠️ `commands/` 已拆（见 §11）；`ui/`+`boot/` 待做 |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
 | 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10；HTTP seam 未做） |
@@ -278,3 +278,32 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 **未做（仍是批次 5 的欠账）**：`updates.rs` 的 **HTTP seam 注入**（把 `ureq::Agent` 调用
 收成可注入闭包，离线覆盖镜像链回退/超时语义）；`repair-session.mjs` fixture 驱动。
 现状：镜像链回退仍只能靠真网络或人工验证。
+
+## 11. 批次 2 第一步落地记录（2026-09-08，`refactor(tauri): 拆出 commands 模块`）
+
+**`lib.rs` 2,713 → 1,778 行（−935）**，55 个 `#[tauri::command]` 按域迁到
+`src-tauri/src/commands/`：
+
+| 模块 | 命令数 | 行数 | 域 |
+|:---|:---|:---|:---|
+| `commands/boot.rs` | 5 | 146 | 启动/运行环境/终端动作 |
+| `commands/profile.rs` | 10 | 198 | profile 生命周期 |
+| `commands/plugin.rs` | 12 | 234 | 插件安装/行表/聚合/构建审批 |
+| `commands/console.rs` | 13 | 148 | 设置/诊断/凭据/引擎/MCP |
+| `commands/session.rs` | 4 | 80 | 会话列表与自愈 |
+| `commands/update.rs` | 5 | 46 | 壳与 dsh 升级 |
+| `commands/link.rs` | 3 | 56 | 外链与工作台 URL |
+| `commands/window.rs` | 2 | 62 | 窗口切换 |
+| `commands/market.rs` | 1 | 13 | 市场 registry |
+
+**先修闸门再搬**：`ipc.rs` 的 handler 解析器原本把条目当裸标识符——搬完会变成
+`commands::profile::list_profiles` 而误判「未登记」。故先让解析器取**最后一段路径**，
+并补 `handler_parser_strips_module_path`（合成源码正反例）——搬完 55 条 handler 全绿。
+
+**可见性**：`ShellState` 与 17 个被命令调用的辅助函数改 `pub(crate)`；`EXTERNAL_URL_HOSTS`
+同理。命令层只依赖 `crate::…`，不反向依赖 `commands::`（`lib.rs` 仅菜单回调一处改为
+`commands::window::open_profiles_window`）。
+
+**未纳入（批次 2 后续）**：`ui/`（`create_main_window` 352 行、菜单/托盘/窗口、
+`resolve_resources_dir`）与 `boot/`（`run()` 400+ 行、会话守卫、`emit_*` 族）。
+本次只搬**叶子层**（命令 → 域模块），不动启动管线，回归面可控。
