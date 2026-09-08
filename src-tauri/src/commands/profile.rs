@@ -4,7 +4,7 @@
 //! 业务实现全在对应域模块（profiles/plugins/sessions/settings/…）。
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
 
-use crate::{
+use crate::boot::{
     active_session_profile, ensure_switchable_profile, lib_boot_again, teardown_session, ShellState,
 };
 use std::sync::Arc;

@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::ShellState;
+use crate::boot::ShellState;
 
 /// GitHub Releases 下载加速镜像（中国大陆直连 github.com 受阻时回退）。
 /// 镜像仅做传输代理；更新产物仍经 minisign 验签，镜像无法篡改安装包。

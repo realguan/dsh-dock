@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
-use crate::{is_allowed_external_url, ShellState};
+use crate::boot::ShellState;
+use crate::is_allowed_external_url;
 
 /// 创建主窗口（含外链拦截）。原静态配置（tauri.conf.json windows）等价迁移：
 /// 1280x820、min 960x640、可缩放、居中、浅色底。

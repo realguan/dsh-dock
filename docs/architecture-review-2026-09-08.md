@@ -142,7 +142,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 0a | 修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删死代码 `ProfileDetailDialog`；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ✅ 已落地（见 §7） |
 | 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ✅ 已落地（见 §8） |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
-| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⚠️ `commands/`+`ui/` 已拆（见 §11/§12）；`boot/` 待做 |
+| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ✅ 已落地（见 §11/§12/§13） |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
 | 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10；HTTP seam 未做） |
@@ -329,3 +329,28 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 （`guard_session`/`teardown_session`/`run_executor_session`）、`emit_*` 族、
 `classify_boot_error`/`read_error_detail`、`init_tracing`/`TeeWriter`。
 这一步动的是启动管线本身，需单独一轮并逐段验证（boot 是最高风险路径）。
+
+## 13. 批次 2 第三步落地记录（2026-09-08，`refactor(tauri): 拆出 boot 模块`）——批次 2 收口
+
+**`lib.rs` 1,372 → 574 行**（相对原始 3,039 **−81%**），启动管线迁到
+`src-tauri/src/boot.rs`（818 行）：
+
+| 迁出项 | 说明 |
+|:---|:---|
+| `ShellState` + 字段 + `impl` | 壳进程内会话真相源（字段改 `pub(crate)`） |
+| `run_executor_session` / `authenticate_workbench_session` / `session_is_current` / `engine_session_alive` / `teardown_session` / `guard_session` | executor 拉起与 1:1 生命周期守卫 |
+| `launch_executor_after_probe` / `executor_for_mode` / `lib_boot_again` / `switch_mode` | 启动/切换/重启编排 |
+| `emit_step` / `boot_sink` / `download_progress_bridge` / `emit_upgrade` / `emit_boot_error` / `emit_update` / `refresh_update_ui` | boot 遥测与更新态刷新 |
+| `classify_boot_error` / `read_error_detail` / `read_log_tail` | 启动失败分类与日志刮取 |
+| `TeeWriter` / `TeeWriterGuard` / `MakeWriter` impl / `init_tracing` / `install_signal_exit_handler` / `signal_exit_handler` / `SIGNAL_EXIT` | tracing 双写与信号监护 |
+| `BOOT_TIMEOUT` / `BOOT_STALL` / `cached_update_status` / `cached_status_or_default` / `empty_update_status` / `active_session_profile` / `ensure_switchable_profile` | 常量与状态缓存 |
+
+**`run()` 有意留在 `lib.rs`**：它是组合根（装配 Builder、注册 handler、挂菜单/托盘），
+只做接线不承载领域逻辑——拆出去反而让「入口在哪」变模糊。
+
+**最终模块地图**：`lib.rs`(574，入口+接线+子进程工具+契约测试) · `boot.rs`(818) ·
+`ui.rs`(424) · `commands/`(9 文件 947) · `injected/`(3 文件 330 JS) + 18 个既有域模块。
+`lib.rs` 从「全仓第一热点」变为薄入口层。
+
+**验证**：`cargo test` 193 绿 · `cargo fmt --check` 干净 · `clippy -D warnings` 干净 ·
+前端 `typecheck`/`lint` 0 warning/`test` 135 全绿（无行为变更，纯搬迁）。

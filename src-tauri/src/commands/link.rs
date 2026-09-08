@@ -4,7 +4,8 @@
 //! 业务实现全在对应域模块（profiles/plugins/sessions/settings/…）。
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
 
-use crate::{is_allowed_external_url, ShellState};
+use crate::boot::ShellState;
+use crate::is_allowed_external_url;
 use std::sync::Arc;
 
 use tauri::Manager;

@@ -4,7 +4,7 @@
 //! 业务实现全在对应域模块（profiles/plugins/sessions/settings/…）。
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
 
-use crate::{
+use crate::boot::{
     emit_boot_error, emit_step, emit_upgrade, executor_for_mode, launch_executor_after_probe,
     refresh_update_ui, run_executor_session, switch_mode, ShellState,
 };
@@ -139,7 +139,7 @@ pub fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), Stri
             }
         }
         // 重新走解析链 + 启动
-        crate::lib_boot_again(state, handle.clone(), data_dir);
+        crate::boot::lib_boot_again(state, handle.clone(), data_dir);
         let _ = handle;
     });
     Ok(())

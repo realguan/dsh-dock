@@ -1868,3 +1868,19 @@
 - 影响：仅周知，无行为变更。
 - 凭据：`cargo test` **193 passed** · `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。
+
+### 2026-09-08 refactor(tauri)：拆出 boot 模块（架构评审批次 2 第三步 · 批次 2 收口）—— guan（AI 起草）
+
+- **`lib.rs` 1,372 → 574 行**（相对原始 3,039 **−81%**）：启动管线迁到
+  `src-tauri/src/boot.rs`（818 行）——`ShellState`（字段 pub(crate)）+ executor 会话
+  拉起与 1:1 守卫、启动/切换/重启编排、boot 遥测（`emit_step`/`emit_upgrade`/
+  `emit_boot_error`/`emit_update`/`refresh_update_ui`）、失败分类与日志刮取、
+  `TeeWriter`+`MakeWriter`+`init_tracing`、`install_signal_exit_handler`+`SIGNAL_EXIT`、
+  `BOOT_TIMEOUT`/`BOOT_STALL` 与状态缓存。
+- **`run()` 有意留在 lib.rs**：它是组合根（装配 Builder / 注册 handler / 挂菜单托盘），
+  只接线不承载领域逻辑。
+- 最终模块地图：`lib.rs`(574) · `boot.rs`(818) · `ui.rs`(424) · `commands/`(9 文件 947) ·
+  `injected/`(3 文件 330 JS) + 18 个既有域模块。`lib.rs` 从「全仓第一热点」变为薄入口层。
+- 影响：仅周知，无行为变更（纯搬迁 + 可见性调整）。
+- 凭据：`cargo test` **193 passed** · `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。
