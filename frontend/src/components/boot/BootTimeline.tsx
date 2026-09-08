@@ -52,10 +52,15 @@ export function BootTimeline({
             className={`truncate text-sm font-semibold tracking-tight ${
               danger ? "text-warn" : "text-ink"
             }`}
+            title={title}
           >
             {title}
           </h1>
-          {subtitle && <p className="mt-0.5 truncate text-xs text-dim">{subtitle}</p>}
+          {subtitle && (
+            <p className="mt-0.5 truncate text-xs text-dim" title={subtitle}>
+              {subtitle}
+            </p>
+          )}
         </div>
         <div
           className="flex shrink-0 items-center gap-1"

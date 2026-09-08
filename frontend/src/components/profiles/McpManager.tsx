@@ -367,7 +367,9 @@ export function McpManager({
                   {/* 命令与参数 */}
                   <div className="flex items-center gap-2 font-mono text-xs text-dim bg-bg rounded-lg border border-line p-2">
                     <Terminal className="size-3.5 text-faint shrink-0" />
-                    <span className="truncate">{s.command} {s.args.join(" ")}</span>
+                    <span className="truncate" title={`${s.command} ${s.args.join(" ")}`}>
+                      {s.command} {s.args.join(" ")}
+                    </span>
                   </div>
 
                   {/* 环境变量标签 */}
@@ -444,7 +446,10 @@ export function McpManager({
                     {preset.desc}
                   </p>
                 </div>
-                <div className="mt-2 truncate font-mono text-meta text-faint border-t border-line/50 pt-1.5">
+                <div
+                  className="mt-2 truncate font-mono text-meta text-faint border-t border-line/50 pt-1.5"
+                  title={`${preset.command} ${preset.args.join(" ")}`}
+                >
                   <code>{preset.command} {preset.args.slice(0, 2).join(" ")}…</code>
                 </div>
               </div>

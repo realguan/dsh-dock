@@ -50,9 +50,14 @@ export function VersionChip() {
               : "bg-faint/60"
         }`}
       />
-      <span className="truncate font-medium text-ink/90">{text}</span>
+      <span className="truncate font-medium text-ink/90" title={text}>
+        {text}
+      </span>
       {clientMsg && (
-        <span className="truncate border-l border-line pl-2 font-medium text-warn">
+        <span
+          className="truncate border-l border-line pl-2 font-medium text-warn"
+          title={clientMsg}
+        >
           {clientMsg}
         </span>
       )}

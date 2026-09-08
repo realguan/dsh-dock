@@ -101,7 +101,10 @@ export function QuickDshSwitcher() {
 
       {/* 关联 Profile 简要标记（若存在） */}
       {activeProfile && (
-        <span className="hidden font-mono text-meta text-faint max-w-14 truncate whitespace-nowrap sm:inline-block">
+        <span
+          className="hidden font-mono text-meta text-faint max-w-14 truncate whitespace-nowrap sm:inline-block"
+          title={activeProfile}
+        >
           ({activeProfile})
         </span>
       )}

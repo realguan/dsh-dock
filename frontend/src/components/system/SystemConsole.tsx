@@ -94,7 +94,9 @@ export function SystemConsole({
                   >
                     <Icon className="size-3.5" />
                   </div>
-                  <span className="text-xs truncate">{item.label}</span>
+                  <span className="text-xs truncate" title={item.label}>
+                    {item.label}
+                  </span>
                 </div>
 
                 <ChevronRight

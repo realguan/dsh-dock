@@ -158,10 +158,12 @@ export function ProfileManager() {
         <div className="flex items-center gap-3 min-w-0">
           <Emblem size={32} />
           <div className="min-w-0">
-            <h1 className="text-ink text-base font-bold tracking-tight truncate">
+            <h1 className="text-ink text-base font-bold tracking-tight truncate" title={t.profiles.title}>
               {t.profiles.title}
             </h1>
-            <p className="text-faint text-xs truncate">{t.profiles.subtitle}</p>
+            <p className="text-faint text-xs truncate" title={t.profiles.subtitle}>
+              {t.profiles.subtitle}
+            </p>
           </div>
         </div>
 

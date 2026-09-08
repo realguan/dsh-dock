@@ -425,7 +425,9 @@ export function SessionManager({
             </span>
             <span className="hidden items-center gap-1 sm:inline-flex">
               <Folder className="size-3" />
-              <span className="max-w-[220px] truncate font-mono">{sess.projectName}</span>
+              <span className="max-w-[220px] truncate font-mono" title={sess.projectName}>
+                {sess.projectName}
+              </span>
             </span>
             {/* 元数据副行（2026-09-07 扩展项1）：创建时间 / 事件数 / 结束状态 / 预设 */}
             {sess.createdAt ? (
@@ -744,7 +746,10 @@ export function SessionManager({
                         <ChevronDown className="size-4 text-faint shrink-0" />
                       )}
                       <Folder className="size-4 text-brand-deep shrink-0" />
-                      <span className="font-mono text-xs font-bold text-ink truncate">
+                      <span
+                        className="font-mono text-xs font-bold text-ink truncate"
+                        title={group.projectName}
+                      >
                         {group.projectName}
                       </span>
                       <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-meta font-mono text-faint">

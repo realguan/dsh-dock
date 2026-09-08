@@ -63,7 +63,7 @@ export function MarketPluginCard({
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h3
                   className="truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors"
-                  title={plugin.name}
+                  title={displayName}
                   onClick={() => onOpenExternal(plugin.url || plugin.page)}
                 >
                   {displayName}
@@ -74,7 +74,7 @@ export function MarketPluginCard({
                   </Badge>
                 )}
               </div>
-              <p className="truncate text-label text-dim font-mono mt-0.5">
+              <p className="truncate text-label text-dim font-mono mt-0.5" title={plugin.owner}>
                 by <span className="text-ink/80">{plugin.owner}</span>
               </p>
             </div>
@@ -114,7 +114,7 @@ export function MarketPluginCard({
           )}
 
           {plugin.added && (
-            <div className="truncate ml-auto text-meta text-faint">
+            <div className="truncate ml-auto text-meta text-faint" title={plugin.added}>
               {plugin.added}
             </div>
           )}

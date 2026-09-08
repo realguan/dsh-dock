@@ -162,7 +162,9 @@ export function BootSelector() {
                             {name}
                           </span>
                         </div>
-                        <span className="mt-1 block truncate text-xs text-dim">{meta.desc}</span>
+                        <span className="mt-1 block truncate text-xs text-dim" title={meta.desc}>
+                          {meta.desc}
+                        </span>
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">

@@ -28,7 +28,7 @@
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ✅ 已修 | `index.css:8` 无 `.dark` 应用点 |
 | U13 | 图标语义错配 4 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ✅ 已修 | 见 §6 |
 | U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ✅ 已修 | `SessionManager.tsx:344-360` vs `:477-489` |
-| U15 | 截断无 tooltip 系统性缺口（Select 尤其） | MEDIUM | ✅ 部分（Select 已修；其它截断清单待做） | `PluginOverview.tsx:197`、`select.tsx:30` |
+| U15 | 截断无 tooltip 系统性缺口（Select 尤其） | MEDIUM | ✅ 已修（Select 自动 title + 22 处手工补齐，见 §20） | `PluginOverview.tsx:197`、`select.tsx:30` |
 
 ## 1. 布局骨架与信息架构
 
@@ -559,3 +559,32 @@ dsh_settings 2）· `fmt --check` 干净 · `clippy -D warnings` 干净 ·
 **未做（登记）**：覆写 `settings.yaml` 仍**无 diff 预览**（评审原文「无确认、无 diff、
 无备份」——确认与备份已补，diff 需要文本对比组件，属独立小项）；`window.confirm` 绝迹
 后新增破坏性操作必须显式接入本组件（闸门已兜）。
+
+## 20. 落地记录：U15 剩余截断补齐（2026-09-08，`fix(uiux): 截断元素补齐 title`）
+
+评审 §0/§3 列的截断清单是**抽样**，不是全集。本次按「凡 `truncate` 必有 `title`」复扫
+全仓，共补 22 处：
+
+| 文件 | 处数 | 内容 |
+|:---|:---|:---|
+| `McpManager` | 2 | 命令+参数、预设命令预览 |
+| `SessionManager` | 2 | 项目名（行内 / 分组头）——另 2 处（会话名、工作区路径）本已有 `title` |
+| `MarketPluginCard` | 3 | 插件名（原 `title` 用了未加工的 `plugin.name`，改为展示用的 `displayName`）、owner、上架日期 |
+| `LogViewerPane` | 1 | 日志文件路径 |
+| `ProfileManager` | 2 | 页标题、副标题 |
+| `VersionChip` | 2 | 版本串、客户端提示 |
+| `BootTimeline` | 2 | 启动阶段标题、副标题 |
+| `QuickDshSwitcher` | 1 | 关联 profile 名 |
+| `SystemConsole` | 1 | 导航项标签 |
+| `ProfileRow` | 1 | 元信息行 |
+| `ProfileDetailPane` | 1 | 详情页 profile 名 |
+| `BootSelector` | 1 | 模式描述 |
+| `ui/toast` | 1 | 已在批次 B 修（`title={toast.message}`） |
+
+**有意不加的 4 处**：`ui/select.tsx:30` 的 trigger（显示值来自子节点，组件无法自推，
+由调用方按需挂 `title`——`SelectItem` 已自动挂，覆盖主要场景）；`DiagnosticsPane` 三处
+分布图例是短数字串（`3 个 profile · 1.2 MB`），非用户数据且不会截断。
+
+**为什么没有机器闸门**：JSX 元素与 `className`/`title` 的对应关系无法用正则可靠判定
+（多行属性、动态类名），加一个会误报的闸门比不加更糟；改为在评审里留「复扫命令」
+（grep `truncate` 后人工核对 ±6 行）作为下次复扫口径。

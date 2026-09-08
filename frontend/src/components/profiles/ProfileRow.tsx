@@ -123,7 +123,7 @@ export function ProfileRow({
           </div>
 
           {/* 元信息行 */}
-          <div className="text-faint mt-1 truncate font-mono text-label">
+          <div className="text-faint mt-1 truncate font-mono text-label" title={metaLine}>
             {metaLine}
           </div>
         </div>

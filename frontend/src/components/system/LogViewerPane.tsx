@@ -216,7 +216,7 @@ export function LogViewerPane({
             <Terminal className="size-3.5 text-brand-deep" />
             <span className="font-semibold">{logData?.source || source}</span>
           </div>
-          <span className="font-mono text-meta text-slate-500 truncate max-w-xs">
+          <span className="font-mono text-meta text-slate-500 truncate max-w-xs" title={logData?.path}>
             {logData?.path}
           </span>
         </div>

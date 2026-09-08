@@ -1947,3 +1947,18 @@
 - 凭据：Rust `cargo test` **213 passed**（206 → +7）· `fmt --check` 干净 ·
   `clippy -D warnings` 干净 · 前端 `typecheck` 0 错 / `oxlint` 0 warning /
   `test` **139 passed**（135 → +4）/ `build` 通过。
+
+### 2026-09-08 fix(uiux)：截断元素补齐 title（UI/UX 评审 U15 剩余项）—— guan（AI 起草）
+
+- **U15 收口**：评审列的是抽样清单，本次按「凡 `truncate` 必有 `title`」复扫全仓，
+  补 **22 处**——`McpManager`(2) · `SessionManager`(2) · `MarketPluginCard`(3，插件名
+  `title` 原用未加工的 `plugin.name`，改为展示用 `displayName`) · `LogViewerPane`(1) ·
+  `ProfileManager`(2) · `VersionChip`(2) · `BootTimeline`(2) · `QuickDshSwitcher`(1) ·
+  `SystemConsole`(1) · `ProfileRow`(1) · `ProfileDetailPane`(1) · `BootSelector`(1)。
+- **有意不加的 4 处**：`ui/select.tsx` trigger（显示值来自子节点，组件无法自推；`SelectItem`
+  已自动挂 `title`）；`DiagnosticsPane` 三处分布图例为短数字串，非用户数据。
+- **未加机器闸门**：JSX 元素与 `className`/`title` 的对应关系无法用正则可靠判定（多行
+  属性 / 动态类名），误报闸门比没有更糟——改在评审 §20 留复扫口径。
+- 影响：仅周知，无行为变更（纯属性补齐）；`title` 同时是浏览器原生 tooltip。
+- 凭据：前端 `typecheck` 0 错 · `oxlint` 0 warning · `test` 139 passed · `build` 通过
+  （本批未动 Rust）。
