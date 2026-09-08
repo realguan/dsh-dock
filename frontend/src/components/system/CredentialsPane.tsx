@@ -13,6 +13,7 @@ import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { CredentialSummaryItem } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,10 @@ export function CredentialsPane({
   const [editingProvider, setEditingProvider] = useState<CredentialSummaryItem | null>(null)
   const [inputKey, setInputKey] = useState("")
   const [savingKey, setSavingKey] = useState(false)
+
+  // 破坏性操作确认（2026-09-08，U9）：清除 Key / 整体覆写凭据文件
+  const [pendingKeyClear, setPendingKeyClear] = useState<CredentialSummaryItem | null>(null)
+  const [confirmRaw, setConfirmRaw] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -73,8 +78,7 @@ export function CredentialsPane({
     }
   }
 
-  const handleDeleteKey = async (item: CredentialSummaryItem) => {
-    if (!window.confirm(`确定清除「${item.label}」的 API Key 吗？`)) return
+  const deleteKey = async (item: CredentialSummaryItem) => {
     try {
       await api.setCredentialKey(item.provider, "")
       onNotice?.(t.console.keyRemoved, "ok")
@@ -84,7 +88,7 @@ export function CredentialsPane({
     }
   }
 
-  const handleSaveRaw = async () => {
+  const saveRaw = async () => {
     setSavingRaw(true)
     try {
       await api.saveCredentialsRaw(rawContent)
@@ -153,7 +157,7 @@ export function CredentialsPane({
             <span className="font-mono text-xs text-faint">$DSH_HOME/.credentials.yaml</span>
             <Button
               size="sm"
-              onClick={handleSaveRaw}
+              onClick={() => setConfirmRaw(true)}
               disabled={savingRaw}
               className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90"
             >
@@ -220,7 +224,7 @@ export function CredentialsPane({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => handleDeleteKey(item)}
+                    onClick={() => setPendingKeyClear(item)}
                     className="h-7 px-2 text-xs text-faint hover:text-rose-700"
                   >
                     <Trash2 className="size-3 mr-1" />
@@ -297,6 +301,33 @@ export function CredentialsPane({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* 破坏性操作确认（U9）：清除 Key / 整体覆写凭据文件 */}
+      <ConfirmDialog
+        open={pendingKeyClear !== null}
+        title={
+          pendingKeyClear ? t.console.keyClearConfirm(pendingKeyClear.label) : ""
+        }
+        confirmLabel={t.console.deleteKey}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          const item = pendingKeyClear
+          setPendingKeyClear(null)
+          if (item) void deleteKey(item)
+        }}
+        onClose={() => setPendingKeyClear(null)}
+      />
+      <ConfirmDialog
+        open={confirmRaw}
+        title={t.console.credentialsOverwriteConfirm}
+        points={t.console.credentialsOverwritePoints}
+        confirmLabel={t.console.saveCredentials}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          setConfirmRaw(false)
+          void saveRaw()
+        }}
+        onClose={() => setConfirmRaw(false)}
+      />
     </div>
   )
 }

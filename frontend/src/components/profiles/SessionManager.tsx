@@ -34,6 +34,7 @@ import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import type { SessionItem } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -115,6 +116,8 @@ export function SessionManager({
   const [statusFilter, setStatusFilter] = useState<"all" | "needs_repair" | "archived">("all")
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
+  // 删除确认（2026-09-08，U9）：统一走模态确认（原为 window.confirm）
+  const [pendingDelete, setPendingDelete] = useState<SessionItem | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
   // 复制反馈各用一套状态（id 与 path 可同时处于「已复制」），失败不置位（2026-09-08）
   const { copiedKey: copiedId, copy: copyId } = useCopy()
@@ -230,9 +233,6 @@ export function SessionManager({
   }
 
   const handleDeleteSingle = async (session: SessionItem) => {
-    if (!window.confirm(`${t.sessions.deleteConfirmTitle(session.id)}\n\n${t.sessions.deleteConfirmNote}`)) {
-      return
-    }
     setDeletingTarget(session.id)
     try {
       await api.deleteSession(session.filePath)
@@ -513,7 +513,7 @@ export function SessionManager({
             size="sm"
             variant="outline"
             title={t.sessions.deleteBtn}
-            onClick={() => handleDeleteSingle(sess)}
+            onClick={() => setPendingDelete(sess)}
             disabled={isBusy || batchRepairing || isDeleting}
             className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-700"
           >
@@ -788,6 +788,21 @@ export function SessionManager({
           {filteredSessions.map((sess) => renderSessionRow(sess))}
         </div>
       )}
+
+      {/* 删除确认（U9）：不可撤销，先列明后果 */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? t.sessions.deleteConfirmTitle(pendingDelete.id) : ""}
+        note={t.sessions.deleteConfirmNote}
+        confirmLabel={t.sessions.deleteBtn}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          const target = pendingDelete
+          setPendingDelete(null)
+          if (target) void handleDeleteSingle(target)
+        }}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

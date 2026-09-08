@@ -27,6 +27,7 @@ import type {
   ProfileDetail,
 } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Switch } from "@/components/ui/switch"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
 import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
@@ -99,6 +100,9 @@ export function ProfileDetailPane({
   // YAML 复制反馈
   const { copied: copiedYaml, copy: copyYamlText } = useCopy()
 
+  // 卸载确认（2026-09-08，U9）：卸载不可撤销，先过确认对话框再执行。
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
+
   const reload = useCallback(() => {
     if (!name) return
     api
@@ -153,6 +157,13 @@ export function ProfileDetailPane({
       })
       .catch((e) => onNotice(String(e), "warn"))
       .finally(() => setOpBusy(null))
+  }
+
+  // 卸载入口：先确认（U9）。确认后立即关框、由行内 busy 态回报进度；
+  // build-gate 的重试仍直连 `runOp`，不二次确认。
+  const requestRemove = (pkg: string) => {
+    if (!name || opBusy) return
+    setConfirmRemove(pkg)
   }
 
   // 安装插件
@@ -700,7 +711,7 @@ export function ProfileDetailPane({
                               type="button"
                               title={t.profiles.pluginUninstall}
                               disabled={opBusy !== null}
-                              onClick={() => runOp("remove", p.name)}
+                              onClick={() => requestRemove(p.name)}
                               className="text-faint hover:text-warn hover:bg-warn-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
                             >
                               <Trash2 className="size-3.5" />
@@ -894,6 +905,21 @@ export function ProfileDetailPane({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 卸载确认（U9）：不可撤销，逐条列出影响面后再执行 */}
+      <ConfirmDialog
+        open={confirmRemove !== null}
+        title={confirmRemove ? t.profiles.pluginUninstallConfirm(confirmRemove) : ""}
+        points={t.profiles.pluginUninstallPoints}
+        confirmLabel={t.profiles.pluginUninstall}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          const pkg = confirmRemove
+          setConfirmRemove(null)
+          if (pkg) runOp("remove", pkg)
+        }}
+        onClose={() => setConfirmRemove(null)}
+      />
 
       {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试被拦截的原操作 */}
       {name && (

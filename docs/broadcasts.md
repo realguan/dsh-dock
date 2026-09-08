@@ -1926,3 +1926,24 @@
 - 影响：仅周知，无产品行为变更（纯测试 + 文档）。
 - 凭据：`cargo test` **206 passed**（204 → +2 表驱动用例）· `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint`/`test` 135/`build` 全绿。
+
+### 2026-09-08 fix(uiux)：破坏性操作统一确认与覆写前备份（UI/UX 评审 U9）—— guan（AI 起草）
+
+- **U9（HIGH）收口**：卸载插件 / 覆写 `.credentials.yaml` / 覆写 `settings.yaml` 三个
+  无确认的不可撤销动作，以及三处原生 `window.confirm`（删除会话 / 移除 MCP / 清除 Key），
+  全部统一到新组件 `ui/confirm-dialog.tsx`（纯展示外壳，不含文案不发 IPC）；
+  `ProfileDeleteDialog` 改用同一外壳（行为不变，取消按钮文案「关闭」→「取消」）。
+- **覆写前备份（Rust 新增 `fs_backup.rs`）**：`<文件名>.bak-<unix 秒>`，同秒重复覆写追加
+  `-N` 不覆盖既有备份；`fs::copy` 保留权限位（凭据备份同为 0600）；**备份失败即中止写入**
+  （确认框已承诺「先备份」，静默降级等于毁约）。新增 `credentials::overwrite_credentials`
+  与 `dsh_settings::overwrite_dsh_settings` 覆写入口，命令层改调；`set_provider_key`
+  增量写路径不产生备份噪声。
+- **闸门** `destructiveConfirmGate.test.ts`：全仓不得出现 `window.confirm`；
+  6 个破坏性入口必须引用 `ConfirmDialog`；含闸门自检与清单路径存在性校验。
+- 文案：新增 `confirm.cancel` 与 6 组站点键，zh-CN / en-US 同步（`AppCopy` 类型兜底）。
+- **未做（登记）**：覆写 `settings.yaml` 仍无 diff 预览（确认与备份已补）。
+- 影响：仅周知，无 IPC / 契约变更；`save_credentials_raw` / `save_dsh_settings_raw`
+  的磁盘副作用多一个 `*.bak-*` 文件（新增，不删除任何既有文件）。
+- 凭据：Rust `cargo test` **213 passed**（206 → +7）· `fmt --check` 干净 ·
+  `clippy -D warnings` 干净 · 前端 `typecheck` 0 错 / `oxlint` 0 warning /
+  `test` **139 passed**（135 → +4）/ `build` 通过。

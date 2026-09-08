@@ -23,6 +23,7 @@ import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import type { McpServerConfig, PluginRuntimeSnapshot } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Switch } from "@/components/ui/switch"
 import {
   Dialog,
@@ -104,6 +105,8 @@ export function McpManager({
   const [formDisabled, setFormDisabled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deletingName, setDeletingName] = useState<string | null>(null)
+  // 删除确认（2026-09-08，U9）：统一走模态确认（原为 window.confirm）
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   // 2026-09-08（问题记录095 #1）：主数据失败改面板内错误态（原 catch 走
   // onNotice toast——onNotice 是父组件内联箭头，引用不稳，effect 依赖
@@ -222,7 +225,6 @@ export function McpManager({
   }
 
   const handleDeleteServer = async (srvName: string) => {
-    if (!window.confirm(t.profiles.mcpDeleteConfirm(srvName))) return
     setDeletingName(srvName)
     try {
       await api.deleteMcpServer(profileName, srvName)
@@ -349,7 +351,7 @@ export function McpManager({
                         size="sm"
                         variant="outline"
                         aria-label={`${t.profiles.mcpDeleteBtn}：${s.name}`}
-                        onClick={() => handleDeleteServer(s.name)}
+                        onClick={() => setPendingDelete(s.name)}
                         disabled={isDeleting}
                         className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-700"
                       >
@@ -593,6 +595,21 @@ export function McpManager({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 删除确认（U9）：从 cordis.patch.yml 安全删除，先确认 */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? t.profiles.mcpDeleteConfirm(pendingDelete) : ""}
+        note={t.profiles.mcpDeleteNote}
+        confirmLabel={t.profiles.mcpDeleteBtn}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          const target = pendingDelete
+          setPendingDelete(null)
+          if (target) void handleDeleteServer(target)
+        }}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

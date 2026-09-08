@@ -67,7 +67,7 @@ pub async fn get_credentials_raw() -> Result<String, String> {
 pub async fn save_credentials_raw(content: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
-        crate::credentials::write_credentials(&home, &content)
+        crate::credentials::overwrite_credentials(&home, &content)
     })
     .await
     .map_err(|e| format!("保存凭据任务异常终止：{e}"))?
@@ -108,7 +108,7 @@ pub async fn get_dsh_settings_raw() -> Result<String, String> {
 pub async fn save_dsh_settings_raw(content: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
-        crate::dsh_settings::write_dsh_settings(&home, &content)
+        crate::dsh_settings::overwrite_dsh_settings(&home, &content)
     })
     .await
     .map_err(|e| format!("保存 DSH 设置任务异常终止：{e}"))?

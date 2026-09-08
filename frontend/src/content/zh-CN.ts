@@ -208,6 +208,12 @@ export const t = {
     pluginInstallCancel: "取消",
     pluginInstallBusy: "安装中…（需要下载，可能数十秒到数分钟）",
     pluginUninstall: "卸载",
+    pluginUninstallConfirm: (pkg: string) => `确定卸载插件「${pkg}」？`,
+    pluginUninstallPoints: [
+      "由 dsh plugin remove 执行，从该 Profile 的依赖中移除",
+      "插件自身的配置文件不在此次删除范围内",
+      "该 Profile 正在运行的话，重启后生效；再次使用需重新安装",
+    ],
     pluginUpdate: "更新",
     pluginDisable: "禁用（重启后生效）",
     pluginEnable: "启用（重启后生效）",
@@ -335,7 +341,8 @@ export const t = {
     mcpRetry: "重试",
     mcpEditBtn: "编辑",
     mcpDeleteBtn: "删除",
-    mcpDeleteConfirm: (name: string) => `确定移除 MCP 服务「${name}」？\n\n将从当前 Profile 的 cordis.patch.yml 中安全删除。`,
+    mcpDeleteConfirm: (name: string) => `确定移除 MCP 服务「${name}」？`,
+    mcpDeleteNote: "将从当前 Profile 的 cordis.patch.yml 中安全删除。",
     mcpActiveTools: (count: number) => `运行时已加载 ${count} 个工具`,
     mcpNoActiveTools: "当前未在运行态或无导出工具",
     mcpModalTitle: "配置 MCP 服务",
@@ -455,11 +462,18 @@ export const t = {
     keyInputLabel: "API Key",
     keySaved: "API Key 已成功更新",
     keyRemoved: "API Key 已清除",
+    keyClearConfirm: (label: string) => `确定清除「${label}」的 API Key 吗？`,
     rawYamlToggle: "切换 YAML 原文模式",
     keyMasked: "已脱敏显示",
     toggleMask: "显示明文",
     hidePlain: "脱敏隐藏",
     saveCredentials: "保存凭据配置",
+    credentialsOverwriteConfirm: "确定覆盖保存 .credentials.yaml？",
+    credentialsOverwritePoints: [
+      "以编辑框当前内容整体重写该文件（不是增量合并）",
+      "原文件会先备份为 .credentials.yaml.bak-<时间戳>",
+      "写回仍保持 0600 权限与原子替换",
+    ],
     credentialsSaved: "凭据文件已安全保存（权限 0600）",
     credentialsSaveFailed: "保存凭据失败",
     credentialsEmpty: "当前尚未配置任何凭据（文件未创建或为空）",
@@ -469,6 +483,13 @@ export const t = {
     dshSettingsTitle: "DSH 引擎全局配置",
     dshSettingsSubtitle: "管理 $DSH_HOME/settings.yaml 权威核心运行策略与全局默认参数",
     dshSettingsSaved: "DSH 设置已成功保存",
+    dshSettingsSave: "保存配置",
+    dshSettingsOverwriteConfirm: "确定覆盖保存 settings.yaml？",
+    dshSettingsOverwritePoints: [
+      "以编辑框当前内容整体重写 $DSH_HOME/settings.yaml（不是增量合并）",
+      "原文件会先备份为 settings.yaml.bak-<时间戳>",
+      "内容写坏会直接影响 dsh 启动——保存前建议先「刷新」比对现状",
+    ],
     // 偏好与语言
     preferencesSection: "客户端偏好",
     localeLabel: "界面语言",
@@ -595,6 +616,10 @@ export const t = {
     confirm: "保存并重试",
     saving: "正在保存…",
     saveFailed: (msg: string) => `审批保存失败：${msg}`,
+  },
+  // 破坏性操作确认对话框的通用文案（2026-09-08，U9）
+  confirm: {
+    cancel: "取消",
   },
 } as const
 

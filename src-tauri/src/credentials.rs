@@ -292,6 +292,13 @@ pub fn write_credentials(home: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 原文覆写入口（4.5）：**先备份**再原子写回（2026-09-08，U9——确认框已向用户
+/// 承诺「原文件会先备份」，故备份失败即中止，不降级）。
+pub fn overwrite_credentials(home: &Path, content: &str) -> Result<(), String> {
+    crate::fs_backup::backup_before_overwrite(&home.join(".credentials.yaml"))?;
+    write_credentials(home, content)
+}
+
 /// 针对单个 Provider 安全设置 API Key（原子写回 + 保持 0600 权限）
 pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), String> {
     let raw = read_credentials(home)?;
@@ -405,6 +412,53 @@ mod tests {
         assert!(oai4.configured);
 
         // 清理
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn overwrite_credentials_backs_up_previous_content() {
+        // 2026-09-08（U9）：原文覆写前留一份备份；凭据文件是用户唯一的密钥真相源，
+        // 写残无法回退的代价最高。
+        let tmp = std::env::temp_dir().join(format!("dsh-cred-bak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        write_credentials(&tmp, "deepseek:\n  apiKey: sk-old\n").unwrap();
+        overwrite_credentials(&tmp, "deepseek:\n  apiKey: sk-new\n").unwrap();
+
+        assert_eq!(
+            read_credentials(&tmp).unwrap(),
+            "deepseek:\n  apiKey: sk-new\n"
+        );
+        let backups: Vec<String> = std::fs::read_dir(&tmp)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(".credentials.yaml.bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "应留一份备份：{backups:?}");
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(&backups[0])).unwrap(),
+            "deepseek:\n  apiKey: sk-old\n",
+            "备份内容应为覆写前原文"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn overwrite_credentials_without_existing_file_skips_backup() {
+        let tmp = std::env::temp_dir().join(format!("dsh-cred-nobak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        overwrite_credentials(&tmp, "deepseek:\n  apiKey: sk-first\n").unwrap();
+
+        let backups = std::fs::read_dir(&tmp)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".bak-"))
+            .count();
+        assert_eq!(backups, 0, "首次写入无原文件可备份");
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

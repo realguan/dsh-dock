@@ -20,6 +20,7 @@ mod diagnostics;
 mod dsh_settings;
 mod engines;
 mod executor;
+mod fs_backup;
 pub mod ipc;
 mod manifest;
 mod mcp;

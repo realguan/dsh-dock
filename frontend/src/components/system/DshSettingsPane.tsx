@@ -13,6 +13,7 @@ import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 export function DshSettingsPane({
   onNotice,
@@ -23,6 +24,8 @@ export function DshSettingsPane({
   const [content, setContent] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  // 覆写确认（2026-09-08，U9）：整文件重写前先过确认对话框
+  const [confirmSave, setConfirmSave] = useState(false)
   const { copied, copy } = useCopy()
 
   const loadData = useCallback(async () => {    setLoading(true)
@@ -40,7 +43,8 @@ export function DshSettingsPane({
     void loadData()
   }, [loadData])
 
-  const handleSave = async () => {
+  // 确认后执行（对话框已关闭，进度由按钮的 saving 态回报）
+  const saveNow = async () => {
     setSaving(true)
     try {
       await api.saveDshSettingsRaw(content)
@@ -102,7 +106,7 @@ export function DshSettingsPane({
 
           <Button
             size="sm"
-            onClick={handleSave}
+            onClick={() => setConfirmSave(true)}
             disabled={saving || loading}
             className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs"
           >
@@ -111,7 +115,7 @@ export function DshSettingsPane({
             ) : (
               <Save className="size-3.5" />
             )}
-            <span>保存配置</span>
+            <span>{t.console.dshSettingsSave}</span>
           </Button>
         </div>
       </div>
@@ -134,6 +138,20 @@ export function DshSettingsPane({
           placeholder="# DSH settings.yaml\n# model: deepseek-chat\n# defaultProvider: deepseek"
         />
       </div>
+
+      {/* 覆写确认（U9）：整文件重写，先列明影响面 */}
+      <ConfirmDialog
+        open={confirmSave}
+        title={t.console.dshSettingsOverwriteConfirm}
+        points={t.console.dshSettingsOverwritePoints}
+        confirmLabel={t.console.dshSettingsSave}
+        cancelLabel={t.confirm.cancel}
+        onConfirm={() => {
+          setConfirmSave(false)
+          void saveNow()
+        }}
+        onClose={() => setConfirmSave(false)}
+      />
     </div>
   )
 }

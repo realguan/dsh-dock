@@ -22,7 +22,7 @@
 | U6 | **对比度系统性不达标**（`faint` 2.1–2.4；白字/品牌蓝 4.23） | HIGH | ✅ 已修 | `index.css:36` + 260 处 `text-faint` |
 | U7 | **字号未走 token**：161 处任意值，主体 9–11px | HIGH | ✅ 已修 | `text-[10px]`×90、`text-[11px]`×72 |
 | U8 | **窗口最小宽度 < 布局断点**，主从布局在允许的窗口尺寸下静默塌成单列 | HIGH | ✅ 已修 | `lib.rs:3012` (860) vs `lg`=1024 |
-| U9 | **破坏性操作无确认**：卸载插件、覆写凭据、覆写引擎设置 | HIGH | ⬜ 待做 | `ProfileDetailPane.tsx:692-700` 等 |
+| U9 | **破坏性操作无确认**：卸载插件、覆写凭据、覆写引擎设置 | HIGH | ✅ 已修（见 §19） | `ProfileDetailPane.tsx:692-700` 等 |
 | U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ✅ 已修 | 全仓 `sticky` 0 处 |
 | U11 | toast 无 `aria-live`；11 处「已复制」假成功 | MEDIUM | ✅ 已修（live region + clipboard 收口） | `ui/toast.tsx:11-61`、`lib/clipboard.ts` |
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ✅ 已修 | `index.css:8` 无 `.dark` 应用点 |
@@ -171,10 +171,10 @@
 ### 3.3 破坏性操作确认缺口
 | 操作 | 位置 | 现状 |
 |:---|:---|:---|
-| 卸载插件 | `ProfileDetailPane.tsx:692-700` | **无确认、无撤销** |
-| 覆写 `.credentials.yaml` | `CredentialsPane.tsx:87-98` | **无确认、无备份** |
-| 覆写 `settings.yaml` | `DshSettingsPane.tsx:43-54` | **无确认、无 diff、无备份** |
-| 删除会话 / MCP / 凭据 | `SessionManager.tsx:236-241` 等 | 原生 `window.confirm`（风格不统一） |
+| 卸载插件 | `ProfileDetailPane.tsx:692-700` | ✅ 已修：`ConfirmDialog` + 风险三条 |
+| 覆写 `.credentials.yaml` | `CredentialsPane.tsx:87-98` | ✅ 已修：确认 + `*.bak-<时间戳>` |
+| 覆写 `settings.yaml` | `DshSettingsPane.tsx:43-54` | ✅ 已修：确认 + 备份（diff 仍缺，见 §19 备注） |
+| 删除会话 / MCP / 凭据 | `SessionManager.tsx:236-241` 等 | ✅ 已统一到 `ConfirmDialog`（原生 `window.confirm` 已绝迹，有源码闸门） |
 | 删除 Profile | `ProfileDeleteDialog.tsx:44-56` | ✓ 模态 + 风险清单（标杆） |
 
 **建议**：以 `ProfileDeleteDialog` 为模板统一；两个文件覆写加「先备份到 `*.bak-<时间戳>`」，
@@ -279,6 +279,7 @@
 | **C（视觉达标）** | U6 对比度（token 层重定色 + 品牌蓝降级为图形象）；U12 删 40 处不可达 `dark:` | 中 | ✅ 已落地（见 §16） |
 | **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ✅ 已落地（见 §15） |
 | **E（一致性）** | U13 图标与动词统一；U15 Select tooltip；中文 `aria-label` 收口 | 中 | ✅ 已落地（见 §17）；i18n 正文抽取拆为 E2 |
+| **F（破坏性确认）** | U9：6 处破坏性入口统一到 `ConfirmDialog`；两个覆写入口加覆写前备份（Rust `fs_backup`） | 中 | ✅ 已落地（见 §19） |
 
 ## 10. 不建议做
 - 不引入组件库/设计系统重写：现有 shadcn + token 骨架可用，问题集中在**取值**与**状态处理**。
@@ -521,3 +522,40 @@ emerald-700 5.48、sky-500 3.0→sky-700 5.93、rose-500 3.4→rose-700 6.29、v
 **为何没在本批顺手修**：批次 5 的意图是补测试覆盖；此处涉及文案键与呈现分支，属 UI/UX
 面（AGENTS §8.1 一次会话一个意图），且 fixture 表已把 `unknown` 的四类原因钉住——修完
 有机器闸门兜底。
+
+## 19. 落地记录：U9 破坏性操作确认（2026-09-08，`fix(uiux): 破坏性操作统一确认与覆写前备份`）
+
+**U9 三个无确认入口 + 三处原生 `window.confirm` 全部收口到一个模态**：
+
+| 入口 | 原 | 现 |
+|:---|:---|:---|
+| 卸载插件（`ProfileDetailPane`） | 直接执行 | 确认框 + 三条风险要点 |
+| 覆写 `.credentials.yaml` | 直接执行 | 确认框 + 三条要点（含备份承诺） |
+| 覆写 `settings.yaml` | 直接执行 | 确认框 + 三条要点（含备份承诺） |
+| 删除会话（`SessionManager`） | `window.confirm` | 模态 + 原文风险说明 |
+| 移除 MCP（`McpManager`） | `window.confirm`（标题里塞了换行） | 模态：标题 + note 拆开 |
+| 清除 API Key（`CredentialsPane`） | `window.confirm` + 硬编码中文 | 模态 + i18n 文案 |
+
+**新组件** `ui/confirm-dialog.tsx`：纯展示外壳（标题 / note / 要点清单 / 破坏性主按钮 /
+执行中禁用关闭 / 失败详情），**不含业务文案也不发 IPC**；`ProfileDeleteDialog` 改用同一
+外壳（行为不变，取消按钮文案由「关闭」改为「取消」——确认框的否定动作本就是取消）。
+要点文案全部落 `content/zh-CN.ts` + `en-US.ts`（新增 `confirm.cancel` 与 6 组站点键）。
+
+**备份落地（评审 §3.3 要求）**：新增 `src-tauri/src/fs_backup.rs`——
+`backup_before_overwrite` 以 `<文件名>.bak-<unix 秒>` 保留每次覆写前的原文；同一秒内
+重复覆写追加 `-N`，**不覆盖既有备份**（可当轻量撤销历史）；`fs::copy` 保留权限位，
+凭据备份同为 0600。**备份失败即中止写入**（fail-closed）——确认框已向用户承诺「先备份」，
+静默降级等于毁约。`credentials::overwrite_credentials` / `dsh_settings::overwrite_dsh_settings`
+为新增覆写入口，命令层改调它们；`set_provider_key` 的增量写路径不受影响（不产生备份噪声）。
+
+**机器闸门** `__tests__/destructiveConfirmGate.test.ts`：① 全仓不得再出现
+`window.confirm`；② 6 个破坏性入口必须引用 `ConfirmDialog`（新增破坏性按钮漏接即红）；
+③ 闸门自检（能识别两种写法）+ 入口清单路径存在性校验（防清单过期）。
+
+**验证**：Rust `cargo test` **213 passed**（206 → +7：`fs_backup` 3 + credentials 2 +
+dsh_settings 2）· `fmt --check` 干净 · `clippy -D warnings` 干净 ·
+前端 `typecheck` 0 错 · `oxlint` 0 warning · `test` **139 passed**（135 → +4 闸门）· `build` 通过。
+
+**未做（登记）**：覆写 `settings.yaml` 仍**无 diff 预览**（评审原文「无确认、无 diff、
+无备份」——确认与备份已补，diff 需要文本对比组件，属独立小项）；`window.confirm` 绝迹
+后新增破坏性操作必须显式接入本组件（闸门已兜）。
