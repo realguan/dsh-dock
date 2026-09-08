@@ -1818,3 +1818,19 @@
 - **欠账**：HTTP seam 注入（离线覆盖镜像链回退/超时）、`repair-session.mjs` fixture 驱动。
 - 凭据：`cargo test` **192 passed**（187 → +5）· `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · `DSH_TEST_REQUIRE_NODE=1` 下全量绿。
+
+### 2026-09-08 ADR-0012 立项：启动失败错误类型化（架构评审批次 4 前置）—— guan（AI 起草）
+
+- 依据架构评审 P5：`classify_boot_error`（lib.rs）把错误文本小写后做子串匹配来决定
+  错误卡标题/建议/按钮——**措辞即契约**（上游改文案即静默落兜底）、**同词不同因**
+  （任何含 timeout 的错误都判「网络不可用」）、**不可穷尽**（新增失败模式不触发编译错误）。
+- ADR-0012 决策：只为 **boot 失败路径**引入 `BootFailure` 枚举（含 `Unknown { detail }`
+  兜底），`classify_boot_error` 改造为 `from_legacy_detail` 映射表（与今天子串规则逐条等价
+  并纳入离线单测）；其余 110 处 `Result<_, String>` 本次不动（§8.2 增量）。
+  备选：B 强化分类器（措辞仍是契约，治标）／C 全仓类型化（一次性大改）／
+  D 引 thiserror/specta（新依赖 + 与既有形状闸门重复）——均已记录否决理由。
+- 状态：**草案，待维护者评审**；行动项 4 条在 ADR §5（枚举 + 等价映射表单测 → boot 路径
+  改造 → 前端结构化分支 + `ipc-shapes.json` 登记 → AGENTS/台账回收）。
+- 影响：AGENTS §9 索引已加 ADR-0012 一行（宪法级文件，改动即本广播）。**代码未动**——
+  §9 要求先立 ADR 再动代码，实施待评审通过后另起一批。
+- 凭据：纯文档（ADR 91 行）。

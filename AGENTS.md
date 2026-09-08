@@ -206,6 +206,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0009](docs/adr/0009-profile-manager.md) | Profile 生命周期：创建走 dsh plugin 转发链，其余文件层；pnpm boot 硬依赖 |
 | [0010](docs/adr/0010-engine-inversion.md) | 运行时归属倒置：引擎=壳资产（pnpm12 引导），探测层退役；升级全显式、离线可启动 |
 | [0011](docs/adr/0011-plugin-management-boundary.md) | 插件职责边界：跨 profile 归插件中心、单 profile 归详情；安装来源三形态白名单（npm / github / tarball），更新检查保持严格 npm 判别 |
+| [0012](docs/adr/0012-typed-boot-failure.md) | 启动失败错误类型化：boot 路径引入 `BootFailure` 枚举，子串分类降级为 `from_legacy_detail` 兜底；其余模块 `Result<_, String>` 不动 |
 
 ## 10. 试验协议
 
