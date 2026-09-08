@@ -86,7 +86,7 @@ export function DshSettingsPane({
             ) : (
               <Copy className="size-3.5 text-dim" />
             )}
-            <span>{copied ? "已复制" : "复制代码"}</span>
+            <span>{copied ? "已复制" : "复制 YAML"}</span>
           </Button>
 
           <Button

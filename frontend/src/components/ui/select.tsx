@@ -80,9 +80,12 @@ function SelectItem({
   children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item>) {
+  // 2026-09-08 批次 E（U15）：下拉选项被截断时读不全——纯文本子节点自动挂 title。
+  // 复杂子节点（带徽标等）由调用方自行提供 title。
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
+      title={typeof children === "string" ? children : undefined}
       className={cn(
         "relative flex w-full cursor-pointer select-none items-center gap-2 rounded-lg py-2 pr-3 pl-8 text-xs font-mono outline-none transition-colors hover:bg-wash focus:bg-wash data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[state=checked]:text-brand-deep data-[state=checked]:font-semibold",
         className,

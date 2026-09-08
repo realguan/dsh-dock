@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
-  DownloadCloud,
   Plus,
   RefreshCw,
   Search,
@@ -246,7 +245,7 @@ export function ProfileManager() {
             }}
             className="size-8 p-0"
           >
-            <DownloadCloud className="size-3.5" />
+            <RefreshCw className="size-3.5" />
           </Button>
 
           {/* 返回 DSH 主工作台操作入口 */}
@@ -270,7 +269,7 @@ export function ProfileManager() {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
           {/* 左侧 List：Profile 列表导航 */}
           <section
-            aria-label="Profile 列表"
+            aria-label={t.profiles.listLabel}
             className="space-y-3 md:col-span-4 xl:col-span-4"
           >
             {/* 新建 Profile 专属醒目操作条 */}
@@ -336,7 +335,7 @@ export function ProfileManager() {
 
           {/* 右侧 Detail：选中的 Profile 工作台面板 */}
           <section
-            aria-label="Profile 详情工作区"
+            aria-label={t.profiles.detailWorkspaceLabel}
             className="min-h-[560px] md:col-span-8 xl:col-span-8"
           >
             <ProfileDetailPane

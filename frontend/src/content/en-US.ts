@@ -3,6 +3,7 @@ import type { AppCopy } from "./zh-CN"
 
 export const enUS: AppCopy = {
   boot: {
+    progressLabel: "Starting up",
     steps: [
       { no: "01", name: "Environment Check", hint: "Making sure your computer is ready to run DSH" },
       { no: "02", name: "Prepare Engine", hint: "Getting DSH components ready (first run downloads them)" },
@@ -89,6 +90,7 @@ export const enUS: AppCopy = {
     entryHint: "Open the update center from the About entry in the menu / tray.",
   },
   about: {
+    workbenchLabel: "Workbench instances",
     title: "About & Updates",
     tagline: "Update Center · Desktop Client & Runtime",
     clientLabel: "Desktop Client",
@@ -147,6 +149,13 @@ export const enUS: AppCopy = {
     officialChannel: "Official Release Channel",
   },
   profiles: {
+    moreActions: "More actions",
+    listLabel: "Profile list",
+    detailWorkspaceLabel: "Profile detail workspace",
+    distributeTargetLabel: "Select target profile",
+    distributeWithConfig: "Copy config lines too",
+    mcpDisable: "Disable this MCP server",
+    mcpEnvRemove: "Remove this environment variable",
     title: "Control Center",
     subtitle: "Workspaces management, plugin matrix, session self-healing, and system console",
     refresh: "Refresh",
@@ -335,7 +344,7 @@ export const enUS: AppCopy = {
   sessions: {
     title: "Session Maintenance & Self-Healing",
     subtitle: "Inspect, diagnose, and auto-repair DSH session log anomalies (sequence gaps, concurrent writes, etc.)",
-    scanBtn: "Refresh Scan",
+    scanBtn: "Refresh Sessions",
     repairAllBtn: "Run Full Health Check & Repair",
     repairing: "Repairing in progress…",
     searchPlaceholder: "Search by session name, ID or project...",
@@ -394,8 +403,11 @@ export const enUS: AppCopy = {
     pathCopied: "Session path copied",
   },
   console: {
-    pullLatestLogs: "Fetch latest logs",
-    rereadCredentials: "Re-read credentials",
+    toastClose: "Dismiss notification",
+    navLabel: "System console navigation",
+    detailLabel: "System console detail area",
+    pullLatestLogs: "Refresh logs",
+    rereadCredentials: "Refresh credentials",
     title: "System Console & Diagnostics",
     subtitle: "Preferences, LLM credentials, DSH engine settings, auto-recovery guardian, telemetry, and live logs",
     tabPreferences: "Preferences & Guardian",
@@ -473,7 +485,7 @@ export const enUS: AppCopy = {
     sourceLabel: "Origin",
     pathLabel: "Resolved Path",
     versionLabel: "Version",
-    copyReport: "Copy Full Report",
+    copyReport: "Copy Diagnostics Report",
     reportCopied: "Diagnostics report copied to clipboard",
     profilesUsage: (n: number, size: string) => `${n} Profiles · ${size}`,
     sessionsUsage: (n: number, size: string) => `${n} Sessions · ${size}`,
@@ -485,7 +497,7 @@ export const enUS: AppCopy = {
     sourceRepair: "Session Repair Log",
     searchPlaceholder: "Filter log messages...",
     autoScroll: "Auto-Scroll",
-    copyLogs: "Copy All Logs",
+    copyLogs: "Copy Logs",
     logsCopied: "Logs copied to clipboard",
     clearLogs: "Clear Screen",
     totalLines: (n: number) => `Total ${n} lines`,
@@ -494,6 +506,7 @@ export const enUS: AppCopy = {
   },
   // Community Plugin Marketplace
   market: {
+    clearSearch: "Clear search",
     title: "Plugin Marketplace",
     subtitle: "2700+ community plugins and extensions from awesome-dsh-plugin registry",
     searchPlaceholder: "Search 2700+ plugins by name, description, npm package, or author...",

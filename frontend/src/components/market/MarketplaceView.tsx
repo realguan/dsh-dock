@@ -222,7 +222,7 @@ export function MarketplaceView({
             {searchQuery && (
               <button
                 type="button"
-                aria-label="清空搜索"
+                aria-label={t.market.clearSearch}
                 onClick={() => setSearchQuery("")}
                 className="absolute top-1/2 right-2.5 -translate-y-1/2 text-faint hover:text-ink"
               >

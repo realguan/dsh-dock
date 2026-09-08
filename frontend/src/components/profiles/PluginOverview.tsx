@@ -220,16 +220,24 @@ export function PluginOverview({
             />
           </div>
 
-          {/* Profile 下拉筛选器 */}
-          <div className="w-48">
+          {/* Profile 下拉筛选器。2026-09-08 批次 E（U15）：原来钉死 w-48 且
+              trigger 内容无 title，长 profile 名被截成「只显示 3 个字符」也读不全。 */}
+          <div className="w-56 min-w-0">
             <Select
               value={selectedProfileFilter}
               onValueChange={(v) => setSelectedProfileFilter(v)}
             >
               <SelectTrigger className="h-8.5 rounded-xl border-line bg-panel text-xs">
-                <div className="flex items-center gap-1.5 truncate">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <Filter className="size-3 text-faint shrink-0" />
-                  <span className="truncate">
+                  <span
+                    className="truncate"
+                    title={
+                      selectedProfileFilter === "all"
+                        ? "全部 Profile"
+                        : selectedProfileFilter
+                    }
+                  >
                     {selectedProfileFilter === "all"
                       ? "全部 Profile"
                       : `Profile: ${selectedProfileFilter}`}
@@ -476,7 +484,7 @@ export function PluginOverview({
                   onValueChange={(v) => setSelectedDest(v)}
                 >
                   <SelectTrigger
-                    aria-label="选择目标 Profile"
+                    aria-label={t.profiles.distributeTargetLabel}
                     className="h-9 w-full min-w-[240px] rounded-xl border-line bg-bg font-mono text-xs"
                   >
                     <SelectValue placeholder="请选择目标 Profile..." />
@@ -521,7 +529,7 @@ export function PluginOverview({
                   </p>
                 </div>
                 <Switch
-                  aria-label="连带复制配置行"
+                  aria-label={t.profiles.distributeWithConfig}
                   checked={withConfig}
                   onCheckedChange={setWithConfig}
                 />

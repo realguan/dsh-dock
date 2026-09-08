@@ -10,7 +10,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
-  Clipboard,
   Clock,
   Copy,
   CircleX,
@@ -412,7 +411,7 @@ export function SessionManager({
               {copiedId === sess.id ? (
                 <Check className="size-3 text-emerald-700" />
               ) : (
-                <Clipboard className="size-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
+                <Copy className="size-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
               )}
             </button>
 

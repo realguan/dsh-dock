@@ -1,7 +1,6 @@
 // components/market/MarketPluginCard.tsx —— 插件市场单个插件卡片 (高质感工程控制台美学)
 import {
   Check,
-  Code2,
   Copy,
   Download,
   ExternalLink,
@@ -157,7 +156,7 @@ export function MarketPluginCard({
                 className="rounded p-1 text-faint hover:text-ink hover:bg-wash transition-colors"
                 title={t.market.viewReadme}
               >
-                <Code2 className="size-3.5" />
+                <ExternalLink className="size-3.5" />
               </button>
             )}
             {plugin.npm && (

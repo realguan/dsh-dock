@@ -111,7 +111,7 @@ export function About() {
 
         {/* 3. 工作台实时实例连接卡 */}
         <section
-          aria-label="工作台实例"
+          aria-label={t.about.workbenchLabel}
           className="page-rise border-line bg-panel rounded-2xl border p-4 shadow-xs"
         >
           <div className="flex items-center justify-between gap-3">

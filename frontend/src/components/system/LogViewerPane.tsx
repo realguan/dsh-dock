@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Search,
   Terminal,
-  Trash2,
+  Eraser,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
@@ -170,7 +170,7 @@ export function LogViewerPane({
             onClick={clearScreen}
             className="size-8 p-0"
           >
-            <Trash2 className="size-3.5 text-faint" />
+            <Eraser className="size-3.5 text-faint" />
           </Button>
 
           <Button

@@ -6,6 +6,7 @@
 // 词汇不再外露；headlines 仍被 BootSelector 消费，仅微调）。
 export const t = {
   boot: {
+    progressLabel: "启动进行中",
     steps: [
       { no: "01", name: "环境检测", hint: "检查电脑环境是否满足运行条件" },
       { no: "02", name: "准备引擎", hint: "准备 DSH 运行所需组件（首次使用需下载）" },
@@ -96,6 +97,7 @@ export const t = {
     entryHint: "可从菜单 / 托盘的「关于」进入更新中心。",
   },
   about: {
+    workbenchLabel: "工作台实例",
     title: "关于与更新",
     tagline: "更新中心 · 桌面客户端与运行环境",
     // 客户端状态机文案（键 = UpdatePhase，failed/done 附带数据的行在组件内插值）
@@ -158,6 +160,13 @@ export const t = {
   },
   // 控制中心（4.3 前端刀）。
   profiles: {
+    moreActions: "更多操作",
+    listLabel: "Profile 列表",
+    detailWorkspaceLabel: "Profile 详情工作区",
+    distributeTargetLabel: "选择目标 Profile",
+    distributeWithConfig: "连带复制配置行",
+    mcpDisable: "停用该 MCP 服务",
+    mcpEnvRemove: "删除该环境变量",
     title: "控制中心",
     subtitle: "多工作台管理、插件生态矩阵、会话自愈维护与系统控制台",
     refresh: "刷新",
@@ -360,7 +369,7 @@ export const t = {
   sessions: {
     title: "会话维护与自愈",
     subtitle: "检测、诊断与自愈修复 DSH 会话日志异常（如序列号断裂、交叉并发落盘等）",
-    scanBtn: "刷新扫描",
+    scanBtn: "刷新会话",
     repairAllBtn: "一键全量体检与自愈",
     repairing: "正在自愈修复中…",
     searchPlaceholder: "搜索会话名称、ID 或项目名...",
@@ -419,8 +428,11 @@ export const t = {
     pathCopied: "会话路径已复制",
   },
   console: {
-    pullLatestLogs: "拉取最新日志",
-    rereadCredentials: "重新读取凭据",
+    toastClose: "关闭通知",
+    navLabel: "系统控制台导航",
+    detailLabel: "系统控制台详情区",
+    pullLatestLogs: "刷新日志",
+    rereadCredentials: "刷新凭据",
     title: "系统控制台与诊断",
     subtitle: "偏好设置、模型凭据、DSH 引擎配置、崩溃自动守护、健康大盘与实时日志",
     tabPreferences: "偏好与守护",
@@ -500,7 +512,7 @@ export const t = {
     sourceLabel: "来源",
     pathLabel: "解析路径",
     versionLabel: "版本",
-    copyReport: "复制完整诊断报告",
+    copyReport: "复制诊断报告",
     reportCopied: "诊断报告已复制到剪贴板",
     profilesUsage: (n: number, size: string) => `${n} 个 Profile · 占用 ${size}`,
     sessionsUsage: (n: number, size: string) => `${n} 个会话 · 占用 ${size}`,
@@ -513,7 +525,7 @@ export const t = {
     sourceRepair: "会话自愈日志",
     searchPlaceholder: "过滤日志关键字...",
     autoScroll: "自动滚底",
-    copyLogs: "复制全部日志",
+    copyLogs: "复制日志",
     logsCopied: "日志已复制到剪贴板",
     clearLogs: "清屏",
     totalLines: (n: number) => `共 ${n} 行`,
@@ -522,6 +534,7 @@ export const t = {
   },
   // 插件市场 (awesome-dsh-plugin 社区 Registry)
   market: {
+    clearSearch: "清空搜索",
     title: "社区插件市场",
     subtitle: "基于 awesome-dsh-plugin 官方聚合的 2700+ 社区插件与扩展生态",
     searchPlaceholder: "搜索 2700+ 插件名称、功能描述、NPM 包名或作者...",
@@ -555,7 +568,7 @@ export const t = {
     copied: "已复制",
     loadingRegistry: "正在连接社区 Registry 加载 2700+ 插件目录…",
     loadFailed: "加载插件市场目录失败",
-    retry: "重新加载",
+    retry: "重试",
     noResults: "未找到符合条件的插件",
     noResultsHint: "尝试更换搜索词或清除分类筛选条件",
     paginationPrev: "上一页",

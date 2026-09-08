@@ -1771,3 +1771,19 @@
 - 影响：**需人工目检**配色观感（尤其 faint 变深后的层级、修复按钮由黄转深橙）。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **135 passed**（130 → +5）·
   `pnpm build` 通过。闸门实测抓漏：把 faint 改回 #a0a7b6 → 两条断言即红。
+
+### 2026-09-08 fix(uiux)：图标与动词统一、Select 截断、aria-label 收口（评审批次 E）—— guan（AI 起草）
+
+- U13 图标错配 4 处：`DownloadCloud`→`RefreshCw`（检查更新不是下载）、`Code2`→
+  `ExternalLink`（打开 GitHub 是外链）、`Trash2`→`Eraser`（清屏非破坏性）、
+  `Clipboard`→`Copy`（同行复制路径用 Copy，复制 ID 却用 Clipboard）。
+- U13 动词统一：所有刷新类动作以「刷新」起头——刷新扫描→刷新会话、拉取最新日志→刷新日志、
+  重新读取凭据→刷新凭据、市场失败态重新加载→重试；复制标签去修饰词（复制完整诊断报告→
+  复制诊断报告、复制全部日志→复制日志）；引擎设置面板「复制代码」→「复制 YAML」（内容是 YAML）。
+- U15 Select 截断：`ui/select.tsx` 的 `SelectItem` 对纯文本子节点自动挂 `title`；
+  `PluginOverview` 筛选 Select `w-48`→`w-56` + trigger 补 `title`（原长 profile 名被截成
+  「只显示 3 个字符」且无法悬停读全）。
+- 中文 `aria-label` 13 处 → i18n（读屏在英文环境不再读中文）。
+- 影响：仅周知。**i18n 正文抽取拆为批次 E2**（实测 2,876 字 / 45 文件，其中 6 个大文件
+  60 条可枚举文案 + 模板串 + 17 个较小文件；纯机械但横跨 25+ 文件，按 §8.1 单独立项）。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **135 passed**。

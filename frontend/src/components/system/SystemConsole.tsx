@@ -63,7 +63,7 @@ export function SystemConsole({
     <div className="grid grid-cols-1 gap-6 md:grid-cols-12 items-start">
       {/* 左侧紧凑极简子导航（Master-Nav） */}
       <aside
-        aria-label="系统控制台导航"
+        aria-label={t.console.navLabel}
         className="space-y-1 md:col-span-4 xl:col-span-3"
       >
         <nav className="space-y-1.5">
@@ -110,7 +110,7 @@ export function SystemConsole({
 
       {/* 右侧主工作区详情区（Detail-Panel） */}
       <main
-        aria-label="系统控制台详情区"
+        aria-label={t.console.detailLabel}
         className="md:col-span-8 xl:col-span-9 min-w-0"
       >
         {subTab === "preferences" && <PreferencesPane onNotice={onNotice} />}

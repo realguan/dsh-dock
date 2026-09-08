@@ -169,7 +169,7 @@ export function ProfileRow({
                 <button
                   type="button"
                   title="更多操作"
-                  aria-label="更多操作"
+                  aria-label={t.profiles.moreActions}
                   disabled={busy}
                   className="text-faint hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
                 >

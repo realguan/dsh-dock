@@ -26,9 +26,9 @@
 | U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ✅ 已修 | 全仓 `sticky` 0 处 |
 | U11 | toast 无 `aria-live`；11 处「已复制」假成功 | MEDIUM | ✅ 已修（live region + clipboard 收口） | `ui/toast.tsx:11-61`、`lib/clipboard.ts` |
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ✅ 已修 | `index.css:8` 无 `.dark` 应用点 |
-| U13 | 图标语义错配 3 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ⬜ 待做 | 见 §6 |
+| U13 | 图标语义错配 4 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ✅ 已修 | 见 §6 |
 | U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ✅ 已修 | `SessionManager.tsx:344-360` vs `:477-489` |
-| U15 | 截断无 tooltip 系统性缺口（Select 尤其） | MEDIUM | ⬜ 待做 | `PluginOverview.tsx:197`、`select.tsx:30` |
+| U15 | 截断无 tooltip 系统性缺口（Select 尤其） | MEDIUM | ✅ 部分（Select 已修；其它截断清单待做） | `PluginOverview.tsx:197`、`select.tsx:30` |
 
 ## 1. 布局骨架与信息架构
 
@@ -278,7 +278,7 @@
 | **B2（表单与标题）** | 12 处输入框补名称/关联（+源码闸门）；面板标题层级 h3→h2 并修正子标题 | 小 | ✅ 已落地（见 §14） |
 | **C（视觉达标）** | U6 对比度（token 层重定色 + 品牌蓝降级为图形象）；U12 删 40 处不可达 `dark:` | 中 | ✅ 已落地（见 §16） |
 | **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ✅ 已落地（见 §15） |
-| **E（一致性）** | U13 图标与动词统一；U15 Select tooltip 补全；i18n 泄漏逐文件收口 | 中，机械但量大 | ⬜ 待做 |
+| **E（一致性）** | U13 图标与动词统一；U15 Select tooltip；中文 `aria-label` 收口 | 中 | ✅ 已落地（见 §17）；i18n 正文抽取拆为 E2 |
 
 ## 10. 不建议做
 - 不引入组件库/设计系统重写：现有 shadcn + token 骨架可用，问题集中在**取值**与**状态处理**。
@@ -461,3 +461,33 @@ emerald-700 5.48、sky-500 3.0→sky-700 5.93、rose-500 3.4→rose-700 6.29、v
 
 **未纳入**：把原始调色板整体替换为语义 token（需为「成功/警告/危险/信息」各定语义色阶，
 属设计系统扩充，建议单独立项）。
+
+## 17. 落地记录：批次 E（2026-09-08，`fix(uiux): 图标与动词统一、Select 截断、aria-label 收口`）
+
+**U13 图标错配（4 处，评审记 3 处 + `Clipboard`/`Copy` 同义不同图标）**
+
+| 位置 | 原 | 现 | 理由 |
+|:---|:---|:---|:---|
+| `ProfileManager.tsx:248` | `DownloadCloud` | `RefreshCw` | 「检查更新」是重新检查，不是下载 |
+| `MarketPluginCard.tsx:160` | `Code2` | `ExternalLink` | 动作是打开 GitHub 外链，非看代码 |
+| `LogViewerPane.tsx:173` | `Trash2` | `Eraser` | 清屏非破坏性，删除语义误导 |
+| `SessionManager.tsx:415` | `Clipboard` | `Copy` | 与同行复制路径同动作不同图标 |
+
+**U13 动词统一**：所有「刷新」类动作以「刷新」起头——`刷新扫描`→`刷新会话`、
+`拉取最新日志`→`刷新日志`、`重新读取凭据`→`刷新凭据`、市场失败态 `重新加载`→`重试`
+（`刷新体检`/`刷新市场` 本已合规）。复制标签去修饰词：`复制完整诊断报告`→`复制诊断报告`、
+`复制全部日志`→`复制日志`、引擎设置面板 `复制代码`→`复制 YAML`（该处内容是 YAML 配置）。
+
+**U15 Select 截断**：`ui/select.tsx` 的 `SelectItem` 对纯文本子节点自动挂 `title`；
+`PluginOverview` 筛选 Select `w-48`→`w-56` 且 trigger 内容补 `title`（原来长 profile 名
+被截成「只显示 3 个字符」且无法悬停读全）。
+
+**中文 `aria-label` 收口（13 处 → i18n）**：`toast` 关闭、`PulseBar` 进度、控制台导航/详情区、
+市场清空搜索、分发目标/连带配置、Profile 列表/详情工作区/更多操作、MCP 停用/删 ENV 行、
+关于页工作台实例——读屏在英文环境不再读中文。
+
+**未纳入：i18n 正文抽取（拆为批次 E2）**。实测余量：组件内硬编码中文 2,876 字（45 文件），
+其中 6 个大文件含 **60 条可枚举文案字面量**（`SessionManager` 13、`PluginOverview` 16、
+`McpManager` 15、`ProfileDetailPane` 9、`ErrorCard` 6、`ProfileManager` 1），另有模板串与
+17 个较小文件未计。这批是纯机械抽取（每条约 2 个键 + 1 处替换），但改动面横跨 25+ 文件，
+按 AGENTS §8.1 应单独立项——本次只收口了读屏可感知的 `aria-label` 与用户可见的动词/标签。

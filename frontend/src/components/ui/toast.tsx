@@ -1,5 +1,6 @@
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
+import { useI18n } from "@/stores/i18nStore"
 
 export interface ToastMessage {
   id: string
@@ -15,6 +16,7 @@ export function FloatingToast({
   toast: ToastMessage | null
   onDismiss: () => void
 }) {
+  const { t } = useI18n()
   return (
     // 常驻 live region（2026-09-08 裁定）：读屏只在「区域已存在、内容变化」时可靠
     // 播报；把 role=status 挂在随 toast 挂载/卸载的节点上，部分读屏会整条漏播。
@@ -59,7 +61,7 @@ export function FloatingToast({
               <button
                 type="button"
                 onClick={onDismiss}
-                aria-label="关闭通知"
+                aria-label={t.console.toastClose}
                 className="ml-1 shrink-0 rounded-full p-0.5 opacity-60 hover:opacity-100 hover:bg-white/10 transition-colors"
               >
                 <X className="size-3.5" />

@@ -549,7 +549,7 @@ export function McpManager({
                       />
                       <button
                         type="button"
-                        aria-label="删除该环境变量"
+                        aria-label={t.profiles.mcpEnvRemove}
                         onClick={() => {
                           const next = formEnv.filter((_, i) => i !== idx)
                           setFormEnv(next)
@@ -567,7 +567,7 @@ export function McpManager({
             <div className="flex items-center justify-between pt-2 border-t border-line/60">
               <span className="text-xs text-dim">停用该 MCP 服务</span>
               <Switch
-                aria-label="停用该 MCP 服务"
+                aria-label={t.profiles.mcpDisable}
                 checked={formDisabled}
                 onCheckedChange={setFormDisabled}
               />
