@@ -33,17 +33,26 @@
   --color-line-soft: #eef1f6;
   --color-ink: #191d27;
   --color-dim: #626a7a;
-  --color-faint: #a0a7b6;
+  /* 2026-09-08 批次 C（U6）：原 #a0a7b6 在 bg/panel/line-soft 上仅 2.13–2.41，
+     远低于 4.5:1。实测「既 ≥4.5 又能与 dim 明显区分」的灰阶不存在——浅底上
+     需要约 #656d7c，与 dim(#626a7a) 已无差别，故三级灰阶压缩为两级：
+     ink（主）→ dim / faint（次）。faint 定为 #6b7280（bg 4.55 / panel 4.83 /
+     line-soft 4.27）。约束由 __tests__/contrast.test.ts 钉住。 */
+  --color-faint: #6b7280;
   --color-brand: #4176e6;
+  /* 品牌蓝的「文本/填充安全档」：白字或小字号文本一律用 brand-deep
+     （white 上 5.50，白字在其上 5.50）；brand 只留作图形象（边框/描边/色块/点）。 */
   --color-brand-deep: #3163cf;
   --color-wash: rgba(65, 118, 230, 0.07);
   /* 命名裁定（2026-08-27）：shadcn 语义层的 --color-muted/--color-accent 已占用
      「muted=浅色填充 / accent=hover 底」含义，域 token 改名避免工具类被
      @theme inline 的后置映射覆盖——灰字用 dim，品牌蓝用 brand。 */
-  --color-ok: #2f9e44;
-  --color-ok-soft: rgba(47, 158, 68, 0.1);
-  --color-warn: #d9480f;
-  --color-warn-soft: rgba(217, 72, 15, 0.08);
+  /* 2026-09-08 批次 C（U6）：ok/warn 原值在白底仅 3.45/4.30，白字在其上同样不达标，
+     逐档加深到 5.41/5.18（浅底 4.78/4.57）。 */
+  --color-ok: #27793a;
+  --color-ok-soft: rgba(39, 121, 58, 0.1);
+  --color-warn: #c2410c;
+  --color-warn-soft: rgba(194, 65, 12, 0.08);
   --color-badge-a: #1d2637;
   --color-badge-b: #0e1524;
 
@@ -70,7 +79,7 @@
   --card-foreground: #191d27;
   --popover: #ffffff;
   --popover-foreground: #191d27;
-  --primary: #4176e6;
+  --primary: #3163cf;
   --primary-foreground: #ffffff;
   --secondary: #eef1f6;
   --secondary-foreground: #191d27;
@@ -78,7 +87,7 @@
   --muted-foreground: #626a7a;
   --accent: rgba(65, 118, 230, 0.07);
   --accent-foreground: #191d27;
-  --destructive: #d9480f;
+  --destructive: #c2410c;
   --destructive-foreground: #ffffff;
   --border: #e5e9f1;
   --input: #e5e9f1;

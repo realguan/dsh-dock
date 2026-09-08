@@ -152,7 +152,7 @@ export function BootIndex() {
             }}
             className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1 font-mono text-label font-medium text-dim shadow-2xs backdrop-blur-md transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs disabled:cursor-default disabled:opacity-50"
           >
-            <TerminalSquare className="size-3.5 text-brand" />
+            <TerminalSquare className="size-3.5 text-brand-deep" />
             {isWsl ? t.boot.localOpen : t.boot.wslOpen}
           </button>
         </div>

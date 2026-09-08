@@ -251,7 +251,7 @@ export function PluginImportPickerDialog({
                                   ({g.pkg})
                                 </span>
                               )}
-                              <span className="text-brand font-mono text-label font-medium">
+                              <span className="text-brand-deep font-mono text-label font-medium">
                                 v{currentSrc?.version}
                               </span>
                             </span>
@@ -307,7 +307,7 @@ export function PluginImportPickerDialog({
                               <span>{src.profile}</span>
                               <span className="text-faint opacity-80">v{src.version}</span>
                               {src.hasConfig && (
-                                <span className="text-brand text-micro font-bold">⚙</span>
+                                <span className="text-brand-deep text-micro font-bold">⚙</span>
                               )}
                             </button>
                           )
@@ -323,7 +323,7 @@ export function PluginImportPickerDialog({
 
         {phase.kind === "running" && (
           <div className="text-dim flex flex-1 flex-col items-center justify-center gap-2 py-8 text-sm">
-            <LoaderCircle className="text-brand size-5 animate-spin" aria-hidden />
+            <LoaderCircle className="text-brand-deep size-5 animate-spin" aria-hidden />
             <span>
               {t.profiles.importRunning(phase.done + 1, phase.total)}
               <span className="text-faint ml-2 font-mono text-xs">{phase.current}</span>

@@ -103,7 +103,7 @@ export function CredentialsPane({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-brand" />
+            <KeyRound className="size-4 text-brand-deep" />
             <h2 className="text-sm font-bold text-ink">
               {t.console.credentialsTitle}
             </h2>
@@ -129,7 +129,7 @@ export function CredentialsPane({
             disabled={loading}
             className="gap-1.5 text-xs"
           >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
             <span>{t.console.rereadCredentials}</span>
           </Button>
         </div>
@@ -137,7 +137,7 @@ export function CredentialsPane({
 
       {/* 安全保障提示 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-line bg-panel p-3 text-xs text-dim">
-        <ShieldCheck className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+        <ShieldCheck className="size-4 text-emerald-700 shrink-0 mt-0.5" />
         <div className="space-y-0.5">
           <span className="font-semibold text-ink">0600 权限保障与前端脱敏</span>
           <p className="text-label text-faint leading-relaxed">
@@ -155,7 +155,7 @@ export function CredentialsPane({
               size="sm"
               onClick={handleSaveRaw}
               disabled={savingRaw}
-              className="gap-1.5 bg-brand text-white hover:bg-brand/90"
+              className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90"
             >
               {savingRaw ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -194,7 +194,7 @@ export function CredentialsPane({
                     )}
                   </div>
                   {item.configured ? (
-                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-600 dark:text-emerald-400 shrink-0 whitespace-nowrap shadow-2xs">
+                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-700 shrink-0 whitespace-nowrap shadow-2xs">
                       {t.console.configuredTag}
                     </span>
                   ) : (
@@ -221,7 +221,7 @@ export function CredentialsPane({
                     size="sm"
                     variant="ghost"
                     onClick={() => handleDeleteKey(item)}
-                    className="h-7 px-2 text-xs text-faint hover:text-rose-500"
+                    className="h-7 px-2 text-xs text-faint hover:text-rose-700"
                   >
                     <Trash2 className="size-3 mr-1" />
                     <span>{t.console.deleteKey}</span>
@@ -234,7 +234,7 @@ export function CredentialsPane({
                     setEditingProvider(item)
                     setInputKey("")
                   }}
-                  className="h-7 gap-1 px-2.5 text-xs hover:border-brand hover:text-brand"
+                  className="h-7 gap-1 px-2.5 text-xs hover:border-brand hover:text-brand-deep"
                 >
                   <Edit2 className="size-3" />
                   <span>{item.configured ? "修改 Key" : t.console.editKey}</span>
@@ -258,7 +258,7 @@ export function CredentialsPane({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold">
-              <KeyRound className="size-4 text-brand" />
+              <KeyRound className="size-4 text-brand-deep" />
               <span>{editingProvider ? t.console.keyModalTitle(editingProvider.label) : ""}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-faint">
@@ -289,7 +289,7 @@ export function CredentialsPane({
             <Button
               onClick={handleSaveKey}
               disabled={savingKey || !inputKey.trim()}
-              className="bg-brand text-white hover:bg-brand/90"
+              className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >
               {savingKey && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>保存 API Key</span>

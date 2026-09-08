@@ -1747,3 +1747,27 @@
   Profile 卡片不挤（4/12 栏 ≈ 280px）；② 吸顶页头滚动时不遮首行内容。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **130 passed**（128 → +2）·
   `pnpm build` 通过（确认 5 档 token 生成 `.text-meta` 等工具类）。
+
+### 2026-09-08 fix(uiux)：对比度达标与 dark 变体清理（评审批次 C）—— guan（AI 起草）
+
+- U6 对比度：实测「既 ≥4.5:1 又能与 `dim` 明显区分」的浅灰不存在（浅底上需 ≈#656d7c，
+  与 dim(#626a7a) 已无差别），故**三级灰阶压缩为两级**：`--color-faint` #a0a7b6→**#6b7280**
+  （bg 4.55 / panel 4.83 / line-soft 4.27，最后一项为记录在案的边际值）；
+  `--color-ok` #2f9e44→**#27793a**（3.45→5.41）；`--color-warn` #d9480f→**#c2410c**（4.30→5.18）。
+- 品牌蓝**降级为图形象**（边框/描边/色块/点，3:1 适用）：`text-brand`→`text-brand-deep`
+  （98 处）、`bg-brand text-white`→`bg-brand-deep text-white`（15 处）、shadcn
+  `--primary`/`--destructive` 同步。
+- 原始调色板同步修正：浅底文字色统一 -700 档（amber-500 2.15→5.02、emerald-500
+  2.54→5.48、sky-500 3.0→5.93、rose-500 3.4→6.29、violet/indigo-500→-700；含 /70 变体
+  改实色）；`bg-amber-500 text-white`（修复按钮，白字 2.15）→`bg-amber-700 text-white`。
+  深底文字（toast/日志终端）保持 -300/-400 档不动。
+- U12 `dark:` 去留 → **删 40 处**：全仓无 `.dark` 应用点（不可达），且与 index.css
+  已记录的暗色方案（「追加 `.dark` 覆盖语义变量，组件零改动」）冲突——留着是地雷，
+  一旦启用会以原始调色板破坏 token 体系。
+- 机器闸门：`__tests__/contrast.test.ts`（5 条）——文字色 token ≥4.5、白字在填充 token
+  上 ≥4.5、faint 的 line-soft 边际 ≥4.2、源码禁 `text-brand`、源码禁 `dark:`。
+  为此 `vite.config.ts` 增 `test.css: true`（Vitest 默认把 CSS 桩成空串，`?raw` 读不到）；
+  配置改用 `vitest/config` 的 `defineConfig` 以获得 `test` 键类型。
+- 影响：**需人工目检**配色观感（尤其 faint 变深后的层级、修复按钮由黄转深橙）。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **135 passed**（130 → +5）·
+  `pnpm build` 通过。闸门实测抓漏：把 faint 改回 #a0a7b6 → 两条断言即红。

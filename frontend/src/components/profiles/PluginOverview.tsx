@@ -272,7 +272,7 @@ export function PluginOverview({
       </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-500">
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-700">
           加载全域插件失败：{error}
         </div>
       )}
@@ -280,7 +280,7 @@ export function PluginOverview({
       {/* 宫格卡片呈现 (Bento Grid) */}
       {loading && !list ? (
         <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-line bg-panel text-xs text-faint">
-          <LoaderCircle className="mb-2 size-6 animate-spin text-brand" />
+          <LoaderCircle className="mb-2 size-6 animate-spin text-brand-deep" />
           <span>正在扫描全域 Profile 插件矩阵...</span>
         </div>
       ) : paginatedList.length === 0 ? (
@@ -307,7 +307,7 @@ export function PluginOverview({
                   {/* 头部：包名与版本 */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
                         <Package className="size-3.5" />
                       </div>
                       <span
@@ -375,7 +375,7 @@ export function PluginOverview({
                       setWithConfig(false)
                       setDistributeError(null)
                     }}
-                    className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand"
+                    className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand-deep"
                   >
                     <Send className="size-3" />
                     <span>分发到...</span>
@@ -414,7 +414,7 @@ export function PluginOverview({
                   onClick={() => setCurrentPage(page)}
                   className={`size-7 rounded-lg text-xs font-mono transition-colors ${
                     currentPage === page
-                      ? "bg-brand text-white font-bold"
+                      ? "bg-brand-deep text-white font-bold"
                       : "text-dim hover:bg-line"
                   }`}
                 >
@@ -450,7 +450,7 @@ export function PluginOverview({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm font-bold flex items-center gap-2">
-              <Send className="size-4 text-brand" />
+              <Send className="size-4 text-brand-deep" />
               <span>{distributeTarget ? t.profiles.distributeTitle(distributeTarget.pkg) : ""}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-faint">
@@ -459,7 +459,7 @@ export function PluginOverview({
           </DialogHeader>
 
           {distributeError && (
-            <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-500">
+            <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-700">
               {distributeError}
             </div>
           )}
@@ -469,7 +469,7 @@ export function PluginOverview({
               {/* 目标 Profile 选择框（修复宽度截断） */}
               <div className="space-y-1.5">
                 <span className="text-dim font-semibold text-label">
-                  选择目标 Profile <span className="text-rose-500">*</span>
+                  选择目标 Profile <span className="text-rose-700">*</span>
                 </span>
                 <Select
                   value={selectedDest ?? undefined}
@@ -540,7 +540,7 @@ export function PluginOverview({
             <Button
               onClick={handleDistribute}
               disabled={distributing || !selectedDest}
-              className="bg-brand text-white hover:bg-brand/90"
+              className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >
               {distributing && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>开始分发安装</span>

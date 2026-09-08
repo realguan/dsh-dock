@@ -33,7 +33,7 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
                 : "text-dim hover:text-ink hover:bg-panel/40"
             }`}
           >
-            <Store className={`size-3.5 ${subTab === "market" ? "text-brand" : "text-faint"}`} />
+            <Store className={`size-3.5 ${subTab === "market" ? "text-brand-deep" : "text-faint"}`} />
             <span>{t.market.subtabMarket}</span>
           </button>
 
@@ -48,7 +48,7 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
                 : "text-dim hover:text-ink hover:bg-panel/40"
             }`}
           >
-            <Layers className={`size-3.5 ${subTab === "installed" ? "text-brand" : "text-faint"}`} />
+            <Layers className={`size-3.5 ${subTab === "installed" ? "text-brand-deep" : "text-faint"}`} />
             <span>{t.market.subtabInstalled}</span>
           </button>
         </div>

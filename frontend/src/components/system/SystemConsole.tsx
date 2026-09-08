@@ -88,7 +88,7 @@ export function SystemConsole({
                   <div
                     className={`flex size-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
                       active
-                        ? "bg-brand/15 text-brand"
+                        ? "bg-brand/15 text-brand-deep"
                         : "bg-line/60 text-faint group-hover:text-dim"
                     }`}
                   >
@@ -99,7 +99,7 @@ export function SystemConsole({
 
                 <ChevronRight
                   className={`size-3.5 shrink-0 transition-transform ${
-                    active ? "text-brand translate-x-0.5" : "text-transparent group-hover:text-faint"
+                    active ? "text-brand-deep translate-x-0.5" : "text-transparent group-hover:text-faint"
                   }`}
                 />
               </button>

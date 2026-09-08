@@ -243,25 +243,25 @@ export function MarketplaceView({
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
                 <SelectItem value="stars">
                   <div className="flex items-center gap-2">
-                    <Star className="size-3.5 text-amber-500" />
+                    <Star className="size-3.5 text-amber-700" />
                     <span>{t.market.sortStars}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="downloads">
                   <div className="flex items-center gap-2">
-                    <Download className="size-3.5 text-sky-500" />
+                    <Download className="size-3.5 text-sky-700" />
                     <span>{t.market.sortDownloads}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="newest">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="size-3.5 text-indigo-500" />
+                    <Sparkles className="size-3.5 text-indigo-700" />
                     <span>{t.market.sortNewest}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="name">
                   <div className="flex items-center gap-2">
-                    <ArrowDownAZ className="size-3.5 text-violet-500" />
+                    <ArrowDownAZ className="size-3.5 text-violet-700" />
                     <span>{t.market.sortName}</span>
                   </div>
                 </SelectItem>
@@ -277,7 +277,7 @@ export function MarketplaceView({
             disabled={loading}
             className="h-8.5 gap-1.5 rounded-xl text-xs"
           >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`} />
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : ""}`} />
             <span>{loading ? "加载中…" : t.market.refreshRegistry}</span>
           </Button>
         </div>
@@ -292,7 +292,7 @@ export function MarketplaceView({
                 onClick={() => setSelectedCategory("all")}
                 className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                   selectedCategory === "all"
-                    ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                    ? "bg-brand-deep text-white border-brand-deep shadow-2xs font-semibold"
                     : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                 }`}
               >
@@ -316,7 +316,7 @@ export function MarketplaceView({
                   onClick={() => setSelectedCategory(cat.key)}
                   className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                     selectedCategory === cat.key
-                      ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                      ? "bg-brand-deep text-white border-brand-deep shadow-2xs font-semibold"
                       : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                   }`}
                 >
@@ -338,7 +338,7 @@ export function MarketplaceView({
                 <button
                   type="button"
                   onClick={() => setExpandAllCategories(!expandAllCategories)}
-                  className="px-2.5 py-1 rounded-lg text-xs text-brand hover:bg-brand/10 transition-colors flex items-center gap-1 font-medium border border-transparent"
+                  className="px-2.5 py-1 rounded-lg text-xs text-brand-deep hover:bg-brand/10 transition-colors flex items-center gap-1 font-medium border border-transparent"
                 >
                   <span>
                     {expandAllCategories
@@ -359,7 +359,7 @@ export function MarketplaceView({
 
       {/* 错误提示 */}
       {error && (
-        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-xs text-rose-600 dark:text-rose-400 space-y-2">
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-xs text-rose-600 space-y-2">
           <AlertCircle className="size-6 mx-auto opacity-80" />
           <p className="font-medium">{t.market.loadFailed}</p>
           <p className="font-mono text-label opacity-80 break-all">{error}</p>

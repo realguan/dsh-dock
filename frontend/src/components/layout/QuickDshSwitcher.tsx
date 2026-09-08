@@ -95,7 +95,7 @@ export function QuickDshSwitcher() {
       </span>
 
       {/* 文本主体 */}
-      <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand transition-colors whitespace-nowrap">
+      <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand-deep transition-colors whitespace-nowrap">
         {t.profiles.switchToDsh}
       </span>
 
@@ -114,7 +114,7 @@ export function QuickDshSwitcher() {
       </span>
 
       {/* 跳转微图标 */}
-      <ArrowUpRight className="size-3 shrink-0 text-faint group-hover:text-brand group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+      <ArrowUpRight className="size-3 shrink-0 text-faint group-hover:text-brand-deep group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
     </button>
   )
 }

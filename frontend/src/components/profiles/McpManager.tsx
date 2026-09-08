@@ -249,7 +249,7 @@ export function McpManager({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <Boxes className="size-4 text-brand" />
+            <Boxes className="size-4 text-brand-deep" />
             <h2 className="text-sm font-bold text-ink">
               {t.profiles.mcpTitle}
             </h2>
@@ -261,7 +261,7 @@ export function McpManager({
           <Button
             size="sm"
             onClick={openCreateDialog}
-            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
+            className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs shadow-xs"
           >
             <Plus className="size-3.5" />
             <span>{t.profiles.mcpAddBtn}</span>
@@ -272,17 +272,17 @@ export function McpManager({
       {/* 已配置的 MCP 服务器列表 */}
       {loadError ? (
         <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/5 py-10 text-center">
-          <Server className="size-7 text-rose-500/70" />
+          <Server className="size-7 text-rose-700" />
           <p className="text-xs font-medium text-ink">{t.profiles.mcpLoadFailed}</p>
           <p className="max-w-md break-all text-label text-faint">{loadError}</p>
           <Button size="sm" variant="outline" onClick={() => void loadData()} className="mt-1 gap-1 text-xs">
-            <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
+            <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
             <span>{t.profiles.mcpRetry}</span>
           </Button>
         </div>
       ) : loading && !servers ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-panel py-12 text-center">
-          <LoaderCircle className="size-6 animate-spin text-brand" />
+          <LoaderCircle className="size-6 animate-spin text-brand-deep" />
           <span className="text-faint mt-2 text-xs">正在读取 MCP 服务配置...</span>
         </div>
       ) : !servers || servers.length === 0 ? (
@@ -315,7 +315,7 @@ export function McpManager({
                           已禁用
                         </span>
                       ) : (
-                        <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-600 dark:text-emerald-400">
+                        <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-700">
                           Active
                         </span>
                       )}
@@ -327,7 +327,7 @@ export function McpManager({
                         title="复制工具前缀"
                       >
                         {copiedName === s.name ? (
-                          <Check className="size-2.5 text-emerald-500" />
+                          <Check className="size-2.5 text-emerald-700" />
                         ) : (
                           <Copy className="size-2.5" />
                         )}
@@ -351,10 +351,10 @@ export function McpManager({
                         aria-label={`${t.profiles.mcpDeleteBtn}：${s.name}`}
                         onClick={() => handleDeleteServer(s.name)}
                         disabled={isDeleting}
-                        className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-500"
+                        className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-700"
                       >
                         {isDeleting ? (
-                          <LoaderCircle className="size-3 animate-spin text-rose-500" />
+                          <LoaderCircle className="size-3 animate-spin text-rose-700" />
                         ) : (
                           <Trash2 className="size-3 text-faint" />
                         )}
@@ -383,13 +383,13 @@ export function McpManager({
                   {/* 运行态工具联动展示 */}
                   {activeTools.length > 0 ? (
                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2 text-xs">
-                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold text-label">
+                      <div className="flex items-center gap-1.5 text-emerald-700 font-semibold text-label">
                         <Wrench className="size-3" />
                         <span>{t.profiles.mcpActiveTools(activeTools.length)}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {activeTools.map((tool) => (
-                          <span key={tool} className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta text-emerald-700 dark:text-emerald-300">
+                          <span key={tool} className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta text-emerald-700">
                             {tool}
                           </span>
                         ))}
@@ -406,7 +406,7 @@ export function McpManager({
       {/* 常用预设快捷卡片 */}
       <div className="rounded-2xl border border-line bg-panel p-4 shadow-xs space-y-3">
         <div className="flex items-center gap-2 font-semibold text-xs text-ink">
-          <Sparkles className="size-3.5 text-brand" />
+          <Sparkles className="size-3.5 text-brand-deep" />
           <span>{t.profiles.mcpPresetTitle}</span>
         </div>
 
@@ -432,7 +432,7 @@ export function McpManager({
                       size="sm"
                       variant="outline"
                       onClick={() => applyPreset(preset)}
-                      className="h-6 gap-1 px-2 text-label hover:border-brand hover:text-brand"
+                      className="h-6 gap-1 px-2 text-label hover:border-brand hover:text-brand-deep"
                     >
                       <PlusCircle className="size-3" />
                       <span>应用预设</span>
@@ -456,7 +456,7 @@ export function McpManager({
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold">
-              <Boxes className="size-4 text-brand" />
+              <Boxes className="size-4 text-brand-deep" />
               <span>{t.profiles.mcpModalTitle}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-faint">
@@ -467,7 +467,7 @@ export function McpManager({
           <div className="space-y-3.5 py-2 text-xs">
             <div>
               <label htmlFor="mcp-form-name" className="text-faint font-semibold text-label">
-                {t.profiles.mcpServerName} <span className="text-rose-500">*</span>
+                {t.profiles.mcpServerName} <span className="text-rose-700">*</span>
               </label>
               <input
                 id="mcp-form-name"
@@ -514,7 +514,7 @@ export function McpManager({
                 <button
                   type="button"
                   onClick={() => setFormEnv([...formEnv, { key: "", value: "" }])}
-                  className="text-label text-brand hover:underline"
+                  className="text-label text-brand-deep hover:underline"
                 >
                   + 添加变量
                 </button>
@@ -554,7 +554,7 @@ export function McpManager({
                           const next = formEnv.filter((_, i) => i !== idx)
                           setFormEnv(next)
                         }}
-                        className="text-faint hover:text-rose-500 px-1"
+                        className="text-faint hover:text-rose-700 px-1"
                       >
                         ×
                       </button>
@@ -585,7 +585,7 @@ export function McpManager({
             <Button
               onClick={handleSaveServer}
               disabled={saving || !formName.trim()}
-              className="bg-brand text-white hover:bg-brand/90"
+              className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >
               {saving && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>{t.profiles.mcpSaveBtn}</span>

@@ -146,8 +146,8 @@ export function BootSelector() {
                       <div
                         className={`flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
                           isDefault
-                            ? "bg-wash text-brand-deep group-hover:bg-brand group-hover:text-white"
-                            : "bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand"
+                            ? "bg-wash text-brand-deep group-hover:bg-brand-deep group-hover:text-white"
+                            : "bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand-deep"
                         }`}
                       >
                         {isDefault ? <Layout className="size-5" /> : <Package className="size-5" />}
@@ -175,7 +175,7 @@ export function BootSelector() {
                         >
                           {meta.tag}
                         </span>
-                        <ChevronRight className="size-4 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand" />
+                        <ChevronRight className="size-4 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand-deep" />
                       </div>
                     </motion.button>
                   )

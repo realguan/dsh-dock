@@ -90,7 +90,7 @@ export function DiagnosticsPane({
   if (loading && !report) {
     return (
       <div className="flex h-64 flex-col items-center justify-center text-xs text-faint">
-        <LoaderCircle className="mb-2 size-5 animate-spin text-brand" />
+        <LoaderCircle className="mb-2 size-5 animate-spin text-brand-deep" />
         <span>{t.console.diagnosticsSubtitle}…</span>
       </div>
     )
@@ -165,7 +165,7 @@ export function DiagnosticsPane({
             className="gap-1 text-xs"
           >
             <RefreshCw
-              className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`}
+              className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : ""}`}
             />
             <span>{t.console.refreshDiagnostics}</span>
           </Button>
@@ -178,7 +178,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-700">
                 <Cpu className="size-4" />
               </div>
               <span
@@ -207,7 +207,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700">
                 <Package className="size-4" />
               </div>
               <span
@@ -236,7 +236,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
                 <Server className="size-4" />
               </div>
               <span
@@ -289,7 +289,7 @@ export function DiagnosticsPane({
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Database className="size-4 text-brand" />
+            <Database className="size-4 text-brand-deep" />
             <h3 className="text-xs font-semibold text-ink">
               DSH_HOME 存储空间分布
             </h3>

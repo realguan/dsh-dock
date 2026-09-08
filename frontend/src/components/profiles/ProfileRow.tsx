@@ -108,7 +108,7 @@ export function ProfileRow({
 
             {/* 默认启动 */}
             {isDefault && (
-              <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
+              <span className="bg-amber-500/10 text-amber-700 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <Star className="size-2.5 fill-current" />
                 {t.profiles.defaultBadge}
               </span>
@@ -151,7 +151,7 @@ export function ProfileRow({
               title={busy ? t.profiles.launchWorking : t.profiles.launch}
               disabled={busy}
               onClick={onLaunch}
-              className="border-line/80 text-dim hover:border-brand hover:text-brand hover:bg-wash inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40"
+              className="border-line/80 text-dim hover:border-brand hover:text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40"
             >
               {busy ? (
                 <LoaderCircle className="size-3 animate-spin" aria-hidden />
@@ -185,7 +185,7 @@ export function ProfileRow({
                 >
                   <DropdownMenu.Item
                     onClick={onDetail}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
                   >
                     <Info className="size-3.5 text-dim" />
                     <span>查看详情</span>
@@ -193,11 +193,11 @@ export function ProfileRow({
 
                   <DropdownMenu.Item
                     onClick={onSetDefault}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
                   >
                     <Star
                       className={`size-3.5 ${
-                        isDefault ? "text-amber-500 fill-current" : "text-dim"
+                        isDefault ? "text-amber-700 fill-current" : "text-dim"
                       }`}
                     />
                     <span>{isDefault ? t.profiles.defaultIs : t.profiles.setDefault}</span>
@@ -205,7 +205,7 @@ export function ProfileRow({
 
                   <DropdownMenu.Item
                     onClick={onCopy}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
                   >
                     <Copy className="size-3.5 text-dim" />
                     <span>{t.profiles.submitCopy}</span>
@@ -213,7 +213,7 @@ export function ProfileRow({
 
                   <DropdownMenu.Item
                     onClick={onRename}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand"
+                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
                   >
                     <Pencil className="size-3.5 text-dim" />
                     <span>{t.profiles.actionRename}</span>

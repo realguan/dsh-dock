@@ -103,7 +103,7 @@ export function PreferencesPane({
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center text-xs text-faint">
-        <LoaderCircle className="mr-2 size-4 animate-spin text-brand" />
+        <LoaderCircle className="mr-2 size-4 animate-spin text-brand-deep" />
         <span>正在加载偏好设置…</span>
       </div>
     )
@@ -140,7 +140,7 @@ export function PreferencesPane({
       {/* 模块 1：界面语言选择 */}
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex items-center gap-2.5 mb-1.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
             <Globe className="size-4" />
           </div>
           <div>
@@ -171,7 +171,7 @@ export function PreferencesPane({
               </div>
               <p className="mt-1 text-label text-faint">Auto Detect</p>
             </div>
-            {preference === "system" && <Check className="size-4 text-brand" />}
+            {preference === "system" && <Check className="size-4 text-brand-deep" />}
           </button>
 
           {/* 简体中文 */}
@@ -190,7 +190,7 @@ export function PreferencesPane({
               </span>
               <p className="mt-1 text-label text-faint">简体中文 (默认)</p>
             </div>
-            {preference === "zh-CN" && <Check className="size-4 text-brand" />}
+            {preference === "zh-CN" && <Check className="size-4 text-brand-deep" />}
           </button>
 
           {/* English */}
@@ -209,7 +209,7 @@ export function PreferencesPane({
               </span>
               <p className="mt-1 text-label text-faint">English (US)</p>
             </div>
-            {preference === "en-US" && <Check className="size-4 text-brand" />}
+            {preference === "en-US" && <Check className="size-4 text-brand-deep" />}
           </button>
         </div>
       </section>
@@ -272,7 +272,7 @@ export function PreferencesPane({
         {/* 熔断机制图解卡片 */}
         <div className="mt-4 rounded-xl border border-line/80 bg-bg p-3.5 text-xs text-dim">
           <div className="flex items-center gap-2 font-medium text-ink">
-            <ShieldAlert className="size-3.5 text-amber-500" />
+            <ShieldAlert className="size-3.5 text-amber-700" />
             <span>智能熔断保护协议（Circuit Breaker）</span>
           </div>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-label">
@@ -282,7 +282,7 @@ export function PreferencesPane({
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">熔断阈值：</span>
-              <span className="text-amber-500 font-semibold ml-1">连续 3 次崩溃</span>
+              <span className="text-amber-700 font-semibold ml-1">连续 3 次崩溃</span>
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">熔断后动作：</span>
@@ -299,7 +299,7 @@ export function PreferencesPane({
             <div
               className={`flex size-8 shrink-0 items-center justify-center rounded-xl transition-colors ${
                 floatingSwitcherActive
-                  ? "bg-brand/15 text-brand border border-brand/20"
+                  ? "bg-brand/15 text-brand-deep border border-brand/20"
                   : "bg-line-soft text-faint"
               }`}
             >
@@ -313,7 +313,7 @@ export function PreferencesPane({
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                     floatingSwitcherActive
-                      ? "bg-brand/10 text-brand"
+                      ? "bg-brand/10 text-brand-deep"
                       : "bg-line-soft text-faint"
                   }`}
                 >
@@ -374,7 +374,7 @@ export function PreferencesPane({
                   {isMac ? "⌘ + ," : "Ctrl + ,"}
                 </p>
               </div>
-              {shortcutChoice === "default" && <Check className="size-4 text-brand" />}
+              {shortcutChoice === "default" && <Check className="size-4 text-brand-deep" />}
             </button>
 
             {/* 命令面板风格 */}
@@ -395,7 +395,7 @@ export function PreferencesPane({
                   {isMac ? "⌘ + ⇧ + P" : "Ctrl + ⇧ + P"}
                 </p>
               </div>
-              {shortcutChoice === "shift_p" && <Check className="size-4 text-brand" />}
+              {shortcutChoice === "shift_p" && <Check className="size-4 text-brand-deep" />}
             </button>
           </div>
         </div>

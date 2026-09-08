@@ -57,20 +57,20 @@ export function MarketPluginCard({
       <div>
         <div className="flex items-start justify-between gap-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-brand shadow-2xs group-hover:border-brand/30 group-hover:bg-brand/5 transition-colors">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-brand-deep shadow-2xs group-hover:border-brand/30 group-hover:bg-brand/5 transition-colors">
               <Package className="size-4.5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h3
-                  className="truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand cursor-pointer transition-colors"
+                  className="truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors"
                   title={plugin.name}
                   onClick={() => onOpenExternal(plugin.url || plugin.page)}
                 >
                   {displayName}
                 </h3>
                 {isOfficial && (
-                  <Badge variant="outline" className="h-4 px-1 text-micro bg-brand/10 text-brand border-brand/30 font-mono">
+                  <Badge variant="outline" className="h-4 px-1 text-micro bg-brand/10 text-brand-deep border-brand/30 font-mono">
                     OFFICIAL
                   </Badge>
                 )}
@@ -103,13 +103,13 @@ export function MarketPluginCard({
         {/* 指标栏 (Stars, Downloads, Added) */}
         <div className="mt-3 flex items-center gap-3 text-label text-faint font-mono">
           <div className="flex items-center gap-1 text-ink/70" title="GitHub Stars">
-            <Star className="size-3 text-amber-500 fill-amber-500/20" />
+            <Star className="size-3 text-amber-700 fill-amber-500/20" />
             <span>{plugin.stars?.toLocaleString() ?? 0}</span>
           </div>
 
           {plugin.downloads !== null && plugin.downloads !== undefined && (
             <div className="flex items-center gap-1 text-ink/70" title="NPM Downloads">
-              <Download className="size-3 text-brand" />
+              <Download className="size-3 text-brand-deep" />
               <span>{plugin.downloads >= 1000 ? `${(plugin.downloads / 1000).toFixed(1)}k` : plugin.downloads}</span>
             </div>
           )}
@@ -176,7 +176,7 @@ export function MarketPluginCard({
               className="rounded p-1 text-faint hover:text-ink hover:bg-wash transition-colors"
               title={t.market.copyCmd}
             >
-              {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+              {copied ? <Check className="size-3.5 text-emerald-700" /> : <Copy className="size-3.5" />}
             </button>
           </div>
         </div>
@@ -189,7 +189,7 @@ export function MarketPluginCard({
           className={`w-full h-8 text-xs font-medium gap-1.5 rounded-lg transition-all ${
             isInstalled
               ? "border-line text-ink hover:bg-wash hover:border-brand/40"
-              : "bg-brand text-white hover:bg-brand/90 shadow-2xs"
+              : "bg-brand-deep text-white hover:bg-brand-deep/90 shadow-2xs"
           }`}
         >
           {isInstalled ? (

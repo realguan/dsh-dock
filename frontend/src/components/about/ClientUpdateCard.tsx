@@ -76,7 +76,7 @@ export function ClientUpdateCard() {
       {/* 顶栏：标题 + 状态胶囊 */}
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
             <Sparkles className="size-3.5" />
           </div>
           <div>
@@ -92,7 +92,7 @@ export function ClientUpdateCard() {
             tone === "ok"
               ? "bg-ok-soft text-ok"
               : tone === "accent"
-                ? "bg-brand/10 text-brand border border-brand/20"
+                ? "bg-brand/10 text-brand-deep border border-brand/20"
                 : tone === "warn"
                   ? "bg-warn-soft text-warn"
                   : tone === "busy"
@@ -135,7 +135,7 @@ export function ClientUpdateCard() {
             snapshot.notes && (
               <div className="rounded-xl border border-line bg-bg/80 p-3 text-xs text-dim space-y-1.5 shadow-2xs">
                 <div className="text-faint flex items-center justify-between text-meta font-semibold border-b border-line/60 pb-1">
-                  <div className="flex items-center gap-1.5 text-brand">
+                  <div className="flex items-center gap-1.5 text-brand-deep">
                     <FileText className="size-3" />
                     <span>{t.about.releaseNotes}</span>
                   </div>
@@ -143,7 +143,7 @@ export function ClientUpdateCard() {
                     <button
                       type="button"
                       onClick={() => setExpandNotes(!expandNotes)}
-                      className="text-brand hover:underline cursor-pointer select-none"
+                      className="text-brand-deep hover:underline cursor-pointer select-none"
                     >
                       {expandNotes ? "收起日志" : "展开全部"}
                     </button>
@@ -223,7 +223,7 @@ export function ClientUpdateCard() {
             className="gap-1.5 text-xs"
           >
             <RefreshCw
-              className={`size-3.5 ${phase === "checking" ? "animate-spin text-brand" : ""}`}
+              className={`size-3.5 ${phase === "checking" ? "animate-spin text-brand-deep" : ""}`}
             />
             <span>{phase === "checking" ? t.about.phases.checking : t.about.checkBtn}</span>
           </Button>

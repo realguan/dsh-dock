@@ -65,7 +65,7 @@ export function DshSettingsPane({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <Sliders className="size-4 text-brand" />
+            <Sliders className="size-4 text-brand-deep" />
             <h2 className="text-sm font-bold text-ink">
               {t.console.dshSettingsTitle}
             </h2>
@@ -82,7 +82,7 @@ export function DshSettingsPane({
             className="gap-1.5 text-xs"
           >
             {copied ? (
-              <Check className="size-3.5 text-emerald-500" />
+              <Check className="size-3.5 text-emerald-700" />
             ) : (
               <Copy className="size-3.5 text-dim" />
             )}
@@ -96,7 +96,7 @@ export function DshSettingsPane({
             disabled={loading || saving}
             className="gap-1.5 text-xs"
           >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
             <span>重新加载</span>
           </Button>
 
@@ -104,7 +104,7 @@ export function DshSettingsPane({
             size="sm"
             onClick={handleSave}
             disabled={saving || loading}
-            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs"
+            className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs"
           >
             {saving ? (
               <LoaderCircle className="size-3.5 animate-spin" />

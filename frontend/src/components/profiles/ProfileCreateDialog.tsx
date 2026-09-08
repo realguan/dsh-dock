@@ -117,7 +117,7 @@ export function ProfileCreateDialog({
 
         {phase.kind === "busy" && (
           <div className="bg-wash text-dim rounded-lg px-3 py-2.5 text-xs">
-            <span className="text-brand mr-1.5 inline-block size-2 animate-pulse rounded-full bg-current align-middle" />
+            <span className="text-brand-deep mr-1.5 inline-block size-2 animate-pulse rounded-full bg-current align-middle" />
             {t.profiles.createBusy}
           </div>
         )}

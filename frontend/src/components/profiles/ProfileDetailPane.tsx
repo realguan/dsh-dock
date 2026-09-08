@@ -348,11 +348,11 @@ export function ProfileDetailPane({
               disabled={isDefault}
               className={`gap-1 text-xs ${
                 isDefault
-                  ? "bg-amber-500/10 text-amber-600 border border-amber-500/20 font-medium cursor-default opacity-100"
+                  ? "bg-amber-500/10 text-amber-700 border border-amber-500/20 font-medium cursor-default opacity-100"
                   : ""
               }`}
             >
-              <Star className={`size-3.5 ${isDefault ? "text-amber-500 fill-current" : ""}`} />
+              <Star className={`size-3.5 ${isDefault ? "text-amber-700 fill-current" : ""}`} />
               {isDefault ? t.profiles.defaultIs : t.profiles.setDefault}
             </Button>
           </div>
@@ -494,7 +494,7 @@ export function ProfileDetailPane({
                   className="size-8 p-0"
                 >
                   {checkState === "busy" ? (
-                    <LoaderCircle className="size-3.5 animate-spin text-brand" />
+                    <LoaderCircle className="size-3.5 animate-spin text-brand-deep" />
                   ) : (
                     <SearchCheck className="size-3.5" />
                   )}
@@ -567,7 +567,7 @@ export function ProfileDetailPane({
             {/* 插件列表 */}
             {plugins === null ? (
               <div className="text-faint py-12 text-center text-xs">
-                <LoaderCircle className="mx-auto mb-2 size-5 animate-spin text-brand" />
+                <LoaderCircle className="mx-auto mb-2 size-5 animate-spin text-brand-deep" />
                 {t.profiles.busyShort}
               </div>
             ) : depCount === 0 ? (
@@ -621,7 +621,7 @@ export function ProfileDetailPane({
                               onClick={() =>
                                 openVersionPick(p.name, p.installed_version ?? "", latest)
                               }
-                              className="text-brand hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium transition-colors"
+                              className="text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium transition-colors"
                             >
                               <ArrowUpCircle className="size-3" />
                               <span>{latest}</span>
@@ -661,7 +661,7 @@ export function ProfileDetailPane({
                       {/* 右侧控制：Toggle 开关 + 动作按钮 */}
                       <div className="flex shrink-0 items-center gap-2">
                         {rowBusy ? (
-                          <LoaderCircle className="size-4 animate-spin text-brand" />
+                          <LoaderCircle className="size-4 animate-spin text-brand-deep" />
                         ) : (
                           <>
                             {row && (
@@ -850,7 +850,7 @@ export function ProfileDetailPane({
 
           {versionPick?.items === null && !versionsError && (
             <div className="text-faint py-6 text-center text-xs">
-              <LoaderCircle className="mx-auto mb-2 size-4 animate-spin text-brand" />
+              <LoaderCircle className="mx-auto mb-2 size-4 animate-spin text-brand-deep" />
               {t.profiles.busyShort}
             </div>
           )}

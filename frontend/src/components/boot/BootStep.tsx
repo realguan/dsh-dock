@@ -51,7 +51,7 @@ export function BootStep({
             <Check className="size-3.5" strokeWidth={2.5} />
           </div>
         ) : isRunning ? (
-          <div className="flex size-6 items-center justify-center rounded-full bg-brand text-white shadow-[0_0_12px_color-mix(in_srgb,var(--color-brand)_45%,transparent)] ring-3 ring-brand/20">
+          <div className="flex size-6 items-center justify-center rounded-full bg-brand-deep text-white shadow-[0_0_12px_color-mix(in_srgb,var(--color-brand)_45%,transparent)] ring-3 ring-brand/20">
             <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
           </div>
         ) : isError ? (
@@ -82,7 +82,7 @@ export function BootStep({
             {name}
           </span>
           {isRunning && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.5 font-mono text-meta font-medium text-brand">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.5 font-mono text-meta font-medium text-brand-deep">
               <span className="size-1 animate-pulse rounded-full bg-brand" aria-hidden />
               {t.boot.stRunning}
             </span>

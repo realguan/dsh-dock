@@ -69,7 +69,7 @@ export function BuildApprovalDialog({
       <DialogContent className="max-w-md rounded-2xl border border-line bg-panel p-6 shadow-xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand shadow-2xs">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand-deep shadow-2xs">
               <ShieldCheck className="size-5" />
             </div>
             <div className="min-w-0 flex-1">
@@ -117,7 +117,7 @@ export function BuildApprovalDialog({
           ))}
 
           {error && (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400 break-all">
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 break-all">
               {error}
             </div>
           )}
@@ -131,7 +131,7 @@ export function BuildApprovalDialog({
             size="sm"
             onClick={handleConfirm}
             disabled={saving}
-            className="rounded-xl bg-brand text-white hover:bg-brand/90 text-xs font-medium shadow-xs"
+            className="rounded-xl bg-brand-deep text-white hover:bg-brand-deep/90 text-xs font-medium shadow-xs"
           >
             <span>{saving ? t.buildGate.saving : t.buildGate.confirm}</span>
           </Button>

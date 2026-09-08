@@ -42,7 +42,7 @@ export function DownloadProgress() {
           </span>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold tracking-tight text-ink">{kindLabel}</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium text-brand">
+            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium text-brand-deep">
               <span className="size-1 animate-pulse rounded-full bg-brand" />
               引擎在线引导
             </span>

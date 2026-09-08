@@ -276,7 +276,7 @@ export function ProfileManager() {
             {/* 新建 Profile 专属醒目操作条 */}
             <Button
               onClick={() => setCreateOpen(true)}
-              className="w-full gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs h-9 rounded-xl font-medium"
+              className="w-full gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs shadow-xs h-9 rounded-xl font-medium"
             >
               <Plus className="size-4" />
               <span>{t.profiles.createBtn}</span>

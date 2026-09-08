@@ -183,7 +183,7 @@ export function LogViewerPane({
             className="size-8 p-0"
           >
             <RefreshCw
-              className={`size-3.5 ${loading ? "animate-spin text-brand" : ""}`}
+              className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : ""}`}
             />
           </Button>
         </div>
@@ -213,7 +213,7 @@ export function LogViewerPane({
         {/* 终端顶栏 */}
         <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-2 text-xs">
           <div className="flex items-center gap-2 font-mono text-slate-300">
-            <Terminal className="size-3.5 text-brand" />
+            <Terminal className="size-3.5 text-brand-deep" />
             <span className="font-semibold">{logData?.source || source}</span>
           </div>
           <span className="font-mono text-meta text-slate-500 truncate max-w-xs">
@@ -228,7 +228,7 @@ export function LogViewerPane({
         >
           {loading && !logData ? (
             <div className="flex h-full items-center justify-center text-slate-500">
-              <LoaderCircle className="mr-2 size-4 animate-spin text-brand" />
+              <LoaderCircle className="mr-2 size-4 animate-spin text-brand-deep" />
               <span>正在读取日志流…</span>
             </div>
           ) : filteredLines.length === 0 ? (
