@@ -1851,3 +1851,20 @@
 - 影响：仅周知，无行为变更（纯搬迁；IPC 名集/形状/契约均未动）。
 - 凭据：`cargo test` **193 passed**（192 → +1 解析器用例）· `cargo fmt --check` 干净 ·
   `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。
+
+### 2026-09-08 refactor(tauri)：拆出 ui 模块（架构评审批次 2 第二步）—— guan（AI 起草）
+
+- **`lib.rs` 1,778 → 1,372 行**（相对原始 3,039 已 −55%）：窗口/菜单/托盘层迁到
+  `src-tauri/src/ui.rs`（423 行）——`create_main_window`（含三个 initialization_script
+  装配与导航拦截）、`resolve_resources_dir`、`build_app_menu`、`build_tray_menu`、
+  `setup_update_tray`、`refresh_app_menu`（`#[cfg]` 双实现）、`current_active_mode`、
+  `open_about_window`；注入脚本常量 `WEBVIEW_MEMORY_POLICY_SCRIPT` 随之下沉（只被
+  `create_main_window` 用），`lib.rs` 测试引用改 `crate::ui::…`。
+- 依赖方向单向：`ui::` → `crate::{ShellState, is_allowed_external_url, settings, emit_*}`；
+  `lib.rs::run` 与 `commands::window` 调用 `ui::create_main_window`。
+- **未纳入（最后一步）**：`boot/`——`run()`（400+ 行）、`ShellState` 与会话守卫、
+  `emit_*` 族、错误分类、`init_tracing`/`TeeWriter`。这一步动启动管线本身，需单独一轮
+  并逐段验证。
+- 影响：仅周知，无行为变更。
+- 凭据：`cargo test` **193 passed** · `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`lint` 0 warning/`test` 135 全绿。

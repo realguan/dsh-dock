@@ -142,7 +142,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 0a | 修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删死代码 `ProfileDetailDialog`；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ✅ 已落地（见 §7） |
 | 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ✅ 已落地（见 §8） |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
-| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⚠️ `commands/` 已拆（见 §11）；`ui/`+`boot/` 待做 |
+| 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⚠️ `commands/`+`ui/` 已拆（见 §11/§12）；`boot/` 待做 |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
 | 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⚠️ 部分（见 §10；HTTP seam 未做） |
@@ -307,3 +307,25 @@ panic（`PATH 上找不到 node，但 CI 要求真跑`）。
 **未纳入（批次 2 后续）**：`ui/`（`create_main_window` 352 行、菜单/托盘/窗口、
 `resolve_resources_dir`）与 `boot/`（`run()` 400+ 行、会话守卫、`emit_*` 族）。
 本次只搬**叶子层**（命令 → 域模块），不动启动管线，回归面可控。
+
+## 12. 批次 2 第二步落地记录（2026-09-08，`refactor(tauri): 拆出 ui 模块`）
+
+**`lib.rs` 1,778 → 1,372 行**（相对原始 3,039 已 −55%），窗口/菜单/托盘层迁到
+`src-tauri/src/ui.rs`（423 行）：
+
+| 迁出项 | 说明 |
+|:---|:---|
+| `create_main_window` | 主窗口创建 + 三个 `initialization_script` 装配 + 导航/新窗口拦截（93 行） |
+| `resolve_resources_dir` | 打包资源目录解析（dev/release 双路径） |
+| `build_app_menu` / `build_tray_menu` / `setup_update_tray` | 菜单与托盘（含 macOS/非 macOS 分叉） |
+| `refresh_app_menu` ×2（`#[cfg]` 双实现）/ `current_active_mode` | 更新态在菜单上的刷新 |
+| `open_about_window` | 关于窗口 |
+| `WEBVIEW_MEMORY_POLICY_SCRIPT` | 注入脚本常量（只被 `create_main_window` 用）随之下沉；`lib.rs` 的测试引用改为 `crate::ui::…` |
+
+依赖方向单向：`ui::` → `crate::{ShellState, is_allowed_external_url, settings, emit_*}`；
+`lib.rs::run` 与 `commands::window` 调用 `ui::create_main_window`。
+
+**未纳入（批次 2 最后一步）**：`boot/`——`run()`（400+ 行）、`ShellState` 与会话守卫
+（`guard_session`/`teardown_session`/`run_executor_session`）、`emit_*` 族、
+`classify_boot_error`/`read_error_detail`、`init_tracing`/`TeeWriter`。
+这一步动的是启动管线本身，需单独一轮并逐段验证（boot 是最高风险路径）。

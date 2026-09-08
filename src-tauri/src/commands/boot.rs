@@ -6,7 +6,7 @@
 
 use crate::{
     emit_boot_error, emit_step, emit_upgrade, executor_for_mode, launch_executor_after_probe,
-    refresh_update_ui, resolve_resources_dir, run_executor_session, switch_mode, ShellState,
+    refresh_update_ui, run_executor_session, switch_mode, ShellState,
 };
 use std::sync::Arc;
 
@@ -117,7 +117,7 @@ pub fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), Stri
             emit_step(&handle, 2, "running", "正在升级官方 DSH 到最新稳定版…");
             // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
             // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
-            let resources_dir = resolve_resources_dir(&handle);
+            let resources_dir = crate::ui::resolve_resources_dir(&handle);
             let path_env = crate::resolve::effective_path();
             match crate::updates::upgrade_engine_dsh(&data_dir, &resources_dir, &path_env) {
                 Ok(version) => {
