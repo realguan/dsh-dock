@@ -2,10 +2,10 @@
 // 形状锚定 src-tauri/src/lib.rs 的 emit 调用与 updater.rs 的 set_state：
 // - boot:step    lib.rs emit_step —— {step, state, detail}
 // - boot:progress lib.rs download_progress_bridge —— {kind, current, total}
-// - boot:error   lib.rs emit_boot_error / classify_boot_error
+// - boot:error   boot.rs emit_boot_error —— BootErrorPayload（含 failure.kind）
 // - boot:update  lib.rs emit_update（updates::UpdateStatus 原样序列化）
 // - app:update   updater.rs set_state（ClientUpdate，仅发给 main/about 窗口）
-import type { ClientUpdate, UpdateStatus } from "./ipc"
+import type { BootFailure, ClientUpdate, UpdateStatus } from "./ipc"
 
 export const EV = {
   bootStep: "boot:step",
@@ -31,7 +31,11 @@ export interface BootProgressEvent {
 
 /// boot:error 的真实载荷：actions[] 由后端下发（可行动动作 id 集合），
 /// 前端只做 id→文案映射（content/zh-CN.ts error.actions），不自行决定动作集合。
+///
+/// 2026-09-08（ADR-0012）：新增 `failure`（结构化分类）。旧缓存/旧后端载荷没有该
+/// 字段 → 保持可选，ErrorCard 回退后端 `title`/`suggestion`。
 export interface BootErrorEvent {
+  failure?: BootFailure
   title?: string
   detail?: string
   suggestion?: string

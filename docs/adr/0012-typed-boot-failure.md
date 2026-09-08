@@ -1,9 +1,9 @@
 # ADR-0012：启动失败错误类型化（`BootFailure`），子串分类降级为兜底
 
 - **日期**：2026-09-08
-- **状态**：草案（待维护者评审）
+- **状态**：**已接受并实施**（2026-09-08；维护者评审通过，实施记录见 §7）
 - **提出人**：guan（AI 起草，依据 `docs/architecture-review-2026-09-08.md` P5）
-- **相关方**：`src-tauri/src/lib.rs`（boot 路径与错误卡）、`frontend/src/components/boot/ErrorCard.tsx`、
+- **相关方**：`src-tauri/src/boot_failure.rs`（新增）、`boot.rs`（错误卡发射）、`frontend/src/components/boot/ErrorCard.tsx`、
   `frontend/src/types/ipc.ts`、`docs/contract.md`（若 IPC 错误形状变化需同步）
 - **关联**：架构评审 P5；`lib.rs::classify_boot_error`（子串分类）、`lib.rs::read_error_detail`（日志刮取）；
   先例：`ClientUpdate` 已用 tagged enum（`updates.rs`）
@@ -100,13 +100,51 @@ else { /* 兜底：启动失败 */ }
 
 ### 行动项
 
-- [ ] 定义 `BootFailure` + `from_legacy_detail` 纯函数；把今天的四条子串规则写成**等价映射表**
-      并补穷尽单测（含「同词不同因」反例：本地 socket 超时不得判成网络）。（负责人待定）
-- [ ] boot 路径的错误产生点改返回 `BootFailure`（先做 `classify_boot_error` 的三个调用方）。
-- [ ] 前端 `ErrorCard` 增加结构化分支；`types/ipc.ts` 加 `BootFailure` 形状并登记
-      `frontend/src/types/ipc-shapes.json`（形状闸门自动生效）。
-- [ ] 若跨 IPC 形状变化涉及契约，同步 `docs/contract.md` 并升 `MANIFEST_FORMAT`。
-- [ ] AGENTS §9 索引补本 ADR 一行；`docs/known-issues` 的 P5 条目回收。
+- [x] 定义 `BootFailure` + `from_legacy_detail` 纯函数；子串规则写成兜底映射表并补穷尽单测
+      （含「同词不同因」反例：本地 socket 超时不得判成网络）——见 §7 ①。
+- [x] boot 路径的错误产生点改走 `BootFailure`（`emit_boot_error` 内部构造；13 处调用点签名不变）。
+- [x] 前端 `ErrorCard` 增加结构化分支（按 `kind` 取本地化文案，回退后端文案）；`types/ipc.ts`
+      加 `BootFailure` / `BootErrorPayload` 形状并登记 `frontend/src/types/ipc-shapes.json`。
+- [x] 跨 IPC 形状变化**不涉** `docs/contract.md`（boot:error 是壳内部事件，非 product.manifest 契约）
+      → 无需升 `MANIFEST_FORMAT`。
+- [x] AGENTS §9 索引补本 ADR 一行；`docs/known-issues` 的 P5 条目回收。
+
+---
+
+## 7. 实施记录（2026-09-08）
+
+### ① 分类表与旧实现的**有意差异**（唯一一处）
+
+`from_legacy_detail` 与旧 `classify_boot_error` 逐条等价，**除**：裸 `timeout` 不再判为
+「网络不可用」。理由即本 ADR §1「同词不同因」——本地 socket 超时、用户取消都含该词，
+判成网络会给出错误建议。网络判定收窄为 `network` / `registry`。影响面：仅「错误文本含
+timeout 但不含 network/registry」这一类，其标题/建议由「网络不可用」变为兜底
+「DSH 工作台启动失败」+「详情见日志」；文案本身仍与旧兜底逐字一致。单测
+`local_socket_timeout_is_not_network` 钉住该反例，`network unreachable` 仍命中网络。
+
+### ② 删除了 §3A 列出的 `EngineNotReady` 变体（证据）
+
+实施时逐点核对 boot 路径全部错误来源（`boot.rs` 13 处 `emit_boot_error` + `lib.rs` 1 处）：
+boot 路径**不经** `engines::resolve_toolchain`（其调用方只有 `plugins.rs` / `profiles.rs`
+的管理动作），引擎未就绪在 boot 路径上**没有生产者**。造一个没有生产者的变体违背
+「分类必须能穷尽覆盖」的初衷，故删除。复审触发：若将来 boot 路径出现引擎/运行时前置检查
+失败（如 ADR-0010 引导链进入启动路径），再补该变体与文案。
+
+### ③ 载荷形状与兼容分支
+
+`BootErrorPayload` = `{ failure, title, detail, suggestion, actions, log }`（camelCase）：
+- `failure` 为 tagged enum（`{"kind":"network_unavailable"}` / `{"kind":"unknown","detail":"…"}`）；
+- `title`/`suggestion` 保留为后端文案——前端**优先**按 `kind` 取 `content/{zh-CN,en-US}.ts`
+  的本地化文案，取不到（旧缓存载荷 / 未识别 kind）才回退。这带来一个附带收益：
+  en-US 用户不再看到中文错误卡标题与建议（原先后端文案是中文硬编码）。
+- 形状由 `ipc-shapes.json` 双闸门覆盖（Rust 真实 serde 序列化 ↔ TS 接口 key 集）。
+
+### ④ 顺带收口
+
+`ErrorCard.tsx` 的三处硬编码中文（`DIAG 诊断控制台` / `启动中断` / `修复建议：`）随本次
+结构化改造一并入 i18n。另将事件载荷规整纯函数从 `lib/events.ts` 拆到 `lib/eventPayloads.ts`
+——`events.ts` 模块加载期即注册 Tauri 监听（见该文件底部注释），测试 import 它会失败；
+拆出后 `normalizeError` 可直接单测（本次新增 4 条）。
 
 ## 6. 复审条件
 

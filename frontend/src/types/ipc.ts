@@ -293,3 +293,27 @@ export interface LogQueryResult {
   truncated: boolean
 }
 
+/// 启动失败分类（ADR-0012）：tagged enum，`kind` 为判别式。
+export type BootFailureKind =
+  | "credentials_mismatch"
+  | "incompatible_options"
+  | "network_unavailable"
+  | "unknown"
+
+export interface BootFailure {
+  kind: BootFailureKind
+  /// 仅 `unknown` 变体携带（无法类型化的外部原文；展示用，不参与分类）。
+  detail?: string
+}
+
+/// `boot:error` 事件载荷（`BootErrorPayload`，camelCase；形状由 ipc-shapes.json 闸住）。
+/// `title`/`suggestion` 是后端文案（兼容分支）；`failure.kind` 是结构化分类，
+/// 前端按 kind 取本地化文案，取不到再回退后端文案。
+export interface BootErrorPayload {
+  failure: BootFailure
+  title: string
+  detail: string
+  suggestion: string
+  actions: string[]
+  log: string
+}

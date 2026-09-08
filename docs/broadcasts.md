@@ -1962,3 +1962,27 @@
 - 影响：仅周知，无行为变更（纯属性补齐）；`title` 同时是浏览器原生 tooltip。
 - 凭据：前端 `typecheck` 0 错 · `oxlint` 0 warning · `test` 139 passed · `build` 通过
   （本批未动 Rust）。
+
+### 2026-09-08 refactor(boot)：启动失败类型化 BootFailure（架构评审批次 4 · ADR-0012 实施）—— guan（AI 起草）
+
+- **P5 收口**：boot 失败分类从「错误文本子串匹配」改为 tagged enum（`{"kind":"…"}`），
+  新增失败模式触发编译错误。新增 `src-tauri/src/boot_failure.rs`：`BootFailure`
+  （`credentials_mismatch` / `incompatible_options` / `network_unavailable` /
+  `unknown{detail}`）+ `from_legacy_detail` 兜底表 + `BootErrorPayload`。
+- **形状入闸门**：`BootErrorPayload` 登记 `frontend/src/types/ipc-shapes.json`，
+  Rust 真实 serde 序列化 ↔ TS 接口 key 集双闸门生效（15 → 16 条）。
+- **前端**：`ErrorCard` 按 `failure.kind` 取 `content/{zh-CN,en-US}.ts` 本地化文案，
+  取不到回退后端文案（旧缓存载荷兼容）；`normalizeError` 对 kind 做白名单校验。
+  附带收益：**en-US 用户不再看到中文错误卡标题/建议**（原后端文案为中文硬编码）；
+  `ErrorCard` 三处硬编码中文（DIAG 头 / 启动中断 / 修复建议）随本次入 i18n。
+- **纯函数下沉**：事件载荷规整从 `lib/events.ts` 拆到 `lib/eventPayloads.ts`
+  （原模块加载期即注册 Tauri 监听，测试 import 会失败），`normalizeError` 得以单测。
+- **两处对 ADR 的偏离（证据见 ADR §7）**：① 裸 `timeout` 不再判为「网络不可用」
+  （ADR §1「同词不同因」正是要修的缺陷；`network`/`registry` 仍命中）；
+  ② 删除 ADR §3A 列出的 `EngineNotReady`——核对 14 处错误来源后确认 boot 路径不经
+  `engines::resolve_toolchain`，该变体无生产者。
+- 影响：`boot:error` 载荷**新增** `failure` 字段（向后兼容：前端对缺失字段有回退分支）；
+  IPC 命令名集/`docs/contract.md` 契约未动。
+- 凭据：Rust `cargo test` **218 passed**（213 → +5）· `fmt --check` 干净 ·
+  `clippy -D warnings` 干净 · 前端 `typecheck` 0 错 / `oxlint` 0 warning /
+  `test` **144 passed**（139 → +5）/ `build` 通过。

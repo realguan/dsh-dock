@@ -48,6 +48,30 @@ export const t = {
       upgrade_only: "后台升级",
       reselect: "返回重选",
     } as Record<string, string>,
+    // 错误卡静态标签（2026-09-08，ADR-0012 顺手收口硬编码中文）
+    diagHeader: "DIAG 诊断控制台",
+    cardHeader: "启动中断",
+    suggestionLabel: "修复建议：",
+    // 分类文案（ADR-0012）：按 failure.kind 取；取不到回退后端 title/suggestion
+    kinds: {
+      credentials_mismatch: {
+        title: "宿主 DSH 与您的凭据格式不匹配",
+        suggestion:
+          "通常是 DSH 版本过旧：升级到官方最新版可解决（升级只动 pnpm/npm 全局，不碰您的数据）。",
+      },
+      incompatible_options: {
+        title: "宿主 DSH 参数不兼容",
+        suggestion: "请升级您的 DSH 到支持当前终端行为的版本。",
+      },
+      network_unavailable: {
+        title: "网络不可用",
+        suggestion: "实时下载需要网络连接；检查网络后重试。",
+      },
+      unknown: {
+        title: "DSH 工作台启动失败",
+        suggestion: "详情见日志；可重试，若持续请反馈。",
+      },
+    } as Record<string, { title: string; suggestion: string }>,
   },
   mode: {
     title: "选择运行环境",

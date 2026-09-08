@@ -13,6 +13,7 @@
 //! 启动过程全链路可视化（壳页面：frontend/src/pages/BootIndex.tsx）。
 
 mod boot;
+mod boot_failure;
 mod build_approvals;
 mod commands;
 mod credentials;
@@ -450,7 +451,8 @@ pub fn run() {
 #[cfg(unix)]
 #[cfg(test)]
 mod tests {
-    use super::boot::{cached_status_or_default, classify_boot_error, ensure_switchable_profile};
+    use super::boot::{cached_status_or_default, ensure_switchable_profile};
+    use super::boot_failure::BootFailure;
 
     #[test]
     fn cookie_parsing_adjusts_samesite_and_domain() {
@@ -487,33 +489,39 @@ mod tests {
         assert!(status.node.is_none());
     }
 
+    // 分类矩阵（2026-09-08，ADR-0012）：变体 + 动作集合逐条钉住；文案逐字断言
+    // 由 boot_failure.rs 的单测负责。
     #[test]
     fn credential_mismatch_classifies_upgrade() {
-        let (title, _, actions) = classify_boot_error(
+        let f = BootFailure::from_legacy_detail(
             "credentials-local: the value for \"version\" in ~/.dsh/.credentials.yaml must be a string",
         );
-        assert!(title.contains("凭据"));
-        assert!(actions.contains(&"upgrade"));
-        assert!(actions.contains(&"retry"));
+        assert_eq!(f, BootFailure::CredentialsMismatch);
+        assert!(f.title().contains("凭据"));
+        assert!(f.actions().contains(&"upgrade"));
+        assert!(f.actions().contains(&"retry"));
     }
 
     #[test]
     fn network_classifies_retry_only() {
-        let (_, _, actions) = classify_boot_error("registry 不可达：network timeout");
-        assert_eq!(actions, vec!["retry"]);
+        let f = BootFailure::from_legacy_detail("registry 不可达：network timeout");
+        assert_eq!(f, BootFailure::NetworkUnavailable);
+        assert_eq!(f.actions(), vec!["retry"]);
     }
 
     #[test]
     fn unknown_option_classifies_upgrade() {
-        let (_, _, actions) = classify_boot_error("error: unknown option '--no-open'");
-        assert!(actions.contains(&"upgrade"));
+        let f = BootFailure::from_legacy_detail("error: unknown option '--no-open'");
+        assert_eq!(f, BootFailure::IncompatibleOptions);
+        assert!(f.actions().contains(&"upgrade"));
     }
 
     #[test]
     fn generic_failure_classifies_retry() {
-        let (title, _, actions) = classify_boot_error("some weird crash");
-        assert!(title.contains("启动失败"));
-        assert_eq!(actions, vec!["retry"]);
+        let f = BootFailure::from_legacy_detail("some weird crash");
+        assert!(matches!(f, BootFailure::Unknown { .. }));
+        assert!(f.title().contains("启动失败"));
+        assert_eq!(f.actions(), vec!["retry"]);
     }
 
     #[test]

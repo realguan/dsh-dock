@@ -1,12 +1,53 @@
 {
-  "ShellSettings": [
-    "autoRestart",
-    "defaultMode",
-    "defaultProfile",
-    "dismissedUpdate",
-    "locale",
-    "showFloatingSwitcher",
-    "switcherShortcut"
+  "AggregatePlugin": [
+    "description",
+    "name",
+    "sources"
+  ],
+  "AggregateSource": [
+    "profile",
+    "version"
+  ],
+  "BootErrorPayload": [
+    "actions",
+    "detail",
+    "failure",
+    "log",
+    "suggestion",
+    "title"
+  ],
+  "CopyConfigOutcome": [
+    "copied",
+    "detail",
+    "skipped_existing"
+  ],
+  "DshDiagnosticInfo": [
+    "isReady",
+    "path",
+    "source",
+    "version"
+  ],
+  "NodeDiagnosticInfo": [
+    "isReady",
+    "path",
+    "source",
+    "version"
+  ],
+  "PlatformDiagnosticInfo": [
+    "arch",
+    "os"
+  ],
+  "PluginRowState": [
+    "contributed_ids",
+    "id",
+    "patch_entries",
+    "pkg_name",
+    "shell_disabled"
+  ],
+  "PnpmDiagnosticInfo": [
+    "isReady",
+    "path",
+    "version"
   ],
   "ProfileSummary": [
     "bundles",
@@ -14,6 +55,11 @@
     "materialized",
     "name",
     "web_ui"
+  ],
+  "RepairOutcome": [
+    "message",
+    "sessionId",
+    "success"
   ],
   "SessionItem": [
     "active",
@@ -37,55 +83,14 @@
     "updatedAt",
     "validator"
   ],
-  "PluginRowState": [
-    "contributed_ids",
-    "id",
-    "patch_entries",
-    "pkg_name",
-    "shell_disabled"
-  ],
-  "AggregatePlugin": [
-    "description",
-    "name",
-    "sources"
-  ],
-  "AggregateSource": [
-    "profile",
-    "version"
-  ],
-  "CopyConfigOutcome": [
-    "copied",
-    "detail",
-    "skipped_existing"
-  ],
-  "RepairOutcome": [
-    "message",
-    "sessionId",
-    "success"
-  ],
-  "SystemDiagnosticsReport": [
-    "dsh",
-    "node",
-    "platform",
-    "pnpm",
-    "storage"
-  ],
-  "NodeDiagnosticInfo": [
-    "isReady",
-    "path",
-    "source",
-    "version"
-  ],
-  "PnpmDiagnosticInfo": [
-    "isReady",
-    "path",
-    "version"
-  ],
-  "DshDiagnosticInfo": [
-    "isReady",
-    "path",
-    "source",
-    "version"
+  "ShellSettings": [
+    "autoRestart",
+    "defaultMode",
+    "defaultProfile",
+    "dismissedUpdate",
+    "locale",
+    "showFloatingSwitcher",
+    "switcherShortcut"
   ],
   "StorageDiagnosticInfo": [
     "dshHome",
@@ -95,8 +100,11 @@
     "sessionsCount",
     "totalBytes"
   ],
-  "PlatformDiagnosticInfo": [
-    "arch",
-    "os"
+  "SystemDiagnosticsReport": [
+    "dsh",
+    "node",
+    "platform",
+    "pnpm",
+    "storage"
   ]
 }

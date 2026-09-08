@@ -401,6 +401,19 @@ mod gate_tests {
             }
         );
         assert_shape!(
+            "BootErrorPayload",
+            crate::boot_failure::BootErrorPayload {
+                failure: crate::boot_failure::BootFailure::Unknown {
+                    detail: String::new(),
+                },
+                title: "",
+                detail: String::new(),
+                suggestion: "",
+                actions: Vec::new(),
+                log: String::new(),
+            }
+        );
+        assert_shape!(
             "ProfileSummary",
             ProfileSummary {
                 name: String::new(),

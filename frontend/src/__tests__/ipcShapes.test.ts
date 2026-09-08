@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest"
 import shapesRaw from "@/types/ipc-shapes.json?raw"
 import type {
   AggregatePlugin,
+  BootErrorPayload,
   AggregateSource,
   CopyConfigOutcome,
   DshDiagnosticInfo,
@@ -39,6 +40,17 @@ function expectShape<T>(name: string, keys: AllKeys<T>) {
 }
 
 describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
+  it("BootErrorPayload（camelCase，含 tagged failure）", () => {
+    expectShape<BootErrorPayload>("BootErrorPayload", {
+      failure: true,
+      title: true,
+      detail: true,
+      suggestion: true,
+      actions: true,
+      log: true,
+    })
+  })
+
   it("ShellSettings（camelCase）", () => {
     expectShape<ShellSettings>("ShellSettings", {
       defaultMode: true,

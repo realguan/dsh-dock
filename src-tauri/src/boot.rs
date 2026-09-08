@@ -696,53 +696,24 @@ pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
     );
 }
 
-/// 发射 boot:error 事件（错误卡数据：标题/详情/建议/可用动作）。
+/// 发射 boot:error 事件（错误卡数据：分类 + 标题/详情/建议/可用动作）。
+///
+/// 2026-09-08（ADR-0012）：分类改为 `BootFailure`（tagged enum，`kind` 判别式），
+/// 外部文本经兜底表转换；前端按 `kind` 取本地化文案，`title`/`suggestion` 保留为
+/// 兼容分支。
 pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
     use tauri::Emitter;
-    let (title, suggestion, actions) = classify_boot_error(detail);
-    let payload = serde_json::json!({
-        "title": title,
-        "detail": detail,
-        "suggestion": suggestion,
-        "actions": actions,
-        "log": log_tail,
+    let payload = crate::boot_failure::BootErrorPayload::classify(detail, log_tail);
+    let value = serde_json::to_value(&payload).unwrap_or_else(|e| {
+        tracing::error!("boot:error 载荷序列化失败: {e}");
+        serde_json::json!({ "detail": detail, "log": log_tail })
     });
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
         if let Ok(mut err) = shell_state.boot_error.lock() {
-            *err = Some(payload.clone());
+            *err = Some(value.clone());
         }
     }
-    let _ = app.emit("boot:error", payload);
-}
-
-/// 错误分类：把 dsh 世界的问题归到可行动动作（upgrade / retry）。
-pub(crate) fn classify_boot_error(detail: &str) -> (&'static str, &'static str, Vec<&'static str>) {
-    let d = detail.to_lowercase();
-    if d.contains("credentials") || d.contains("must be a string") {
-        (
-            "宿主 DSH 与您的凭据格式不匹配",
-            "通常是 DSH 版本过旧：升级到官方最新版可解决（升级只动 pnpm/npm 全局，不碰您的数据）。",
-            vec!["upgrade", "retry"],
-        )
-    } else if d.contains("unknown option") || d.contains("incompatible") {
-        (
-            "宿主 DSH 参数不兼容",
-            "请升级您的 DSH 到支持当前终端行为的版本。",
-            vec!["upgrade", "retry"],
-        )
-    } else if d.contains("network") || d.contains("registry") || d.contains("timeout") {
-        (
-            "网络不可用",
-            "实时下载需要网络连接；检查网络后重试。",
-            vec!["retry"],
-        )
-    } else {
-        (
-            "DSH 工作台启动失败",
-            "详情见日志；可重试，若持续请反馈。",
-            vec!["retry"],
-        )
-    }
+    let _ = app.emit("boot:error", value);
 }
 
 /// 从日志提取崩溃原因摘要（首条顶层 Error 行，截断 200 字符），带 `<br/>` 前缀。

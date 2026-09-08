@@ -43,6 +43,31 @@ export const enUS: AppCopy = {
       upgrade_only: "Upgrade in Background",
       reselect: "Reselect",
     } as Record<string, string>,
+    // Error-card static labels (2026-09-08, ADR-0012)
+    diagHeader: "DIAG Console",
+    cardHeader: "Launch Interrupted",
+    suggestionLabel: "Suggested fix:",
+    // Per-kind copy (ADR-0012): looked up by failure.kind, falling back to the
+    // backend-provided title/suggestion when the kind is unknown.
+    kinds: {
+      credentials_mismatch: {
+        title: "Your DSH host does not match your credential format",
+        suggestion:
+          "This usually means DSH is too old: upgrading to the latest official release fixes it (the upgrade only touches the global pnpm/npm, never your data).",
+      },
+      incompatible_options: {
+        title: "DSH host options are incompatible",
+        suggestion: "Upgrade your DSH to a version that supports the current terminal behavior.",
+      },
+      network_unavailable: {
+        title: "Network unavailable",
+        suggestion: "Live downloads need a network connection; check your network and retry.",
+      },
+      unknown: {
+        title: "DSH workbench failed to start",
+        suggestion: "See the log for details; retry, and report it if it keeps happening.",
+      },
+    } as Record<string, { title: string; suggestion: string }>,
   },
   mode: {
     title: "Select Runtime Environment",

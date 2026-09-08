@@ -144,7 +144,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ✅ 已落地（见 §11/§12/§13） |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
-| 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⚠️ ADR-0012 已立（草案）；实施待评审 |
+| 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ✅ 已落地（ADR-0012 已接受；见 §16） |
 | 5 | `updates.rs` HTTP seam + 离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ✅ 已落地（见 §10/§14/§15） |
 
 ## 4. 不建议做
@@ -428,3 +428,27 @@ packument 不会缺这两键，坏响应路径已被 `continue` 覆盖。
 
 **验证**：`cargo test` **206 passed**（204 → +2 表驱动用例）· `cargo fmt --check` 干净 ·
 `clippy --all-targets -D warnings` 干净 · 前端 `typecheck`/`oxlint`/`test`/`build` 全绿（未动前端）。
+
+## 16. 批次 4 落地记录（2026-09-08，`refactor(boot): 启动失败类型化 BootFailure`）——ADR-0012 实施
+
+**P5 收口**：boot 失败分类从「对错误文本做子串匹配」改为 tagged enum
+（`{"kind":"…"}`），新增失败模式会触发编译错误。
+
+| 项 | 落地 |
+|:---|:---|
+| 分类 | 新增 `src-tauri/src/boot_failure.rs`：`BootFailure`（`credentials_mismatch` / `incompatible_options` / `network_unavailable` / `unknown{detail}`）+ `from_legacy_detail` 兜底表 |
+| 载荷 | `BootErrorPayload`（`failure` + 旧 `title`/`suggestion`/`actions`/`detail`/`log`），形状入 `ipc-shapes.json` 双闸门 |
+| 前端 | `ErrorCard` 按 `failure.kind` 取 `content/{zh-CN,en-US}.ts` 本地化文案，回退后端文案；`normalizeError` 白名单校验 kind |
+| 纯函数下沉 | 事件载荷规整从 `lib/events.ts` 拆到 `lib/eventPayloads.ts`（原模块加载期即注册监听，测试无法 import） |
+
+**两处对 ADR 的偏离（已在 ADR §7 记录证据）**：
+1. 裸 `timeout` 不再判为网络（ADR §1「同词不同因」正是要修的缺陷）；
+2. 删除 ADR §3A 列出的 `EngineNotReady`——核对 14 处错误来源后确认 boot 路径
+   **不经** `engines::resolve_toolchain`，该变体在 boot 路径无生产者。
+
+**附带收益**：en-US 用户不再看到中文错误卡标题/建议（原后端文案为中文硬编码）；
+`ErrorCard` 三处硬编码中文（DIAG 头、启动中断、修复建议）随本次入 i18n。
+
+**验证**：`cargo test` **218 passed**（213 → +5 分类/载荷用例）· `fmt --check` 干净 ·
+`clippy -D warnings` 干净 · 前端 `typecheck` 0 错 · `oxlint` 0 warning ·
+`test` **144 passed**（139 → +5：4 条 `normalizeError` + 1 条形状闸门）· `build` 通过。

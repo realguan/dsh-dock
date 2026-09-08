@@ -42,7 +42,11 @@ export function ErrorCard({
   const [actionError, setActionError] = useState<string | null>(null)
   const { copied, copy } = useCopy()
   const actions = payload.actions?.length ? payload.actions : ["retry"]
-  const title = payload.title || t.error.fallbackTitle
+  // 2026-09-08（ADR-0012）：优先按结构化分类取本地化文案；后端文案作为兼容分支
+  // （旧缓存载荷 / 未来新增的未识别 kind）。
+  const kindCopy = payload.failure ? t.error.kinds[payload.failure.kind] : undefined
+  const title = kindCopy?.title ?? payload.title ?? t.error.fallbackTitle
+  const suggestion = kindCopy?.suggestion ?? payload.suggestion
 
   const actionLabel = (id: string): string => {
     return t.error.actions[id] ?? id
@@ -80,6 +84,7 @@ export function ErrorCard({
         diag ? "w-full border-warn/30" : "mx-auto mt-6 w-full max-w-xl border-warn/35 shadow-md"
       }`}
       role="alert"
+      data-failure-kind={payload.failure?.kind ?? "none"}
     >
       {/* 诊断状态头 */}
       <div className="flex items-center justify-between border-b border-warn/20 bg-warn-soft/40 px-4 py-2.5">
@@ -88,7 +93,7 @@ export function ErrorCard({
             <AlertTriangle className="size-3" />
           </span>
           <span className="font-mono text-xs font-semibold tracking-wide text-warn">
-            {diag ? "DIAG 诊断控制台" : "启动中断"}
+            {diag ? t.error.diagHeader : t.error.cardHeader}
           </span>
         </div>
         <span className="font-mono text-label font-medium text-dim tabular-nums">
@@ -107,12 +112,12 @@ export function ErrorCard({
         )}
 
         {/* 建议解决方案 */}
-        {payload.suggestion && (
+        {suggestion && (
           <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-wash/70 p-3 text-xs leading-relaxed text-dim">
             <Sparkles className="mt-0.5 size-3.5 shrink-0 text-brand-deep" />
             <div className="flex-1">
-              <span className="font-semibold text-brand-deep">修复建议：</span>
-              {payload.suggestion}
+              <span className="font-semibold text-brand-deep">{t.error.suggestionLabel}</span>
+              {suggestion}
             </div>
           </div>
         )}
