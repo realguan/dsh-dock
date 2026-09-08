@@ -3,11 +3,12 @@
 // 强调与完整遥测详情（等宽可选中 + 一键复制）；error 行警示态、详情展开。
 // 状态由图标 + 文字双重表达；竖向导轨由 BootTimeline 容器层统一绘制，
 // 节点自带底色遮罩，行高变化不再撕裂连接线。
-import { useState } from "react"
 import { motion } from "framer-motion"
 import { Check, Loader2, AlertCircle, Copy } from "lucide-react"
 import type { BootStepState } from "@/types/events"
 import { useI18n } from "@/stores/i18nStore"
+import { useCopy } from "@/hooks/useCopy"
+import { logger } from "@/lib/logger"
 
 export function BootStep({
   no,
@@ -23,17 +24,17 @@ export function BootStep({
   status: BootStepState
 }) {
   const { t } = useI18n()
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const isDone = status === "done"
   const isRunning = status === "running"
   const isError = status === "error"
   const sideNote = detail ?? hint
 
-  const copyDetail = () => {
+  // 2026-09-08：写失败不再假装「已复制」（原写法 `.catch(() => {})` + 立即置位）
+  const copyDetail = async () => {
     if (!detail) return
-    navigator.clipboard.writeText(detail).catch(() => {})
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const outcome = await copy(detail)
+    if (!outcome.ok) logger.warn("[boot]", "复制步骤详情失败", { error: outcome.error })
   }
 
   return (

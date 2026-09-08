@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
 import { pluginToggleTargets } from "@/lib/pluginToggle"
@@ -96,7 +97,7 @@ export function ProfileDetailPane({
   const [versionsError, setVersionsError] = useState<string | null>(null)
 
   // YAML 复制反馈
-  const [copiedYaml, setCopiedYaml] = useState(false)
+  const { copied: copiedYaml, copy: copyYamlText } = useCopy()
 
   const reload = useCallback(() => {
     if (!name) return
@@ -270,13 +271,12 @@ export function ProfileDetailPane({
       .finally(() => setOpBusy(null))
   }
 
-  const copyYaml = () => {
+  const copyYaml = async () => {
     if (!detail?.patch_yaml) return
-    void navigator.clipboard.writeText(detail.patch_yaml).then(() => {
-      setCopiedYaml(true)
-      onNotice(t.profiles.copyPatchSuccess, "ok")
-      setTimeout(() => setCopiedYaml(false), 2000)
-    })
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copyYamlText(detail.patch_yaml)
+    if (outcome.ok) onNotice(t.profiles.copyPatchSuccess, "ok")
+    else onNotice(t.error.copyFailed, "warn")
   }
 
   const liveEntries =

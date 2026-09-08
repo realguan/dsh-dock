@@ -39,6 +39,8 @@ export const t = {
   error: {
     fallbackTitle: "启动失败",
     actionFailed: "动作失败",
+    // 剪贴板写入失败（2026-09-08，批次 0b）：绝不静默假装「已复制」
+    copyFailed: "复制失败——请手动选中内容复制",
     actions: {
       retry: "重试",
       upgrade: "升级 DSH 并重试",

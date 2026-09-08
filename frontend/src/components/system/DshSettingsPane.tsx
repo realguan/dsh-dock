@@ -10,6 +10,7 @@ import {
   Sliders,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 
@@ -22,10 +23,9 @@ export function DshSettingsPane({
   const [content, setContent] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
+  const loadData = useCallback(async () => {    setLoading(true)
     try {
       const text = await api.getDshSettingsRaw()
       setContent(text)
@@ -53,11 +53,10 @@ export function DshSettingsPane({
     }
   }
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(content).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+  const handleCopy = async () => {
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copy(content)
+    if (!outcome.ok) onNotice?.(t.error.copyFailed, "warn")
   }
 
   return (

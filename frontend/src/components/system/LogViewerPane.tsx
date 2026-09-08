@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { localizeLogTimestamp } from "@/lib/format"
 import { Button } from "@/components/ui/button"
@@ -30,7 +31,7 @@ export function LogViewerPane({
   const [loading, setLoading] = useState(false)
   const [searchFilter, setSearchFilter] = useState("")
   const [autoScroll, setAutoScroll] = useState(true)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
 
   const terminalRef = useRef<HTMLDivElement>(null)
 
@@ -59,14 +60,13 @@ export function LogViewerPane({
     }
   }, [logData, autoScroll])
 
-  const copyLogs = () => {
+  const copyLogs = async () => {
     if (!logData?.lines.length) return
     const text = logData.lines.join("\n")
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      onNotice(t.console.logsCopied, "ok")
-      setTimeout(() => setCopied(false), 2000)
-    })
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copy(text)
+    if (outcome.ok) onNotice(t.console.logsCopied, "ok")
+    else onNotice(t.error.copyFailed, "warn")
   }
 
   const clearScreen = () => {

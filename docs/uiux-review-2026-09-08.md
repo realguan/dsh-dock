@@ -24,7 +24,7 @@
 | U8 | **窗口最小宽度 < 布局断点**，主从布局在允许的窗口尺寸下静默塌成单列 | HIGH | ⬜ 待做 | `lib.rs:3012` (860) vs `lg`=1024 |
 | U9 | **破坏性操作无确认**：卸载插件、覆写凭据、覆写引擎设置 | HIGH | ⬜ 待做 | `ProfileDetailPane.tsx:692-700` 等 |
 | U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ⬜ 待做 | 全仓 `sticky` 0 处 |
-| U11 | toast 无 `aria-live`；10 处「已复制」假成功 | MEDIUM | ⚠️ 部分（live region 已修；假成功待做） | `ui/toast.tsx:11-61` |
+| U11 | toast 无 `aria-live`；11 处「已复制」假成功 | MEDIUM | ✅ 已修（live region + clipboard 收口） | `ui/toast.tsx:11-61`、`lib/clipboard.ts` |
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ⬜ 待做 | `index.css:8` 无 `.dark` 应用点 |
 | U13 | 图标语义错配 3 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ⬜ 待做 | 见 §6 |
 | U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ⬜ 待做 | `SessionManager.tsx:344-360` vs `:477-489` |
@@ -180,13 +180,16 @@
 **建议**：以 `ProfileDeleteDialog` 为模板统一；两个文件覆写加「先备份到 `*.bak-<时间戳>`」，
 与本次配置事故（`settings.yaml` 被写残）同源风险。
 
-### 3.4 「已复制」假成功（10 处）
+### 3.4 「已复制」假成功（11 处）—— ✅ 已修（架构批次 0b，2026-09-08）
 `copied` 在 Promise settle 之前就置位，拒绝被忽略：`ErrorCard.tsx:65-70`（连 `.catch` 都没有）、
 `MarketPluginCard.tsx:46-53`、`BootStep.tsx:32-37`、`ProfileDetailPane.tsx:273-280`、
 `DiagnosticsPane.tsx:76-81`、`LogViewerPane.tsx:62-70`、`DshSettingsPane.tsx:56-61`、
-`SessionManager.tsx:212-217`、`McpManager.tsx:239-244`、`About.tsx:56-70`。
-`BootStep.tsx:34` 是唯一正确写法（`.catch`）。
-**建议**：抽 `useCopy()` hook（`await` → `.then` 置位 → `.catch` 提示失败），10 处一次收口。
+`SessionManager.tsx:212-217`（另有 `:219-225` 复制路径，本表漏记）、`McpManager.tsx:239-244`、
+`About.tsx:56-70`。
+**更正**：原文写「`BootStep.tsx:34` 是唯一正确写法（`.catch`）」——不成立，它
+`.catch(() => {})` 吞掉后**照样立即置位**，与其余各处的「假成功」同病。
+**修法**：抽 `lib/clipboard.ts::writeClipboard` + `hooks/useCopy`，11 处一次收口；
+`clipboardGate.test.ts` 源码闸门禁止再绕过。
 
 ### 3.5 toast
 - 两个独立实例：`ProfileManager.tsx:58-63`（3500ms）与 `About.tsx:30-35`（3000ms）。

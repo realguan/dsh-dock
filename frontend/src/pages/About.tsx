@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Copy, ExternalLink, Globe, Server } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { resource } from "@/lib/resource"
 import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
@@ -28,6 +29,7 @@ export function About() {
 
   const [wbUrl, setWbUrl] = useState<string | null>(null)
   const [toast, setToast] = useState<ToastMessage | null>(null)
+  const { copy } = useCopy()
 
   const showToast = (message: string, kind: "ok" | "warn" | "info" = "ok") => {
     setToast({ id: `${Date.now()}`, message, kind })
@@ -53,7 +55,7 @@ export function About() {
     }
   }, [hydrate, setVersions])
 
-  const copyDiagnostics = () => {
+  const copyDiagnostics = async () => {
     const report = [
       `=== DSH Dock Diagnostics ===`,
       `Client Version: ${clientVersion ?? "Unknown"}`,
@@ -64,9 +66,10 @@ export function About() {
       `Timestamp: ${new Date().toISOString()}`,
     ].join("\n")
 
-    void navigator.clipboard.writeText(report).then(() => {
-      showToast(t.about.diagnosticsCopied, "ok")
-    })
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copy(report)
+    if (outcome.ok) showToast(t.about.diagnosticsCopied, "ok")
+    else showToast(t.error.copyFailed, "warn")
   }
 
   return (

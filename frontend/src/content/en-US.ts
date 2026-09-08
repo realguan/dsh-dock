@@ -34,6 +34,8 @@ export const enUS: AppCopy = {
   error: {
     fallbackTitle: "Launch Failed",
     actionFailed: "Action Failed",
+    // Clipboard write failure (2026-09-08, batch 0b): never fake a "copied" state
+    copyFailed: "Copy failed — please select the text and copy manually",
     actions: {
       retry: "Retry",
       upgrade: "Upgrade DSH & Retry",

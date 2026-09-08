@@ -1,5 +1,4 @@
 // components/market/MarketPluginCard.tsx —— 插件市场单个插件卡片 (高质感工程控制台美学)
-import { useState } from "react"
 import {
   Check,
   Code2,
@@ -12,6 +11,7 @@ import {
   Star,
 } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
+import { useCopy } from "@/hooks/useCopy"
 import type { MarketPlugin } from "@/types/market"
 import { getProfileColorClass } from "@/lib/format"
 import { getPluginDescription, getPluginDisplayName } from "@/lib/market"
@@ -36,20 +36,19 @@ export function MarketPluginCard({
   onCopyNotice,
 }: MarketPluginCardProps) {
   const { t, activeLocale } = useI18n()
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
 
   const isInstalled = installedProfiles.length > 0
   const isOfficial = plugin.owner.toLowerCase().includes("deepseek") || plugin.name.startsWith("@deepseek-ai/")
   const displayName = getPluginDisplayName(plugin.name)
   const desc = getPluginDescription(plugin.description, activeLocale)
 
-  const handleCopyCmd = (e: React.MouseEvent) => {
+  // 2026-09-08：原写法连 promise 都没接——写失败照样显示「已复制」并弹「已复制」
+  const handleCopyCmd = async (e: React.MouseEvent) => {
     e.stopPropagation()
     const cmd = plugin.install || `dsh plugin --profile web add ${plugin.npm || plugin.name}`
-    void navigator.clipboard.writeText(cmd)
-    setCopied(true)
-    onCopyNotice?.(t.market.copied)
-    setTimeout(() => setCopied(false), 2000)
+    const outcome = await copy(cmd)
+    onCopyNotice?.(outcome.ok ? t.market.copied : t.error.copyFailed)
   }
 
   return (

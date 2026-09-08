@@ -13,6 +13,8 @@ import {
   Terminal,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { logger } from "@/lib/logger"
+import { useCopy } from "@/hooks/useCopy"
 import type { TerminalAction } from "@/types/ipc"
 import type { BootErrorEvent } from "@/types/events"
 import { useI18n } from "@/stores/i18nStore"
@@ -38,7 +40,7 @@ export function ErrorCard({
   const { t } = useI18n()
   const [pending, setPending] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const actions = payload.actions?.length ? payload.actions : ["retry"]
   const title = payload.title || t.error.fallbackTitle
 
@@ -62,11 +64,11 @@ export function ErrorCard({
       .finally(() => setPending((p) => (p === id ? null : p)))
   }
 
-  const handleCopyLog = () => {
+  // 2026-09-08：原写法连 promise 都没接——写失败照样显示「已复制」。
+  const handleCopyLog = async () => {
     if (!payload.log) return
-    navigator.clipboard.writeText(payload.log)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const outcome = await copy(payload.log)
+    if (!outcome.ok) logger.warn("[boot]", "复制诊断日志失败", { error: outcome.error })
   }
 
   return (

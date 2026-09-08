@@ -19,6 +19,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import type { McpServerConfig, PluginRuntimeSnapshot } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
@@ -91,7 +92,7 @@ export function McpManager({
   const [servers, setServers] = useState<McpServerConfig[] | null>(null)
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
-  const [copiedName, setCopiedName] = useState<string | null>(null)
+  const { copiedKey: copiedName, copy } = useCopy()
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // 新建/编辑 Dialog 状态
@@ -234,13 +235,12 @@ export function McpManager({
     }
   }
 
-  const copyPrefix = (serverName: string) => {
+  const copyPrefix = async (serverName: string) => {
     const prefix = `mcp__${serverName}__*`
-    void navigator.clipboard.writeText(prefix).then(() => {
-      setCopiedName(serverName)
-      onNotice?.(`已复制工具匹配前缀：${prefix}`, "ok")
-      setTimeout(() => setCopiedName(null), 2000)
-    })
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copy(prefix, serverName)
+    if (outcome.ok) onNotice?.(`已复制工具匹配前缀：${prefix}`, "ok")
+    else onNotice?.(t.error.copyFailed, "warn")
   }
 
   return (

@@ -1691,3 +1691,21 @@
 
 
 
+
+### 2026-09-08 fix(frontend)：剪贴板写入唯一入口（架构评审批次 0b）—— guan（AI 起草）
+
+- 缺陷：11 处各自直呼 `navigator.clipboard.writeText(...)`，处理方式分四种——
+  完全不接 promise（`ErrorCard` 写失败仍显示「已复制」）、`.catch(() => {})` 后照样
+  置位（`BootStep`）、只挂 `.then` 成功分支（8 处，无失败反馈 + unhandled rejection）。
+  **更正评审原判**：原文写「`BootStep.tsx:34` 是唯一正确写法」不成立——它吞掉拒绝后
+  仍立即置位，与其余各处同病；另外 `SessionManager` 还有一处复制路径（`:219-225`）
+  原表漏记，实为 11 处。
+- 修法：新增 `lib/clipboard.ts::writeClipboard`（`write` 可注入 → 纯逻辑可测）+
+  `hooks/useCopy`（成功才置位、自动复位、不收回调参数以免引用不稳，同 onNotice 裁定）。
+  11 处改为 `await copy(...)` 后按结果分流：有 toast 渠道 → `onNotice(t.error.copyFailed)`，
+  boot 页无 toast → `logger.warn`。
+- 机器闸门：`__tests__/clipboardGate.test.ts`（`import.meta.glob(?raw)` 扫全量源）
+  断言 `clipboard.writeText` 只允许出现在 `lib/clipboard.ts`；探针文件实测被抓出。
+- 影响：仅周知。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **126 passed**
+  （120 → +4 `clipboard` 单测 +2 闸门）。

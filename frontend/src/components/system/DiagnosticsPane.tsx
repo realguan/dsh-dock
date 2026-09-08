@@ -13,6 +13,7 @@ import {
   Server,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 import type { SystemDiagnosticsReport } from "@/types/ipc"
@@ -40,7 +41,7 @@ export function DiagnosticsPane({
     !cachedReport || Date.now() - lastFetchedAt >= CACHE_TTL_MS,
   )
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
 
   const fetchDiagnostics = useCallback(
     (force = false) => {
@@ -78,14 +79,12 @@ export function DiagnosticsPane({
     fetchDiagnostics(false)
   }, [fetchDiagnostics])
 
-  const copyFullReport = () => {
+  const copyFullReport = async () => {
     if (!report) return
-    const text = JSON.stringify(report, null, 2)
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      onNotice(t.console.reportCopied, "ok")
-      setTimeout(() => setCopied(false), 2000)
-    })
+    // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
+    const outcome = await copy(JSON.stringify(report, null, 2))
+    if (outcome.ok) onNotice(t.console.reportCopied, "ok")
+    else onNotice(t.error.copyFailed, "warn")
   }
 
   if (loading && !report) {

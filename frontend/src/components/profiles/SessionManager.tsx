@@ -31,6 +31,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import type { SessionItem } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
@@ -116,8 +117,9 @@ export function SessionManager({
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  // 复制反馈各用一套状态（id 与 path 可同时处于「已复制」），失败不置位（2026-09-08）
+  const { copiedKey: copiedId, copy: copyId } = useCopy()
+  const { copiedKey: copiedPath, copy: copyPath } = useCopy()
 
   // 视图模式：按项目分组 vs 平铺列表
   const [viewMode, setViewMode] = useState<"grouped" | "flat">("grouped")
@@ -209,19 +211,15 @@ export function SessionManager({
     }
   }
 
-  const handleCopyId = (id: string) => {
-    void navigator.clipboard.writeText(id).then(() => {
-      setCopiedId(id)
-      setTimeout(() => setCopiedId((curr) => (curr === id ? null : curr)), 2000)
-    })
+  const handleCopyId = async (id: string) => {
+    const outcome = await copyId(id, id)
+    if (!outcome.ok) onNotice?.(t.error.copyFailed, "warn")
   }
 
-  const handleCopyPath = (path: string) => {
-    void navigator.clipboard.writeText(path).then(() => {
-      setCopiedPath(path)
-      onNotice?.(t.sessions.pathCopied, "ok")
-      setTimeout(() => setCopiedPath((curr) => (curr === path ? null : curr)), 2000)
-    })
+  const handleCopyPath = async (path: string) => {
+    const outcome = await copyPath(path, path)
+    if (outcome.ok) onNotice?.(t.sessions.pathCopied, "ok")
+    else onNotice?.(t.error.copyFailed, "warn")
   }
 
   const handleOpenWorkspace = async (path: string) => {

@@ -140,7 +140,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 批次 | 内容 | 风险 | ADR | 状态 |
 |:---|:---|:---|:---|:---|
 | 0a | 修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删死代码 `ProfileDetailDialog`；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ✅ 已落地（见 §7） |
-| 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ⬜ 待做 |
+| 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ✅ 已落地（见 §8） |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ⬜ 待做 |
@@ -199,3 +199,25 @@ Rust 侧 `include_str!` 读入并比对真实序列化结果；前端侧
 **未纳入**：10 处 clipboard promise 假成功 → 批次 0b；「组件内纯逻辑下沉 `lib/` 再写真实测试」
 （被删的 sessions/mcp 测试所覆盖的逻辑仍在组件内）→ 归 P7 后续批次。
 
+
+## 8. 批次 0b 落地记录（2026-09-08，`fix(frontend): 剪贴板写入唯一入口`）
+
+**缺陷**：11 处调用各自直呼 `navigator.clipboard.writeText(...)`，处理方式分四种：
+
+| 写法 | 处 | 后果 |
+|:---|:---|:---|
+| 完全不接 promise | `ErrorCard.tsx` | 写失败仍显示「已复制」（最严重） |
+| `.catch(() => {})` 后立即置位 | `BootStep.tsx` | 失败照样显示「已复制」 |
+| 只挂 `.then` 成功分支 | 8 处 | 无失败反馈 + unhandled rejection |
+| `.then` + 置位 | `BootStep.tsx:34`（评审原判「唯一正确」） | 同第 2 行——原判只看了「有没有 catch」 |
+
+**收口**：新增 `lib/clipboard.ts::writeClipboard`（`write` 可注入，纯逻辑可测）+
+`hooks/useCopy`（成功才置位、自动复位、不收回调参数以免引用不稳）。11 处全部改为
+`await copy(...)` 并按结果分流：有 toast 渠道的走 `onNotice(t.error.copyFailed)`，
+boot 页走 `logger.warn`。
+
+**机器闸门**：`__tests__/clipboardGate.test.ts` 用 `import.meta.glob(?raw)` 扫全量源，
+断言 `clipboard.writeText` 只允许出现在 `lib/clipboard.ts`——探针文件实测被抓出。
+
+**测试**：`__tests__/clipboard.test.ts`（4 条）：成功透传原文 / 失败带原始错误不抛 /
+非 Error 拒绝不抛 / 空串照写（调用方负责过滤）。
