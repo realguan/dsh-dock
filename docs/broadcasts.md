@@ -1669,5 +1669,25 @@
   `clippy --all-targets -D warnings` 干净 · `pnpm typecheck` 0 err · `oxlint` 0 warning ·
   `pnpm test` **131 passed**（125 → +6）。
 
+### 2026-09-08 chore：清理惰性守卫、死代码与同义反复测试（架构评审批次 0a）—— guan（AI 起草）
+
+- `build.rs` 删 5 条 `../ui/*` rerun 监视：`ui/` 早已不存在，是 2026-08-23「复用旧前端」
+  事故留下的惰性守卫；**上游已覆盖**——`tauri-build` 2.6.3 自己就为 `frontendDist`
+  （`src/codegen/context.rs:87-95`）与 `capabilities/`（`src/acl.rs:427`）发 rerun 指令。
+  留着只会让人以为守卫还在。
+- `scripts/regen-icons.sh` 三条 `ui/assets/dsh-logo.svg` 死路径 → `assets/dsh-logo.svg`
+  （`frontend-migration.md:66` 早已记录搬移，脚本是漏网）。
+- 删 `ProfileDetailDialog.tsx`（671 行、全仓 0 引用；ADR-0011 §5 行动项「随小版本批」）。
+- 删 4 个同义反复测试（`credentials`/`diagnostics`/`mcp`/`sessions`）：仅 `import type`，
+  在测试体重写逻辑后断言字面量，**从不触达生产代码**——假覆盖率比没有覆盖率更危险。
+  被覆盖的纯逻辑仍在组件内，替代路径是「下沉 `lib/` 再写真测试」（归 P7 后续批次）。
+- 文档漂移：`tauri.ts:1`「20 个命令」（实为 55）改为 rot-proof 表述（指向
+  `ipc.rs::COMMANDS` + 双向闸门）；`frontend-migration.md` 加计数口径补注
+  （该文是迁移期记录，「12 个命令」是当时数量）。
+- 影响：仅周知。**未纳入**：10 处 clipboard promise 假成功（批次 0b）。
+- 凭据：`cargo build` 通过 · `pnpm typecheck` 0 err · `oxlint` 0 warning ·
+  `pnpm test` **120 passed**（131 − 11 条假测试）。
+
+
 
 

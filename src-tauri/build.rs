@@ -4,17 +4,11 @@
 mod ipc;
 
 fn main() {
-    // 前端资产嵌入追踪：tauri-build 默认不跟随 ../ui 变更，
-    // 缺省会导致 cargo tauri build 复用旧前端（2026-08-23 实测踩坑）。
-    for f in [
-        "../ui/index.html",
-        "../ui/mode.html",
-        "../ui/selector.html",
-        "../ui/assets/app.css",
-        "../ui/assets/dsh-logo.svg",
-    ] {
-        println!("cargo:rerun-if-changed={f}");
-    }
+    // 前端资产嵌入追踪：**已由 tauri-build 自管**——`frontendDist`（tauri.conf.json
+    // 指向 ../frontend/dist）与 `capabilities/` 的 rerun 指令由 tauri-build 自己发出
+    // （tauri-build 2.6.3 `src/codegen/context.rs:87-95`、`src/acl.rs:427`）。
+    // 2026-09-08 删除 5 条手写 `../ui/*` 监视：`ui/` 目录早已不存在，这些行是
+    // 2026-08-23 旧前端复用事故留下的惰性守卫，现由上游覆盖，留着只会误导。
     // IPC 命令单一事实源变更须触发重跑，否则改 src/ipc.rs 不再生效
     // （2026-08-28 三处同步机器闸门；capabilities 一致性由 cargo test 拦）。
     println!("cargo:rerun-if-changed=src/ipc.rs");

@@ -1,4 +1,7 @@
-// Tauri IPC 唯一入口：20 个命令全类型化（frontend-migration §3.3）。
+// Tauri IPC 唯一入口：全部自定义命令全类型化。命令清单的**唯一事实源**是
+// `src-tauri/src/ipc.rs::COMMANDS`（现 55 条），本文件与它由 cargo test 的
+// `ipc::gate_tests::tauri_ts_matches_ipc_commands` 双向比对——此处不写死数量，
+// 免得像 2026-09-08 之前那样写「20 个命令」而实际 55 个（frontend-migration §3.3）。
 // 组件中不直接 invoke()，必须走本文件 api 对象；所有调用统一 .catch()。
 // open_about 已于 v0.4.7 删除（8075eea）——常驻入口在菜单/托盘。
 // 参数拼写已对照现网 ui/*.html 逐一核实；choose_mode 的 { mode, setDefault }

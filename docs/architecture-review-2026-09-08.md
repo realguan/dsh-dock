@@ -139,7 +139,8 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 
 | 批次 | 内容 | 风险 | ADR | 状态 |
 |:---|:---|:---|:---|:---|
-| 0 | 删 `ProfileDetailDialog`；修 10 处 clipboard promise；修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ⬜ 待做（`ProfileDetailDialog` 归 ADR-0011） |
+| 0a | 修 `build.rs` 惰性 `ui/*` 监视与 `regen-icons.sh` 死路径；删死代码 `ProfileDetailDialog`；删 4 个同义反复测试；修正易腐注释 | 无 | 否 | ✅ 已落地（见 §7） |
+| 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ⬜ 待做 |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
 | 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ⬜ 待做 |
@@ -184,3 +185,17 @@ Rust 侧 `include_str!` 读入并比对真实序列化结果；前端侧
 
 **未纳入**：③ `emit_step` 的 `json!` 手拼 payload 换结构体（`lib.rs:2444`，随批次 2
 拆 `lib.rs` 时一并做）；④ 统一 `rename_all`。
+
+## 7. 批次 0a 落地记录（2026-09-08，`chore: 清理惰性守卫、死代码与同义反复测试`）
+
+| 项 | 处理 | 依据 |
+|:---|:---|:---|
+| `build.rs:9-15` 5 条 `../ui/*` rerun 监视 | **删** | `tauri-build` 2.6.3 自己就为 `frontendDist`（`src/codegen/context.rs:87-95`）与 `capabilities/`（`src/acl.rs:427`）发 rerun 指令；`ui/` 已不存在，那 5 行是 2026-08-23 事故的惰性遗留 |
+| `scripts/regen-icons.sh:16,17,19` 死路径 | 改指 `assets/dsh-logo.svg` | `ui/assets/` 随迁移搬至仓库根 `assets/`（`frontend-migration.md:66` 早已记录） |
+| `ProfileDetailDialog.tsx`（671 行，全仓 0 引用） | **删** | ADR-0011 §5 行动项（随小版本批） |
+| 4 个同义反复测试（`credentials`/`diagnostics`/`mcp`/`sessions`） | **删** | 仅 `import type`，在测试体重写逻辑后断言字面量，从不触达生产代码 = 假覆盖率 |
+| `tauri.ts:1`「20 个命令」/ `frontend-migration.md`「12 个命令」 | 前者改 rot-proof（指向 `COMMANDS` + 闸门）；后者加计数口径补注 | P8 文档漂移 |
+
+**未纳入**：10 处 clipboard promise 假成功 → 批次 0b；「组件内纯逻辑下沉 `lib/` 再写真实测试」
+（被删的 sessions/mcp 测试所覆盖的逻辑仍在组件内）→ 归 P7 后续批次。
+
