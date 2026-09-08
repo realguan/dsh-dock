@@ -143,7 +143,7 @@ Rust 改字段名 → TS 静默 `undefined`：编译绿、测试绿、运行时�
 | 0b | 10 处 clipboard promise 假成功（`ErrorCard` 失败仍显示「已复制」） | 无 | 否 | ✅ 已落地（见 §8） |
 | 1 | `ipc.rs` gate 加 `tauri.ts` 名集断言 + IPC 结构体 key 集 fixture 断言 | 无（纯新增测试） | 否 | ✅ 已落地（见 §6） |
 | 2 | 按域拆 `lib.rs`：`commands/` → `ui/` → `boot/`（P1/P2） | 中 | 否（结构重构，不涉契约） | ⬜ 待做 |
-| 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ⬜ 待做 |
+| 3 | 注入 JS 迁出 Rust（P3），先迁胶囊 238 行 | 低 | 否 | ✅ 已落地（见 §9，330 行全迁） |
 | 4 | 错误类型化 `BootFailure`（P5） | 中 | **是** | ⬜ 待做（先立 ADR） |
 | 5 | `updates.rs` HTTP seam + 6 个离线测试；`repair-session.mjs` fixture 驱动；去 flaky | 低 | 否 | ⬜ 待做 |
 
@@ -221,3 +221,32 @@ boot 页走 `logger.warn`。
 
 **测试**：`__tests__/clipboard.test.ts`（4 条）：成功透传原文 / 失败带原始错误不抛 /
 非 Error 拒绝不抛 / 空串照写（调用方负责过滤）。
+
+## 9. 批次 3 落地记录（2026-09-08，`refactor(tauri): 注入脚本迁出 Rust 原始字符串`）
+
+**缺陷（P3）**：330 行 JS 活在 Rust `r#"…"#` 原始字符串里——tsc / oxlint / 语法检查
+全部看不见，改错只能等运行时。
+
+**落地**：三段脚本全部迁到 `frontend/src/injected/*.js`，Rust 侧改 `include_str!`
+（同 `updater.rs:461` 的跨语言引用范式）：
+
+| 脚本 | 原位置 | 现文件 | 行数 |
+|:---|:---|:---|:---|
+| 内存策略（`content-visibility` 注入） | `lib.rs:1605-1672` | `injected/memory-policy.js` | 68 |
+| 外链兜底 hook | `lib.rs:1685-1708` | `injected/link-hook.js` | 24 |
+| 悬浮胶囊 | `lib.rs:1728-1965` | `injected/switcher.js` | 238 |
+
+`lib.rs` 3,039 → 2,713 行（−326）。
+
+**迁出即见真章（工具链首次扫到这 330 行，立刻报 6 条）**：
+- `memory-policy.js` 的 `scan(root)` **是死代码**（MutationObserver 已内联同逻辑，从未调用）→ 删。
+- `switcher.js` 的 `var isMac = isMacPlatform()` 赋值未使用 → 删（`isMacPlatform` 本身仍被
+  两处使用）。
+- 4 处 `catch (e)` 未用参数 → 改可选捕获绑定 `catch {}`。
+
+**为什么放 `frontend/src/injected/`**：`pnpm run lint` 覆盖 `frontend/src`，迁到这里即被
+oxlint 纳管（当前 0 warning）；Vite 只打包被 import 的模块，这些文件不进产物；
+`tsconfig.app.json` 未开 `allowJs`，tsc 不会误编译它们。
+
+**验证**：`cargo test` 187 绿（含 `WEBVIEW_MEMORY_POLICY_SCRIPT` 的三条子串断言）·
+`cargo fmt --check` 干净 · `node --check` 三个文件语法通过 · `pnpm lint` 0 warning。

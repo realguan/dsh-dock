@@ -1787,3 +1787,19 @@
 - 影响：仅周知。**i18n 正文抽取拆为批次 E2**（实测 2,876 字 / 45 文件，其中 6 个大文件
   60 条可枚举文案 + 模板串 + 17 个较小文件；纯机械但横跨 25+ 文件，按 §8.1 单独立项）。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **135 passed**。
+
+### 2026-09-08 refactor(tauri)：注入脚本迁出 Rust 原始字符串（架构评审批次 3）—— guan（AI 起草）
+
+- 缺陷（P3）：330 行 JS 活在 Rust `r#"…"#` 里——tsc/oxlint/语法检查全部看不见，改错只能
+  等运行时。
+- 落地：三段全部迁到 `frontend/src/injected/*.js`，Rust 侧改 `include_str!`（同
+  `updater.rs:461` 跨语言引用范式）：`memory-policy.js`（68 行）、`link-hook.js`（24 行）、
+  `switcher.js`（238 行）。`lib.rs` 3,039 → 2,713 行（−326）。
+- **迁出即见真章**：工具链首次扫到这 330 行立刻报 6 条——`memory-policy.js` 的
+  `scan(root)` 是死代码（MutationObserver 已内联同逻辑、从未调用）、`switcher.js` 的
+  `var isMac` 赋值未用、4 处 `catch (e)` 未用参数。已一并清理（改 `catch {}`）。
+- 放 `frontend/src/injected/` 的理由：`pnpm run lint` 覆盖该目录 → 即被 oxlint 纳管；
+  Vite 只打包被 import 的模块 → 不进产物；tsconfig 未开 `allowJs` → tsc 不误编译。
+- 影响：仅周知。运行期行为不变（脚本内容逐行迁移，仅删死代码与未用参数）。
+- 凭据：`cargo test` 187 绿（含内存策略三条子串断言）· `cargo fmt --check` 干净 ·
+  `node --check` ×3 通过 · `pnpm lint` **0 warning**（迁出前这 330 行是 lint 盲区）。
