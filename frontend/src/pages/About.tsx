@@ -132,7 +132,7 @@ export function About() {
                     <span className="bg-ok size-1.5 animate-pulse rounded-full" />
                   )}
                 </div>
-                <p className="text-faint mt-0.5 truncate font-mono text-[11px]" title={wbUrl ?? undefined}>
+                <p className="text-faint mt-0.5 truncate font-mono text-label" title={wbUrl ?? undefined}>
                   {wbUrl ?? "启动 DSH 后将自动建立本地 HTTP 桥接"}
                 </p>
               </div>
@@ -164,13 +164,13 @@ export function About() {
             <span>{t.about.copyDiagnostics}</span>
           </Button>
 
-          <span className="text-faint text-[11px] font-mono">
+          <span className="text-faint text-label font-mono">
             Tauri v2 · React 19
           </span>
         </div>
 
         {/* 脚注说明 */}
-        <footer className="text-faint border-t border-line/60 pt-3 text-center text-[11px] leading-relaxed">
+        <footer className="text-faint border-t border-line/60 pt-3 text-center text-label leading-relaxed">
           {t.about.restartNote}
           <br />
           {t.about.dshUpgradeNote}

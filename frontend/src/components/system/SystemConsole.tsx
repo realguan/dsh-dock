@@ -60,11 +60,11 @@ export function SystemConsole({
   ]
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+    <div className="grid grid-cols-1 gap-6 md:grid-cols-12 items-start">
       {/* 左侧紧凑极简子导航（Master-Nav） */}
       <aside
         aria-label="系统控制台导航"
-        className="space-y-1 lg:col-span-4 xl:col-span-3"
+        className="space-y-1 md:col-span-4 xl:col-span-3"
       >
         <nav className="space-y-1.5">
           {navItems.map((item) => {
@@ -111,7 +111,7 @@ export function SystemConsole({
       {/* 右侧主工作区详情区（Detail-Panel） */}
       <main
         aria-label="系统控制台详情区"
-        className="lg:col-span-8 xl:col-span-9 min-w-0"
+        className="md:col-span-8 xl:col-span-9 min-w-0"
       >
         {subTab === "preferences" && <PreferencesPane onNotice={onNotice} />}
         {subTab === "credentials" && <CredentialsPane onNotice={onNotice} />}

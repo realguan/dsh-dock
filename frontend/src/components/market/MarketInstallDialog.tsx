@@ -145,13 +145,13 @@ export function MarketInstallDialog({
                   {displayName}
                 </div>
                 {displayName !== plugin.name && (
-                  <div className="text-[10px] text-faint font-mono truncate" title={plugin.name}>
+                  <div className="text-meta text-faint font-mono truncate" title={plugin.name}>
                     {plugin.name}
                   </div>
                 )}
               </div>
               <div className="shrink-0 text-right">
-                <span className="text-[11px] text-dim font-mono">by {plugin.owner}</span>
+                <span className="text-label text-dim font-mono">by {plugin.owner}</span>
               </div>
             </div>
 
@@ -167,7 +167,7 @@ export function MarketInstallDialog({
             <span className="text-xs font-medium text-ink flex items-center justify-between">
               <span>{t.market.selectProfile}</span>
               {selectedProfile && isAlreadyInstalled && (
-                <span className="text-[10px] text-amber-500 font-mono flex items-center gap-1">
+                <span className="text-meta text-amber-500 font-mono flex items-center gap-1">
                   <AlertCircle className="size-3" />
                   已在此 Profile 安装（将执行覆盖/重装）
                 </span>
@@ -188,10 +188,10 @@ export function MarketInstallDialog({
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-medium">{p.name}</span>
                         {p.web_ui && (
-                          <span className="rounded bg-brand/10 px-1 py-0.2 text-[9px] text-brand">Web</span>
+                          <span className="rounded bg-brand/10 px-1 py-0.2 text-micro text-brand">Web</span>
                         )}
                         {hasIt && (
-                          <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-[9px] text-emerald-600 dark:text-emerald-400">
+                          <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-micro text-emerald-600 dark:text-emerald-400">
                             已安装
                           </span>
                         )}
@@ -211,12 +211,12 @@ export function MarketInstallDialog({
               </span>
               {/* 自动识别徽标 */}
               {sourceInfo.type === "npm" ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-emerald-600 dark:text-emerald-400 shadow-2xs">
                   <Package className="size-3" />
                   <span>{t.market.sourceNpm}</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-purple-600 dark:text-purple-400 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-purple-600 dark:text-purple-400 shadow-2xs">
                   <Code2 className="size-3" />
                   <span>{t.market.sourceGithub}</span>
                 </span>

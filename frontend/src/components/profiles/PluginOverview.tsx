@@ -257,7 +257,7 @@ export function PluginOverview({
             value={String(pageSize)}
             onValueChange={(v) => setPageSize(Number(v))}
           >
-            <SelectTrigger className="h-8 w-24 rounded-lg border-line bg-panel text-[11px]">
+            <SelectTrigger className="h-8 w-24 rounded-lg border-line bg-panel text-label">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -287,7 +287,7 @@ export function PluginOverview({
         <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/60 text-center">
           <Package className="text-faint mb-2 size-8" />
           <p className="text-xs font-medium text-ink">未找到匹配的插件</p>
-          <p className="text-faint mt-1 text-[11px]">
+          <p className="text-faint mt-1 text-label">
             尝试调整搜索关键词或重置 Profile 筛选条件。
           </p>
         </div>
@@ -317,7 +317,7 @@ export function PluginOverview({
                         {item.name}
                       </span>
                     </div>
-                    <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 font-mono text-[10px] text-dim">
+                    <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 font-mono text-meta text-dim">
                       v{latestVersion}
                     </span>
                   </div>
@@ -332,7 +332,7 @@ export function PluginOverview({
 
                   {/* 已安装到的 Profile 标签 */}
                   <div>
-                    <span className="text-[10px] font-semibold text-dim block mb-1">
+                    <span className="text-meta font-semibold text-dim block mb-1">
                       已安装到 ({item.sources.length}):
                     </span>
                     <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
@@ -341,13 +341,13 @@ export function PluginOverview({
                         return (
                           <span
                             key={src.profile}
-                            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] shadow-2xs transition-all ${colorClass}`}
+                            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-meta shadow-2xs transition-all ${colorClass}`}
                             title={src.version ? `${src.profile} (v${src.version})` : `已安装于 ${src.profile}`}
                           >
                             <span className="size-1 rounded-full bg-current opacity-80" />
                             <span className="font-semibold">{src.profile}</span>
                             {src.version && (
-                              <span className="opacity-75 text-[9px] font-normal">v{src.version}</span>
+                              <span className="opacity-75 text-micro font-normal">v{src.version}</span>
                             )}
                           </span>
                         )
@@ -358,7 +358,7 @@ export function PluginOverview({
 
                 {/* 底部操作条 */}
                 <div className="mt-3.5 flex items-center justify-between border-t border-line/60 pt-2.5">
-                  <span className="text-[11px] text-faint font-mono">
+                  <span className="text-label text-faint font-mono">
                     {item.sources.length} 处引用
                   </span>
 
@@ -390,7 +390,7 @@ export function PluginOverview({
       {/* 分页控制器 */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t border-line pt-3 text-xs">
-          <span className="text-faint text-[11px] font-mono">
+          <span className="text-faint text-label font-mono">
             第 {currentPage} / {totalPages} 页
           </span>
 
@@ -468,7 +468,7 @@ export function PluginOverview({
             <div className="space-y-4 py-2 text-xs">
               {/* 目标 Profile 选择框（修复宽度截断） */}
               <div className="space-y-1.5">
-                <span className="text-dim font-semibold text-[11px]">
+                <span className="text-dim font-semibold text-label">
                   选择目标 Profile <span className="text-rose-500">*</span>
                 </span>
                 <Select
@@ -502,7 +502,7 @@ export function PluginOverview({
               {/* 安装版本信息 */}
               <div className="rounded-xl border border-line bg-bg p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-faint text-[11px] flex items-center gap-1">
+                  <span className="text-faint text-label flex items-center gap-1">
                     <Download className="size-3" />
                     目标版本
                   </span>
@@ -516,7 +516,7 @@ export function PluginOverview({
               <div className="flex items-center justify-between pt-2 border-t border-line/60">
                 <div className="space-y-0.5">
                   <span className="text-xs font-medium text-ink">连带复制配置行</span>
-                  <p className="text-[10px] text-faint">
+                  <p className="text-meta text-faint">
                     从首个来源 Profile 的 cordis.patch.yml 原样同步配置条目
                   </p>
                 </div>

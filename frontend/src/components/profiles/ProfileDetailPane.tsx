@@ -328,7 +328,7 @@ export function ProfileDetailPane({
                 {name}
               </h2>
               {isRunning && (
-                <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium">
+                <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium">
                   <span className="bg-ok size-1.5 animate-pulse rounded-full" />
                   {t.profiles.runningBadge}
                 </span>
@@ -377,7 +377,7 @@ export function ProfileDetailPane({
             <Package className="size-3.5" />
             <span>{t.profiles.tabPlugins}</span>
             {depCount > 0 && (
-              <span className="rounded-full bg-line px-1.5 text-[10px] font-mono">
+              <span className="rounded-full bg-line px-1.5 text-meta font-mono">
                 {depCount}
               </span>
             )}
@@ -397,7 +397,7 @@ export function ProfileDetailPane({
             <Layers className="size-3.5" />
             <span>{t.profiles.tabBundles}</span>
             {layerBundles.length > 0 && (
-              <span className="rounded-full bg-line px-1.5 text-[10px] font-mono">
+              <span className="rounded-full bg-line px-1.5 text-meta font-mono">
                 {layerBundles.length}
               </span>
             )}
@@ -549,7 +549,7 @@ export function ProfileDetailPane({
 
             {/* 更新检查结论 */}
             {checkState === "done" && checkMeta && (
-              <div className="text-faint flex items-center justify-between rounded-lg bg-bg px-3 py-1.5 text-[11px]">
+              <div className="text-faint flex items-center justify-between rounded-lg bg-bg px-3 py-1.5 text-label">
                 <span>{t.profiles.updateChecked(checkMeta)}</span>
                 {updateMap && Object.keys(updateMap).length === 0 && (
                   <span className="text-ok font-medium">{t.profiles.allUpToDate}</span>
@@ -559,7 +559,7 @@ export function ProfileDetailPane({
 
             {/* 运行态概要 */}
             {liveEntries.length > 0 ? (
-              <div className="text-faint px-1 text-[11px]">
+              <div className="text-faint px-1 text-label">
                 {t.profiles.runtimeSummary(runtimeSummary(liveEntries))}
               </div>
             ) : null}
@@ -621,7 +621,7 @@ export function ProfileDetailPane({
                               onClick={() =>
                                 openVersionPick(p.name, p.installed_version ?? "", latest)
                               }
-                              className="text-brand hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-[10px] font-medium transition-colors"
+                              className="text-brand hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium transition-colors"
                             >
                               <ArrowUpCircle className="size-3" />
                               <span>{latest}</span>
@@ -631,7 +631,7 @@ export function ProfileDetailPane({
                           {/* 运行态徽标 */}
                           {!shellDisabled && chip && (
                             <span
-                              className={`rounded px-1.5 py-0.5 text-[10px] leading-none ${
+                              className={`rounded px-1.5 py-0.5 text-meta leading-none ${
                                 chip.failed
                                   ? "bg-warn-soft text-warn"
                                   : "bg-ok-soft text-ok font-medium"
@@ -642,7 +642,7 @@ export function ProfileDetailPane({
                           )}
 
                           {shellDisabled && (
-                            <span className="border border-line text-faint rounded px-1.5 py-0.5 text-[10px] leading-none">
+                            <span className="border border-line text-faint rounded px-1.5 py-0.5 text-meta leading-none">
                               {t.profiles.pluginDisabled}
                             </span>
                           )}
@@ -739,7 +739,7 @@ export function ProfileDetailPane({
                           {b}
                         </span>
                         {isBase && (
-                          <span className="bg-line-soft text-dim rounded px-1.5 py-0.5 text-[10px]">
+                          <span className="bg-line-soft text-dim rounded px-1.5 py-0.5 text-meta">
                             系统核心
                           </span>
                         )}
@@ -753,7 +753,7 @@ export function ProfileDetailPane({
 
                     {chip && (
                       <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-medium leading-none ${
+                        className={`rounded px-2 py-0.5 text-meta font-medium leading-none ${
                           chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
                         }`}
                       >
@@ -871,12 +871,12 @@ export function ProfileDetailPane({
                     >
                       <span className="text-ink font-mono text-xs">{v}</span>
                       {isLatest && (
-                        <span className="bg-ok-soft text-ok rounded px-1.5 text-[10px] leading-none">
+                        <span className="bg-ok-soft text-ok rounded px-1.5 text-meta leading-none">
                           {t.profiles.versionLatest}
                         </span>
                       )}
                       {isCurrent && (
-                        <span className="border border-line text-faint ml-auto rounded px-1.5 text-[10px] leading-none">
+                        <span className="border border-line text-faint ml-auto rounded px-1.5 text-meta leading-none">
                           {t.profiles.versionCurrent}
                         </span>
                       )}

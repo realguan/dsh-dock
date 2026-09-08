@@ -40,7 +40,7 @@ export function VersionChip() {
     clientMsg = t.selector.chipClientUpdatingRun
 
   return (
-    <div className="inline-flex max-w-[340px] items-center gap-2 rounded-full border border-line/80 bg-panel/90 px-3 py-1 font-mono text-[11px] text-dim shadow-2xs backdrop-blur-md transition-all hover:border-brand/30 hover:text-ink whitespace-nowrap">
+    <div className="inline-flex max-w-[340px] items-center gap-2 rounded-full border border-line/80 bg-panel/90 px-3 py-1 font-mono text-label text-dim shadow-2xs backdrop-blur-md transition-all hover:border-brand/30 hover:text-ink whitespace-nowrap">
       <span
         className={`size-2 shrink-0 rounded-full transition-all ${
           dot === "ok"

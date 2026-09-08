@@ -341,7 +341,7 @@ export function SessionManager({
           <div className="flex flex-wrap items-center gap-2">
             {isActive ? (
               <span
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-600 dark:text-sky-400"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-meta font-medium text-sky-600 dark:text-sky-400"
                 title={t.sessions.statusRunningDesc}
               >
                 <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
@@ -349,7 +349,7 @@ export function SessionManager({
               </span>
             ) : (
               <span
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-meta font-medium ${
                   isNeedsRepair
                     ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
                     : isHealthy
@@ -366,7 +366,7 @@ export function SessionManager({
             {/* 已归档徽标：仅归档视图可见（默认视图已隐藏） */}
             {sess.archived && (
               <span
-                className="flex shrink-0 items-center gap-1 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400"
+                className="flex shrink-0 items-center gap-1 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-meta font-medium text-violet-600 dark:text-violet-400"
                 title={t.sessions.archivedTagDesc}
               >
                 <Archive className="size-2.5" />
@@ -377,7 +377,7 @@ export function SessionManager({
             {/* 子代理会话：dsh 侧栏隐藏此类，维护工具标注展示 */}
             {sess.subagent && (
               <span
-                className="flex shrink-0 items-center gap-1 rounded-md bg-line px-1.5 py-0.5 text-[10px] font-medium text-dim"
+                className="flex shrink-0 items-center gap-1 rounded-md bg-line px-1.5 py-0.5 text-meta font-medium text-dim"
                 title={t.sessions.subagentTagDesc}
               >
                 <Bot className="size-2.5" />
@@ -386,14 +386,14 @@ export function SessionManager({
             )}
 
             <span
-              className="truncate text-[13px] font-semibold text-ink"
+              className="truncate text-note font-semibold text-ink"
               title={displayName}
             >
               {displayName}
             </span>
 
             {sess.hasBackup && (
-              <span className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-600 dark:text-emerald-400">
                 <FileArchive className="size-2.5" />
                 {t.sessions.backupTag}
               </span>
@@ -401,7 +401,7 @@ export function SessionManager({
           </div>
 
           {/* 次行：ID（等宽可复制）+ 元信息 */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-faint">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-faint">
             <button
               type="button"
               onClick={() => handleCopyId(sess.id)}
@@ -470,23 +470,17 @@ export function SessionManager({
 
           {/* 异常详情（非健康时展示原因） */}
           {isNeedsRepair && sess.healthDetail && (
-            <p className="line-clamp-1 text-[11px] text-amber-600/70 dark:text-amber-400/70">
+            <p className="line-clamp-1 text-label text-amber-600/70 dark:text-amber-400/70">
               {sess.healthDetail}
             </p>
           )}
         </div>
 
-        {/* 操作区：修复按钮仅非健康显示；健康显示状态描述 */}
+        {/* 操作区：**只放动作**（2026-09-08 批次 D / U14 去重）——运行中/健康/未知
+            三种状态原本在左侧徽标与右侧胶囊各显示一次，右侧还挤占修复/删除位。
+            状态统一由左侧徽标表达；此处只在「需要修复且非运行中」时给修复按钮。 */}
         <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
-          {isActive ? (
-            <span
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-sky-500/20 bg-sky-500/[0.06] px-2.5 text-[11px] text-sky-600 dark:text-sky-400"
-              title={t.sessions.statusRunningDesc}
-            >
-              <LoaderCircle className="size-3 animate-spin" />
-              {t.sessions.statusRunning}
-            </span>
-          ) : isNeedsRepair ? (
+          {!isActive && isNeedsRepair && (
             <Button
               size="sm"
               onClick={() => handleRepairSingle(sess)}
@@ -500,18 +494,6 @@ export function SessionManager({
               )}
               <span>{t.sessions.repairBtn}</span>
             </Button>
-          ) : (
-            <span
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-line bg-panel px-2.5 text-[11px] text-dim"
-              title={meta.desc}
-            >
-              {isHealthy ? (
-                <ShieldCheck className="size-3 text-emerald-500/80" />
-              ) : (
-                <HelpCircle className="size-3 text-faint" />
-              )}
-              {isHealthy ? t.sessions.statusHealthy : t.sessions.statusUnknown}
-            </span>
           )}
 
           <Button
@@ -605,15 +587,15 @@ export function SessionManager({
         {/* 统计指标：项目 / 总数 / 健康 / 运行中 / 待修复 */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-[11px] text-faint">工作区项目数</span>
+            <span className="text-label text-faint">工作区项目数</span>
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.projectsCount}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-[11px] text-faint">会话总数</span>
+            <span className="text-label text-faint">会话总数</span>
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.total}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <span className="flex items-center gap-1 text-label text-emerald-600 dark:text-emerald-400">
               <span className="size-1.5 rounded-full bg-emerald-500" />
               健康就绪
             </span>
@@ -622,7 +604,7 @@ export function SessionManager({
             </div>
           </div>
           <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-3">
-            <span className="flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400">
+            <span className="flex items-center gap-1 text-label text-sky-600 dark:text-sky-400">
               <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
               运行中
             </span>
@@ -631,7 +613,7 @@ export function SessionManager({
             </div>
           </div>
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
-            <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="flex items-center gap-1 text-label text-amber-600 dark:text-amber-400">
               <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
               待修复异常
             </span>
@@ -679,7 +661,7 @@ export function SessionManager({
             <AlertTriangle className="size-3.5" />
             <span>{t.sessions.filterNeedsRepair}</span>
             {stats.needsRepair > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-[10px] text-amber-600 dark:text-amber-400">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-meta text-amber-600 dark:text-amber-400">
                 {stats.needsRepair}
               </span>
             )}
@@ -696,7 +678,7 @@ export function SessionManager({
             <Archive className="size-3.5" />
             <span>{t.sessions.filterArchived}</span>
             {stats.archived > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-500/15 px-1 font-mono text-[10px] text-violet-600 dark:text-violet-400">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-500/15 px-1 font-mono text-meta text-violet-600 dark:text-violet-400">
                 {stats.archived}
               </span>
             )}
@@ -766,7 +748,7 @@ export function SessionManager({
                       <span className="font-mono text-xs font-bold text-ink truncate">
                         {group.projectName}
                       </span>
-                      <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-[10px] font-mono text-faint">
+                      <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-meta font-mono text-faint">
                         {group.items.length} 个会话 · {formatBytes(group.totalBytes)}
                       </span>
                     </div>
@@ -785,7 +767,7 @@ export function SessionManager({
 
                   <div className="pl-6">
                     <span
-                      className="font-mono text-[11px] text-faint block truncate"
+                      className="font-mono text-label text-faint block truncate"
                       title={group.decodedPath}
                     >
                       {group.decodedPath}

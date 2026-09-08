@@ -152,8 +152,10 @@ export function ProfileManager() {
 
   return (
     <PageShell width={1040} align="top" className="px-4 py-4 sm:px-6">
-      {/* 顶部全局标题栏（单行弹性布局，右侧控制区 shrink-0 防止 Hover 展开时发生折行抖动） */}
-      <header className="mb-4 flex items-center justify-between gap-3">
+      {/* 顶部全局标题栏（单行弹性布局，右侧控制区 shrink-0 防止 Hover 展开时发生折行抖动）。
+          2026-09-08 批次 D / U10：吸顶——长列表滚动后「视图切换」入口不再消失；
+          负外边距抵消 PageShell 的 px-4/6/8，半透明底 + 模糊保证滚动内容不穿透。 */}
+      <header className="sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 bg-bg/90 px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6 md:-mx-8 md:px-8">
         <div className="flex items-center gap-3 min-w-0">
           <Emblem size={32} />
           <div className="min-w-0">
@@ -265,11 +267,11 @@ export function ProfileManager() {
       ) : view === "plugins" ? (
         <PluginHub refreshKey={overviewTick} onNotice={showToast} />
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
           {/* 左侧 List：Profile 列表导航 */}
           <section
             aria-label="Profile 列表"
-            className="space-y-3 lg:col-span-4 xl:col-span-4"
+            className="space-y-3 md:col-span-4 xl:col-span-4"
           >
             {/* 新建 Profile 专属醒目操作条 */}
             <Button
@@ -335,7 +337,7 @@ export function ProfileManager() {
           {/* 右侧 Detail：选中的 Profile 工作台面板 */}
           <section
             aria-label="Profile 详情工作区"
-            className="min-h-[560px] lg:col-span-8 xl:col-span-8"
+            className="min-h-[560px] md:col-span-8 xl:col-span-8"
           >
             <ProfileDetailPane
               name={currentSelectedProfile?.name ?? null}

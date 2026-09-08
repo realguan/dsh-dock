@@ -43,7 +43,7 @@ export function DshVersionCard() {
         <div className="min-w-0 text-left sm:text-right">
           <VersionView dim={dsh} />
           {upgrading && (
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-brand">
+            <div className="mt-1 flex items-center gap-1 text-label text-brand">
               <LoaderCircle className="size-3 animate-spin" />
               <span>{t.about.upgradeRunning}</span>
             </div>
@@ -52,7 +52,7 @@ export function DshVersionCard() {
             <div className="mt-1">
               <Note tone="warn">{t.about.upgradeFailed}</Note>
               <p
-                className="text-faint mt-0.5 max-w-xs truncate font-mono text-[10px]"
+                className="text-faint mt-0.5 max-w-xs truncate font-mono text-meta"
                 title={upgradeFail}
               >
                 {upgradeFail}
@@ -125,7 +125,7 @@ function VersionView({ dim }: { dim: ComponentUpdate | null }) {
         <span className="font-mono text-xs font-semibold text-ink">
           {dim.current ?? t.about.notDetected}
         </span>
-        <span className="bg-brand/10 text-brand border border-brand/20 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium">
+        <span className="bg-brand/10 text-brand border border-brand/20 rounded px-1.5 py-0.5 font-mono text-meta font-medium">
           {t.about.hasNew} {dim.latest ?? ""}
         </span>
       </div>
@@ -134,7 +134,7 @@ function VersionView({ dim }: { dim: ComponentUpdate | null }) {
     return (
       <span className="font-mono text-xs">
         <span className="font-semibold text-ink">{dim.current}</span>
-        <span className="text-faint ml-1.5 text-[11px]">（{t.about.latestIsNewest}）</span>
+        <span className="text-faint ml-1.5 text-label">（{t.about.latestIsNewest}）</span>
       </span>
     )
   if (!dim.current && dim.latest)

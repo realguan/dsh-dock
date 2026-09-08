@@ -20,14 +20,14 @@
 | U4 | **偏好设置读取失败后把默认值写回**，可能清空其他键 | HIGH | ✅ 已修 | `PreferencesPane.tsx:36,54,72,90` + `i18nStore.ts:54` |
 | U5 | **配置迁移失败却提示「分发完成」** | HIGH | ✅ 已修 | `PluginOverview.tsx:165-167,170` |
 | U6 | **对比度系统性不达标**（`faint` 2.1–2.4；白字/品牌蓝 4.23） | HIGH | ⬜ 待做 | `index.css:36` + 260 处 `text-faint` |
-| U7 | **字号未走 token**：173 处任意值，主体 9–11px | HIGH | ⬜ 待做 | `text-[10px]`×90、`text-[11px]`×72 |
-| U8 | **窗口最小宽度 < 布局断点**，主从布局在允许的窗口尺寸下静默塌成单列 | HIGH | ⬜ 待做 | `lib.rs:3012` (860) vs `lg`=1024 |
+| U7 | **字号未走 token**：161 处任意值，主体 9–11px | HIGH | ✅ 已修 | `text-[10px]`×90、`text-[11px]`×72 |
+| U8 | **窗口最小宽度 < 布局断点**，主从布局在允许的窗口尺寸下静默塌成单列 | HIGH | ✅ 已修 | `lib.rs:3012` (860) vs `lg`=1024 |
 | U9 | **破坏性操作无确认**：卸载插件、覆写凭据、覆写引擎设置 | HIGH | ⬜ 待做 | `ProfileDetailPane.tsx:692-700` 等 |
-| U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ⬜ 待做 | 全仓 `sticky` 0 处 |
+| U10 | 页面头部不吸顶，长列表滚动后视图切换入口消失 | MEDIUM | ✅ 已修 | 全仓 `sticky` 0 处 |
 | U11 | toast 无 `aria-live`；11 处「已复制」假成功 | MEDIUM | ✅ 已修（live region + clipboard 收口） | `ui/toast.tsx:11-61`、`lib/clipboard.ts` |
 | U12 | `dark:` 变体不可达（40 处死代码），掩盖对比度问题 | MEDIUM | ⬜ 待做 | `index.css:8` 无 `.dark` 应用点 |
 | U13 | 图标语义错配 3 处 + 文案动词漂移（7 种「刷新」） | MEDIUM | ⬜ 待做 | 见 §6 |
-| U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ⬜ 待做 | `SessionManager.tsx:344-360` vs `:477-489` |
+| U14 | 会话行状态重复展示（左徽标 + 右胶囊同显「运行中」） | MEDIUM | ✅ 已修 | `SessionManager.tsx:344-360` vs `:477-489` |
 | U15 | 截断无 tooltip 系统性缺口（Select 尤其） | MEDIUM | ⬜ 待做 | `PluginOverview.tsx:197`、`select.tsx:30` |
 
 ## 1. 布局骨架与信息架构
@@ -277,7 +277,7 @@
 | **B（可见性）** | U2 卡片键盘可达；toast 常驻 live region；8 个 Switch 补名称（+类型闸门）；4 个图标按钮补名称 | 小 | ✅ B1 已落地（见 §13） |
 | **B2（表单与标题）** | 12 处输入框补名称/关联（+源码闸门）；面板标题层级 h3→h2 并修正子标题 | 小 | ✅ 已落地（见 §14） |
 | **C（视觉达标）** | U6 对比度三改（`faint`→仅装饰、主按钮用 `brand-deep`、原始调色板逐文件替换）；U12 决定 `.dark` 去留 | 中，逐模块 | ⬜ 待做 |
-| **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ⬜ 待做 |
+| **D（版式）** | U7 字号 token 化；U8 断点/最小宽度对齐；U10 页头吸顶；U14 会话行去重 | 中 | ✅ 已落地（见 §15） |
 | **E（一致性）** | U13 图标与动词统一；U15 Select tooltip 补全；i18n 泄漏逐文件收口 | 中，机械但量大 | ⬜ 待做 |
 
 ## 10. 不建议做
@@ -407,3 +407,19 @@ ENV 行的 KEY/VALUE 输入框另加 `aria-label={`${t.profiles.mcpEnv} ${idx+1}
 **机器闸门**：`__tests__/formLabels.test.tsx`（`import.meta.glob(?raw)` 扫全量 `.tsx`）
 断言每个 `<input>` 至少有 `aria-label`/`aria-labelledby`/`id`/`<label>` 包裹/`type="hidden"` 之一；
 探针文件实测被抓出。正则把 `=>` 当整体跳过，避免 `onChange` 的箭头把标签截断。
+
+## 15. 落地记录：批次 D（2026-09-08，`refactor(uiux): 字号刻度、断点对齐、页头吸顶、会话行去重`）
+
+| 条目 | 改动 | 文件 |
+|:---|:---|:---|
+| U7 | `@theme` 新增 5 档字号 token（`--text-micro/meta/label/note/lead` = 9/10/11/13/15px，**逐像素等同改造前**）；161 处 `text-[Npx]` 全量替换；`ui/button.tsx` 的 `text-[0.8rem]`→`text-xs`（12.8→12px，sm 按钮，视觉无感） | `index.css` + 38 个组件 |
+| U8 | 两处主从布局 `lg:`(1024)→`md:`(768)：`ProfileManager` 与 `SystemConsole`。窗口最小宽度 860/960 均 ≥ 768 ⇒ **在允许的任何窗口尺寸下都不再塌成单列**；只改断点、不动窗口尺寸（评审 §10 明令） | `pages/ProfileManager.tsx`、`components/system/SystemConsole.tsx` |
+| U10 | `ProfileManager` 页头 `sticky top-0 z-20` + `bg-bg/90 backdrop-blur-sm`，负外边距抵消 `PageShell` 的 `px-4/6/8`；长列表滚动后视图切换入口常驻 | `pages/ProfileManager.tsx` |
+| U14 | 会话行右侧操作区**只留动作**：删掉与左徽标重复的「运行中」「健康/未知」胶囊（原来三选一渲染），仅在「需修复且非运行中」时给修复按钮 | `components/profiles/SessionManager.tsx` |
+
+**机器闸门**：`__tests__/fontTokens.test.ts` 禁止再出现 `text-[Npx]`/`text-[Nrem]`，
+需要新档位先在 `@theme` 加 token。
+
+**未做/风险**：本次改动均为类名与结构，**未实机目检**（Tauri 需真实窗口）。
+需人工确认两点：① 860px 宽时左栏 Profile 卡片不挤（4/12 栏 ≈ 280px）；
+② 吸顶页头在滚动时不遮挡首行内容（`bg-bg/90` + 模糊为遮挡兜底）。

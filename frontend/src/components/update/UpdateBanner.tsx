@@ -58,7 +58,7 @@ export function UpdateBanner() {
               <div key={b.key} className="flex items-start gap-2.5">
                 <span className="mt-1.5 size-2 shrink-0 animate-pulse rounded-full bg-warn ring-2 ring-warn/25" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-medium leading-snug text-ink">
+                  <p className="text-note font-medium leading-snug text-ink">
                     {b.kind === "dsh"
                       ? t.updateBanner.dshTitle.replace("{latest}", b.latest).replace("{current}", b.current ?? "?")
                       : t.updateBanner.clientTitle.replace("{latest}", b.latest)}
@@ -79,7 +79,7 @@ export function UpdateBanner() {
                 </button>
               </div>
             ))}
-            <p className="text-[11px] leading-relaxed text-faint">{t.updateBanner.entryHint}</p>
+            <p className="text-label leading-relaxed text-faint">{t.updateBanner.entryHint}</p>
           </div>
         </motion.div>
       )}

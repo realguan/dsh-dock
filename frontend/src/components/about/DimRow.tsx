@@ -17,7 +17,7 @@ export function DimRow({
           {label}
         </span>
         {badge && (
-          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-dim">
+          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-dim">
             {badge}
           </span>
         )}

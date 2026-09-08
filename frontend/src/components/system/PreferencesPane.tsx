@@ -169,7 +169,7 @@ export function PreferencesPane({
                   {t.console.localeSystem}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-faint">Auto Detect</p>
+              <p className="mt-1 text-label text-faint">Auto Detect</p>
             </div>
             {preference === "system" && <Check className="size-4 text-brand" />}
           </button>
@@ -188,7 +188,7 @@ export function PreferencesPane({
               <span className="text-xs font-semibold text-ink">
                 {t.console.localeZh}
               </span>
-              <p className="mt-1 text-[11px] text-faint">简体中文 (默认)</p>
+              <p className="mt-1 text-label text-faint">简体中文 (默认)</p>
             </div>
             {preference === "zh-CN" && <Check className="size-4 text-brand" />}
           </button>
@@ -207,7 +207,7 @@ export function PreferencesPane({
               <span className="text-xs font-semibold text-ink">
                 {t.console.localeEn}
               </span>
-              <p className="mt-1 text-[11px] text-faint">English (US)</p>
+              <p className="mt-1 text-label text-faint">English (US)</p>
             </div>
             {preference === "en-US" && <Check className="size-4 text-brand" />}
           </button>
@@ -237,7 +237,7 @@ export function PreferencesPane({
                   {t.console.autoRestartLabel}
                 </h2>
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                     autoRestartActive
                       ? "bg-ok-soft text-ok"
                       : "bg-line-soft text-faint"
@@ -275,7 +275,7 @@ export function PreferencesPane({
             <ShieldAlert className="size-3.5 text-amber-500" />
             <span>智能熔断保护协议（Circuit Breaker）</span>
           </div>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-[11px]">
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-label">
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">监控窗口：</span>
               <span className="text-ink font-semibold ml-1">60 秒滑动窗口</span>
@@ -311,7 +311,7 @@ export function PreferencesPane({
                   {t.console.floatingSwitcherLabel}
                 </h2>
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                     floatingSwitcherActive
                       ? "bg-brand/10 text-brand"
                       : "bg-line-soft text-faint"
@@ -350,7 +350,7 @@ export function PreferencesPane({
             <h2 className="text-xs font-semibold text-ink">
               {t.console.shortcutLabel}
             </h2>
-            <span className="text-[11px] text-faint">
+            <span className="text-label text-faint">
               ({t.console.shortcutDesc})
             </span>
           </div>
@@ -370,7 +370,7 @@ export function PreferencesPane({
                 <span className="text-xs font-semibold text-ink">
                   {t.console.shortcutDefault}
                 </span>
-                <p className="mt-1 font-mono text-[10px] text-faint">
+                <p className="mt-1 font-mono text-meta text-faint">
                   {isMac ? "⌘ + ," : "Ctrl + ,"}
                 </p>
               </div>
@@ -391,7 +391,7 @@ export function PreferencesPane({
                 <span className="text-xs font-semibold text-ink">
                   {t.console.shortcutShiftP}
                 </span>
-                <p className="mt-1 font-mono text-[10px] text-faint">
+                <p className="mt-1 font-mono text-meta text-faint">
                   {isMac ? "⌘ + ⇧ + P" : "Ctrl + ⇧ + P"}
                 </p>
               </div>

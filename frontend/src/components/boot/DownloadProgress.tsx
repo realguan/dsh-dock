@@ -42,7 +42,7 @@ export function DownloadProgress() {
           </span>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold tracking-tight text-ink">{kindLabel}</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/5 px-2 py-0.5 font-mono text-[10px] font-medium text-brand">
+            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium text-brand">
               <span className="size-1 animate-pulse rounded-full bg-brand" />
               引擎在线引导
             </span>
@@ -51,13 +51,13 @@ export function DownloadProgress() {
 
         <div className="flex items-center gap-2">
           {!isDsh && fmtSpeed(progress.speed) && (
-            <span className="inline-flex items-center gap-1 rounded-lg border border-brand/20 bg-wash px-2 py-0.5 font-mono text-[11px] font-medium text-brand-deep shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-brand/20 bg-wash px-2 py-0.5 font-mono text-label font-medium text-brand-deep shadow-2xs">
               <Zap className="size-3" />
               {fmtSpeed(progress.speed)}
             </span>
           )}
           {progress.eta !== null && fmtEta(progress.eta) && (
-            <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-line-soft/70 px-2 py-0.5 font-mono text-[11px] text-dim shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-line-soft/70 px-2 py-0.5 font-mono text-label text-dim shadow-2xs">
               <Clock className="size-3" />
               {fmtEta(progress.eta)}
             </span>
@@ -98,7 +98,7 @@ export function DownloadProgress() {
       </div>
 
       {/* 底部保障与隔离说明 */}
-      <div className="mt-3.5 flex items-center justify-between border-t border-line/40 pt-2.5 text-[11px] text-faint">
+      <div className="mt-3.5 flex items-center justify-between border-t border-line/40 pt-2.5 text-label text-faint">
         <span className="flex items-center gap-1">
           <ShieldCheck className="size-3 text-ok" />
           官方镜像链下载 · 完整性校验

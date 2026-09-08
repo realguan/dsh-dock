@@ -1729,3 +1729,21 @@
 - 影响：仅周知。**B2 残留**：tab roving tabindex/aria-controls、prefers-reduced-motion、
   命中区 <24px、「仅靠 title 命名」15 处。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **128 passed**（126 → +2）。
+
+### 2026-09-08 refactor(uiux)：字号刻度、断点对齐、页头吸顶、会话行去重（评审批次 D）—— guan（AI 起草）
+
+- U7 字号 token 化：`@theme` 新增 5 档（`--text-micro/meta/label/note/lead` =
+  9/10/11/13/15px，**逐像素等同改造前**，避免视觉回归）；161 处 `text-[Npx]` 全量
+  替换（38 个文件）；`ui/button.tsx` 的 `text-[0.8rem]`→`text-xs`（12.8→12px，sm 按钮，
+  视觉无感）。闸门 `__tests__/fontTokens.test.ts` 禁止再出现任意字号。
+- U8 主从布局断点 `lg`(1024)→`md`(768)：`ProfileManager` 与 `SystemConsole`。窗口
+  最小宽度 860/960 均 ≥ 768 ⇒ **允许的任何窗口尺寸下都不再塌成单列**。只改断点、
+  不动窗口尺寸（评审 §10 明令「不在同一 PR 里同时改断点与窗口尺寸」）。
+- U10 页头吸顶：`ProfileManager` 页头 `sticky top-0 z-20` + `bg-bg/90 backdrop-blur-sm`，
+  负外边距抵消 `PageShell` 的 px-4/6/8；长列表滚动后视图切换入口常驻。
+- U14 会话行去重：右侧操作区**只留动作**——删掉与左徽标重复的「运行中」「健康/未知」
+  胶囊（原来三选一渲染），仅在「需修复且非运行中」时给修复按钮，修复/复制/删除不再被挤。
+- 影响：**需人工目检两点**（Tauri 需真实窗口，本次未实机验证）：① 860px 宽时左栏
+  Profile 卡片不挤（4/12 栏 ≈ 280px）；② 吸顶页头滚动时不遮首行内容。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning · `pnpm test` **130 passed**（128 → +2）·
+  `pnpm build` 通过（确认 5 档 token 生成 `.text-meta` 等工具类）。

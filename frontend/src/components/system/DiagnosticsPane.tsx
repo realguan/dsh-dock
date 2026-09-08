@@ -182,7 +182,7 @@ export function DiagnosticsPane({
                 <Cpu className="size-4" />
               </div>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   node.isReady
                     ? "bg-ok-soft text-ok font-semibold"
                     : "bg-warn-soft text-warn font-semibold"
@@ -198,7 +198,7 @@ export function DiagnosticsPane({
               {node.version || "未检出"}
             </p>
           </div>
-          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
+          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
             <span title={node.path}>{node.path || "无路径"}</span>
           </div>
         </div>
@@ -211,7 +211,7 @@ export function DiagnosticsPane({
                 <Package className="size-4" />
               </div>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   pnpm.isReady
                     ? "bg-ok-soft text-ok font-semibold"
                     : "bg-warn-soft text-warn font-semibold"
@@ -227,7 +227,7 @@ export function DiagnosticsPane({
               {pnpm.isReady ? (pnpm.version ? `v${pnpm.version}` : "已全局就绪") : "缺失"}
             </p>
           </div>
-          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
+          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
             <span title={pnpm.path}>{pnpm.path || "无路径"}</span>
           </div>
         </div>
@@ -240,7 +240,7 @@ export function DiagnosticsPane({
                 <Server className="size-4" />
               </div>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+                className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   dsh.isReady
                     ? "bg-ok-soft text-ok font-semibold"
                     : "bg-warn-soft text-warn font-semibold"
@@ -256,7 +256,7 @@ export function DiagnosticsPane({
               {dsh.isReady ? (dsh.version ? `v${dsh.version}` : "官方源 (已就绪)") : "官方源 (未检出)"}
             </p>
           </div>
-          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
+          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
             <span title={dsh.path}>{dsh.path || "无路径"}</span>
           </div>
         </div>
@@ -268,7 +268,7 @@ export function DiagnosticsPane({
               <div className="flex size-7 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-600">
                 <HardDrive className="size-4" />
               </div>
-              <span className="rounded-full bg-line px-2 py-0.5 font-mono text-[10px] text-faint">
+              <span className="rounded-full bg-line px-2 py-0.5 font-mono text-meta text-faint">
                 {platform.os} ({platform.arch})
               </span>
             </div>
@@ -279,7 +279,7 @@ export function DiagnosticsPane({
               {formatBytes(storage.totalBytes)}
             </p>
           </div>
-          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-[10px] text-faint">
+          <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
             <span title={storage.dshHome}>{storage.dshHome || "~/.dsh"}</span>
           </div>
         </div>
@@ -324,7 +324,7 @@ export function DiagnosticsPane({
             <span className="size-2.5 rounded-full bg-brand shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">Profile 工作台</span>
-              <p className="font-mono text-[11px] text-faint truncate">
+              <p className="font-mono text-label text-faint truncate">
                 {t.console.profilesUsage(
                   storage.profilesCount,
                   formatBytes(storage.profilesBytes),
@@ -337,7 +337,7 @@ export function DiagnosticsPane({
             <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">会话数据 (Sessions)</span>
-              <p className="font-mono text-[11px] text-faint truncate">
+              <p className="font-mono text-label text-faint truncate">
                 {t.console.sessionsUsage(
                   storage.sessionsCount,
                   formatBytes(storage.sessionsBytes),
@@ -350,7 +350,7 @@ export function DiagnosticsPane({
             <span className="size-2.5 rounded-full bg-line-soft shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">系统缓存与其他</span>
-              <p className="font-mono text-[11px] text-faint truncate">
+              <p className="font-mono text-label text-faint truncate">
                 {formatBytes(
                   Math.max(
                     0,

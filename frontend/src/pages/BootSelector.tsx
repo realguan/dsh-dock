@@ -158,7 +158,7 @@ export function BootSelector() {
                           <span className="text-sm font-semibold tracking-tight text-ink group-hover:text-brand-deep">
                             {meta.title}
                           </span>
-                          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-[10px] text-faint">
+                          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
                             {name}
                           </span>
                         </div>
@@ -167,7 +167,7 @@ export function BootSelector() {
 
                       <div className="flex shrink-0 items-center gap-2">
                         <span
-                          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-wide ${
+                          className={`rounded-full border px-2.5 py-0.5 text-meta font-semibold tracking-wide ${
                             isDefault
                               ? "border-brand/20 bg-brand/10 text-brand-deep"
                               : "border-line bg-line-soft/60 text-faint"

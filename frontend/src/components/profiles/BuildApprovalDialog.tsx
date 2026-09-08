@@ -84,7 +84,7 @@ export function BuildApprovalDialog({
         </DialogHeader>
 
         <div className="space-y-2 py-2">
-          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-1 text-[10px] font-medium text-faint">
+          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-1 text-meta font-medium text-faint">
             <span>package</span>
             <span>
               {t.buildGate.allow} / {t.buildGate.skip}
@@ -99,7 +99,7 @@ export function BuildApprovalDialog({
                 <div className="font-mono text-xs font-medium text-ink truncate" title={row.name}>
                   {row.name}
                 </div>
-                <div className="text-[10px] text-faint leading-snug mt-0.5">
+                <div className="text-meta text-faint leading-snug mt-0.5">
                   {row.allowed ? t.buildGate.allowHint : t.buildGate.skipHint}
                 </div>
               </div>

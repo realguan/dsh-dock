@@ -274,7 +274,7 @@ export function McpManager({
         <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/5 py-10 text-center">
           <Server className="size-7 text-rose-500/70" />
           <p className="text-xs font-medium text-ink">{t.profiles.mcpLoadFailed}</p>
-          <p className="max-w-md break-all text-[11px] text-faint">{loadError}</p>
+          <p className="max-w-md break-all text-label text-faint">{loadError}</p>
           <Button size="sm" variant="outline" onClick={() => void loadData()} className="mt-1 gap-1 text-xs">
             <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand" : "text-dim"}`} />
             <span>{t.profiles.mcpRetry}</span>
@@ -289,7 +289,7 @@ export function McpManager({
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-center">
           <Server className="size-8 text-faint mb-2" />
           <p className="text-xs font-medium text-ink">{t.profiles.mcpEmpty}</p>
-          <p className="text-[11px] text-faint mt-1 max-w-sm">
+          <p className="text-label text-faint mt-1 max-w-sm">
             支持一键添加 GitHub、Postgres、Brave Search 等 MCP 官方工具库。
           </p>
         </div>
@@ -311,11 +311,11 @@ export function McpManager({
                         {s.name}
                       </span>
                       {s.disabled ? (
-                        <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-[10px] text-faint">
+                        <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-meta text-faint">
                           已禁用
                         </span>
                       ) : (
-                        <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                        <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-600 dark:text-emerald-400">
                           Active
                         </span>
                       )}
@@ -323,7 +323,7 @@ export function McpManager({
                       <button
                         type="button"
                         onClick={() => copyPrefix(s.name)}
-                        className="flex items-center gap-1 font-mono text-[10px] text-faint hover:text-ink rounded px-1.5 py-0.5 border border-line bg-bg transition-colors"
+                        className="flex items-center gap-1 font-mono text-meta text-faint hover:text-ink rounded px-1.5 py-0.5 border border-line bg-bg transition-colors"
                         title="复制工具前缀"
                       >
                         {copiedName === s.name ? (
@@ -370,10 +370,10 @@ export function McpManager({
 
                   {/* 环境变量标签 */}
                   {Object.keys(s.env).length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] text-faint">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1 text-label text-faint">
                       <span className="font-semibold text-ink">ENV:</span>
                       {Object.keys(s.env).map((k) => (
-                        <span key={k} className="rounded bg-line px-1.5 py-0.5 font-mono text-[10px]">
+                        <span key={k} className="rounded bg-line px-1.5 py-0.5 font-mono text-meta">
                           {k}=••••
                         </span>
                       ))}
@@ -383,13 +383,13 @@ export function McpManager({
                   {/* 运行态工具联动展示 */}
                   {activeTools.length > 0 ? (
                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2 text-xs">
-                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold text-[11px]">
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold text-label">
                         <Wrench className="size-3" />
                         <span>{t.profiles.mcpActiveTools(activeTools.length)}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {activeTools.map((tool) => (
-                          <span key={tool} className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
+                          <span key={tool} className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta text-emerald-700 dark:text-emerald-300">
                             {tool}
                           </span>
                         ))}
@@ -432,17 +432,17 @@ export function McpManager({
                       size="sm"
                       variant="outline"
                       onClick={() => applyPreset(preset)}
-                      className="h-6 gap-1 px-2 text-[11px] hover:border-brand hover:text-brand"
+                      className="h-6 gap-1 px-2 text-label hover:border-brand hover:text-brand"
                     >
                       <PlusCircle className="size-3" />
                       <span>应用预设</span>
                     </Button>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
+                  <p className="mt-1.5 text-label text-faint leading-relaxed">
                     {preset.desc}
                   </p>
                 </div>
-                <div className="mt-2 truncate font-mono text-[10px] text-faint border-t border-line/50 pt-1.5">
+                <div className="mt-2 truncate font-mono text-meta text-faint border-t border-line/50 pt-1.5">
                   <code>{preset.command} {preset.args.slice(0, 2).join(" ")}…</code>
                 </div>
               </div>
@@ -466,7 +466,7 @@ export function McpManager({
 
           <div className="space-y-3.5 py-2 text-xs">
             <div>
-              <label htmlFor="mcp-form-name" className="text-faint font-semibold text-[11px]">
+              <label htmlFor="mcp-form-name" className="text-faint font-semibold text-label">
                 {t.profiles.mcpServerName} <span className="text-rose-500">*</span>
               </label>
               <input
@@ -480,7 +480,7 @@ export function McpManager({
 
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
-                <label htmlFor="mcp-form-command" className="text-faint font-semibold text-[11px]">
+                <label htmlFor="mcp-form-command" className="text-faint font-semibold text-label">
                   {t.profiles.mcpCommand}
                 </label>
                 <input
@@ -492,7 +492,7 @@ export function McpManager({
                 />
               </div>
               <div className="col-span-2">
-                <label htmlFor="mcp-form-args" className="text-faint font-semibold text-[11px]">
+                <label htmlFor="mcp-form-args" className="text-faint font-semibold text-label">
                   {t.profiles.mcpArgs}
                 </label>
                 <input
@@ -508,19 +508,19 @@ export function McpManager({
             {/* 环境变量列表 */}
             <div role="group" aria-label={t.profiles.mcpEnv}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-faint font-semibold text-[11px]">
+                <span className="text-faint font-semibold text-label">
                   {t.profiles.mcpEnv}
                 </span>
                 <button
                   type="button"
                   onClick={() => setFormEnv([...formEnv, { key: "", value: "" }])}
-                  className="text-[11px] text-brand hover:underline"
+                  className="text-label text-brand hover:underline"
                 >
                   + 添加变量
                 </button>
               </div>
               {formEnv.length === 0 ? (
-                <p className="text-[11px] text-faint italic">无需特殊环境变量</p>
+                <p className="text-label text-faint italic">无需特殊环境变量</p>
               ) : (
                 <div className="space-y-1.5 max-h-32 overflow-y-auto">
                   {formEnv.map((item, idx) => (

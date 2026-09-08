@@ -93,7 +93,7 @@ export function BootMode() {
                 </span>
 
                 <span
-                  className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+                  className={`rounded-full border px-2 py-0.5 text-meta font-semibold tracking-wide ${
                     selected
                       ? "border-brand/30 bg-wash text-brand-deep"
                       : "border-line bg-line-soft/60 text-faint"
@@ -104,14 +104,14 @@ export function BootMode() {
               </div>
 
               <div className="mt-4 flex-1">
-                <span className="block text-[15px] font-semibold tracking-tight text-ink">
+                <span className="block text-lead font-semibold tracking-tight text-ink">
                   {name}
                 </span>
                 <span className="mt-1.5 block text-xs leading-relaxed text-dim">{desc}</span>
               </div>
 
               {selected && (
-                <div className="mt-4 flex items-center gap-1 text-[11px] font-medium text-brand-deep">
+                <div className="mt-4 flex items-center gap-1 text-label font-medium text-brand-deep">
                   <CheckCircle2 className="size-3.5 text-brand" />
                   <span>已选定此模式</span>
                 </div>
@@ -131,7 +131,7 @@ export function BootMode() {
           />
           <div>
             <span className="block text-xs font-medium text-ink">{t.mode.setDefault}</span>
-            <span className="text-[11px] text-faint">随时可在设置或托盘菜单中更改</span>
+            <span className="text-label text-faint">随时可在设置或托盘菜单中更改</span>
           </div>
         </label>
 

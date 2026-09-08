@@ -59,7 +59,7 @@ export function BootStep({
             <AlertCircle className="size-3.5" />
           </div>
         ) : (
-          <div className="flex size-6 items-center justify-center rounded-full border border-line bg-panel font-mono text-[10px] font-semibold text-faint tabular-nums shadow-2xs">
+          <div className="flex size-6 items-center justify-center rounded-full border border-line bg-panel font-mono text-meta font-semibold text-faint tabular-nums shadow-2xs">
             {no}
           </div>
         )}
@@ -69,7 +69,7 @@ export function BootStep({
       <div className="min-w-0 flex-1 leading-snug">
         <div className="flex min-w-0 items-baseline gap-2">
           <span
-            className={`shrink-0 text-[13px] tracking-tight transition-colors ${
+            className={`shrink-0 text-note tracking-tight transition-colors ${
               isRunning
                 ? "font-semibold text-ink"
                 : isError
@@ -82,7 +82,7 @@ export function BootStep({
             {name}
           </span>
           {isRunning && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-brand">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.5 font-mono text-meta font-medium text-brand">
               <span className="size-1 animate-pulse rounded-full bg-brand" aria-hidden />
               {t.boot.stRunning}
             </span>
@@ -101,7 +101,7 @@ export function BootStep({
           <div className="mt-1.5 flex items-start gap-1.5">
             <code
               title={detail}
-              className="min-w-0 flex-1 select-all break-all rounded-md bg-panel/70 px-2 py-1 font-mono text-[11px] leading-relaxed text-dim"
+              className="min-w-0 flex-1 select-all break-all rounded-md bg-panel/70 px-2 py-1 font-mono text-label leading-relaxed text-dim"
             >
               {detail}
             </code>

@@ -140,7 +140,7 @@ export function LogViewerPane({
           {/* 自动滚底开关 */}
           <div className="flex items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 py-1 text-xs text-dim">
             <ArrowDown className="size-3 text-faint" />
-            <span className="text-[11px]">{t.console.autoScroll}</span>
+            <span className="text-label">{t.console.autoScroll}</span>
             <Switch
               aria-label={t.console.autoScroll}
               checked={autoScroll}
@@ -202,7 +202,7 @@ export function LogViewerPane({
           />
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-[11px] text-faint">
+        <div className="flex items-center gap-2 font-mono text-label text-faint">
           <span>{logData ? t.console.totalLines(logData.totalLines) : ""}</span>
           {logData?.truncated && <span>· {t.console.truncatedHint}</span>}
         </div>
@@ -216,7 +216,7 @@ export function LogViewerPane({
             <Terminal className="size-3.5 text-brand" />
             <span className="font-semibold">{logData?.source || source}</span>
           </div>
-          <span className="font-mono text-[10px] text-slate-500 truncate max-w-xs">
+          <span className="font-mono text-meta text-slate-500 truncate max-w-xs">
             {logData?.path}
           </span>
         </div>
@@ -252,7 +252,7 @@ export function LogViewerPane({
                     key={`${idx}-${line.slice(0, 15)}`}
                     className="flex items-start gap-3 hover:bg-slate-900/60 rounded px-1 -mx-1"
                   >
-                    <span className="select-none text-[10px] text-slate-600 w-8 text-right shrink-0 pt-0.5">
+                    <span className="select-none text-meta text-slate-600 w-8 text-right shrink-0 pt-0.5">
                       {idx + 1}
                     </span>
                     <span

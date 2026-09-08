@@ -206,7 +206,7 @@ export function PluginImportPickerDialog({
         {phase.kind === "picking" && (
           <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {phase.rowsFailed && groupedCandidates.length > 0 && (
-              <div className="text-faint text-[10px]">{t.profiles.importRowsFailedNote}</div>
+              <div className="text-faint text-meta">{t.profiles.importRowsFailedNote}</div>
             )}
             {groupedCandidates.length === 0 ? (
               <div className="text-faint border-line bg-bg rounded-lg border border-dashed px-3 py-6 text-center text-xs">
@@ -247,17 +247,17 @@ export function PluginImportPickerDialog({
                                 {displayName}
                               </span>
                               {displayName !== g.pkg && (
-                                <span className="text-faint font-mono text-[10px]" title={g.pkg}>
+                                <span className="text-faint font-mono text-meta" title={g.pkg}>
                                   ({g.pkg})
                                 </span>
                               )}
-                              <span className="text-brand font-mono text-[11px] font-medium">
+                              <span className="text-brand font-mono text-label font-medium">
                                 v{currentSrc?.version}
                               </span>
                             </span>
                             {g.description && (
                               <span
-                                className="text-faint mt-0.5 block truncate text-[11px]"
+                                className="text-faint mt-0.5 block truncate text-label"
                                 title={g.description}
                               >
                                 {g.description}
@@ -282,12 +282,12 @@ export function PluginImportPickerDialog({
                             onChange={() => toggleConfig(g.pkg)}
                             className="accent-brand size-3.5"
                           />
-                          <span className="text-[11px]">{t.profiles.importConfig}</span>
+                          <span className="text-label">{t.profiles.importConfig}</span>
                         </label>
                       </div>
 
                       {/* 来源 Profile 切换器（折叠去重） */}
-                      <div className="ml-7 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <div className="ml-7 flex flex-wrap items-center gap-1.5 text-label">
                         <span className="text-faint">来源：</span>
                         {g.sources.map((src) => {
                           const isSelectedSrc = src.profile === currentSrcName
@@ -297,7 +297,7 @@ export function PluginImportPickerDialog({
                               key={src.profile}
                               type="button"
                               onClick={() => setPkgSource(g.pkg, src.profile)}
-                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-[10px] transition-all ${
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-meta transition-all ${
                                 isSelectedSrc
                                   ? `${colorCls} ring-1 ring-brand/40 font-semibold shadow-2xs`
                                   : "bg-panel text-dim hover:bg-line-soft opacity-75"
@@ -307,7 +307,7 @@ export function PluginImportPickerDialog({
                               <span>{src.profile}</span>
                               <span className="text-faint opacity-80">v{src.version}</span>
                               {src.hasConfig && (
-                                <span className="text-brand text-[9px] font-bold">⚙</span>
+                                <span className="text-brand text-micro font-bold">⚙</span>
                               )}
                             </button>
                           )
@@ -344,7 +344,7 @@ export function PluginImportPickerDialog({
               </div>
               {s.failures.length > 0 && (
                 <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
-                  <div className="text-warn px-3 py-1.5 text-[10px]">{t.profiles.importFailures}</div>
+                  <div className="text-warn px-3 py-1.5 text-meta">{t.profiles.importFailures}</div>
                   {s.failures.map((f) => (
                     <div key={f.pkg} className="px-3 py-2">
                       <div className="text-ink font-mono text-xs">{f.pkg}</div>

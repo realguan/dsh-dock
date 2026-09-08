@@ -70,12 +70,12 @@ export function MarketPluginCard({
                   {displayName}
                 </h3>
                 {isOfficial && (
-                  <Badge variant="outline" className="h-4 px-1 text-[9px] bg-brand/10 text-brand border-brand/30 font-mono">
+                  <Badge variant="outline" className="h-4 px-1 text-micro bg-brand/10 text-brand border-brand/30 font-mono">
                     OFFICIAL
                   </Badge>
                 )}
               </div>
-              <p className="truncate text-[11px] text-dim font-mono mt-0.5">
+              <p className="truncate text-label text-dim font-mono mt-0.5">
                 by <span className="text-ink/80">{plugin.owner}</span>
               </p>
             </div>
@@ -85,7 +85,7 @@ export function MarketPluginCard({
           {categoryLabel && (
             <Badge
               variant="secondary"
-              className="shrink-0 text-[10px] font-medium border border-line/60 bg-wash text-dim"
+              className="shrink-0 text-meta font-medium border border-line/60 bg-wash text-dim"
             >
               {categoryLabel}
             </Badge>
@@ -101,7 +101,7 @@ export function MarketPluginCard({
         </p>
 
         {/* 指标栏 (Stars, Downloads, Added) */}
-        <div className="mt-3 flex items-center gap-3 text-[11px] text-faint font-mono">
+        <div className="mt-3 flex items-center gap-3 text-label text-faint font-mono">
           <div className="flex items-center gap-1 text-ink/70" title="GitHub Stars">
             <Star className="size-3 text-amber-500 fill-amber-500/20" />
             <span>{plugin.stars?.toLocaleString() ?? 0}</span>
@@ -115,7 +115,7 @@ export function MarketPluginCard({
           )}
 
           {plugin.added && (
-            <div className="truncate ml-auto text-[10px] text-faint">
+            <div className="truncate ml-auto text-meta text-faint">
               {plugin.added}
             </div>
           )}
@@ -133,7 +133,7 @@ export function MarketPluginCard({
                 return (
                   <span
                     key={prof}
-                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-mono font-medium shrink-0 shadow-2xs ${colorClass}`}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta font-mono font-medium shrink-0 shadow-2xs ${colorClass}`}
                     title={`已安装在 ${prof}`}
                   >
                     <span className="size-1 rounded-full bg-current opacity-80" />
@@ -142,7 +142,7 @@ export function MarketPluginCard({
                 )
               })
             ) : (
-              <span className="text-[10px] text-faint font-mono">
+              <span className="text-meta text-faint font-mono">
                 {t.market.notInstalled}
               </span>
             )}

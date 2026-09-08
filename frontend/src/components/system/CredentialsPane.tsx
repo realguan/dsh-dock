@@ -140,7 +140,7 @@ export function CredentialsPane({
         <ShieldCheck className="size-4 text-emerald-500 shrink-0 mt-0.5" />
         <div className="space-y-0.5">
           <span className="font-semibold text-ink">0600 权限保障与前端脱敏</span>
-          <p className="text-[11px] text-faint leading-relaxed">
+          <p className="text-label text-faint leading-relaxed">
             {t.console.permHint}。前端界面绝不持有全量明文 API Key，仅显示脱敏掩码。
           </p>
         </div>
@@ -188,17 +188,17 @@ export function CredentialsPane({
                       {item.label}
                     </span>
                     {item.label.toLowerCase() !== item.provider.toLowerCase() && (
-                      <span className="font-mono text-[10px] text-faint truncate" title={item.provider}>
+                      <span className="font-mono text-meta text-faint truncate" title={item.provider}>
                         ({item.provider})
                       </span>
                     )}
                   </div>
                   {item.configured ? (
-                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0 whitespace-nowrap shadow-2xs">
+                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-600 dark:text-emerald-400 shrink-0 whitespace-nowrap shadow-2xs">
                       {t.console.configuredTag}
                     </span>
                   ) : (
-                    <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-[10px] text-faint shrink-0 whitespace-nowrap">
+                    <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-meta text-faint shrink-0 whitespace-nowrap">
                       {t.console.notConfiguredTag}
                     </span>
                   )}
@@ -210,7 +210,7 @@ export function CredentialsPane({
                       {item.maskedKey}
                     </span>
                   ) : (
-                    <span className="text-faint text-[11px] italic">尚未配置 API Key</span>
+                    <span className="text-faint text-label italic">尚未配置 API Key</span>
                   )}
                 </div>
               </div>

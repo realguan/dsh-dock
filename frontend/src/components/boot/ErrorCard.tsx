@@ -91,7 +91,7 @@ export function ErrorCard({
             {diag ? "DIAG 诊断控制台" : "启动中断"}
           </span>
         </div>
-        <span className="font-mono text-[11px] font-medium text-dim tabular-nums">
+        <span className="font-mono text-label font-medium text-dim tabular-nums">
           #{typeof index === "number" ? String(index).padStart(2, "0") : "01"}
         </span>
       </div>
@@ -167,7 +167,7 @@ export function ErrorCard({
         {payload.log && (
           <details open={diag} className="group mt-4 overflow-hidden rounded-xl border border-line">
             <summary className="flex cursor-pointer select-none items-center justify-between bg-muted/40 px-3.5 py-2 text-xs text-dim transition-colors hover:bg-muted/70">
-              <div className="flex items-center gap-1.5 font-mono text-[11px]">
+              <div className="flex items-center gap-1.5 font-mono text-label">
                 <Terminal className="size-3 text-faint" />
                 <span>
                   原始诊断日志 · 尾部 {payload.log.split("\n").filter(Boolean).length} 行
@@ -179,7 +179,7 @@ export function ErrorCard({
               <button
                 type="button"
                 onClick={handleCopyLog}
-                className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/10 px-2 py-1 font-mono text-[10px] text-white/80 transition-colors hover:bg-white/20"
+                className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/10 px-2 py-1 font-mono text-meta text-white/80 transition-colors hover:bg-white/20"
                 title="复制日志"
               >
                 {copied ? (
@@ -194,7 +194,7 @@ export function ErrorCard({
                   </>
                 )}
               </button>
-              <pre className="max-h-60 overflow-x-auto font-mono text-[11px] leading-relaxed text-emerald-400/90 whitespace-pre-wrap">
+              <pre className="max-h-60 overflow-x-auto font-mono text-label leading-relaxed text-emerald-400/90 whitespace-pre-wrap">
                 {payload.log}
               </pre>
             </div>

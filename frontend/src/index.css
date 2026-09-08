@@ -51,6 +51,15 @@
   --font-sans:
     -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* 字号刻度（2026-09-08 批次 D / U7）：把散落的 162 处 `text-[Npx]` 收进 token。
+     名字表达该档的主要用途；值刻意与改造前**逐像素一致**（避免视觉回归），
+     要收缩刻度时只改这里。Tailwind 原生刻度：text-xs 12 / sm 14 / base 16。 */
+  --text-micro: 9px; /* 极小：图表刻度、角标 */
+  --text-meta: 10px; /* 元信息 / 徽标（改造前最多的一档） */
+  --text-label: 11px; /* 小标签 / 等宽元数据 */
+  --text-note: 13px; /* 次级正文 */
+  --text-lead: 15px; /* 强调正文 */
 }
 
 /* ---------------- shadcn/ui 语义层（映射到 dsh 基调值） ---------------- */

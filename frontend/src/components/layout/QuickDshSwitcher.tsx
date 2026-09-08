@@ -101,14 +101,14 @@ export function QuickDshSwitcher() {
 
       {/* 关联 Profile 简要标记（若存在） */}
       {activeProfile && (
-        <span className="hidden font-mono text-[10px] text-faint max-w-14 truncate whitespace-nowrap sm:inline-block">
+        <span className="hidden font-mono text-meta text-faint max-w-14 truncate whitespace-nowrap sm:inline-block">
           ({activeProfile})
         </span>
       )}
 
       {/* 快捷键徽章：平时隐藏，Hover 时平滑展开（禁止折行，预留充裕宽度） */}
       <span className="max-w-0 opacity-0 overflow-hidden group-hover:max-w-32 group-hover:opacity-100 transition-all duration-200 ease-out inline-flex items-center shrink-0">
-        <kbd className="ml-1 inline-flex items-center whitespace-nowrap rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-[9px] font-semibold text-dim border border-line/60 shadow-2xs leading-none">
+        <kbd className="ml-1 inline-flex items-center whitespace-nowrap rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-micro font-semibold text-dim border border-line/60 shadow-2xs leading-none">
           {shortcutDisplay}
         </kbd>
       </span>

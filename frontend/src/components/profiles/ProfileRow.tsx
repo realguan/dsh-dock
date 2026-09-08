@@ -100,7 +100,7 @@ export function ProfileRow({
 
             {/* 运行中：翡翠绿脉动点 */}
             {isRunning && (
-              <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none">
+              <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <span className="bg-ok size-1.5 animate-pulse rounded-full" aria-hidden />
                 {t.profiles.runningBadge}
               </span>
@@ -108,7 +108,7 @@ export function ProfileRow({
 
             {/* 默认启动 */}
             {isDefault && (
-              <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none">
+              <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <Star className="size-2.5 fill-current" />
                 {t.profiles.defaultBadge}
               </span>
@@ -116,14 +116,14 @@ export function ProfileRow({
 
             {/* 模板 / 已创建 */}
             {!materialized && (
-              <span className="bg-line-soft text-dim rounded-full px-1.5 py-0.5 text-[10px] leading-none">
+              <span className="bg-line-soft text-dim rounded-full px-1.5 py-0.5 text-meta leading-none">
                 {t.profiles.tagTemplate}
               </span>
             )}
           </div>
 
           {/* 元信息行 */}
-          <div className="text-faint mt-1 truncate font-mono text-[11px]">
+          <div className="text-faint mt-1 truncate font-mono text-label">
             {metaLine}
           </div>
         </div>

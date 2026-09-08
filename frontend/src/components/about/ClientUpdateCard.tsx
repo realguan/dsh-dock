@@ -83,12 +83,12 @@ export function ClientUpdateCard() {
             <h2 className="text-ink text-xs font-bold tracking-tight">
               {t.about.clientLabel}
             </h2>
-            <p className="text-faint text-[10px]">{t.about.officialChannel}</p>
+            <p className="text-faint text-meta">{t.about.officialChannel}</p>
           </div>
         </div>
 
         <span
-          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
             tone === "ok"
               ? "bg-ok-soft text-ok"
               : tone === "accent"
@@ -134,7 +134,7 @@ export function ClientUpdateCard() {
             typeof snapshot.notes === "string" &&
             snapshot.notes && (
               <div className="rounded-xl border border-line bg-bg/80 p-3 text-xs text-dim space-y-1.5 shadow-2xs">
-                <div className="text-faint flex items-center justify-between text-[10px] font-semibold border-b border-line/60 pb-1">
+                <div className="text-faint flex items-center justify-between text-meta font-semibold border-b border-line/60 pb-1">
                   <div className="flex items-center gap-1.5 text-brand">
                     <FileText className="size-3" />
                     <span>{t.about.releaseNotes}</span>
@@ -150,7 +150,7 @@ export function ClientUpdateCard() {
                   )}
                 </div>
                 <div
-                  className={`text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-ink/90 overflow-y-auto transition-all ${
+                  className={`text-label leading-relaxed whitespace-pre-wrap font-mono text-ink/90 overflow-y-auto transition-all ${
                     expandNotes ? "max-h-60" : "max-h-24"
                   }`}
                 >
@@ -175,7 +175,7 @@ export function ClientUpdateCard() {
                     value={Math.min(100, ((snapshot.current ?? 0) / snapshot.total) * 100)}
                     className="h-2 rounded-full"
                   />
-                  <div className="text-faint flex justify-between font-mono text-[11px]">
+                  <div className="text-faint flex justify-between font-mono text-label">
                     <span>
                       {fmtBytes(snapshot.current ?? 0)} / {fmtBytes(snapshot.total)}
                     </span>
@@ -189,7 +189,7 @@ export function ClientUpdateCard() {
                   <div className="pulse-bar">
                     <div className="pulse-bar-fill" />
                   </div>
-                  <div className="text-faint flex justify-between font-mono text-[11px]">
+                  <div className="text-faint flex justify-between font-mono text-label">
                     <span>{fmtBytes(snapshot.current ?? 0)}</span>
                     <span>正在获取资源…</span>
                   </div>

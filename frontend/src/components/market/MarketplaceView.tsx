@@ -298,7 +298,7 @@ export function MarketplaceView({
               >
                 <span>{t.market.allCategories}</span>
                 <span
-                  className={`text-[10px] font-mono rounded px-1 py-0.2 ${
+                  className={`text-meta font-mono rounded px-1 py-0.2 ${
                     selectedCategory === "all"
                       ? "bg-white/20 text-white"
                       : "bg-panel text-faint"
@@ -322,7 +322,7 @@ export function MarketplaceView({
                 >
                   <span>{cat.label}</span>
                   <span
-                    className={`text-[10px] font-mono rounded px-1 py-0.2 ${
+                    className={`text-meta font-mono rounded px-1 py-0.2 ${
                       selectedCategory === cat.key
                         ? "bg-white/20 text-white"
                         : "bg-panel text-faint"
@@ -362,7 +362,7 @@ export function MarketplaceView({
         <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-xs text-rose-600 dark:text-rose-400 space-y-2">
           <AlertCircle className="size-6 mx-auto opacity-80" />
           <p className="font-medium">{t.market.loadFailed}</p>
-          <p className="font-mono text-[11px] opacity-80 break-all">{error}</p>
+          <p className="font-mono text-label opacity-80 break-all">{error}</p>
           <Button size="sm" variant="outline" onClick={() => void loadRegistry(true)} className="rounded-xl mt-2">
             <RefreshCw className="mr-1 size-3.5" />
             {t.market.retry}
@@ -429,7 +429,7 @@ export function MarketplaceView({
             <div className="rounded-2xl border border-dashed border-line bg-panel/50 p-12 text-center text-xs space-y-2">
               <Package className="size-8 mx-auto text-faint opacity-60" />
               <p className="font-medium text-ink">{t.market.noResults}</p>
-              <p className="text-dim text-[11px]">{t.market.noResultsHint}</p>
+              <p className="text-dim text-label">{t.market.noResultsHint}</p>
               {(searchQuery || selectedCategory !== "all") && (
                 <Button
                   size="sm"
