@@ -401,6 +401,8 @@ export const enUS: AppCopy = {
     statusHealthyDesc: "Session log sequence intact, ready to open",
     statusNeedsRepairDesc: "Replay overlap or sequence anomaly detected; repair to view the full session",
     statusUnknownDesc: "Cannot determine health (possibly active session or engine not ready)",
+    statusUnknownDescWithReason:
+      "Health state cannot be determined automatically — the reason from the repair script is shown below",
     repairNeedHint: "Only unhealthy sessions can be repaired",
     backupTag: "Backed Up",
     // Archive & metadata (2026-09-07): archive semantics aligned with dsh sidebar

@@ -425,6 +425,7 @@ export const t = {
     statusHealthyDesc: "会话日志序列完整，可正常打开",
     statusNeedsRepairDesc: "检测到重放重叠或序列异常，建议修复后可查看完整会话",
     statusUnknownDesc: "无法判定健康状态（可能为活跃会话或引擎未就绪）",
+    statusUnknownDescWithReason: "无法自动判定健康状态——下方是脚本给出的具体原因",
     repairNeedHint: "仅异常会话可修复",
     backupTag: "已备份",
     // 归档与元数据透出（2026-09-07）：归档口径对齐 dsh 侧栏（默认隐藏），

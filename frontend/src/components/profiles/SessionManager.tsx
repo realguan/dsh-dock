@@ -33,6 +33,7 @@ import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import type { SessionItem } from "@/types/ipc"
+import { statusMeta } from "@/lib/sessionStatus"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
@@ -72,33 +73,6 @@ function endStateLabel(
   if (endState === "aborted") return t.sessions.endStateAborted
   if (endState === "error") return t.sessions.endStateError
   return t.sessions.endStateOpen
-}
-
-/** 状态视觉映射：色点 + 徽标 + 描述。 */
-function statusMeta(
-  status: SessionItem["status"],
-  t: ReturnType<typeof useI18n>["t"],
-): { dot: string; badge: string; desc: string } {
-  switch (status) {
-    case "healthy":
-      return {
-        dot: "bg-emerald-500",
-        badge: `${t.sessions.statusHealthy}`,
-        desc: t.sessions.statusHealthyDesc,
-      }
-    case "needs_repair":
-      return {
-        dot: "bg-amber-500 animate-pulse",
-        badge: t.sessions.statusNeedsRepair,
-        desc: t.sessions.statusNeedsRepairDesc,
-      }
-    default:
-      return {
-        dot: "bg-faint/50",
-        badge: t.sessions.statusUnknown,
-        desc: t.sessions.statusUnknownDesc,
-      }
-  }
 }
 
 export function SessionManager({
@@ -313,7 +287,7 @@ export function SessionManager({
     // 活跃会话（运行中）不参与「需自愈」：修复会被 dsh 下次 flush 覆盖。
     const isNeedsRepair = sess.status === "needs_repair" && !isActive
     const isHealthy = sess.status === "healthy" && !isActive
-    const meta = statusMeta(sess.status, t)
+    const meta = statusMeta(sess.status, t, Boolean(sess.healthDetail))
     const displayName = sessionDisplayName(sess, t.sessions.noTitle)
 
     return (
@@ -469,9 +443,14 @@ export function SessionManager({
             )}
           </div>
 
-          {/* 异常详情（非健康时展示原因） */}
-          {isNeedsRepair && sess.healthDetail && (
-            <p className="line-clamp-1 text-label text-amber-700">
+          {/* 异常/未知详情（2026-09-08 §18：unknown 也带原因——JSON 不可解析 /
+              空文件 / 版本高于本构建，旧实现只在 needs_repair 时展示，用户看不到） */}
+          {sess.healthDetail && (
+            <p
+              className={`line-clamp-1 text-label ${
+                isNeedsRepair ? "text-amber-700" : "text-faint"
+              }`}
+            >
               {sess.healthDetail}
             </p>
           )}

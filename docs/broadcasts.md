@@ -1986,3 +1986,16 @@
 - 凭据：Rust `cargo test` **218 passed**（213 → +5）· `fmt --check` 干净 ·
   `clippy -D warnings` 干净 · 前端 `typecheck` 0 错 / `oxlint` 0 warning /
   `test` **144 passed**（139 → +5）/ `build` 通过。
+
+### 2026-09-08 fix(uiux)：会话 unknown 状态呈现（UI/UX 评审 §18 / 问题记录 U16）—— guan（AI 起草）
+
+- **缺陷**：`--scan` 对「JSON 不可解析 / 末行截断 / 空文件 / 存储版本高于本构建」判
+  `unknown` 并给出确切原因，但前端把 `unknown` 一律渲染成「无法判定健康状态（可能为
+  活跃会话或引擎未就绪）」，且 `healthDetail` 只在 `needs_repair` 时展示——原因被吞。
+- **修法**：`healthDetail` 改为凡有即展示（需修复 amber / 未知 faint 区分）；
+  `unknown` 描述按「是否携带原因」分叉（新增 `statusUnknownDescWithReason`）；
+  状态映射下沉纯函数 `lib/sessionStatus.ts::statusMeta(status, t, hasReason)`，
+  补 `sessionStatus.test.ts` 3 条（含「有原因时不得再说无法判定」）。
+- 影响：仅周知，无 IPC / 契约变更；`needs_repair` 呈现不变。
+- 凭据：前端 `typecheck` 0 错 · `oxlint` 0 warning · `test` **147 passed**（144 → +3）·
+  `build` 通过（本批未动 Rust）。

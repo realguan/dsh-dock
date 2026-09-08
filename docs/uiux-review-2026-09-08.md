@@ -493,7 +493,7 @@ emerald-700 5.48、sky-500 3.0→sky-700 5.93、rose-500 3.4→rose-700 6.29、v
 17 个较小文件未计。这批是纯机械抽取（每条约 2 个键 + 1 处替换），但改动面横跨 25+ 文件，
 按 AGENTS §8.1 应单独立项——本次只收口了读屏可感知的 `aria-label` 与用户可见的动词/标签。
 
-## 18. 补充发现：会话 `unknown` 呈现（2026-09-08 架构批次 5 fixture 驱动暴露，**未修，登记**）
+## 18. 会话 `unknown` 呈现（2026-09-08 架构批次 5 fixture 驱动暴露 → **已修**）
 
 `scripts/repair-session.mjs` 的 `--scan` 对「JSON 不可解析 / 末行截断 / 空文件 /
 存储版本高于本构建」一律判 `unknown`（脚本 §994-998 明确口径：`unknown` = 无法解析 /
@@ -519,9 +519,14 @@ emerald-700 5.48、sky-500 3.0→sky-700 5.93、rose-500 3.4→rose-700 6.29、v
 - `healthDetail` 对 `unknown` 同样展示（该原因对用户可行动：空文件可删、版本不支持需升级 dsh）；
 - 补一条纯函数映射测试（status + detail → 徽标/描述键），避免再次退化。
 
-**为何没在本批顺手修**：批次 5 的意图是补测试覆盖；此处涉及文案键与呈现分支，属 UI/UX
-面（AGENTS §8.1 一次会话一个意图），且 fixture 表已把 `unknown` 的四类原因钉住——修完
-有机器闸门兜底。
+**落地（2026-09-08，`fix(uiux): 会话 unknown 呈现`）**：
+
+- `healthDetail` 不再只在 `needs_repair` 时渲染——`unknown` 行同样展示脚本给出的原因
+  （配色区分：需修复 amber / 未知 faint）；
+- `unknown` 描述按「是否携带原因」分叉：无原因沿用旧文案，有原因改
+  `statusUnknownDescWithReason`「无法自动判定健康状态——下方是脚本给出的具体原因」；
+- 映射下沉为纯函数 `lib/sessionStatus.ts::statusMeta(status, t, hasReason)`（原在组件内），
+  补 `__tests__/sessionStatus.test.ts` 三条（含「有原因时不得再说无法判定」）。
 
 ## 19. 落地记录：U9 破坏性操作确认（2026-09-08，`fix(uiux): 破坏性操作统一确认与覆写前备份`）
 
