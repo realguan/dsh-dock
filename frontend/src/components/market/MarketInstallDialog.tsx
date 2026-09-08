@@ -11,6 +11,7 @@ import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
 import type { MarketPlugin } from "@/types/market"
+import { validatePluginSpec } from "@/lib/profiles"
 import {
   detectInstallSource,
   getPluginDescription,
@@ -87,6 +88,13 @@ export function MarketInstallDialog({
 
   const handleInstall = async () => {
     if (!selectedProfile || !sourceInfo.spec.trim()) return
+    // 提交前预检（ADR-0011 齐口径）：market spec 坏形时给出可读文案而非
+    // 等后端校验失败再回显
+    const invalid = validatePluginSpec(sourceInfo.spec.trim())
+    if (invalid) {
+      setError(invalid)
+      return
+    }
     setInstalling(true)
     setError(null)
 

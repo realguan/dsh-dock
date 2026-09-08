@@ -10,7 +10,17 @@ export function extractInstallSpec(installCmd: string): string {
   if (!installCmd) return ""
   const trimmed = installCmd.trim()
   const parts = trimmed.split(/\s+/)
-  return parts[parts.length - 1] || ""
+  const last = parts[parts.length - 1] || ""
+  // registry 数据形态：tarball 直链常被成对引号包裹（`dsh plugin add "https://…tgz"`）
+  // ——argv 单传无 shell，引号会字面进入 spec，提取层剥掉（ADR-0011）
+  if (
+    last.length >= 2 &&
+    ((last.startsWith('"') && last.endsWith('"')) ||
+      (last.startsWith("'") && last.endsWith("'")))
+  ) {
+    return last.slice(1, -1)
+  }
+  return last
 }
 
 /**

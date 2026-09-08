@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import {
   summarizeCreateOutcome,
   TEMPLATE_BUNDLES,
+  validatePluginSpec,
   validateProfileName,
 } from "@/lib/profiles"
 
@@ -18,6 +19,59 @@ describe("validateProfileName（逐字镜像 dsh resolveProfileDir 拒绝集）"
     for (const good of ["web", "headless", "my-profile", "中文名", ".hidden", "a b", "..foo"]) {
       expect(validateProfileName(good), `${good} 应放行`).toBeNull()
     }
+  })
+})
+
+describe("validatePluginSpec（镜像 plugins::validate_install_spec，ADR-0011 三形态）", () => {
+  it("npm 形态：scope 包名与 tag/精确/^~ 区间放行，`><` 与元字符拒绝", () => {
+    for (const ok of ["dsh-better-sidebar", "@scope/pkg", "pkg@next", "pkg@^1.0.0"]) {
+      expect(validatePluginSpec(ok), `${ok} 应放行`).toBeNull()
+    }
+    for (const bad of ["pkg@>=2", "pkg`id`", "pkg$(id)", "a b", "pkg\tx"]) {
+      expect(validatePluginSpec(bad), `${bad} 应被拒绝`).not.toBeNull()
+    }
+  })
+
+  it("github 形态：registry 实测三形态放行，残缺/越界拒绝", () => {
+    for (const ok of [
+      "github:CAI-MH/dsh-quality-review",
+      "github:zhu1090093659/dsh-web-ui#path:/packages/dsh-pet",
+      "github:owner/repo#main",
+      "github:owner/repo#dev&path:/packages/p",
+    ]) {
+      expect(validatePluginSpec(ok), `${ok} 应放行`).toBeNull()
+    }
+    for (const bad of [
+      "github:",
+      "github:o",
+      "github:/r",
+      "github:o/",
+      "github:o/r/r2",
+      "github:o/r#",
+      "github:o/r#path:",
+      "github:o/r#x;rm",
+      "github:o/r#x y",
+    ]) {
+      expect(validatePluginSpec(bad), `${bad} 应被拒绝`).not.toBeNull()
+    }
+  })
+
+  it("tarball 形态：https 直链放行，http/残缺/未知协议拒绝（fail-closed）", () => {
+    expect(
+      validatePluginSpec("https://github.com/o/r/releases/latest/download/p.tgz"),
+    ).toBeNull()
+    for (const bad of ["https://", "https:///x", "http://x/y.tgz", "npm:o/r", "git+https://github.com/o/r"]) {
+      expect(validatePluginSpec(bad), `${bad} 应被拒绝`).not.toBeNull()
+    }
+  })
+
+  it("注入面：前导 - 拒绝；长度上限 npm 214 / 总长 512", () => {
+    expect(validatePluginSpec("-flag")).not.toBeNull()
+    expect(validatePluginSpec("--frozen-lockfile")).not.toBeNull()
+    expect(validatePluginSpec("a".repeat(215))).not.toBeNull()
+    expect(validatePluginSpec("a".repeat(215))).toContain("214")
+    expect(validatePluginSpec("a".repeat(513))).toContain("512")
+    expect(validatePluginSpec(`github:o/${"r".repeat(300)}`)).toBeNull()
   })
 })
 

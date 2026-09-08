@@ -1560,3 +1560,28 @@
 - 凭据：前端 typecheck/lint/112 测试绿；cargo test 182 绿 + fmt/clippy
   干净（probe_no_open 首跑偶发失败，单跑与全量复跑均过——存量偶发，与
   本次改动无关，留观）；vite 预览目检 selector 页顶栏已消失。
+
+### 2026-09-08 fix(plugins)：市场非 npm 来源安装必败修复 + 弹窗溢出治理 + 插件职责边界立宪（ADR-0011）—— guan
+
+- 缺陷（用户实测复现 dsh-pet）：线上 registry 3363 条中 51.6%（1736 条）
+  install spec 为 `github:owner/repo`（含 `#path:/子目录` 片段）或带成对引号的
+  tarball 直链，`validate_plugin_spec` 白名单不含 `:` `#` 必拒——市场半数插件
+  点安装即报「包名只允许字母数字与 @/._^~*-」。pnpm 原生支持三形态，
+  唯一挡路点是壳的校验白名单。
+- 修复：校验谓词拆二——安装/卸载/更新入口换 `validate_install_spec`
+  （npm / github[:#frag] / https tarball 三形态；总长 512、npm 形态仍守 214；
+  `#path:` 空值 fail-closed；仍拒前导 `-`、空白、`><` 区间）；更新检查与
+  选版本保持严格 npm 判别（防拿 github 形态打 packument）。前端预检镜像
+  同步；registry 提取层剥离成对引号；市场弹窗提交前预检。恶意反例入测。
+- UI：`DialogContent` 基类无 max-h 无滚动，fixed 居中定位下视口不足即上下
+  两端溢出且不可滚动救援——补 `max-h-[calc(100dvh-2rem)] overflow-y-auto`，
+  全站弹窗受益。
+- 职责边界立宪（ADR-0011）：跨 profile 归插件中心、单 profile 归详情；
+  安装来源三形态两面对齐。CONTEXT.md 新增插件领域词汇四条；AGENTS §9
+  登记索引；roadmap 4.4 落地记录补 09-08 行。
+- 小版本挂账：分发 github 包改从来源 package.json dependencies 取 spec；
+  跨 profile 更新检查 + 批量更新 + 下载队列（问题记录095 #4）；动词统一
+  「安装到…」/Tab 名「插件」/删 ProfileDetailDialog.tsx 死代码。
+- 挂账实测：git dep 的安装/更新/卸载需 dev 环境各实测一轮（update 对
+  git dep 是否重解析默认分支存疑）。
+- 凭据：cargo test 184 绿 + fmt/clippy 干净；前端 typecheck/lint/117 测试绿。

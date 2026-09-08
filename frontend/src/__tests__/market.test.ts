@@ -31,6 +31,23 @@ describe("lib/market.ts", () => {
       expect(extractInstallSpec("@org/plugin")).toBe("@org/plugin")
       expect(extractInstallSpec("")).toBe("")
     })
+
+    it("strips paired quotes wrapping tarball urls (registry data form, ADR-0011)", () => {
+      expect(
+        extractInstallSpec(
+          'dsh plugin --profile web add "https://github.com/Crosery/dsh-drop/releases/latest/download/dsh-drop.tgz"',
+        ),
+      ).toBe(
+        "https://github.com/Crosery/dsh-drop/releases/latest/download/dsh-drop.tgz",
+      )
+      expect(extractInstallSpec("'https://example.com/p.tgz'")).toBe(
+        "https://example.com/p.tgz",
+      )
+      // 非成对引号不剥（fail-closed，交给校验层拒绝）
+      expect(extractInstallSpec('"https://example.com/p.tgz')).toBe(
+        '"https://example.com/p.tgz',
+      )
+    })
   })
 
   describe("getPluginDescription", () => {

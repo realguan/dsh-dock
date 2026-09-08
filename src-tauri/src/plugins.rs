@@ -338,11 +338,16 @@ impl PluginOp {
     }
 }
 
-/// 插件名/规格校验（纯函数）：spec 作为单个 argv 传给 dsh→pnpm（无 shell 参与，
-/// 无注入面），但仍须防两类滥用——① pnpm 旗标注入（前导 `-` 会被 pnpm 当参数，
-/// 如 `--frozen-lockfile`）；② 控制字符/空白进日志与清单。允许 scope 包名
-/// （`@scope/name`）、版本段（`@tag|精确|^~区间`，不含 `><`——需要语义区间时
-/// 走终端，v1 不开）。与前端 lib/profiles.ts 的预检镜像同规则。
+/// npm 包名/规格判别（纯函数，严格形态）：只接受纯 npm spec。更新检查的
+/// 依赖过滤（`check_updates_blocking`）与选版本（`plugin_versions_blocking`）
+/// 用它避免拿 `github:` 等非 npm 形态去打 registry。安装入口的宽口径见
+/// [`validate_install_spec`]（ADR-0011，两谓词勿混用）。
+///
+/// spec 作为单个 argv 传给 dsh→pnpm（无 shell 参与，无注入面），仍须防两类
+/// 滥用——① pnpm 旗标注入（前导 `-` 会被 pnpm 当参数，如 `--frozen-lockfile`）；
+/// ② 控制字符/空白进日志与清单。允许 scope 包名（`@scope/name`）、版本段
+/// （`@tag|精确|^~区间`，不含 `><`——需要语义区间时走终端，v1 不开）。
+/// 与前端 lib/profiles.ts 的预检镜像同规则。
 pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
     if spec.is_empty() {
         return Err("包名不能为空".to_string());
@@ -354,6 +359,40 @@ pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
     if spec.starts_with('-') {
         return Err("包名不能以 - 开头（会被当作命令参数）".to_string());
     }
+    validate_npm_body(spec)
+}
+
+/// 安装 spec 校验（纯函数，宽口径，安装/卸载/更新转发链专用——ADR-0011）：
+/// 注入安全不变（单 argv、拒前导 `-`、拒空白/控制字符、拒 `><` 语义区间），
+/// 放行线上 registry 实测三形态——npm spec（现规则）、`github:用户名/仓库名`
+/// （可带 `#path:/子目录`、`#分支`、`#提交` 片段）、`https://…` tarball 直链。
+/// 片段/URL 的语义合法性（分支是否存在、路径遍历等）归 pnpm/dsh，壳只守
+/// 注入面。更新检查/选版本仍用 [`validate_plugin_spec`]，勿混用。
+pub fn validate_install_spec(spec: &str) -> Result<(), String> {
+    if spec.is_empty() {
+        return Err("包名不能为空".to_string());
+    }
+    if spec.starts_with('-') {
+        return Err("包名不能以 - 开头（会被当作命令参数）".to_string());
+    }
+    if spec.len() > 512 {
+        return Err("安装来源过长（上限 512 字符）".to_string());
+    }
+    if let Some(rest) = spec.strip_prefix("github:") {
+        return validate_github_body(rest);
+    }
+    if let Some(rest) = spec.strip_prefix("https://") {
+        return validate_tarball_body(rest);
+    }
+    // npm 形态保持 214 上限（github/tarball 链接走 512 总长上限）
+    if spec.len() > 214 {
+        return Err("包名过长（npm 上限 214 字符）".to_string());
+    }
+    validate_npm_body(spec)
+}
+
+/// npm 形态字符集（长度上限由调用方按口径先行把关）。
+fn validate_npm_body(spec: &str) -> Result<(), String> {
     if !spec
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || "@/._^~*-".contains(c))
@@ -365,6 +404,53 @@ pub fn validate_plugin_spec(spec: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `github:` 之后的部分：`用户名/仓库名` + 可选 `#片段`（`#path:/…`、`#分支`、
+/// `#分支&path:/…`）。字符集不含空白/引号/尖括号/分号；`#semver:` 等语义
+/// 片段 v1 不开（走终端，同 `><` 区间口径）。
+fn validate_github_body(rest: &str) -> Result<(), String> {
+    let bad =
+        || "GitHub 来源格式：github:用户名/仓库名，可带 #path:/子目录 或 #分支/#提交".to_string();
+    let (owner_repo, frag) = match rest.split_once('#') {
+        Some((body, f)) => (body, Some(f)),
+        None => (rest, None),
+    };
+    let mut parts = owner_repo.split('/');
+    let (owner, repo) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    if parts.next().is_some() || !is_repo_segment(owner) || !is_repo_segment(repo) {
+        return Err(bad());
+    }
+    if let Some(f) = frag {
+        if f.is_empty()
+            || !f
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_./:=&-".contains(c))
+            || f.strip_prefix("path:").is_some_and(str::is_empty)
+        {
+            return Err(bad());
+        }
+    }
+    Ok(())
+}
+
+/// `https://` 之后的部分：host 非空、其余走字符集（覆盖 query 串）。
+fn validate_tarball_body(rest: &str) -> Result<(), String> {
+    let bad = "安装链接仅支持 https:// 的 tarball 直链".to_string();
+    if rest.split('/').next().unwrap_or("").is_empty()
+        || !rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ":/._~#?&=%+-".contains(c))
+    {
+        return Err(bad);
+    }
+    Ok(())
+}
+
+fn is_repo_segment(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
 pub fn mutate_plugin_blocking(
@@ -374,7 +460,8 @@ pub fn mutate_plugin_blocking(
     data_dir: &Path,
 ) -> Result<PluginOpOutcome, String> {
     crate::profiles::validate_profile_name(profile)?;
-    validate_plugin_spec(spec)?;
+    // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
+    validate_install_spec(spec)?;
     let home = crate::resolve::user_dsh_home();
     if !home
         .join("profiles")
@@ -486,6 +573,74 @@ mod op_tests {
             &format!("a{}", "b".repeat(215)),
         ] {
             assert!(validate_plugin_spec(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn install_spec_accepts_registry_three_forms() {
+        // npm 现规则原样
+        for ok_spec in [
+            "dsh-better-sidebar",
+            "@scope/pkg",
+            "pkg@0.16.1",
+            "pkg@next",
+            "pkg@^1.0.0",
+        ] {
+            assert!(validate_install_spec(ok_spec).is_ok(), "{ok_spec}");
+        }
+        // github：线上 registry 实测形态（ADR-0011）
+        for ok_spec in [
+            "github:CAI-MH/dsh-quality-review",
+            "github:zhu1090093659/dsh-web-ui#path:/packages/dsh-pet",
+            "github:owner/repo#main",
+            "github:owner/repo#dev&path:/packages/p",
+            "github:O-R.e1/r_2.N-x",
+        ] {
+            assert!(validate_install_spec(ok_spec).is_ok(), "{ok_spec}");
+        }
+        // tarball：registry 实测（成对引号由提取层剥离后到达）
+        assert!(
+            validate_install_spec("https://github.com/o/r/releases/latest/download/p.tgz").is_ok()
+        );
+        // github 链接超 214 但在 512 上限内合法（npm 形态仍守 214）
+        let long_link = format!("github:o/{}", "r".repeat(300));
+        assert!(validate_install_spec(&long_link).is_ok());
+        assert!(validate_install_spec(&format!("a{}", "b".repeat(215))).is_err());
+    }
+
+    #[test]
+    fn install_spec_rejects_injection_and_malformed() {
+        for bad in [
+            "",
+            "-flag",
+            "--frozen-lockfile",
+            "pkg; rm -rf ~",
+            "a b",
+            "pkg\tx",
+            "pkg@>=2",
+            "pkg`id`",
+            "pkg$(id)",
+            // 非 npm 协议/URL 形态 v1 不开（fail-closed）
+            "npm:o/r",
+            "git+https://github.com/o/r",
+            "http://x/y.tgz",
+            // github 形态残缺/越界
+            "github:",
+            "github:o",
+            "github:/r",
+            "github:o/",
+            "github:o/r/r2",
+            "github:o/r#",
+            "github:o/r#path:",
+            "github:o/r#x;rm",
+            "github:o/r#x y",
+            // tarball 残缺
+            "https://",
+            "https:///x",
+            // 总长上限
+            &format!("a{}", "b".repeat(513)),
+        ] {
+            assert!(validate_install_spec(bad).is_err(), "{bad}");
         }
     }
 

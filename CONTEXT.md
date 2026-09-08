@@ -31,3 +31,21 @@ _Avoid_: 环境检查、probe（指执行器整体探测时除外）
 **引擎目录（Engine dir）**:
 壳数据目录下 `engines/`，即注入给子进程的 `PNPM_HOME`，引擎三件的实际落点。
 _Avoid_: tools/（旧布局）、私有 prefix
+
+## 插件领域词汇
+
+**内置插件（Bundle）**:
+dsh 官方维护、随引擎安装目录分发的插件（`dsh.profile.bundles` 声明），不进 profile 的 node_modules，版本随引擎。
+_Avoid_: 官方插件、系统插件
+
+**外挂插件（Dependency）**:
+装入 profile `node_modules` 的第三方插件（package.json dependencies 声明），经 dsh plugin 转发链安装；UI 固定称「外挂插件」。
+_Avoid_: 第三方包（泛指时）、用户插件
+
+**补丁包（Patch bundle）**:
+`dsh.bundle.patch` 类插件——纯 insert 贡献配置行、自身不产生可定位行，启停以全部贡献行集合为单位。
+_Avoid_: patch 插件、插入式插件
+
+**安装来源（Install source）**:
+安装 spec 的三形态：npm 包名（含版本段）、`github:用户名/仓库名`（可带 `#path:` 子目录或分支片段）、`https://…` tarball 直链；市场卡片与详情手填同规格（ADR-0011）。
+_Avoid_: 安装地址（泛称）、链接安装

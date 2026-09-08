@@ -49,17 +49,57 @@ export function phaseLabel(phase: string | null): string {
 }
 
 /**
- * 插件名/规格输入预检（4.4②）——逐字镜像后端 plugins::validate_plugin_spec
+ * 安装 spec 输入预检（ADR-0011 三形态）——镜像后端 plugins::validate_install_spec
  * （前端只做提效预检，后端校验仍是权威）。防两类滥用：pnpm 旗标注入（前导
- * `-`）与控制字符/空白；scope 包名与版本段（tag/精确/^~ 区间）放行，`><`
- * 语义区间 v1 不开（走终端）。
+ * `-`）与控制字符/空白；放行 registry 实测三形态：npm spec（scope 包名 +
+ * tag/精确/^~ 区间，`><` 语义区间 v1 不开走终端）、`github:用户名/仓库名`
+ * （可带 #path:/子目录 或 #分支/#提交 片段）、`https://…` tarball 直链。
+ * 更新检查的严格 npm 判别在后端（validate_plugin_spec），前端无需镜像。
  */
 export function validatePluginSpec(spec: string): string | null {
   if (spec === "") return "包名不能为空"
-  if (spec.length > 214) return "包名过长（npm 上限 214 字符）"
   if (spec.startsWith("-")) return "包名不能以 - 开头（会被当作命令参数）"
+  if (spec.length > 512) return "安装来源过长（上限 512 字符）"
+  if (spec.startsWith("github:"))
+    return validateGithubBody(spec.slice("github:".length))
+  if (spec.startsWith("https://"))
+    return validateTarballBody(spec.slice("https://".length))
+  // npm 现规则：scope 包名与版本段放行
+  if (spec.length > 214) return "包名过长（npm 上限 214 字符）"
   if (!/^[a-zA-Z0-9@/._^~*-]+$/.test(spec))
     return "包名只允许字母数字与 @/._^~*-（版本段支持 tag、精确版本、^~ 区间）"
+  return null
+}
+
+const GITHUB_BODY_BAD =
+  "GitHub 来源格式：github:用户名/仓库名，可带 #path:/子目录 或 #分支/#提交"
+const TARBALL_BODY_BAD = "安装链接仅支持 https:// 的 tarball 直链"
+
+function isRepoSegment(s: string): boolean {
+  return s !== "" && /^[A-Za-z0-9._-]+$/.test(s)
+}
+
+function validateGithubBody(rest: string): string | null {
+  const hash = rest.indexOf("#")
+  const body = hash === -1 ? rest : rest.slice(0, hash)
+  const frag = hash === -1 ? null : rest.slice(hash + 1)
+  const segs = body.split("/")
+  if (segs.length !== 2 || !isRepoSegment(segs[0]) || !isRepoSegment(segs[1]))
+    return GITHUB_BODY_BAD
+  // #path: 空路径值 fail-closed（与后端 strip_prefix("path:").is_some_and(is_empty) 同口径）
+  if (
+    frag !== null &&
+    (frag === "" ||
+      !/^[a-zA-Z0-9_./:=&-]+$/.test(frag) ||
+      (frag.startsWith("path:") && frag.slice(5) === ""))
+  )
+    return GITHUB_BODY_BAD
+  return null
+}
+
+function validateTarballBody(rest: string): string | null {
+  if (rest.split("/")[0] === "" || !/^[a-zA-Z0-9:/._~#?&=%+-]+$/.test(rest))
+    return TARBALL_BODY_BAD
   return null
 }
 
