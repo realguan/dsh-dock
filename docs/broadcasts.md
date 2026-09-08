@@ -789,6 +789,31 @@
   1:1 生命周期 ADR 修订。
 ```
 
+### 2026-09-08 完成通知 · 补丁包启用/禁用开关（4.4③ 补丁包形态补全）—— guan（AI 协作）
+
+- 变更：本 commit——`plugins.rs`（`PluginRowState` 扩展 `contributed_ids`；
+  行表解析 `parse_dump_rows_with_section` 带 bundle 段落归属 `# == <bundle>`
+  （含 `, patched by <路径>` 后缀剥离——2026-09-08 实机实测）；`build_row_states`
+  合成补丁包条目：id = 第一贡献行、shell_disabled = 贡献行**全禁用**（all 语义，
+  部分禁用显示启用、切换一次收敛）、patch_entries 合计；`plugin_rows_blocking`
+  读 manifest dependencies 走合成）、前端（`types/ipc.ts` 新字段；
+  `lib/pluginToggle.ts` 开关目标纯函数；`ProfileDetailPane.toggleDisabled`
+  补丁包多目标**串行**写——同一 patch 文件读改写，并发 invoke 相互覆盖）、
+  文档（ADR-0009 第七次执行细则修订；ledger 复现点 13 入册——dsh 0.1.2-rc.1
+  段落归属 + include 浅覆盖 + loader 组禁用继承；roadmap 4.4 落地记录）。
+- 影响：无自身行的补丁包（实测 `@openviking/dsh-memory-plugin`、
+  `@tt-a1i/archify-dsh`，`dsh.bundle.patch` 纯 insert 形态）此前无开关、用户
+  误判「未安装/解析失败」——现在开关真实可切换：写 profile
+  `cordis.patch.yml` 贡献行 `{id, disabled}`，重启生效（不热生效，同 4.4③
+  口径）；bundle 级禁用第一类语义**不做**（dsh 无该命名空间）；id 来源仍定死
+  dump-config 行表（第四次修订「勿自解析包内 patch 结构」口径不变）。
+  **升级复核项**：dump 段落注释格式（含 patched by 后缀）随 dsh 升级须按
+  ledger 复现点 13 逐条复核。
+- 凭据：cargo test 182 绿（+3）/ clippy -D warnings 清 / fmt 过；前端
+  typecheck / lint / vitest 112 绿（+3）；实机验证 = 备份 → 注入两条禁用补丁
+  → dump 确认（archify-skill-filesystem 与 openviking-memory 行均得
+  `disabled: true`、name/config 不丢）→ 还原 patch（diff 一致）。
+
 ### 2026-08-29 完成通知 · 4.3⑥ Profile 切换落地（重启语义）+ WSL guest 脚本参数化；多开登记待办 —— guan（AI 协作）
 
 - 变更：本 commit——`executor.rs`（Executor trait 新增 `set_forced_profile`；
