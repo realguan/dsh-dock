@@ -2147,3 +2147,22 @@
   同一安装 27.6s 装上（`bundles` 已 reconcile）。
 - 待办：实机 `cargo tdev` 复测（GUI 路径不再弹审批）；存量 profile 在首次插件
   操作时自动补齐旗标（无需迁移脚本）。
+
+### 2026-09-09 快车道 · cargo tdev 调试档隔离 + DSH 版本列表与版本选择器 —— guan（AI 协作）
+
+- 变更（commit `0871907` + `4b5603a`）：
+  - `chore(dev)`：`.cargo/config.toml` 新增别名 `cargo tdev` +
+    `src-tauri/tauri.dev.conf.json` 把 dev 构建 identifier 切到
+    `io.github.realguan.dsh-dock.dev`——此前 debug 构建与已安装应用共用生产
+    identifier（同开互顶 + 数据目录互踩）；README / CONTRIBUTING 同步推荐命令。
+  - `feat(about)`：`list_dsh_versions`（packument 全版本 + 通道归类
+    stable/rc/alpha/other + 与已装版本 semver 相对关系）、
+    `ComponentUpdate.preview_latest`（「有新版」仍只按稳定/rc 判定）、
+    `terminal_action` 可选 `version`、`UpgradePlan::Skip` 短路；前端
+    DshVersionListDialog 版本列表（安装/回退/当前态 + 全部·稳定候选·预览过滤）。
+- 影响：新增 IPC `list_dsh_versions`（AGENTS §7 已登记、capabilities 已授权）；
+  `terminal_action` 入参增可选 `version`（不传 = 原行为）；`ComponentUpdate`
+  形状增 `preview_latest`（`ipc-shapes.json` 与前端形状闸门同步）。发版 Release
+  notes 需带版本选择器；`cargo tdev` 成为贡献者推荐调试入口。
+- 凭据：cargo test 228 绿 + fmt/clippy 干净；前端 typecheck / oxlint / 161 测试绿
+  （新增 `lib/dshVersions.ts` 纯逻辑测试 8 条）。
