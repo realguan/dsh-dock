@@ -1217,6 +1217,30 @@ function extractTitle(records) {
   return title
 }
 
+/**
+ * 失效 dsh 会话投影缓存（session_projcache，2026-09-09 实测 4885 根因）：
+ * dsh 侧栏可见性（blank/title）由投影缓存决定——`recordFor` 只以日志身份
+ * （formatVersion/createdAt/cwd/isSeeded/inheritedEventCount）判定缓存有效，
+ * 内容修复**不改变身份**，缓存永不失效；写回只发生在创建 / turn/end /
+ * 释放三处，被隐藏的会话再无事件流过 → 即使修复文件 + 重启 dsh，侧栏仍按
+ * stale 投影（blank=true）隐藏会话。投影缓存是 derived data（dsh 语义：
+ * 缺失/损坏仅代价是冷读重建，绝不产生错值），修复成功后删除该会话条目，
+ * 让 dsh 下次以修复后的日志重建（标题与 blank 一并恢复）。
+ * 尽力而为：ENOENT = 无缓存（正常）；其他失败不阻断修复，返回值供消息附注。
+ */
+function clearSessionProjectionCache(sessionId) {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+  const home = getDshHome()
+  const cacheFile = join(home, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`)
+  try {
+    unlinkSync(cacheFile)
+    return `已清除会话投影缓存（${basename(cacheFile)}），dsh 将以修复后的日志重建侧栏投影`
+  } catch (e) {
+    if (e?.code === 'ENOENT') return null
+    return `⚠️ 未能清除投影缓存 ${cacheFile}（${e?.message ?? e}）；若 dsh 侧栏仍隐藏该会话，请手动删除此文件后重启 dsh`
+  }
+}
+
 /** 日志字节 → { header, records }（重建分支的写盘校验用）。 */
 function parseLogBytes(buffer, isZstd) {
   if (buffer.length === 0) throw new Error('文件为空')
@@ -1387,10 +1411,14 @@ async function rebuildGenerationFromSource(plan, targetPath, validatorName) {
     }
   }
 
+  // 侧栏投影缓存与文件内容脱钩（见 clearSessionProjectionCache 注释）：
+  // 重建成功即失效，dsh 下次读取以修复后的日志重建 blank/title。
+  const cacheNote = clearSessionProjectionCache(plan.sessionId)
+
   return {
     ok: true,
     changed: true,
-    message: `✨ 会话 ${plan.sessionId} 世代分叉/异常已修复：按历史源 ${basename(plan.sourcePath)} 重建当前世代（v${plan.generation}，${plan.srcRows.count} 个逻辑事件，校验器 ${validatorName}），源文件保持原样。${plan.detail}`,
+    message: `✨ 会话 ${plan.sessionId} 世代分叉/异常已修复：按历史源 ${basename(plan.sourcePath)} 重建当前世代（v${plan.generation}，${plan.srcRows.count} 个逻辑事件，校验器 ${validatorName}），源文件保持原样。${plan.detail}。${cacheNote ?? ''}`,
   }
 }
 
@@ -1844,10 +1872,14 @@ export async function repairSessionFile(filePath) {
     }
   }
 
+  // 侧栏投影缓存与文件内容脱钩（见 clearSessionProjectionCache 注释）：任何
+  // 写回成功都失效对应条目，dsh 下次读取以修复后的日志重建 blank/title。
+  const cacheNote = clearSessionProjectionCache(sessionId)
+
   return {
     ok: true,
     changed: true,
-    message: `✨ 会话 ${sessionId} 已修复（${isZstd ? 'zstd' : 'jsonl'}，校验器 ${validatorName}）。${details.join('；')}`,
+    message: `✨ 会话 ${sessionId} 已修复（${isZstd ? 'zstd' : 'jsonl'}，校验器 ${validatorName}）。${details.join('；')}。${cacheNote ?? ''}`,
   }
 }
 

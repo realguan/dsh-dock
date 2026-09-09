@@ -1745,12 +1745,38 @@ export const sessionFormatCatalog = {
         install_engine_node_shim(&home);
         install_engine_catalog_stub(&home);
 
+        // 侧栏投影缓存脱钩（2026-09-09）：dsh 侧栏可见性（blank/title）由
+        // 投影缓存决定且只认日志身份——修复文件不会让它失效（实测 4885：
+        // 修复 + 重启后侧栏仍隐藏，因为记录 identity 与 header 全匹配，
+        // 写回又只发生在创建/turn/end/释放）。修复成功必须删除该会话的
+        // 缓存条目（derived data，缺失 = 冷读重建，代价仅是更长尾部回放）。
+        let projcache = home
+            .join("storages")
+            .join("session_projcache")
+            .join("sessions")
+            .join("sess-gendiv.json");
+        fs::create_dir_all(projcache.parent().unwrap()).unwrap();
+        fs::write(
+            &projcache,
+            r#"{"version":7,"record":{"identity":{"formatVersion":3,"createdAt":1,"cwd":"/tmp/demo","isSeeded":false,"inheritedEventCount":0},"rows":{"sessionListMetadata":{"ver":1,"seq":3,"val":{"blank":true,"lastPromptAt":null}}}}}"#,
+        )
+        .unwrap();
+
         let outcome = run_repair(Some(v3_path.to_str().unwrap()), &home, &home, false).unwrap();
         assert!(outcome.success, "{}", outcome.message);
         assert!(
             outcome.message.contains("重建当前世代"),
             "修复消息应说明世代重建：{}",
             outcome.message
+        );
+        assert!(
+            outcome.message.contains("投影缓存"),
+            "修复消息应说明投影缓存已失效：{}",
+            outcome.message
+        );
+        assert!(
+            !projcache.exists(),
+            "修复成功后必须清除该会话的投影缓存（derived data，dsh 冷读重建）"
         );
 
         // 备份 = 旧的空 v3；新 v3 = 源全量内容

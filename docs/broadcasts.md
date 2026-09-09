@@ -32,6 +32,15 @@
 
 ## 三、记录
 
+### 2026-09-09 快车道直推 · 会话修复后失效 dsh 投影缓存——stale blank 投影致侧栏隐藏（实测 4885） —— guan（AI 协作）
+
+- 变更：
+  1. **根因**：dsh 侧栏可见性（blank/title）由 `session_projcache` 投影片段决定，`recordFor` 只以日志身份（formatVersion/createdAt/cwd/isSeeded/inheritedEventCount）判定缓存有效；4885 的缓存是 16:48 对空 v3 写的 `blank:true` 投影，文件修复**不改变身份** → 缓存永不失效，写回又只发生在创建/turn/end/释放三处 → 修复 + 重启后侧栏仍隐藏（`sessionVisible` 过滤非当前 blank 行，client-ui-workspace 实锤）。
+  2. `repair-session.mjs` 新增 `clearSessionProjectionCache`：任何写回成功（世代重建 + 常规修复）都删除该会话的投影缓存条目（derived data，缺失 = dsh 冷读重建，语义安全），消息附注清理结果。
+  3. `sessions.rs` 重建用例预置 stale blank 缓存并断言修复后被清除。
+- 影响：一键修复后重开 dsh 即可见（此前的 4885 缓存条目已由本次人工清除，下次修复自动覆盖）；投影缓存删除属 derived data 操作，dsh 冷读自动重建。
+- 凭据：`cargo test` sessions 21 绿（新增断言），脚本真会话副本演练：修复 → 缓存条目移除；`fmt --check` 干净。
+
 ### 2026-09-09 快车道直推 · 会话自愈新增「世代分叉」检测与一键修复（类别 5）+ 校验器适配 dsh 0.1.5-alpha.1 —— guan（AI 协作）
 
 - 变更：
