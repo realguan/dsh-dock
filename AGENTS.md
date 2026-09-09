@@ -118,8 +118,9 @@
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
-  `pnpm-workspace.yaml` allowBuilds 单键受控改写/追加（写入例外 #5，2026-09-07，
-  pnpm 12 构建审批门裁决，非三件套成员）；`.credentials.yaml`
+  `pnpm-workspace.yaml` 顶层键 `dangerouslyAllowAllBuilds: true` 单键受控写入
+  （写入例外 #5 重立，2026-09-09，ADR-0013：pnpm 构建脚本**默认批准**，非三件套
+  成员；原 allowBuilds 逐包裁决链已退役）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
   农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
@@ -141,8 +142,6 @@
   `check_plugin_updates` `list_plugin_versions`。
   `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
   配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
-  `set_profile_build_approvals`（pnpm 12 构建审批门逐包裁决写入
-  pnpm-workspace.yaml，写入例外 #5，ADR-0009 第六次修订 2026-09-07）。
   `list_sessions` `repair_session` `repair_all_sessions`（会话维护与自愈，2026-08-31）。
   `get_shell_settings` `set_shell_settings` `get_system_diagnostics` `get_app_logs`（系统控制台与诊断，2026-08-31）。
   `get_credentials_raw` `save_credentials_raw` `get_credentials_summary` `set_credential_key`（凭据安全管理与脱敏，2026-08-31）。
@@ -207,6 +206,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0010](docs/adr/0010-engine-inversion.md) | 运行时归属倒置：引擎=壳资产（pnpm12 引导），探测层退役；升级全显式、离线可启动 |
 | [0011](docs/adr/0011-plugin-management-boundary.md) | 插件职责边界：跨 profile 归插件中心、单 profile 归详情；安装来源三形态白名单（npm / github / tarball），更新检查保持严格 npm 判别 |
 | [0012](docs/adr/0012-typed-boot-failure.md) | 启动失败错误类型化：boot 路径引入 `BootFailure` 枚举，子串分类降级为 `from_legacy_detail` 兜底；其余模块 `Result<_, String>` 不动 |
+| [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
 
 ## 10. 试验协议
 

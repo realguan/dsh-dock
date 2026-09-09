@@ -310,14 +310,12 @@ mod tests {
 // 会把声明 dsh.bundle 的新装依赖回写进 bundles（同复现点 7），装完刷新即见。
 
 /// 插件操作结果：ok = dsh 退出 0 且未超时；detail 为人读文案（失败附输出尾部）。
-/// ignored_builds 非空 = 撞 pnpm 12 构建审批门（ERR_PNPM_IGNORED_BUILDS），
-/// 携带被点名包名供前端弹逐包裁决框（build_approvals 模块，2026-09-07）。
+/// pnpm 12 构建审批门已改为**默认批准**（build_policy 模块，ADR-0013）：操作前
+/// 幂等写入 profile 的 `dangerouslyAllowAllBuilds: true`，结果里不再有逐包裁决载荷。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PluginOpOutcome {
     pub ok: bool,
     pub detail: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ignored_builds: Vec<String>,
 }
 
 /// 插件操作种类。
@@ -480,6 +478,10 @@ pub fn mutate_plugin_blocking(
             "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
         ));
     }
+    // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
+    // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
+    // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
+    crate::build_policy::ensure_profile_build_policy_best_effort(profile);
     let run = crate::profiles::run_toolchain_forward(
         &crate::engines::resolve_toolchain(data_dir)?,
         &[
@@ -494,14 +496,6 @@ pub fn mutate_plugin_blocking(
         data_dir,
     )?;
     let ok = !run.timed_out && run.code == Some(0);
-    let ignored_builds = if ok || run.timed_out {
-        Vec::new()
-    } else {
-        // pnpm 12 构建审批门（复现点 12）：包已装完但脚本未获批 → dsh 退出 1。
-        // 解析被点名包名随结果返回；detail 前置可行动指引（无对话框的消费方
-        // 如批量导入也能看到出路）。
-        crate::build_approvals::parse_ignored_builds(&run.output)
-    };
     let detail = if ok {
         format!(
             "已{label} {spec}（profile「{profile}」）——若该 profile 正在运行，重启后生效。",
@@ -523,28 +517,16 @@ pub fn mutate_plugin_blocking(
             .rev()
             .collect::<Vec<_>>()
             .join("\n");
-        let base = format!(
+        format!(
             "{label}失败（dsh 退出码 {}）。输出尾部：\n{}",
             run.code
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "未知".into()),
             tail,
             label = op.label()
-        );
-        if ignored_builds.is_empty() {
-            base
-        } else {
-            format!(
-                "pnpm 12 构建审批门：以下依赖的安装脚本未获批——{}。在「构建脚本审批」中逐包选择允许/跳过，保存后自动重试（手工出路：编辑 profile 的 pnpm-workspace.yaml allowBuilds）。\n{base}",
-                ignored_builds.join("、"),
-            )
-        }
+        )
     };
-    Ok(PluginOpOutcome {
-        ok,
-        detail,
-        ignored_builds,
-    })
+    Ok(PluginOpOutcome { ok, detail })
 }
 
 #[cfg(test)]

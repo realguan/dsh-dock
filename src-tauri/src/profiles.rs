@@ -470,7 +470,7 @@ pub fn run_dsh_forward(
                 return Ok(ForwardRun {
                     code: status.code(),
                     timed_out: false,
-                    output: crate::resolve::read_log_auto(log_path),
+                    output: current_run_output(&crate::resolve::read_log_auto(log_path), &header),
                 });
             }
             Ok(None) => {}
@@ -482,10 +482,23 @@ pub fn run_dsh_forward(
             return Ok(ForwardRun {
                 code: None,
                 timed_out: true,
-                output: crate::resolve::read_log_auto(log_path),
+                output: current_run_output(&crate::resolve::read_log_auto(log_path), &header),
             });
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// 从追加式运维日志里切出**本次运行**的输出（2026-09-09，ADR-0013 附带修复）：
+/// 日志自 9d341f8 起为追加式，历史运行全在本次分隔头之前——`ForwardRun.output`
+/// 的语义是「本次运行输出」，直接读全文会让下游解析（审批门、dump 行表、创建
+/// 分类）把历史输出当成本次结果（实测：装 dsh-ssh 却解析出上一轮 dsh-pet 的
+/// 门槛键）。按**最后一个**分隔头切分；找不到分隔头（异常）时返回全文（fail-open，
+/// 与旧行为一致，不因切片逻辑丢诊断信息）。
+fn current_run_output(full: &str, header: &str) -> String {
+    match full.rfind(header) {
+        Some(idx) => full[idx + header.len()..].to_string(),
+        None => full.to_string(),
     }
 }
 
@@ -611,6 +624,11 @@ pub fn create_profile_blocking(
     } else {
         None
     };
+    // 构建脚本默认批准（ADR-0013，2026-09-09）：物化后写一次，此后该 profile 的
+    // 插件操作不再撞 pnpm 12 审批门（写失败只告警，不改变创建结果）。
+    if materialized {
+        crate::build_policy::ensure_profile_build_policy_best_effort(profile);
+    }
     Ok(classify_create_outcome(
         profile,
         &run,
@@ -840,6 +858,42 @@ mod profiles_tests {
             "x".repeat(65)
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "==== h3 ====\n");
+    }
+
+    /// 追加式日志里只取本次运行的输出（2026-09-09 bug 复现先行）：装 dsh-ssh
+    /// 时下游解析器拿到的是历史 dsh-pet 运行的门槛文本 → 弹错包 + 批准死循环。
+    #[test]
+    fn current_run_output_excludes_previous_runs() {
+        let h1 = "\n==== 2026-09-09T02:22:12Z | plugin --profile web add github:o/r ====\n";
+        let h2 = "\n==== 2026-09-09T04:31:03Z | plugin --profile test add github:o/ssh ====\n";
+        let full = format!(
+            "{h1}Error: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\n  allowBuilds:\n    @linxin666/dsh-pet@https://x: true\n{h2}Error: ERR_PNPM_IGNORED_BUILDS\n  ╰─▶ Ignored build scripts: cpu-features@0.0.10, ssh2@1.17.0\n"
+        );
+        let got = current_run_output(&full, h2);
+        assert!(got.contains("Ignored build scripts"));
+        assert!(!got.contains("dsh-pet"), "历史运行文本不得混入：{got}");
+        assert!(
+            !got.contains("GIT_DEP_PREPARE"),
+            "历史门槛标记不得混入：{got}"
+        );
+    }
+
+    /// 找不到分隔头（异常输入）→ 返回全文（fail-open，不丢诊断信息）。
+    #[test]
+    fn current_run_output_falls_back_to_full_text_without_header() {
+        assert_eq!(
+            current_run_output("plain output\n", "==== h ====\n"),
+            "plain output\n"
+        );
+        assert_eq!(current_run_output("", "==== h ====\n"), "");
+    }
+
+    /// 同一日志里出现多次同一分隔头 → 取最后一次（并发/重试场景下仍是最近一次运行）。
+    #[test]
+    fn current_run_output_uses_last_header_occurrence() {
+        let h = "==== h ====\n";
+        let full = format!("{h}first{h}second");
+        assert_eq!(current_run_output(&full, h), "second");
     }
 
     /// 内联 fixture 临时目录（settings.rs 既有风格：进程级递增编号防并发冲突）。

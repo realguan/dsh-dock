@@ -1,10 +1,9 @@
 // stores/queueStore.ts —— 插件安装队列编排（095 #4 / ADR-0011 队列形态）。
-// 前端编排的**串行**队列：市场安装与总览分发入队后逐项执行 install_plugin；
-// 撞 pnpm 12 审批门（ignored_builds）→ 项转「待审批」，在下载管理面板内联
-// 批准（写目标 profile 的 allowBuilds）后自动重试。目标 profile 在入队瞬间
-// 快照绑定（2026-09-09 串位教训）。
-// 会话级运行态，不持久化；进度流（Rust Channel）为后续切片——本切片队列项
-// 只呈现状态机相位。
+// 前端编排的**串行**队列：市场安装与总览分发入队后逐项执行 install_plugin。
+// 目标 profile 在入队瞬间快照绑定（2026-09-09 串位教训）。构建脚本审批门已改
+// 默认批准（ADR-0013）——`blocked_gate` 相位与逐包裁决一并退役，撞门不再需要
+// 用户介入。会话级运行态，不持久化；进度流（Rust Channel）为后续切片——本切片
+// 队列项只呈现状态机相位。
 import { create } from "zustand"
 import { api } from "@/lib/tauri"
 import { useI18nStore } from "@/stores/i18nStore"
@@ -15,7 +14,6 @@ import {
   type QueueItem,
   type QueueOutcomeLike,
 } from "@/lib/queue"
-import type { BuildApprovalChoice } from "@/lib/buildApprovals"
 
 export interface QueueEnqueueInput {
   pkg: string
@@ -42,8 +40,6 @@ interface QueueState {
   enqueue: (input: QueueEnqueueInput) => void
   /** failed → queued（手动重试） */
   retry: (id: string) => void
-  /** blocked_gate：写目标 profile 的 allowBuilds 后自动重排该项 */
-  approveGate: (id: string, choices: BuildApprovalChoice[]) => Promise<void>
   dismiss: (id: string) => void
   clearFinished: () => void
 }
@@ -123,26 +119,6 @@ export const useQueueStore = create<QueueState>((set, get) => {
           i.id === id && i.status === "failed"
             ? { ...i, status: "queued" as const, detail: undefined }
             : i,
-        ),
-      }))
-      void pump()
-    },
-
-    approveGate: async (id, choices) => {
-      const item = get().items.find((i) => i.id === id)
-      if (!item || item.status !== "blocked_gate") return
-      try {
-        await api.setProfileBuildApprovals(item.profile, choices)
-      } catch (e) {
-        set((s) => ({
-          items: s.items.map((i) => (i.id === id ? { ...i, detail: String(e) } : i)),
-        }))
-        notify(String(e), "warn")
-        return
-      }
-      set((s) => ({
-        items: s.items.map((i) =>
-          i.id === id ? { ...i, status: "queued" as const, gatePkgs: undefined } : i,
         ),
       }))
       void pump()

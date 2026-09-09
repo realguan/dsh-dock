@@ -31,8 +31,9 @@
   空白/控制字符），**语义合法性归 pnpm/dsh**（不重造包管理器校验）。
 - 更新检查只打 npm registry（`npm_packument_versions` 镜像链，§7 唯一网络面）——
   安装白名单放宽**不得**让 `github:…` 形态流进 packument 查询。
-- 写入面不变：安装/卸载/更新仍经 `dsh plugin` 转发链（ADR-0009），pnpm 12
-  构建审批门（写入例外 #5）覆盖全部来源。
+- 写入面不变：安装/卸载/更新仍经 `dsh plugin` 转发链（ADR-0009）。~~pnpm 12
+  构建审批门（写入例外 #5）覆盖全部来源~~（2026-09-09 ADR-0013：改为默认批准，
+  审批门与逐包裁决链退役）。
 - 恶意反例必测（AGENTS §5）。
 
 ## 3. 备选方案及评估
@@ -126,6 +127,9 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
   `→ 安装中 → 完成/失败`；批准即写该 profile 的 allowBuilds 并自动重试该项，
   连续分发多 profile 的审批在队列中顺序清账（BuildApprovalDialog 的裁决行
   逻辑复用为内联面板；跳过 = 装上但不跑构建脚本，需明示可能不可用的告警）。
+  **⚠️ 2026-09-09 退役（ADR-0013）**：构建脚本改默认批准，`blocked_gate`
+  相位与内联审核面板已删除——队列项状态机为
+  `排队 → 安装中 → 完成/失败`；下载队列本身（进度/并发）仍按本条推进。
 - [ ] 术语与死代码：动词统一「安装到…」、详情导入改「从其他 Profile 安装」、
   Tab 名改「插件」、删 `ProfileDetailDialog.tsx`（随小版本批）
 
@@ -133,7 +137,8 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
 
 - registry 出现三形态之外的新 install 形态（如 `#semver:` 片段、`git+https://`）。
 - dsh/pnpm 升级改变 `plugin` 转发链对 git dep 的 reconcile 语义。
-- pnpm 12 构建审批门对 tarball/git 来源的 `ignored_builds` 行为与 npm 来源不一致。
+- ~~pnpm 12 构建审批门对 tarball/git 来源的 `ignored_builds` 行为与 npm 来源不一致~~
+  （2026-09-09 失效：审批门退役，见 ADR-0013）。
 - dsh 上游若支持 pnpm reporter 透传（`--reporter=ndjson`，2026-09-09 实证引擎
   pnpm 12.3.1 输出 `pnpm:stage/progress/stats` 统一事件流；环境变量注入实测
   无效，reporter 为 CLI 专属选项）——安装进度解析层应从「非 TTY 计数行」

@@ -2115,3 +2115,34 @@
   fontTokens 闸门当场拦下——已按刻度（micro/meta/label）与 brand-deep
   修正；三个设计闸门重新全绿。
 - 凭据：前端 typecheck/lint/156 测试绿（新增 queue 纯逻辑 6 测）。
+
+### 2026-09-09 宪法级 + 快车道 · 构建脚本默认批准：pnpm 审批门逻辑退役（ADR-0013） —— guan（AI 协作）
+
+- 缘起（用户实测 bug）：装 `dsh-ssh` 却弹出 `dsh-pet` 的旧 exact key，批准对真
+  门槛（`cpu-features`/`ssh2`）无效 → 重试死循环。根因 = 追加式日志（9d341f8）
+  让 `ForwardRun.output` 变成历史全量，审批门解析器先撞上旧
+  `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 标记。维护者裁定：不再逐包裁决，
+  改**默认批准**。
+- 决策（ADR-0013，新增）：向 profile 的 `pnpm-workspace.yaml` 幂等写入顶层键
+  `dangerouslyAllowAllBuilds: true`（新建 profile 物化后写一次 + 每次插件操作前
+  补齐；写失败只告警不阻断）。引擎档 pnpm 12.3.1 实测：两种门槛形态（npm 依赖 /
+  git `prepare`）都被压过，含既有 `allowBuilds` 显式 false 与 pnpm 占位模板。
+- 退役：`build_approvals.rs`（558 行）、`set_profile_build_approvals` IPC（ipc.rs /
+  lib.rs / capabilities 三处同步删除）、`PluginOpOutcome.ignored_builds`、
+  `BuildApprovalDialog.tsx`（142 行）、`lib/buildApprovals.ts`、队列 `blocked_gate`
+  相位与内联审批面板、相关文案与测试。写入例外 #5 由 ADR-0013 重立为「顶层键
+  单键受控写入」；ADR-0009 第六次修订 / ADR-0011 队列审批裁定 / 复现点 12 已标
+  退役；AGENTS §6 / §7 / §9 已同步（宪法级改动）。
+- 安全边界（需知悉）：这是把 pnpm 的供应链门禁关掉——**任何插件的安装脚本都会
+  在无审阅的情况下执行**，包括市场一键装进来的第三方 git 包。撤销只能手工
+  （删键 / 改 false / 删旗标），壳不再提供逐包裁决 UI。复审条件：pnpm 大版本改
+  键名或语义、dsh 自带审批处理、出现「默认拒绝某些包」的诉求。
+- 附带修复（建议独立提交）：`run_dsh_forward` 只取本次运行输出
+  （`current_run_output` 按最后一个分隔头切分）——顺带修掉 `plugin-rows` 行表
+  混入历史 dump 的重复行。
+- 凭据：`cargo test` 228 绿 + `fmt --check` / `clippy -D warnings` 干净；前端
+  typecheck / oxlint / 161 测试绿；隔离 `DSH_HOME` 端到端（dsh CLI 真链）：对照
+  跑出 `ERR_PNPM_IGNORED_BUILDS`（`cpu-features@0.0.10, ssh2@1.17.0`），补键后
+  同一安装 27.6s 装上（`bundles` 已 reconcile）。
+- 待办：实机 `cargo tdev` 复测（GUI 路径不再弹审批）；存量 profile 在首次插件
+  操作时自动补齐旗标（无需迁移脚本）。

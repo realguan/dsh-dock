@@ -609,29 +609,11 @@ export const enUS: AppCopy = {
     queueClearDone: "Clear finished",
     queueStatusQueued: "Queued",
     queueStatusInstalling: "Installing",
-    queueStatusBlocked: "Approval needed",
     queueStatusDone: "Installed",
     queueStatusFailed: "Failed",
-    queueApprove: "Approve & retry",
     queueDismiss: "Dismiss",
     queueRetry: "Retry",
-    queueGateHint: (prof: string) => `Build scripts need approval (writes allowBuilds of ${prof})`,
     queueFailedNotice: (pkg: string, detail: string) => `Failed to install "${pkg}": ${detail}`,
-  },
-  // pnpm 12 build-script approval gate (ERR_PNPM_IGNORED_BUILDS dialog)
-  buildGate: {
-    title: "Build Script Approvals",
-    subtitle:
-      "pnpm 12's security policy blocked the install scripts (postinstall) of these dependencies — decide per package:",
-    allow: "Allow",
-    skip: "Skip",
-    allowHint:
-      "Run its install script: may download binaries over the network or compile locally (requires a toolchain)",
-    skipHint:
-      "Skip the install script: the install will always succeed, but script-provided features may be missing (e.g. the cloudflared tunnel binary)",
-    confirm: "Save & Retry",
-    saving: "Saving…",
-    saveFailed: (msg: string) => `Failed to save approvals: ${msg}`,
   },
   // Shared copy for the destructive-action confirm dialog (2026-09-08, U9)
   confirm: {

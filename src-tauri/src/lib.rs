@@ -14,7 +14,7 @@
 
 mod boot;
 mod boot_failure;
-mod build_approvals;
+mod build_policy;
 mod commands;
 mod credentials;
 mod diagnostics;
@@ -408,7 +408,6 @@ pub fn run() {
             commands::plugin::get_plugin_runtime,
             commands::plugin::list_all_plugins,
             commands::plugin::copy_plugin_config,
-            commands::plugin::set_profile_build_approvals,
             commands::session::list_sessions,
             commands::session::repair_session,
             commands::session::repair_all_sessions,

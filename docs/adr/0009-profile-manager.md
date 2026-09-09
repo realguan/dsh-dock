@@ -213,7 +213,12 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 聚合查询新 IPC `list_all_plugins`；两者均 spawn_blocking。变更生效同 #3：
 > 不热生效，重启承接。**npm 搜索（roadmap 4.4⑤）维持挂账**，本修订不涉及。
 > **2026-09-07 第六次执行细则修订（范围扩展：pnpm 12 构建审批门裁决，
-> 4.4② 补全）——pnpm-workspace.yaml 写入例外 #5**。引擎档 pnpm 12 起默认
+> 4.4② 补全）——pnpm-workspace.yaml 写入例外 #5**。
+> ⚠️ **2026-09-09 退役（ADR-0013）**：构建脚本改**默认批准**——profile 级
+> `dangerouslyAllowAllBuilds: true`（写入例外 #5 由 ADR-0013 重立为「顶层键
+> 单键受控写入」）。下列逐包裁决链（解析器 / 裁决对话框 / 队列内联审批 /
+> `set_profile_build_approvals` IPC）已整体删除；本节仅作决策史保留，
+> **勿据以实现**。引擎档 pnpm 12 起默认
 > 拦截依赖安装脚本：`pnpm add` 装完全部包后若依赖树存在未获批脚本，写
 > `allowBuilds: {包名: "set this to true or false"}` 裁决模板进 profile 的
 > `pnpm-workspace.yaml` 并以 `ERR_PNPM_IGNORED_BUILDS` **硬失败退出 1**

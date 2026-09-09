@@ -636,26 +636,11 @@ export const t = {
     queueClearDone: "清除已完成",
     queueStatusQueued: "排队中",
     queueStatusInstalling: "安装中",
-    queueStatusBlocked: "待审批",
     queueStatusDone: "已安装",
     queueStatusFailed: "失败",
-    queueApprove: "批准并重试",
     queueDismiss: "放弃",
     queueRetry: "重试",
-    queueGateHint: (prof: string) => `以下构建脚本需批准（写入 ${prof} 的 allowBuilds）`,
     queueFailedNotice: (pkg: string, detail: string) => `「${pkg}」安装失败：${detail}`,
-  },
-  // pnpm 12 构建脚本审批门（ERR_PNPM_IGNORED_BUILDS 裁决对话框）
-  buildGate: {
-    title: "构建脚本审批",
-    subtitle: "pnpm 12 安全策略拦截了这些依赖的安装脚本（postinstall），需要你逐包裁决：",
-    allow: "允许运行",
-    skip: "跳过",
-    allowHint: "执行其安装脚本：可能联网下载二进制或本机编译（需要编译工具链）",
-    skipHint: "跳过安装脚本：安装必定成功，但该包依赖脚本的功能可能缺失（如 cloudflared 隧道二进制）",
-    confirm: "保存并重试",
-    saving: "正在保存…",
-    saveFailed: (msg: string) => `审批保存失败：${msg}`,
   },
   // 破坏性操作确认对话框的通用文案（2026-09-08，U9）
   confirm: {
