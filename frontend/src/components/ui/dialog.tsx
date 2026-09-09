@@ -62,8 +62,12 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           // max-h + 滚动：内容高于视口时容器内滚动，不溢出屏幕（2026-09-08，
-          // ADR-0011 hotfix——fixed 居中定位下无约束会上下两端溢出且不可滚动）
-          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // ADR-0011 hotfix——fixed 居中定位下无约束会上下两端溢出且不可滚动）。
+          // [&>*]:min-w-0：grid 隐式列 auto 轨道会被 nowrap 长内容（如安装源
+          // spec 展示串）的固有宽度顶开，整行元素越出卡片右缘（2026-09-08
+          // 弹窗横向截断修复；min-w-0 让轨道以容器宽度为准，深层由各自
+          // truncate 收口）。
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm [&>*]:min-w-0 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

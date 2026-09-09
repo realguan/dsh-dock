@@ -1999,3 +1999,16 @@
 - 影响：仅周知，无 IPC / 契约变更；`needs_repair` 呈现不变。
 - 凭据：前端 `typecheck` 0 错 · `oxlint` 0 warning · `test` **147 passed**（144 → +3）·
   `build` 通过（本批未动 Rust）。
+
+### 2026-09-08 fix(ui)：弹窗横向截断根治（grid 轨道被 nowrap 长串顶开）—— guan
+
+- 上批 max-h 修复的后续：overflow-y-auto 把 overflow-x 从 visible 转为 auto，
+  使存量横向溢出从「画出卡片外」显形为「裁切」——市场安装弹窗右缘被截、
+  安装按钮不可达（用户实测复现）。
+- 根因（浏览器实测复刻定位）：grid 隐式列 auto 轨道取子项固有宽度，安装源
+  spec 展示串（whitespace-nowrap，389px）经 flex 容器把轨道顶到 414px，
+  超出卡片 383px——所有整行元素随之越界。
+- 修复：DialogContent 基类补 `[&>*]:min-w-0`，轨道以容器宽度为准，深层由
+  各自 truncate 收口。实测复刻树验证：scrollWidth=clientWidth=383、零越界
+  元素、spec 正确省略、footer 双按钮入卡。
+- 凭据：前端 typecheck/lint/147 测试绿；布局指标经浏览器实测（上）。
