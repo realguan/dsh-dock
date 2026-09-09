@@ -456,7 +456,8 @@ export const enUS: AppCopy = {
     statusRunning: "Running",
     statusRunningDesc: "Session is in use by dsh; safe to repair after it ends",
     statusHealthyDesc: "Session log sequence intact, ready to open",
-    statusNeedsRepairDesc: "Replay overlap or sequence anomaly detected; repair to view the full session",
+    statusNeedsRepairDesc:
+      "Repairable anomaly detected (replay overlap, sequence gap, generation divergence); repair to view the full session",
     statusUnknownDesc: "Cannot determine health (possibly active session or engine not ready)",
     statusUnknownDescWithReason:
       "Health state cannot be determined automatically — the reason from the repair script is shown below",

@@ -1464,4 +1464,358 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp);
     }
+
+    // ---------- 世代分叉（类别 5，2026-09-09）fixture 与测试 ----------
+    //
+    // 真实引擎（0.1.5-alpha.1）用 format-catalog 流式 API 还原；测试环境以
+    // **stub 引擎包**（v0/v3 恒等编解码）驱动脚本的真实分支：检测（世代分叉
+    // 标记）、重建（从源重发当前世代）、拒绝（真分叉不动文件）。stub 与真实
+    // catalog 的 API 面一致（readHeader/createRestore/encodeCurrentHeader/
+    // encodeCurrentEvent），脚本侧 Zero 漂移。
+
+    /// 装配引擎档 stub 包（引擎目录下 global/v11/<id>/node_modules/.pnpm 布局，
+    /// 与 findEnginePackageSync 的扫描路径一致）：dsh-session（词汇表）+
+    /// dsh-session-format-catalog（v0/v3 恒等编解码）。
+    fn install_engine_catalog_stub(home: &Path) {
+        fn write_pkg(root: &Path, pkg: &str, body: &str) {
+            let dir = root
+                .join("global")
+                .join("v11")
+                .join("stub")
+                .join("node_modules")
+                .join(".pnpm")
+                .join(format!("@deepseek-ai+{pkg}@0.0.0-fixture_"))
+                .join("node_modules")
+                .join("@deepseek-ai")
+                .join(pkg);
+            fs::create_dir_all(dir.join("lib")).unwrap();
+            fs::write(dir.join("lib").join("index.js"), body).unwrap();
+            fs::write(
+                dir.join("package.json"),
+                format!(r#"{{"name":"{pkg}","type":"module"}}"#),
+            )
+            .unwrap();
+        }
+        let engines = home.join("engines");
+        write_pkg(
+            &engines,
+            "dsh-session",
+            r#"
+export const SESSION_FORMAT_VERSION = 3
+export const KNOWN_SESSION_EVENT_TYPES = new Set(['permission/preset','sandbox/mode','approval/policy','session/end-seed','command/run','model/selection','turn/start','step/start','user/message','assistant/message','step/end','turn/end','todo/write','session/title'])
+export function adoptSessionEvent() {}
+export function interruptedTurnClosers() { return [] }
+export function decodeSeqRanges(value) { return value }
+export function decodeStorageRecord(record) { return [record] }
+export class Session {
+  static fromRestore() {}
+}
+export default {}
+"#,
+        );
+        write_pkg(
+            &engines,
+            "dsh-session-format-catalog",
+            r#"
+export const sessionFormatCatalog = {
+  currentVersion: 3,
+  readHeader(header) {
+    if (header.version === 3) return { status: 'current', header }
+    if (typeof header.version === 'number' && header.version < 3) return { status: 'migration-required', header }
+    return { status: 'unsupported', reason: 'stored Session format is newer than this build' }
+  },
+  createRestore(header, options) {
+    const rows = []
+    let finished = false
+    return {
+      decodeRow(row) {
+        if (finished) throw new Error('decodeRow after finish')
+        rows.push(row)
+      },
+      finish() {
+        finished = true
+        const logical = {
+          version: 3,
+          id: header.id,
+          createdAt: header.createdAt,
+          ...(header.cwd !== undefined ? { cwd: header.cwd } : {}),
+          isSeeded: header.isSeeded === true || header.seedLength !== undefined,
+          ...(header.origin !== undefined ? { origin: header.origin } : {}),
+          delegationDepth: header.delegationDepth,
+          ...(header.agentPreset !== undefined ? { agentPreset: header.agentPreset } : {}),
+        }
+        return { header: logical, inheritedEventCount: 0, events: rows }
+      },
+    }
+  },
+  encodeCurrentHeader(header, inheritedEventCount) {
+    return { type: 'session', ...header }
+  },
+  encodeCurrentEvent(event) {
+    return event
+  },
+}
+"#,
+        );
+    }
+
+    /// 世代分叉 fixture 的 v0 源（真实会话头部语义：v1→v2 迁移需 system head，
+    /// 前置 model/selection；事件形状对齐 dsh 真实记录）。
+    fn gen_div_v0() -> &'static str {
+        concat!(
+            r#"{"type":"session","version":0,"id":"sess-gendiv","createdAt":1,"cwd":"/tmp/demo","delegationDepth":0,"agentPreset":"standard"}"#,
+            "\n",
+            r#"{"type":"permission/preset","seq":0,"time":1,"data":{"preset":"workspace-write"}}"#,
+            "\n",
+            r#"{"type":"sandbox/mode","seq":1,"time":1,"data":{"mode":"workspace-write"}}"#,
+            "\n",
+            r#"{"type":"approval/policy","seq":2,"time":1,"data":{"policy":"ask"}}"#,
+            "\n",
+            r#"{"type":"session/end-seed","seq":3,"time":2,"data":{}}"#,
+            "\n",
+            r#"{"type":"command/run","seq":4,"time":3,"data":{"commandId":"cmd-1","name":"permission","args":" danger-full-access","source":{"kind":"user"}}}"#,
+            "\n",
+            r#"{"type":"model/selection","seq":5,"time":4,"data":{"provider":"deepseek-official","model":"m1","reasoningEffort":"high"}}"#,
+            "\n",
+            r#"{"type":"turn/start","seq":6,"time":5,"data":{"turn":1}}"#,
+            "\n",
+            r#"{"type":"step/start","seq":7,"time":6,"data":{"turn":1,"step":1}}"#,
+            "\n",
+            r#"{"type":"user/message","seq":8,"time":7,"data":{"role":"user","id":"u0","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]},"surfaceOp":"append"}"#,
+            "\n",
+            r#"{"type":"assistant/message","seq":9,"time":8,"data":{"turn":1,"step":1,"message":{"role":"assistant","id":"a0","source":{"kind":"model","provider":"deepseek-official","model":"m1"},"content":[{"type":"text","text":"hi"}]}},"surfaceOp":"append"}"#,
+            "\n",
+            r#"{"type":"step/end","seq":10,"time":9,"data":{"turn":1,"step":1}}"#,
+            "\n",
+            r#"{"type":"turn/end","seq":11,"time":10,"data":{"turn":1,"reason":{"kind":"stop"}}}"#,
+            "\n",
+            r#"{"type":"todo/write","seq":12,"time":11,"data":{"todos":[{"content":"a","status":"in_progress"}]}}"#,
+            "\n",
+        )
+    }
+
+    /// v0 源的事件行（不含 header，供构造 v3 世代）。
+    fn gen_div_v0_event_lines() -> &'static str {
+        concat!(
+            r#"{"type":"permission/preset","seq":0,"time":1,"data":{"preset":"workspace-write"}}"#,
+            "\n",
+            r#"{"type":"sandbox/mode","seq":1,"time":1,"data":{"mode":"workspace-write"}}"#,
+            "\n",
+            r#"{"type":"approval/policy","seq":2,"time":1,"data":{"policy":"ask"}}"#,
+            "\n",
+            r#"{"type":"session/end-seed","seq":3,"time":2,"data":{}}"#,
+            "\n",
+            r#"{"type":"command/run","seq":4,"time":3,"data":{"commandId":"cmd-1","name":"permission","args":" danger-full-access","source":{"kind":"user"}}}"#,
+            "\n",
+            r#"{"type":"model/selection","seq":5,"time":4,"data":{"provider":"deepseek-official","model":"m1","reasoningEffort":"high"}}"#,
+            "\n",
+            r#"{"type":"turn/start","seq":6,"time":5,"data":{"turn":1}}"#,
+            "\n",
+            r#"{"type":"step/start","seq":7,"time":6,"data":{"turn":1,"step":1}}"#,
+            "\n",
+            r#"{"type":"user/message","seq":8,"time":7,"data":{"role":"user","id":"u0","source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]},"surfaceOp":"append"}"#,
+            "\n",
+            r#"{"type":"assistant/message","seq":9,"time":8,"data":{"turn":1,"step":1,"message":{"role":"assistant","id":"a0","source":{"kind":"model","provider":"deepseek-official","model":"m1"},"content":[{"type":"text","text":"hi"}]}},"surfaceOp":"append"}"#,
+            "\n",
+            r#"{"type":"step/end","seq":10,"time":9,"data":{"turn":1,"step":1}}"#,
+            "\n",
+            r#"{"type":"turn/end","seq":11,"time":10,"data":{"turn":1,"reason":{"kind":"stop"}}}"#,
+            "\n",
+            r#"{"type":"todo/write","seq":12,"time":11,"data":{"todos":[{"content":"a","status":"in_progress"}]}}"#,
+            "\n",
+        )
+    }
+
+    /// v3 世代 header（与 stub encodeCurrentHeader 输出键序一致）。
+    fn gen_div_v3_header() -> &'static str {
+        concat!(
+            r#"{"type":"session","version":3,"id":"sess-gendiv","createdAt":1,"cwd":"/tmp/demo","isSeeded":false,"delegationDepth":0,"agentPreset":"standard"}"#,
+            "\n",
+        )
+    }
+
+    /// 铺「世代分叉」目录：v0 全量 + v3 仅 header（真实 4885a34d 场景）。
+    /// 返回 v3 文件路径。
+    fn write_divergence_fixture(home: &Path, tag: &str) -> PathBuf {
+        write_session_fixture(home, tag, "session.jsonl", gen_div_v0());
+        write_session_fixture(home, tag, "session.v3.jsonl", gen_div_v3_header())
+    }
+
+    /// 铺「真分叉」目录：v3 与 v0 互不包含（todo 行内容不同）。
+    fn write_fork_fixture(home: &Path, tag: &str) -> PathBuf {
+        write_session_fixture(home, tag, "session.jsonl", gen_div_v0());
+        let fork_v3 = format!(
+            "{}{}",
+            gen_div_v3_header(),
+            gen_div_v0_event_lines().replace(r#""content":"a""#, r#""content":"FORK-MARKER""#)
+        );
+        write_session_fixture(home, tag, "session.v3.jsonl", &fork_v3)
+    }
+
+    #[test]
+    fn scan_flags_generation_divergence_for_rebuild() {
+        // 类别 5（2026-09-09，真实 session-4885a34d）：v3 空快照 + v0 全量并存
+        // ——引擎本尊还原比对后，最高世代条目必须标需要修复并给出可重建说明。
+        if !require_node_or_skip("scan_flags_generation_divergence_for_rebuild") {
+            return;
+        }
+        let home = fixture_home("gen-div-scan");
+        let v3_path = write_divergence_fixture(&home, "sess-gendiv");
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let list = scan_sessions(&home, &home, false).unwrap();
+        assert_eq!(list.len(), 1, "同目录多世代只保留最高世代条目");
+        assert_eq!(
+            list[0].file_path,
+            v3_path.to_string_lossy().to_string(),
+            "列表条目应为 dsh 实际读取的最高世代"
+        );
+        assert_eq!(
+            list[0].status,
+            SessionStatus::NeedsRepair,
+            "世代分叉应标可修复：{:?}",
+            list[0].health_detail
+        );
+        let detail = list[0].health_detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("世代分叉") && detail.contains("可无损重建"),
+            "detail 应说明分叉与重建路径：{detail}"
+        );
+        assert_eq!(
+            list[0].validator.as_deref(),
+            Some("dsh-session@0.0.0-fixture+catalog")
+        );
+
+        // 未经 stub 引擎时不误报（fallback 无迁移管线 → 保持未知，不冒充判定）。
+        let no_stub = fixture_home("gen-div-scan-no-stub");
+        write_divergence_fixture(&no_stub, "sess-gendiv");
+        install_engine_node_shim(&no_stub);
+        let list2 = scan_sessions(&no_stub, &no_stub, false).unwrap();
+        assert_eq!(
+            list2[0].status,
+            SessionStatus::Unknown,
+            "fallback 不得标分叉"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&no_stub);
+    }
+
+    #[test]
+    fn scan_no_divergence_flag_when_generations_equal() {
+        // 两代一致（v3 为源的全量迁移快照）：不得误报分叉。
+        if !require_node_or_skip("scan_no_divergence_flag_when_generations_equal") {
+            return;
+        }
+        let home = fixture_home("gen-div-equal");
+        write_session_fixture(&home, "sess-gendiv", "session.jsonl", gen_div_v0());
+        let v3 = format!("{}{}", gen_div_v3_header(), gen_div_v0_event_lines());
+        write_session_fixture(&home, "sess-gendiv", "session.v3.jsonl", &v3);
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let list = scan_sessions(&home, &home, false).unwrap();
+        assert_eq!(
+            list[0].status,
+            SessionStatus::Healthy,
+            "{:?}",
+            list[0].health_detail
+        );
+        assert!(
+            list[0].health_detail.as_deref().unwrap_or("").is_empty(),
+            "一致世代不应带 detail：{:?}",
+            list[0].health_detail
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn repair_rebuilds_diverged_generation_from_source() {
+        // 一键修复：v3 空快照被按 v0 源重建（备份 + 写后本尊校验），源文件保持
+        // 原样；修复后再扫描 = 健康。
+        if !require_node_or_skip("repair_rebuilds_diverged_generation_from_source") {
+            return;
+        }
+        let home = fixture_home("gen-div-repair");
+        let v3_path = write_divergence_fixture(&home, "sess-gendiv");
+        let v0_path = v3_path.with_file_name("session.jsonl");
+        let v0_before = fs::read_to_string(&v0_path).unwrap();
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let outcome = run_repair(Some(v3_path.to_str().unwrap()), &home, &home, false).unwrap();
+        assert!(outcome.success, "{}", outcome.message);
+        assert!(
+            outcome.message.contains("重建当前世代"),
+            "修复消息应说明世代重建：{}",
+            outcome.message
+        );
+
+        // 备份 = 旧的空 v3；新 v3 = 源全量内容
+        let bak = v3_path.with_file_name("session.v3.jsonl.bak");
+        assert!(bak.is_file(), "重建必须备份旧世代");
+        assert_eq!(
+            fs::read_to_string(&bak).unwrap(),
+            gen_div_v3_header(),
+            "备份应是重建前的空 v3"
+        );
+        let repaired = fs::read_to_string(&v3_path).unwrap();
+        let v3_lines: Vec<&str> = repaired.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(v3_lines.len(), 14, "重建后的 v3 应含 header + 13 条事件");
+        assert!(
+            v3_lines[1].contains("\"permission/preset\""),
+            "重建内容应来自源"
+        );
+
+        // 源保持原样（世代只读模型）
+        assert_eq!(
+            fs::read_to_string(&v0_path).unwrap(),
+            v0_before,
+            "源文件不得改动"
+        );
+
+        // 修复后再扫描 = 健康（同一套比对闭环）
+        let after = scan_sessions(&home, &home, false).unwrap();
+        assert_eq!(
+            after[0].status,
+            SessionStatus::Healthy,
+            "{:?}",
+            after[0].health_detail
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn repair_refuses_true_generation_fork() {
+        // 真分叉（两代互不包含）：不可无损合并 —— 修复必须拒绝、文件未动、无备份。
+        if !require_node_or_skip("repair_refuses_true_generation_fork") {
+            return;
+        }
+        let home = fixture_home("gen-div-fork");
+        let v3_path = write_fork_fixture(&home, "sess-gendiv");
+        let v3_before = fs::read_to_string(&v3_path).unwrap();
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let err = run_repair(Some(v3_path.to_str().unwrap()), &home, &home, false)
+            .expect_err("真分叉必须拒绝修复");
+        assert!(
+            err.contains("无法无损合并"),
+            "拒绝消息应说明合并不可行：{err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&v3_path).unwrap(),
+            v3_before,
+            "拒绝后文件必须原样保留"
+        );
+        assert!(
+            !v3_path.with_file_name("session.v3.jsonl.bak").exists(),
+            "拒绝不得创建备份"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
 }

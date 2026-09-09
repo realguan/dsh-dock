@@ -32,6 +32,16 @@
 
 ## 三、记录
 
+### 2026-09-09 快车道直推 · 会话自愈新增「世代分叉」检测与一键修复（类别 5）+ 校验器适配 dsh 0.1.5-alpha.1 —— guan（AI 协作）
+
+- 变更：
+  1. **根因**（实测 session-4885a34d）：dsh 0.1.5-alpha.1（SESSION_FORMAT_VERSION=3）对「仅种子段」的旧会话迁移发布出**空 v3 世代**；随后旧版 dsh 0.1.2-rc.1 不识世代文件名，把真实对话持续追加进 v0——新引擎只认最高世代（空），会话打开即空白、会话标题回退项目名。同目录多世代并存即「世代分叉」（类别 5）。
+  2. `scripts/repair-session.mjs`：校验器能力分派适配 0.1.5+（stream catalog API `createRestore/encodeCurrentHeader/encodeCurrentEvent`；0.1.3 代 legacy API 兼容；无 catalog 才要求 0.1.2 代存储层导出）；`--scan` 对最高世代条目叠加引擎本尊还原比对（行比较忽略 time 元数据——30cbe3e5 实测仅末条 end-seed 时间不同不得误报），分类：两代一致=正常；当前世代为源早前前缀 / 当前世代不可读而源完好=可无损重建（needs_repair）；真分叉（互不包含）=unknown 保留现场；一键修复=按源经 catalog 编码重建当前世代（备份旧世代、写后本尊校验、源保持原样）。
+  3. `src-tauri/src/sessions.rs`：新增 stub 引擎包（global/v11 布局的 dsh-session + format-catalog 恒等 stub）驱动 4 项用例：分叉标记 / 双代一致不误报 / 重建闭环 / 真分叉拒绝；既有损坏类别 fixture 全量回绿。
+  4. 文案（zh-CN / en-US）：`statusNeedsRepairDesc` 覆盖世代分叉。
+- 影响：会话维护新增可修复类别，需引擎档 dsh ≥0.1.3 + format-catalog 才启用检测/修复（fallback 不误判、维持原判定）；真分叉不自动合并（保留现场，建议向 dsh 官方报障）；受影响的 4885 类会话在下次会话维护刷新时自动标「需自愈」，一键修复即恢复。存量数据无需迁移。
+- 凭据：`cargo test` 233 passed（sessions 21 项，含 4 项新用例），`cargo fmt --check` 与 `cargo clippy -- -D warnings` 干净；前端 typecheck + 170 测试绿；真实会话 /tmp 副本演练：扫描标记「世代分叉」→ 一键修复 → 引擎本尊还原 2913 逻辑事件与 v0 全等（29 用户 / 528 助手消息），对照会话 30cbe3e5 无分叉误报。
+
 ### 2026-09-09 快车道直推 · 启动体验双模重塑（日常秒启 Splash + 全新工作台启动台 Launchpad 与偏好持久化） —— guan（AI 协作）
 
 - 变更：

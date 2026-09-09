@@ -25,6 +25,16 @@
  *    `invalid seed event at index N: surface replace: end seq X not found in surface`
  *    ——旧健康检查只看 seq 连续性，对此类完全失明。修复 = 悬空 replace 转
  *    append + 剥离失效 sourceEventSeqs（消息内容与 seq 全保留）。
+ * 5. 世代分叉（2026-09-09 实测 session-4885a34d）：同一会话目录并存多世代
+ *    （v0 源 + session.v3 不可变世代）时，低世代在世代发布后被**另一个** dsh
+ *    版本继续写入——旧版本不识别世代文件名（0.1.2-rc.1 实测：findLog 只认
+ *    session.jsonl.zstd），把后续对话全部追加进 v0；新版本（0.1.5-alpha.1，
+ *    SESSION_FORMAT_VERSION=3）只认最高世代（空快照），v0 内容被静默遮蔽，
+ *    会话打开即空白。检测 = 引擎本尊把最高世代与最低历史源分别还原为当前
+ *    逻辑产物并逐行比对；可无损修复 = 当前世代是源的早前前缀（源的尾部才
+ *    是多出来的真实写入）→ 以源重新发布当前世代（源文件保持原样，与引擎
+ *    世代模型一致）。真分叉（两代互不包含）不可无损合并，保留现场拒绝修复。
+ *    该检测需要引擎档 format-catalog（fallback 无迁移管线时宁可放过不误判）。
  *
  * 健康判定（2026-09-07 起的两层模型）：
  * - 第一层（存储层）：行展开后 seq 从 0 严格连续 + sourceEventSeqs 存储形
@@ -45,8 +55,10 @@
  *   needs_repair（不可修复、不尝试变异，与 dsh refuseForeignFormatVersion 同语义）；
  * - 无 catalog（0.1.2 代）时要求存储版本与已装 dsh 一致，其余版本同样归 unknown；
  * - fallback fold 仅锚 v0；v1+ 文件在 fallback 下同样归 unknown。
- * - 同一会话目录可能同时存在 v0 源与 vN 世代：本脚本按文件独立校验/修复
- *   （dsh 实际读取哪个世代由其 findLog 决定，壳端扫描展示时取最高世代）。
+ * - 同一会话目录可能同时存在 v0 源与 vN 世代：每代按文件独立校验/修复（dsh
+ *   实际读取哪个世代由其 findLog 决定，壳端扫描展示时取最高世代）；**最高
+ *   世代条目额外叠加世代分叉检测**（类别 5，仅 stream catalog 模式），把
+ *   「低世代被旧版本继续写入」的会话标为 needs_repair 并支持从源重建。
  *
  * 安全约束：
  * - 修复输出必须通过「存储层校验 + 恢复层校验」双闸门；任一失败 → 用内存中
@@ -62,7 +74,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { zstdCompress, zstdDecompressSync, constants } from 'node:zlib'
@@ -196,14 +208,22 @@ function findEnginePackageSync(packageName) {
   return candidates[0]
 }
 
-let dshValidator = undefined // undefined=未解析 null=已解析但不可用 {dsh,catalog,version,hasCatalog}
+let dshValidator = undefined // undefined=未解析 null=已解析但不可用 {dsh,catalog,version,hasCatalog,catalogApi}
 
 /**
  * 解析引擎档校验器（进程内缓存）：
- * - dsh-session 本尊（必需）：Session 恢复链；
+ * - dsh-session 本尊（必需）：Session 恢复链与词表；
  * - dsh-session-format-catalog（可选，dsh ≥0.1.3 才存在）：世代格式解码/迁移/
  *   编码管线。currentVersion 必须与 dsh-session 的 SESSION_FORMAT_VERSION
  *   一致（同代安装；不一致视为不可用，走无迁移路径）。
+ * 能力分派（2026-09-09 适配 0.1.5-alpha.1）：
+ * - catalogApi='stream'：0.1.5+ 流式 API（createRestore/decodeRow/finish +
+ *   encodeCurrentHeader/encodeCurrentEvent）——健康判定、世代分叉检测与重建
+ *   都走这一支；
+ * - catalogApi='legacy'：0.1.3 代 API（decodeRecoverableArtifact/migrate/
+ *   encodeCurrent），仅兼容旧引擎档，不参与世代分叉检测；
+ * - 无 catalog 时要求 0.1.2 代存储层导出（decodeSeqRanges/decodeStorageRecord，
+ *   直接恢复链），否则整体不可用。
  * 返回 null 表示不可用——调用方必须走 fallback，且不得把 fallback 结论冒充 dsh 结论。
  */
 async function getDshValidator() {
@@ -213,20 +233,42 @@ async function getDshValidator() {
   if (!foundSession) return dshValidator
   try {
     const mod = await import(pathToFileURL(join(foundSession.dir, 'lib', 'index.js')).href)
-    for (const key of ['Session', 'SESSION_FORMAT_VERSION', 'KNOWN_SESSION_EVENT_TYPES', 'decodeSeqRanges', 'decodeStorageRecord', 'interruptedTurnClosers']) {
+    // 基础契约（所有世代共有）：Session 恢复链与词表。
+    for (const key of ['Session', 'SESSION_FORMAT_VERSION', 'KNOWN_SESSION_EVENT_TYPES']) {
       if (mod[key] === undefined) throw new Error(`export missing: ${key}`)
     }
-    const entry = { dsh: mod, version: foundSession.version, catalog: null, hasCatalog: false }
+    const entry = { dsh: mod, version: foundSession.version, catalog: null, hasCatalog: false, catalogApi: null }
     const foundCatalog = findEnginePackageSync('dsh-session-format-catalog')
     if (foundCatalog) {
       try {
         const catalogMod = await import(pathToFileURL(join(foundCatalog.dir, 'lib', 'index.js')).href)
         const catalog = catalogMod.sessionFormatCatalog
         if (catalog && catalog.currentVersion === mod.SESSION_FORMAT_VERSION) {
-          entry.catalog = catalog
-          entry.hasCatalog = true
+          if (
+            typeof catalog.createRestore === 'function' &&
+            typeof catalog.readHeader === 'function' &&
+            typeof catalog.encodeCurrentHeader === 'function' &&
+            typeof catalog.encodeCurrentEvent === 'function'
+          ) {
+            entry.catalog = catalog
+            entry.hasCatalog = true
+            entry.catalogApi = 'stream'
+          } else if (
+            typeof catalog.decodeRecoverableArtifact === 'function' &&
+            typeof catalog.encodeCurrent === 'function'
+          ) {
+            entry.catalog = catalog
+            entry.hasCatalog = true
+            entry.catalogApi = 'legacy'
+          }
         }
       } catch { /* catalog 缺失/不兼容：无迁移路径 */ }
+    }
+    if (!entry.hasCatalog) {
+      // 0.1.2 代（无 catalog）：存储层导出是直接恢复链的硬依赖。
+      for (const key of ['decodeSeqRanges', 'decodeStorageRecord', 'adoptSessionEvent', 'interruptedTurnClosers']) {
+        if (mod[key] === undefined) throw new Error(`export missing: ${key}`)
+      }
     }
     dshValidator = entry
   } catch {
@@ -575,14 +617,53 @@ function restoreThroughDshLegacy(dsh, header, records) {
 }
 
 /**
+ * 0.1.5+ 流式 catalog 还原（与持久化层 decodeStoredLog / 迁移 preparation 同构，
+ * 2026-09-09 对照 dsh-session-persistence-jsonl：generationFormat.createRestore =
+ * { recovery: 'recoverable', validation: 'transformed' }；当前世代 = current 输入，
+ * 同加载器用 strict）：readHeader 分类 → createRestore 单遍 decodeRow →
+ * finish()，末段以已装词表 Session.fromRestore 兜第二道（surface fold 等
+ * 校验已在 catalog 的 restoreReleasedV3Artifact 内执行）。
+ * 返回 current artifact { header, events, inheritedEventCount }；失败抛错，
+ * unsupportedVersion 标记 = 不可修复版本（与 0.1.2 代同口径）。
+ */
+function restoreCurrentArtifactStream(entry, header, records) {
+  const { catalog, dsh } = entry
+  const classified = catalog.readHeader(header)
+  if (classified.status === 'unsupported') {
+    throw unsupportedVersionError(classified.reason || 'stored Session format is not supported by this build')
+  }
+  if (classified.status === 'malformed') {
+    throw new Error(`corrupt session log: ${classified.reason || 'malformed header'}`)
+  }
+  const restore = catalog.createRestore(header, {
+    recovery: classified.status === 'current' ? 'strict' : 'recoverable',
+    validation: 'transformed',
+  })
+  for (const record of records) restore.decodeRow(record)
+  const current = restore.finish()
+  dsh.Session.fromRestore(current.header.id, current.events, current.header, current.inheritedEventCount, 'detached')
+  return current
+}
+
+/**
  * dsh + catalog 模式（0.1.3+）：复刻真实读路径——readHeader 版本分类 →
  * decodeRecoverableArtifact → migrate → encodeCurrent（世代发布语义）→
  * 用迁移后的 v2 表示走与 0.1.2 相同的扫描 + 恢复链。迁移内部本就含
  * restoreCurrent 的 fromRestore 全量校验；末段再用扫描+恢复链兜一道。
  * 注意 v2 物理行与 v0 不同（一行一事件、header 直接带 isSeeded），存储层
  * v0 锚定代码不适用于迁移产物——所以必须在迁移后表示上判定。
+ * 0.1.5+ 的 catalogApi='stream' 走 createRestore 流式路径（上述函数），
+ * 本函数仅在 catalogApi='legacy'（0.1.3 代 API）时使用。
  */
 function restoreThroughDshCatalog(entry, header, records) {
+  if (entry.catalogApi === 'stream') {
+    try {
+      restoreCurrentArtifactStream(entry, header, records)
+      return null
+    } catch (e) {
+      return e instanceof Error ? e : new Error(String(e))
+    }
+  }
   const { dsh, catalog } = entry
   const classified = catalog.readHeader(header)
   if (classified.status === 'unsupported') {
@@ -973,6 +1054,346 @@ function readStable(filePath) {
   throw new Error('文件在读取期间持续被写入（活跃会话），无法稳定读取')
 }
 
+// ---------------------------------------------------------------------------
+// 世代分叉检测与重建（类别 5，2026-09-09）：仅 stream catalog 模式启用。
+// ---------------------------------------------------------------------------
+
+/** 文件名 → 世代号：session.jsonl[.zstd]=0；session.vN.jsonl[.zstd]=N；非会话日志 null。 */
+function generationOf(filePath) {
+  const name = basename(filePath)
+  const match = /^session(?:\.v(\d+))?\.jsonl(?:\.zstd)?$/.exec(name)
+  if (!match) return null
+  return match[1] === undefined ? 0 : Number(match[1])
+}
+
+/** 目录内全部会话日志文件（带世代号，按世代降序）。 */
+function sessionLogFilesInDir(dir) {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((n) => n.endsWith('.jsonl') || n.endsWith('.jsonl.zstd'))
+    .map((n) => ({ path: join(dir, n), generation: generationOf(join(dir, n)) }))
+    .filter((f) => f.generation !== null)
+    .sort((a, b) => b.generation - a.generation)
+}
+
+/**
+ * 会话日志 → { header, records }（供世代分叉检测与重建；非健康检查路径——
+ * 含读取稳定、帧解压与行解析，任一失败抛错由调用方处置）。
+ */
+function readLogRows(filePath) {
+  const stable = readStable(filePath)
+  return parseLogBytes(stable.buffer, filePath.endsWith('.zstd'))
+}
+
+/** 当前逻辑产物 → 规范当前世代行（header 行 + 事件行文本，与 dsh 写入器同构）。 */
+function encodeCurrentRows(entry, current) {
+  const headerRow = entry.catalog.encodeCurrentHeader(current.header, current.inheritedEventCount)
+  const headerText = typeof headerRow === 'string' ? headerRow : JSON.stringify(headerRow)
+  const eventRows = current.events.map((event) => {
+    const row = entry.catalog.encodeCurrentEvent(event)
+    return typeof row === 'string' ? row : JSON.stringify(row)
+  })
+  return { headerText, eventRows, count: current.events.length }
+}
+
+/**
+ * 行级深比较（键序无关，与 isDeepEqualJson 同判据；2026-09-09 增订：**忽略
+ * time 元数据**——时间戳不是会话内容，迁移快照与嗣后被旧版本续写的源之间，
+ * 同一条末次事件可仅时间不同而内容完全一致（实测 session-30cbe3e5 末条
+ * session/end-seed：快照 10:39 vs 源 14:04，其余 5073 行全等）。内容等价
+ * 即非分叉，不得因时间戳差异误报。
+ */
+function rowsDeepEqual(a, b) {
+  if (a.length !== b.length) return false
+  const sansTime = (text) => {
+    try {
+      const { time: _t, ...rest } = JSON.parse(text)
+      return rest
+    } catch {
+      return text
+    }
+  }
+  return a.every((text, i) => {
+    try {
+      return isDeepEqualJson(sansTime(text), sansTime(b[i]))
+    } catch {
+      return text === b[i]
+    }
+  })
+}
+
+/** 当前世代行是否为源行序列的「早前快照」（前缀相等），是则可无损重建。 */
+function isPrefixRows(prefix, full) {
+  if (prefix.eventRows.length > full.eventRows.length) return false
+  if (!rowsDeepEqual([prefix.headerText], [full.headerText])) return false
+  return rowsDeepEqual(prefix.eventRows, full.eventRows.slice(0, prefix.eventRows.length))
+}
+
+/**
+ * 世代分叉检测（类别 5，只对目录内**最高世代**条目叠加）：
+ * 同一会话目录并存多世代时，用引擎本尊把最高世代与最低历史源（v0）分别
+ * 还原为当前逻辑产物并逐行比对：
+ * - 两代一致 → 无分叉（迁移快照仍与源一致，正常会话不误报）；
+ * - 当前世代为源的早前前缀（源更长）→ 分叉但可无损重建（低世代在世代发布
+ *   后被旧版本 dsh 继续写入——0.1.2-rc.1 不识别世代文件，实测 2026-09-09）；
+ * - 源为当前世代的早前前缀（当前世代更长）→ 当前世代权威且更完整，非分叉；
+ * - 当前世代还原失败而源完好 → 可重建（当前世代不可读）；
+ * - 两代互不构成前缀 → 真分叉（各自演进），无法无损合并，保留现场。
+ * 无 catalog / 非 stream API / 源不可读 / 源还原失败时返回 null（宁可放过
+ * 不可误判——与「不把 fallback 结论冒充 dsh 结论」同口径；源自身异常已由
+ * 其世代条目的独立健康判定表达）。
+ */
+function detectGenerationDivergence(highestPath, highestHealth) {
+  if (!dshValidator?.hasCatalog || dshValidator.catalogApi !== 'stream') return null
+  const dir = dirname(highestPath)
+  const files = sessionLogFilesInDir(dir)
+  if (files.length < 2 || files[0].path !== highestPath) return null
+  const source = files[files.length - 1]
+  if (source.generation >= files[0].generation) return null
+
+  let srcLog
+  try {
+    srcLog = readLogRows(source.path)
+  } catch {
+    return null // 源不可读：无从比对，其自身条目已表达
+  }
+  let srcCurrent
+  try {
+    srcCurrent = restoreCurrentArtifactStream(dshValidator, srcLog.header, srcLog.records)
+  } catch {
+    return null // 源本尊还原失败（可能为 surface 类可修损坏）：不叠加标记，走单文件路径
+  }
+  const srcRows = encodeCurrentRows(dshValidator, srcCurrent)
+
+  let curRows = null
+  let curErr = null
+  try {
+    const curLog = readLogRows(highestPath)
+    const curCurrent = restoreCurrentArtifactStream(dshValidator, curLog.header, curLog.records)
+    curRows = encodeCurrentRows(dshValidator, curCurrent)
+  } catch (e) {
+    curErr = e instanceof Error ? e : new Error(String(e))
+  }
+
+  if (curRows && rowsDeepEqual([curRows.headerText, ...curRows.eventRows], [srcRows.headerText, ...srcRows.eventRows])) {
+    return null // 两代一致：无分叉
+  }
+  const sourceName = basename(source.path)
+  const currentName = basename(highestPath)
+  if (!curRows) {
+    if (curErr?.unsupportedVersion) return null
+    return {
+      status: 'needs_repair',
+      detail: `世代异常：当前世代（${currentName}）本尊还原失败（${curErr?.message ?? '未知'}），但历史源（${sourceName}）完好（${srcRows.count} 个逻辑事件）；可安全重建当前世代（源保持原样）`,
+      title: extractTitle(srcLog.records) ?? '',
+    }
+  }
+  if (isPrefixRows(curRows, srcRows)) {
+    return {
+      status: 'needs_repair',
+      detail: `世代分叉：历史源（${sourceName}）在世代发布后仍被旧版本 dsh 写入（源 ${srcRows.count} 个逻辑事件 vs 当前世代 ${curRows.count} 个），当前世代为源的早前快照；可无损重建当前世代（源保持原样）`,
+      title: extractTitle(srcLog.records) ?? '',
+    }
+  }
+  if (isPrefixRows(srcRows, curRows)) {
+    // 当前世代为源的超集（源未比快照多内容）：当前世代权威且更完整，不是分叉。
+    return null
+  }
+  return {
+    status: 'unknown',
+    detail: `世代分叉且两世代互不包含（源 ${srcRows.count} 个逻辑事件 vs 当前世代 ${curRows.count} 个），无法无损合并；文件保持原样，请保留现场并向 dsh 官方报障`,
+  }
+}
+
+/** 标题提取（与 scanSessionHealthFile 同口径：最新 session/title，跳过镜像行）。 */
+function extractTitle(records) {
+  let title = ''
+  for (const r of records) {
+    if (r?.type === 'session/title' && !('sourceEventSeqs' in r)) {
+      const t = r?.data?.title
+      if (typeof t === 'string' && t.trim()) title = t.trim()
+    }
+  }
+  return title
+}
+
+/** 日志字节 → { header, records }（重建分支的写盘校验用）。 */
+function parseLogBytes(buffer, isZstd) {
+  if (buffer.length === 0) throw new Error('文件为空')
+  const lines = (isZstd ? decompressZstd(buffer) : buffer)
+    .toString('utf8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (lines.length === 0) throw new Error('文件为空')
+  const header = JSON.parse(lines[0])
+  if (!isSessionHeader(header)) throw new Error('header 非法')
+  const records = []
+  for (let i = 1; i < lines.length; i++) records.push(JSON.parse(lines[i]))
+  return { header, records }
+}
+
+/**
+ * 重建规划（修复入口侧，类别 5）：目标文件为目录内**最高世代**且伴随更低
+ * 世代源时，判定是否需要「按源重新发布当前世代」。判定与检测同源：
+ * - 两代一致 → 无需重建（走常规单文件路径，幂等 no-op）；
+ * - 当前世代为源的早前前缀 / 当前世代不可读而源完好 → 可无损重建；
+ * - 真分叉（互不包含）→ 拒绝并保留现场（不可无损合并）；
+ * - 源不可读 / 源本尊还原失败 → 常规路径（源自身问题先由单文件修复处理）。
+ */
+function planGenerationRebuild(filePath) {
+  if (!dshValidator?.hasCatalog || dshValidator.catalogApi !== 'stream') return { kind: 'none' }
+  const generation = generationOf(filePath)
+  if (generation === null || generation === 0) return { kind: 'none' } // 历史世代走常规单文件路径
+  const dir = dirname(filePath)
+  const files = sessionLogFilesInDir(dir)
+  if (files.length < 2 || files[0].path !== filePath) return { kind: 'none' }
+  const source = files[files.length - 1]
+  if (source.generation >= generation) return { kind: 'none' }
+
+  let srcLog
+  try {
+    srcLog = readLogRows(source.path)
+  } catch {
+    return { kind: 'none' }
+  }
+  let srcCurrent
+  try {
+    srcCurrent = restoreCurrentArtifactStream(dshValidator, srcLog.header, srcLog.records)
+  } catch {
+    return { kind: 'none' } // 源本尊还原失败：可能为 surface 类可修损坏，先走常规路径修源
+  }
+  const srcRows = encodeCurrentRows(dshValidator, srcCurrent)
+  const sessionId = srcCurrent.header.id
+
+  let curRows = null
+  let curErr = null
+  try {
+    const curLog = readLogRows(filePath)
+    const curCurrent = restoreCurrentArtifactStream(dshValidator, curLog.header, curLog.records)
+    curRows = encodeCurrentRows(dshValidator, curCurrent)
+  } catch (e) {
+    curErr = e instanceof Error ? e : new Error(String(e))
+  }
+
+  if (curRows) {
+    if (rowsDeepEqual([curRows.headerText, ...curRows.eventRows], [srcRows.headerText, ...srcRows.eventRows])) {
+      return { kind: 'none' } // 两代一致：无需重建
+    }
+    if (isPrefixRows(curRows, srcRows)) {
+      return {
+        kind: 'rebuild',
+        sourcePath: source.path,
+        generation,
+        sessionId,
+        srcRows,
+        detail: `历史源 ${basename(source.path)}（${srcRows.count} 个逻辑事件）晚于当前世代（${curRows.count} 个），源尾部为旧版本 dsh 补写的真实内容`,
+      }
+    }
+    if (isPrefixRows(srcRows, curRows)) {
+      // 当前世代为源的超集（源未比快照多内容）：当前世代权威且更完整，无需重建。
+      return { kind: 'none' }
+    }
+    return {
+      kind: 'refused',
+      message: `❌ 会话 ${sessionId} 双世代互相独立（世代分叉且互不包含：源 ${srcRows.count} 个逻辑事件 vs 当前世代 ${curRows.count} 个），无法无损合并，文件未动。请保留现场并向 dsh 官方报障。`,
+    }
+  }
+  if (curErr?.unsupportedVersion) return { kind: 'none' }
+  return {
+    kind: 'rebuild',
+    sourcePath: source.path,
+    generation,
+    sessionId,
+    srcRows,
+    detail: `当前世代本尊还原失败（${curErr?.message ?? '未知'}），历史源 ${basename(source.path)} 完好（${srcRows.count} 个逻辑事件）`,
+  }
+}
+
+/**
+ * 按源重建当前世代（类别 5 修复执行侧）：源（历史世代）只读不动；当前世代
+ * 备份后以源经由 catalog 编码的当前世代行原子替换；写盘字节先过本尊还原 +
+ * 与源行逐条对账双闸，再 rename；最后写后 stat/字节复查（与常规修复同口径）。
+ */
+async function rebuildGenerationFromSource(plan, targetPath, validatorName) {
+  const isZstd = targetPath.endsWith('.zstd')
+  const headerLine = plan.srcRows.headerText
+  const eventLines = plan.srcRows.eventRows
+  const repairedBytes = isZstd
+    ? await compressZstdFrames(headerLine, eventLines)
+    : Buffer.from(`${headerLine}\n${eventLines.join('\n')}\n`, 'utf8')
+
+  const backupPath = `${targetPath}.bak`
+  if (!existsSync(backupPath)) {
+    try {
+      copyFileSync(targetPath, backupPath)
+    } catch (e) {
+      return { ok: false, changed: false, message: `❌ 创建备份失败（已取消修复）: ${e.message}` }
+    }
+  }
+
+  const tmpPath = `${targetPath}.dsh-repair-tmp`
+  writeFileSync(tmpPath, repairedBytes)
+  let verifyErr = null
+  try {
+    const checkRows = parseLogBytes(readFileSync(tmpPath), isZstd)
+    const restored = restoreCurrentArtifactStream(dshValidator, checkRows.header, checkRows.records)
+    const outRows = encodeCurrentRows(dshValidator, restored)
+    if (!rowsDeepEqual([outRows.headerText, ...outRows.eventRows], [plan.srcRows.headerText, ...plan.srcRows.eventRows])) {
+      verifyErr = '重建产物与本尊还原结果不一致'
+    }
+  } catch (e) {
+    verifyErr = e instanceof Error ? e.message : String(e)
+  }
+  if (verifyErr !== null) {
+    try {
+      unlinkSync(tmpPath)
+    } catch { /* ignore */ }
+    return {
+      ok: false,
+      changed: false,
+      message: `❌ 重建产物未通过本尊校验（备份已建立，正式文件未动）：${verifyErr}`,
+    }
+  }
+  renameWithRetry(tmpPath, targetPath)
+
+  // 写后竞态复查（与常规修复同口径：字节 + stat 修订双重视角）。
+  let diskBytes
+  let diskStat
+  try {
+    diskBytes = readFileSync(targetPath)
+    diskStat = statSync(targetPath)
+  } catch {
+    diskBytes = null
+    diskStat = null
+  }
+  const wroteStat = (() => {
+    try {
+      return statSync(targetPath)
+    } catch {
+      return null
+    }
+  })()
+  const statChanged =
+    diskStat && wroteStat &&
+    (diskStat.size !== wroteStat.size ||
+      diskStat.mtimeMs !== wroteStat.mtimeMs ||
+      diskStat.ino !== wroteStat.ino)
+  if ((diskBytes && !diskBytes.equals(repairedBytes)) || statChanged) {
+    return {
+      ok: false,
+      changed: false,
+      message: `⚠️ 会话 ${plan.sessionId} 重建期间文件被其他进程写入（可能为活跃会话），本次未生效；文件已保留为重建后的状态，请稍后在会话静止时再次修复。`,
+    }
+  }
+
+  return {
+    ok: true,
+    changed: true,
+    message: `✨ 会话 ${plan.sessionId} 世代分叉/异常已修复：按历史源 ${basename(plan.sourcePath)} 重建当前世代（v${plan.generation}，${plan.srcRows.count} 个逻辑事件，校验器 ${validatorName}），源文件保持原样。${plan.detail}`,
+  }
+}
+
 /** 统一健康结果形态：早退路径无 header/不可解析时元数据取缺省值。 */
 function healthOut(status, extra = {}) {
   return {
@@ -990,7 +1411,25 @@ function healthOut(status, extra = {}) {
 }
 
 /**
- * 只读健康检查（不写回、不备份）：
+ * 只读健康检查入口：单文件两层判定（存储层 + 恢复层）后，对目录内**最高世代**
+ * 条目叠加世代分叉检测（类别 5，2026-09-09；仅 stream catalog 模式启用）——
+ * 命中时以合并结果为准（可修复分叉 → needs_repair + 可重建说明；真分叉 →
+ * unknown + 保留现场说明；源标题在空标题时补全）。
+ */
+export function scanSessionHealth(filePath) {
+  const health = scanSessionHealthFile(filePath)
+  const merge = detectGenerationDivergence(filePath, health)
+  if (!merge) return health
+  return healthOut(merge.status, {
+    ...health,
+    status: merge.status,
+    detail: merge.detail,
+    ...(merge.title && !health.title ? { title: merge.title } : {}),
+  })
+}
+
+/**
+ * 单文件只读健康检查（不写回、不备份）：
  * status ∈ healthy | needs_repair | unknown。
  * - healthy：存储层 seq 连续 **且** 恢复层（dsh fromRestore / fallback fold）通过；
  * - needs_repair：存储层存在可安全修复的重放重叠/缺口，或恢复层失败但属
@@ -1011,7 +1450,7 @@ function healthOut(status, extra = {}) {
  *   stop，存在漏标，裁定接受，见问题记录095 #5）。仅作 UI 徽标与修复
  *   预拦，不参与健康判定。
  */
-export function scanSessionHealth(filePath) {
+function scanSessionHealthFile(filePath) {
   const isZstd = filePath.endsWith('.zstd')
   let buffer
   let st = null
@@ -1193,6 +1632,22 @@ export async function repairSessionFile(filePath) {
     original = readStable(filePath)
   } catch (e) {
     return { ok: false, changed: false, message: `❌ ${e.message}（会话可能仍在持续写入中，请稍后重试）: ${filePath}` }
+  }
+
+  // 类别 5（2026-09-09）：世代分叉/世代异常——目标文件为目录内最高世代且伴有
+  // 更低世代源时，以源重新发布当前世代（下例：v3 只含空快照、v0 被旧版本
+  // dsh 继续写入）。判定不依赖目标自身解析（当前世代不可读/空文件而源完好
+  // 同样走重建），与扫描侧 detectGenerationDivergence 口径一致：命中重建/
+  // 拒绝即返回；否则落入常规单文件路径。
+  const rebuildEarly = planGenerationRebuild(filePath)
+  if (rebuildEarly.kind === 'rebuild') {
+    const validatorName0 = dshValidator
+      ? `dsh-session@${dshValidator.version}（引擎档本尊${dshValidator.hasCatalog ? ` + format-catalog v${dshValidator.catalog.currentVersion}` : ''}）`
+      : '内置 fold（引擎档缺包降级）'
+    return rebuildGenerationFromSource(rebuildEarly, filePath, validatorName0)
+  }
+  if (rebuildEarly.kind === 'refused') {
+    return { ok: false, changed: false, message: rebuildEarly.message }
   }
 
   if (original.before.size === 0) {
