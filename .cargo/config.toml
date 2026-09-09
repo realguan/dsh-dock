@@ -1,0 +1,14 @@
+# cargo 别名（cargo 从当前目录向上逐级发现 .cargo/config.toml）
+#
+#   cargo tdev   —— 本地调试默认档，在 src-tauri/ 内运行
+# 等价于：cargo tauri dev --config tauri.dev.conf.json
+# 作用：dev 构建改用独立 identifier（io.github.realguan.dsh-dock.dev），
+# 与已安装的 dsh-dock 同开互不挤（单实例锁 / 数据目录均隔离）。
+#
+# ⚠️ 不要起名 `tauri`（alias tauri = "..."）——那会让 `cargo tauri build`
+# 也带上 dev 标识；出包 / CI（仓库根调用 cargo tauri build）必须保持生产
+# identifier。
+#
+# 注：--config 相对路径按启动时 CWD 解析，故固定从 src-tauri/ 运行。
+[alias]
+tdev = "tauri dev --config tauri.dev.conf.json"

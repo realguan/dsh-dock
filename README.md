@@ -82,12 +82,23 @@ cargo clippy --all-targets -- -D warnings
 
 ```bash
 # a) 一条命令（tauri-cli 自动先起 vite 再编译运行，热重载）
-cargo tauri dev
+#    cargo tdev = 调试默认档（.cargo/config.toml 别名），自动附带
+#    --config tauri.dev.conf.json：dev 构建改用独立 identifier，
+#    与已安装的 dsh-dock 同开互不顶（单实例锁、数据目录都隔离）
+cargo tdev
 
 # b) 两终端
 cd frontend && npm run dev    # 终端 1：vite dev server @1420
 cd src-tauri && cargo run     # 终端 2
 ```
+
+> ⚠️ 单实例锁按 `identifier` 生成（tauri-plugin-single-instance）；
+> debug 构建默认与已安装应用共用 `io.github.realguan.dsh-dock`，同开时
+> 谁后启动谁退，且共用数据目录（profiles/settings 互踩）。`tauri.dev.conf.json`
+> 将 dev 构建切成独立 identifier `io.github.realguan.dsh-dock.dev`：实例锁与
+> 数据目录均独立（`.dev` 全新状态，首次启动走引擎引导需联网）。`cargo tdev`
+> 等价 `cargo tauri dev --config tauri.dev.conf.json`；裸 `cargo tauri dev`
+> 或路径 b) 不带此隔离，与已安装应用同开仍会互顶——同开调试走 a)。
 
 ```bash
 # 出安装包无此问题（release 构建内嵌 frontend/dist 产物）；
