@@ -34,6 +34,10 @@ export const t = {
     localFailed: "本机切换失败",
     controlCenter: "控制中心",
     controlCenterTip: "打开控制中心面板（管理 Profile / 插件 / 凭据 / 诊断）",
+    launchingTitle: "正在启动工作台…",
+    launchingSub: "正在连接本地服务，即将进入工作台界面",
+    viewTimeline: "查看启动详情",
+    hideTimeline: "收起详情",
   },
   // 错误动作文案表：boot:error payload 的 actions[] 只给 id，文案在此映射；
   // 组件层以 t.error.actions[id] ?? id 兜底。
@@ -110,6 +114,17 @@ export const t = {
     chipClientNew: "客户端有新版",
     chipClientUpdating: "客户端更新",
     chipClientUpdatingRun: "客户端更新中…",
+    // 全新工作台启动台（Workbench Launchpad）
+    rememberChoice: "记住我的选择，下次启动直接进入此工作台",
+    quickKeysHint: "按数字键 1-9 快速选择启动",
+    createWorkbench: "创建全新工作台",
+    createWorkbenchDesc: "克隆模板或在控制中心定制独立工作空间",
+    manageWorkbenches: "工作台管理中心",
+    engineReady: "引擎环境已就绪",
+    pluginsCount: "{count} 个插件",
+    defaultBadge: "默认",
+    enterWorkbench: "进入工作台",
+    launching: "正在启动…",
   },
   updateBanner: {
     // 升级提示条（ADR-0010 升级呈现；非阻断、可忽略同版本）

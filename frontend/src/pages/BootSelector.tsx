@@ -1,42 +1,47 @@
-// 工作台选择器页（原 ui/selector.html 升级重构，frontend-migration §4.3）。
-// 两阶段叙事：一问一答（选卡片）→ 选定后原地切启动形态（与启动页同构）；
-// 复用 DownloadProgress / ErrorCard / PulseBar。
-// 2026-09-08 裁定：撤通栏顶栏——原生标题栏之下再叠一条导航视觉上叠加成
-// 「双下巴」（同启动页 af0e3ee 口径）；徽标/版本芯片/控制中心入口经菜单/
-// 托盘/全局快捷键可达，boot 期页面不再重复承载。
+// 工作台启动中心（Workbench Launchpad，2026-09-09 产品体验重塑）。
+// 职责：当应用已就绪但未指定默认工作台时，以沉浸式 Launchpad 呈现所有工作空间；
+// 支持卡片点选、键盘快捷直达（1~9）、一键设为默认工作台、直达控制中心。
 import { useEffect, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useSearchParams } from "react-router-dom"
-import { Layout, ChevronRight, Package } from "lucide-react"
+import {
+  Layout,
+  Package,
+  Sparkles,
+  Plus,
+  SlidersHorizontal,
+  CheckCircle2,
+  ArrowUpRight,
+  ShieldCheck,
+  Loader2,
+} from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
+import type { ProfileSummary } from "@/types/ipc"
 import { useBootStore } from "@/stores/bootStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PulseBar } from "@/components/boot/PulseBar"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { ErrorCard } from "@/components/boot/ErrorCard"
+import { logger } from "@/lib/logger"
 
 export function BootSelector() {
   const { t } = useI18n()
   const [params] = useSearchParams()
 
-  const profileMeta = (name: string) => {
-    return (
-      t.selector.items[name] ?? {
-        title: name,
-        desc: t.selector.customDesc,
-        tag: t.selector.customTag,
-      }
-    )
-  }
-  const profiles = (params.get("profiles") || "web")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const rawParams = params.get("profiles")
+  const urlCandidateNames = rawParams
+    ? rawParams
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
 
-  // —— 本地叙事状态（store 管运行时事件，这里管页面阶段） ——
-  const [selected, setSelected] = useState<{ name: string; title: string } | null>(null)
+  const [profileSummaries, setProfileSummaries] = useState<ProfileSummary[]>([])
+  const [defaultProfile, setDefaultProfile] = useState<string | null>(null)
+  const [rememberChoice, setRememberChoice] = useState(false)
+  const [launchingName, setLaunchingName] = useState<string | null>(null)
   const [localError, setLocalError] = useState<BootErrorEvent | null>(null)
   const [hideDownload, setHideDownload] = useState(false)
   const [maxStepSeen, setMaxStepSeen] = useState(-1)
@@ -48,6 +53,22 @@ export function BootSelector() {
   const progress = useBootStore((s) => s.progress)
 
   const shownError: BootErrorEvent | null = localError ?? error
+
+  // 挂载时并发拉取 Profile 详情与当前默认工作台
+  useEffect(() => {
+    let alive = true
+    Promise.all([
+      api.listProfiles().catch(() => [] as ProfileSummary[]),
+      api.getDefaultProfile().catch(() => null),
+    ]).then(([list, def]) => {
+      if (!alive) return
+      setProfileSummaries(list)
+      setDefaultProfile(def)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // step>=2（spawn DSH 及之后）→ 隐藏下载条
   useEffect(() => {
@@ -65,141 +86,292 @@ export function BootSelector() {
     if (shownError) setHideDownload(true)
   }, [shownError])
 
-  const showPulse = selected !== null && !shownError && !(!hideDownload && progress !== null)
+  // 计算展示的工作台列表（富元数据加持）
+  const displayProfiles = (() => {
+    const summaryMap = new Map(profileSummaries.map((p) => [p.name, p]))
+    const candidateNames =
+      urlCandidateNames.length > 0
+        ? urlCandidateNames
+        : profileSummaries.length > 0
+          ? profileSummaries.map((p) => p.name)
+          : ["web"]
+
+    return candidateNames.map((name) => {
+      const summary = summaryMap.get(name)
+      const meta = t.selector.items[name] ?? {
+        title: name === "web" ? "默认工作台" : name,
+        desc: t.selector.customDesc,
+        tag: t.selector.customTag,
+      }
+      const isDefault = name === defaultProfile || meta.tag === "DEFAULT"
+      const pluginCount = summary?.dependencies.length ?? 0
+      const isTemplate = summary ? !summary.materialized : false
+
+      return {
+        name,
+        title: meta.title || name,
+        desc: meta.desc || (pluginCount > 0 ? t.selector.pluginsCount.replace("{count}", String(pluginCount)) : t.selector.customDesc),
+        tag: isDefault ? t.selector.defaultBadge : isTemplate ? "TEMPLATE" : meta.tag,
+        pluginCount,
+        isTemplate,
+        isDefault,
+      }
+    })
+  })()
+
+  // 启动所选工作台
+  const handleLaunch = async (name: string) => {
+    if (launchingName) return
+    setLaunchingName(name)
+    setLocalError(null)
+
+    try {
+      if (rememberChoice) {
+        await api.setDefaultProfile(name).catch((e) => {
+          logger.warn("[selector]", "保存默认工作台偏好失败", { error: e })
+        })
+      }
+      await api.chooseProfile(name)
+    } catch (e) {
+      setLaunchingName(null)
+      setLocalError({
+        title: t.error.fallbackTitle,
+        detail: `${String(e instanceof Error ? e.message : e)}（可返回重选）`,
+        actions: ["retry"],
+      })
+    }
+  }
+
+  // 键盘快捷直达：按数字键 1~9 快速启动
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (launchingName || e.metaKey || e.ctrlKey || e.altKey) return
+      const num = parseInt(e.key, 10)
+      if (!isNaN(num) && num >= 1 && num <= displayProfiles.length) {
+        const target = displayProfiles[num - 1]
+        if (target) {
+          e.preventDefault()
+          handleLaunch(target.name)
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [displayProfiles, launchingName, rememberChoice])
+
+  const showPulse = launchingName !== null && !shownError && !(!hideDownload && progress !== null)
 
   const headline =
     shownError !== null
       ? t.selector.problemHeadline
-      : selected === null
+      : launchingName === null
         ? t.selector.headline
         : maxStepSeen >= 1 && activeStep >= 2
           ? t.boot.headlines[Math.min(Math.max(activeStep, 2), 4)]
-          : `${t.selector.launchingPrefix}${selected.title}${t.selector.launchingSuffix}`
+          : `${t.selector.launchingPrefix}${launchingName}${t.selector.launchingSuffix}`
 
   const subline = (() => {
-    if (selected === null) return t.selector.subline
-    if (!hideDownload && progress !== null && maxStepSeen < 2)
-      return t.selector.preparingSub
+    if (launchingName === null) return t.selector.subline
+    if (!hideDownload && progress !== null && maxStepSeen < 2) return t.selector.preparingSub
     const detail = steps[Math.max(activeStep, 0)]?.detail
-    return detail ?? selected.name
+    return detail ?? launchingName
   })()
 
   return (
-    <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
+    <div className="relative flex min-h-dvh flex-col bg-bg text-ink selection:bg-wash selection:text-brand-deep">
       {/* 顶部环境渐变光晕 */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,_rgba(65,118,230,0.08),_transparent_70%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(ellipse_60%_40%_at_50%_-10%,color-mix(in_srgb,var(--color-brand)_14%,transparent),transparent_80%)]" />
 
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
-        {/* Hero */}
-        <section className="flex w-full max-w-xl flex-col items-center text-center">
-          <div className="relative mb-2">
-            <div className="absolute -inset-2 rounded-2xl bg-brand/10 blur-xl" />
-            <Emblem size={56} />
-          </div>
-          <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">{headline}</h1>
-          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-dim">{subline}</p>
-          {!shownError && showPulse && selected !== null && (
-            <div className="mt-6 w-full">
+      {/* 顶栏微导航 */}
+      <header className="relative z-10 flex items-center justify-between border-b border-line/60 px-6 py-3.5 backdrop-blur-md sm:px-8">
+        <div className="flex items-center gap-3">
+          <Emblem size={24} />
+          <span className="font-mono text-sm font-semibold tracking-tight text-ink">DSH Dock</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-ok/25 bg-ok/10 px-2 py-0.5 text-meta font-medium text-ok">
+            <ShieldCheck className="size-3" />
+            {t.selector.engineReady}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => api.openProfilesWindow().catch(() => {})}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-panel px-3 py-1.5 text-xs font-medium text-dim shadow-2xs transition-all hover:border-brand/40 hover:text-ink hover:shadow-xs"
+          >
+            <SlidersHorizontal className="size-3.5 text-brand-deep" />
+            <span>{t.selector.manageWorkbenches}</span>
+          </button>
+        </div>
+      </header>
+
+      {/* 主工作区 */}
+      <main className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center px-6 py-10 sm:px-8">
+        {/* 欢迎语与引导 */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+          className="mb-8 text-center"
+        >
+          <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{headline}</h1>
+          <p className="mx-auto mt-2 max-w-lg text-sm text-dim">{subline}</p>
+          {!shownError && showPulse && (
+            <div className="mt-5 flex justify-center">
               <PulseBar width={260} />
             </div>
           )}
-        </section>
+        </motion.div>
 
-        {/* 阶段一：Profile 卡片选择阵列 */}
-        <AnimatePresence mode="wait">
-          {selected === null ? (
-            <motion.div
-              key="selector-cards"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
-              className="mt-8 w-full max-w-xl"
-            >
-              <div className="grid gap-3">
-                {profiles.map((name, i) => {
-                  const meta = profileMeta(name)
-                  const isDefault = meta.tag === "DEFAULT"
-                  return (
-                    <motion.button
-                      key={name}
-                      type="button"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05, duration: 0.22 }}
-                      whileHover={{ scale: 1.01, y: -1 }}
-                      whileTap={{ scale: 0.99 }}
-                      onClick={() => {
-                        setSelected({ name, title: meta.title })
-                        api
-                          .chooseProfile(name)
-                          .catch((e) =>
-                            setLocalError({
-                              title: t.error.fallbackTitle,
-                              detail: `${String(e instanceof Error ? e.message : e)}（可返回重选）`,
-                              actions: ["retry"],
-                            }),
-                          )
-                      }}
-                      className="group relative flex items-center gap-4 rounded-2xl border border-line bg-panel/95 p-4 text-left shadow-xs transition-all hover:border-brand/50 hover:bg-wash/30 hover:shadow-md"
-                    >
+        {/* 状态区：下载进度条接管 */}
+        {!hideDownload && progress !== null && (
+          <div className="mx-auto mb-8 w-full max-w-xl">
+            <DownloadProgress />
+          </div>
+        )}
+
+        {/* 卡片矩阵 */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <AnimatePresence>
+            {displayProfiles.map((p, idx) => {
+              const isLaunching = launchingName === p.name
+
+              return (
+                <motion.div
+                  key={p.name}
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.04, duration: 0.22 }}
+                  whileHover={{ y: -2, transition: { duration: 0.15 } }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => handleLaunch(p.name)}
+                  className={`group relative flex cursor-pointer flex-col justify-between rounded-2xl border p-5 shadow-xs transition-all ${
+                    isLaunching
+                      ? "border-brand bg-wash/60 ring-2 ring-brand/30"
+                      : "border-line bg-panel/95 hover:border-brand/50 hover:bg-wash/30 hover:shadow-md"
+                  }`}
+                >
+                  {/* 卡片顶栏：图标 + 数字快捷键 + 默认标签 */}
+                  <div>
+                    <div className="flex items-center justify-between">
                       <div
-                        className={`flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
-                          isDefault
-                            ? "bg-wash text-brand-deep group-hover:bg-brand-deep group-hover:text-white"
-                            : "bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand-deep"
+                        className={`flex size-10 items-center justify-center rounded-xl border transition-colors ${
+                          p.isTemplate
+                            ? "border-line/70 bg-purple-500/10 text-purple-600 group-hover:bg-purple-600 group-hover:text-white"
+                            : p.isDefault
+                              ? "border-brand/30 bg-wash text-brand-deep group-hover:bg-brand-deep group-hover:text-white"
+                              : "border-line/70 bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand-deep"
                         }`}
                       >
-                        {isDefault ? <Layout className="size-5" /> : <Package className="size-5" />}
+                        {p.isTemplate ? (
+                          <Sparkles className="size-5" />
+                        ) : p.isDefault ? (
+                          <Layout className="size-5" />
+                        ) : (
+                          <Package className="size-5" />
+                        )}
                       </div>
 
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold tracking-tight text-ink group-hover:text-brand-deep">
-                            {meta.title}
+                      <div className="flex items-center gap-1.5">
+                        {p.isDefault && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-brand/25 bg-brand/10 px-2 py-0.5 text-meta font-medium text-brand-deep">
+                            <CheckCircle2 className="size-3" />
+                            {t.selector.defaultBadge}
                           </span>
-                          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
-                            {name}
-                          </span>
-                        </div>
-                        <span className="mt-1 block truncate text-xs text-dim" title={meta.desc}>
-                          {meta.desc}
+                        )}
+                        <span className="rounded-md border border-line bg-panel px-1.5 py-0.5 font-mono text-meta text-faint group-hover:border-brand/30 group-hover:text-ink">
+                          {idx + 1}
                         </span>
                       </div>
+                    </div>
 
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span
-                          className={`rounded-full border px-2.5 py-0.5 text-meta font-semibold tracking-wide ${
-                            isDefault
-                              ? "border-brand/20 bg-brand/10 text-brand-deep"
-                              : "border-line bg-line-soft/60 text-faint"
-                          }`}
-                        >
-                          {meta.tag}
+                    {/* 工作台信息 */}
+                    <div className="mt-4">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-base font-semibold tracking-tight text-ink group-hover:text-brand-deep">
+                          {p.title}
+                        </h2>
+                        <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
+                          {p.name}
                         </span>
-                        <ChevronRight className="size-4 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand-deep" />
                       </div>
-                    </motion.button>
-                  )
-                })}
+                      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-dim" title={p.desc}>
+                        {p.desc}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 卡片底栏：插件数与进入按钮 */}
+                  <div className="mt-6 flex items-center justify-between border-t border-line/60 pt-3">
+                    <span className="font-mono text-meta text-faint">
+                      {p.pluginCount > 0
+                        ? t.selector.pluginsCount.replace("{count}", String(p.pluginCount))
+                        : p.name === "web"
+                          ? "官方开箱即用"
+                          : t.selector.customDesc}
+                    </span>
+                    <div className="flex items-center gap-1 text-xs font-medium text-brand-deep transition-transform group-hover:translate-x-0.5">
+                      {isLaunching ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Loader2 className="size-3.5 animate-spin" />
+                          {t.selector.launching}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          {t.selector.enterWorkbench}
+                          <ArrowUpRight className="size-3.5" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              )
+            })}
+
+            {/* 新建工作台卡片 */}
+            <motion.div
+              key="create-new"
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: displayProfiles.length * 0.04, duration: 0.22 }}
+              whileHover={{ y: -2 }}
+              onClick={() => api.openProfilesWindow().catch(() => {})}
+              className="group flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/40 p-6 text-center shadow-2xs transition-all hover:border-brand/60 hover:bg-wash/20"
+            >
+              <div className="flex size-10 items-center justify-center rounded-full border border-line bg-panel text-faint transition-colors group-hover:border-brand/40 group-hover:text-brand-deep">
+                <Plus className="size-5" />
               </div>
-
-              <p className="mt-4 text-center text-xs text-faint">{t.selector.pickHint}</p>
+              <h3 className="mt-3 text-sm font-semibold text-ink group-hover:text-brand-deep">
+                {t.selector.createWorkbench}
+              </h3>
+              <p className="mt-1 text-xs text-dim">{t.selector.createWorkbenchDesc}</p>
             </motion.div>
-          ) : !hideDownload && progress !== null ? (
-            /* 阶段二：下载条接管 */
-            <div className="w-full max-w-xl">
-              <DownloadProgress />
-            </div>
-          ) : null}
-        </AnimatePresence>
+          </AnimatePresence>
+        </div>
 
         {/* 错误卡 */}
         {shownError && (
-          <div className="mt-6 w-full max-w-xl">
+          <div className="mx-auto mt-6 w-full max-w-xl">
             <ErrorCard payload={shownError} onReselect={() => window.location.reload()} />
           </div>
         )}
+
+        {/* 底部偏好设置栏：记住默认选择 + 快捷提示 */}
+        <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-line/60 pt-6 text-xs text-dim sm:flex-row">
+          <label className="flex cursor-pointer items-center gap-2 select-none hover:text-ink">
+            <input
+              type="checkbox"
+              checked={rememberChoice}
+              onChange={(e) => setRememberChoice(e.target.checked)}
+              className="accent-brand size-4 rounded"
+            />
+            <span>{t.selector.rememberChoice}</span>
+          </label>
+
+          <div className="flex items-center gap-4 text-faint">
+            <span>{t.selector.quickKeysHint}</span>
+          </div>
+        </div>
       </main>
     </div>
   )

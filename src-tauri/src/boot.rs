@@ -456,9 +456,10 @@ pub(crate) fn launch_executor_after_probe(
         Ok(crate::executor::ProbeOutcome::NeedsProfile(profiles)) => {
             emit_step(&app, 2, "running", "选择器：多个 webUi 工作台");
             // 2026-08-27 前端迁移：selector 由 SPA pathname 路由承载（§3.1）
+            // 优先调用 React SPA 路由桥接（零闪烁平滑直达），未就绪时回退 location.assign
+            let target = format!("/selector?profiles={}", profiles.join(","));
             let _ = state.window.eval(format!(
-                "location.assign('/selector?profiles={}')",
-                profiles.join(",")
+                "if (typeof window.__DSH_NAVIGATE__ === 'function') {{ window.__DSH_NAVIGATE__('{target}'); }} else {{ location.assign('{target}'); }}"
             ));
             *state.pending.lock().unwrap() = Some(executor);
         }

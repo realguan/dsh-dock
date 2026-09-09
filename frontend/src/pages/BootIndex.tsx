@@ -16,6 +16,8 @@ import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
 import { ErrorCard } from "@/components/boot/ErrorCard"
 import { UpdateBanner } from "@/components/update/UpdateBanner"
+import { Emblem } from "@/components/layout/Emblem"
+import { PulseBar } from "@/components/boot/PulseBar"
 
 /// StrictMode 双挂载下去重同一份握手参数（choose_mode 会 teardown+重启会话）
 let lastHandoff = ""
@@ -29,6 +31,8 @@ export function BootIndex() {
   const [errorCount, setErrorCount] = useState(0)
   const [hideDownload, setHideDownload] = useState(false)
   const [maxStepSeen, setMaxStepSeen] = useState(-1)
+  const [hasEverDownloaded, setHasEverDownloaded] = useState(false)
+  const [forceShowTimeline, setForceShowTimeline] = useState(false)
 
   // —— store 订阅（细粒度选择器防高频重渲染） ——
   const steps = useBootStore((s) => s.steps)
@@ -91,7 +95,10 @@ export function BootIndex() {
     if (maxStepSeen >= 2) setHideDownload(true)
   }, [maxStepSeen])
   useEffect(() => {
-    if (progress) setHideDownload(false)
+    if (progress) {
+      setHideDownload(false)
+      setHasEverDownloaded(true)
+    }
   }, [progress])
   // 下载完成后延迟隐藏下载卡片，让卡头展示后续步骤详情
   // 避免卡在 100% 进度条（后续解压/安装阶段无新 progress 事件）
@@ -123,14 +130,17 @@ export function BootIndex() {
       ? t.selector.preparingSub
       : steps[idx]?.detail || t.boot.steps[idx].hint
 
+  // 区分「首次安装准备向导」与「日常秒启 Splash」：
+  // 只有在发生环境下载、出现错误或手动请求时才展示 5 步向导列表；
+  // 普通秒级直启展示高保真极简启动屏，彻底消除每次打开装机自检的割裂感。
+  const isSetupMode = hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline
+
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
       {/* 顶部环境渐变光晕 */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,color-mix(in_srgb,var(--color-brand)_12%,transparent),transparent_70%)]" />
 
-      {/* WSL 模式切换（仅 Windows 渲染）：悬浮胶囊。boot 页不再渲染通栏顶栏
-          ——原生标题栏之下再来一条导航条视觉上叠加成「双下巴」，且徽标/版本
-          芯片/控制中心入口在 boot 期均无消费场景（错误卡兜底诊断入口）。 */}
+      {/* WSL 模式切换（仅 Windows 渲染）：悬浮胶囊 */}
       {can.bootWsl && (
         <div className="absolute right-6 top-4 z-20">
           <button
@@ -163,15 +173,54 @@ export function BootIndex() {
         <UpdateBanner />
       </div>
 
-      {/* 主工作区：控制台卡即页面主角 */}
+      {/* 主工作区 */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
         <section className="w-full max-w-xl">
-          <BootTimeline
-            title={title}
-            subtitle={subtitle}
-            danger={!!shownError}
-            banner={inDownload ? <DownloadProgress /> : undefined}
-          />
+          {isSetupMode ? (
+            <>
+              <BootTimeline
+                title={title}
+                subtitle={subtitle}
+                danger={!!shownError}
+                banner={inDownload ? <DownloadProgress /> : undefined}
+              />
+              {!shownError && hasEverDownloaded && (
+                <div className="mt-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setForceShowTimeline(false)}
+                    className="text-meta text-dim transition-colors hover:text-ink"
+                  >
+                    {t.boot.hideTimeline}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col items-center text-center">
+              <div className="relative mb-6">
+                <div className="absolute -inset-4 animate-pulse rounded-2xl bg-brand/20 blur-xl motion-reduce:animate-none" />
+                <Emblem size={64} />
+              </div>
+              <h1 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
+                {t.boot.launchingTitle}
+              </h1>
+              <p className="mt-2 max-w-md text-xs text-dim sm:text-sm">
+                {steps[idx]?.detail || t.boot.launchingSub}
+              </p>
+              <div className="mt-6">
+                <PulseBar width={220} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setForceShowTimeline(true)}
+                className="mt-8 text-meta text-faint transition-colors hover:text-dim"
+              >
+                {t.boot.viewTimeline}
+              </button>
+            </div>
+          )}
+
           {shownError && (
             <div className="mt-4">
               <ErrorCard

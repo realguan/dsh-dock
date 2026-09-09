@@ -32,6 +32,16 @@
 
 ## 三、记录
 
+### 2026-09-09 快车道直推 · 启动体验双模重塑（日常秒启 Splash + 全新工作台启动台 Launchpad 与偏好持久化） —— guan（AI 协作）
+
+- 变更：
+  1. **日常秒启与环境准备向导解耦（BootIndex 双模）**：日常启动环境就绪且直达默认工作台时，屏蔽繁重的 5 步向导时间线，切换为极简典雅的 Direct Launch Splash（居中 Emblem 呼吸微光 + 状态提示 + PulseBar，提供可折叠的启动详情）；仅在环境下载（first-run）或异常报错时完整展开 BootTimeline。
+  2. **全新工作台启动台（Workbench Launchpad / BootSelector）**：全面升级为产品级 Launchpad，富元数据卡片矩阵（标题、描述、插件统计、模板标识、默认标签）、键盘 `1~9` 快速盲打直达、一键“记住我的选择（下次启动直接进入此工作台）”、直达工作台管理中心与新建工作台；启动中实时 Connecting 原地反馈。
+  3. **SPA 平滑导航桥接（消除白屏刷新闪烁）**：在 `App.tsx` 挂载 `window.__DSH_NAVIGATE__` 桥接，Rust 端 `launch_executor_after_probe` 派发时优先通过 SPA 客户端路由平滑转场，避免 `location.assign` 带来的全页白屏重载。
+- 影响：仅周知；用户首次体验与日常高频启动彻底分离，默认工作台偏好闭环。
+- 凭据：`cargo test` 229 passed，`pnpm test` 170 passed，`oxlint` 0 warning，`cargo clippy` 0 warning，`cargo fmt` check 通过。
+
+
 ### 2026-09-09 快车道直推 · 插件安装飞行动画 + 下载管理 Popover 点外收起 + 引擎就绪秒级直达（5a5d279） —— guan（AI 协作）
 
 - 变更：

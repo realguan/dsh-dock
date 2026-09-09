@@ -31,6 +31,10 @@ export const enUS: AppCopy = {
     localFailed: "Failed to switch to local",
     controlCenter: "Control Center",
     controlCenterTip: "Open Control Center (manage profiles, plugins, credentials, diagnostics)",
+    launchingTitle: "Launching Workbench...",
+    launchingSub: "Connecting to local service and runtime, entering workbench soon",
+    viewTimeline: "View startup details",
+    hideTimeline: "Hide details",
   },
   error: {
     fallbackTitle: "Launch Failed",
@@ -104,6 +108,17 @@ export const enUS: AppCopy = {
     chipClientNew: "App Update Available",
     chipClientUpdating: "Updating App",
     chipClientUpdatingRun: "Updating App…",
+    // Workbench Launchpad
+    rememberChoice: "Remember my choice and enter this workbench directly next time",
+    quickKeysHint: "Press keys 1-9 to quickly launch",
+    createWorkbench: "Create New Workbench",
+    createWorkbenchDesc: "Clone templates or customize workspaces in Control Center",
+    manageWorkbenches: "Workbench Manager",
+    engineReady: "Engine Ready",
+    pluginsCount: "{count} plugins",
+    defaultBadge: "DEFAULT",
+    enterWorkbench: "Open Workbench",
+    launching: "Starting…",
   },
   updateBanner: {
     dshTitle: "dsh v{latest} available (current v{current})",

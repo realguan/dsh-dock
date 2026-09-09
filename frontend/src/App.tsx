@@ -9,7 +9,7 @@
 // 页面播种 invoke，见该处裁定注释）。label 未就绪时渲染轻量骨架。
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { useEffect, useState } from "react"
-import { Navigate, Route, Routes } from "react-router-dom"
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { Emblem } from "@/components/layout/Emblem"
 import { BootIndex } from "@/pages/BootIndex"
 import { BootMode } from "@/pages/BootMode"
@@ -21,6 +21,17 @@ import { PulseBar } from "@/components/boot/PulseBar"
 
 export default function App() {
   const [label, setLabel] = useState<string | null>(null)
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    // 挂载全局 SPA 导航桥接（Rust 后端路由指令平滑切换，避免 location.assign 整页重载闪烁）
+    ;(window as unknown as { __DSH_NAVIGATE__?: (path: string) => void }).__DSH_NAVIGATE__ = (path: string) => {
+      navigate(path)
+    }
+    return () => {
+      delete (window as unknown as { __DSH_NAVIGATE__?: (path: string) => void }).__DSH_NAVIGATE__
+    }
+  }, [navigate])
 
   useEffect(() => {
     // label 是同步 getter（@tauri-apps/api v2）；缺失/异常（纯 vite dev 浏览器
