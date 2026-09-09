@@ -1530,6 +1530,16 @@ export const sessionFormatCatalog = {
     return {
       decodeRow(row) {
         if (finished) throw new Error('decodeRow after finish')
+        // 迁移器拒绝模拟（2026-09-09）：cwd='/tmp/refuse' 的会话在首个
+        // surface 事件处抛 SessionFormatUnsupportedMigrationError（锚真实
+        // session-8650d6f2：旧代会话在 turn 起始前写 user/message 组，
+        // 0.1.5 发布链 v2→v3 拒绝无损迁移）——脚本必须归类不可修复，
+        // 不得落进 needs_repair（点修复必然失败）。
+        if (header.cwd === '/tmp/refuse' && (row.type === 'user/message' || row.type === 'assistant/message')) {
+          const err = new Error('format v2 surface before first step cannot acquire a system head without changing chronology')
+          err.name = 'SessionFormatUnsupportedMigrationError'
+          throw err
+        }
         rows.push(row)
       },
       finish() {
@@ -1839,6 +1849,81 @@ export const sessionFormatCatalog = {
         );
         assert!(
             !v3_path.with_file_name("session.v3.jsonl.bak").exists(),
+            "拒绝不得创建备份"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// 迁移器拒绝 fixture（锚 session-8650d6f2）：v0 内容与 gen_div_v0 相同
+    /// 但 cwd=/tmp/refuse（stub 在首个 surface 事件抛
+    /// SessionFormatUnsupportedMigrationError）。
+    fn write_refusal_fixture(home: &Path, tag: &str) -> PathBuf {
+        let content = gen_div_v0().replace("/tmp/demo", "/tmp/refuse");
+        write_session_fixture(home, tag, "session.jsonl", &content)
+    }
+
+    #[test]
+    fn scan_classifies_migration_refusal_as_unknown_not_repair() {
+        // 迁移器拒绝（SessionFormatUnsupportedMigrationError，2026-09-09 实测
+        // session-8650d6f2 顶格）：与「存储版本更高」同类——不可修复、不可
+        // 变异，必须归 unknown + 升级提示；此前 stream 路径漏判致 needs_repair，
+        // 用户点修复必然失败。
+        if !require_node_or_skip("scan_classifies_migration_refusal_as_unknown_not_repair") {
+            return;
+        }
+        let home = fixture_home("gen-refuse-scan");
+        write_refusal_fixture(&home, "sess-refuse");
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let list = scan_sessions(&home, &home, false).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list[0].status,
+            SessionStatus::Unknown,
+            "迁移器拒绝应归 unknown（不可修复）：{:?}",
+            list[0].health_detail
+        );
+        let detail = list[0].health_detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("版本不受支持") && detail.contains("不可修复"),
+            "detail 应提示不可修复版本：{detail}"
+        );
+        assert!(
+            detail.contains("without changing chronology"),
+            "detail 应携带迁移器原始拒绝原因：{detail}"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn repair_refuses_migration_refusal_without_touching_file() {
+        // 一键修复对迁移器拒绝的会话必须如实失败：文件未动、无备份（不可修复
+        // 类别不得伪装成可修）。
+        if !require_node_or_skip("repair_refuses_migration_refusal_without_touching_file") {
+            return;
+        }
+        let home = fixture_home("gen-refuse-repair");
+        let target = write_refusal_fixture(&home, "sess-refuse");
+        let before = fs::read_to_string(&target).unwrap();
+        install_engine_node_shim(&home);
+        install_engine_catalog_stub(&home);
+
+        let err = run_repair(Some(target.to_str().unwrap()), &home, &home, false)
+            .expect_err("迁移器拒绝必须非 0 退出");
+        assert!(
+            err.contains("无法修复") || err.contains("不支持"),
+            "拒绝消息应说明不可修复：{err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            before,
+            "拒绝后文件必须原样保留"
+        );
+        assert!(
+            !target.with_file_name("session.jsonl.bak").exists(),
             "拒绝不得创建备份"
         );
 

@@ -628,21 +628,34 @@ function restoreThroughDshLegacy(dsh, header, records) {
  */
 function restoreCurrentArtifactStream(entry, header, records) {
   const { catalog, dsh } = entry
-  const classified = catalog.readHeader(header)
-  if (classified.status === 'unsupported') {
-    throw unsupportedVersionError(classified.reason || 'stored Session format is not supported by this build')
+  try {
+    const classified = catalog.readHeader(header)
+    if (classified.status === 'unsupported') {
+      throw unsupportedVersionError(classified.reason || 'stored Session format is not supported by this build')
+    }
+    if (classified.status === 'malformed') {
+      throw new Error(`corrupt session log: ${classified.reason || 'malformed header'}`)
+    }
+    const restore = catalog.createRestore(header, {
+      recovery: classified.status === 'current' ? 'strict' : 'recoverable',
+      validation: 'transformed',
+    })
+    for (const record of records) restore.decodeRow(record)
+    const current = restore.finish()
+    dsh.Session.fromRestore(current.header.id, current.events, current.header, current.inheritedEventCount, 'detached')
+    return current
+  } catch (e) {
+    // 迁移器拒绝（SessionFormatUnsupportedMigrationError，如「format v2
+    // surface before first step cannot acquire a system head…」，2026-09-09
+    // 实测 session-8650d6f2——旧代会话在 turn 起始前写入 user/message 组，
+    // 发布链拒绝无损迁移）：与「存储版本更高」同类——不可修复、不可变异，
+    // 必须归类 unknown + 升级提示，**不得**落进 needs_repair（点修复必然
+    // 失败）。判定与 legacy 路径同法（错误类名匹配，零依赖）。
+    if (e instanceof Error && (e.name === 'SessionFormatUnsupportedMigrationError' || String(e.constructor?.name ?? '') === 'SessionFormatUnsupportedMigrationError')) {
+      throw unsupportedVersionError(e.message)
+    }
+    throw e
   }
-  if (classified.status === 'malformed') {
-    throw new Error(`corrupt session log: ${classified.reason || 'malformed header'}`)
-  }
-  const restore = catalog.createRestore(header, {
-    recovery: classified.status === 'current' ? 'strict' : 'recoverable',
-    validation: 'transformed',
-  })
-  for (const record of records) restore.decodeRow(record)
-  const current = restore.finish()
-  dsh.Session.fromRestore(current.header.id, current.events, current.header, current.inheritedEventCount, 'detached')
-  return current
 }
 
 /**

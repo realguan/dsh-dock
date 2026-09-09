@@ -32,6 +32,15 @@
 
 ## 三、记录
 
+### 2026-09-09 快车道直推 · 迁移器拒绝会话归类修正——不再误标「需自愈」（实测 8650d6f2） —— guan（AI 协作）
+
+- 变更：
+  1. **根因**：`session-8650d6f2` 是 0.1.2 时代会话（turn 起始前写 5 条 user/message 输入组），0.1.5 发布链 v2→v3 迁移边以 `SessionFormatUnsupportedMigrationError` 拒绝（format v2 surface before first step cannot acquire a system head without changing chronology）——**引擎本尊也打不开**；脚本 stream 路径漏判该错误类 → 归 needs_repair，用户点修复必然失败。
+  2. `restoreCurrentArtifactStream` 错误分类：`SessionFormatUnsupportedMigrationError`（类名匹配，与 legacy 路径同法）→ `unsupportedVersionError`，scan 归 unknown + 「存储格式版本不受支持（不可修复，需升级适配）」+ 原始原因；修复入口如实拒绝（文件不动、无备份）。
+  3. `sessions.rs`：stub catalog 增加迁移器拒绝模拟（cwd=/tmp/refuse 首 surface 抛名匹配错误）+ 2 项用例（scan 归 unknown 非 needs_repair / repair 拒绝且不动文件）。
+- 影响：8650 类会话（旧代形态、官方迁移链拒绝）不再显示「一键修复」误导；数据完好（6172 事件、正常收尾、有 .bak），等 dsh 官方适配即可打开；如需内容可先取明文导出。
+- 凭据：`cargo test` sessions 23 绿（新增 2 例）；真实 8650 只读复扫 = unknown + 升级提示（validator dsh-session@0.1.5-alpha.1+catalog）。
+
 ### 2026-09-09 快车道直推 · 会话修复后失效 dsh 投影缓存——stale blank 投影致侧栏隐藏（实测 4885） —— guan（AI 协作）
 
 - 变更：
