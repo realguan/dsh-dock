@@ -2094,3 +2094,24 @@
   allowBuilds 并自动重试该项，多 profile 分发的审批顺序清账。
 - 复审条件扩充：`--offline/--prefer-offline` 与 reporter 透传合并为 dsh
   上游诉求（git 来源分发可完全离线）。
+
+### 2026-09-09 feat(market)：安装队列与下载管理面板——095 #4 第一切片（ADR-0011 队列形态落地）—— guan
+
+- 行为变化：市场安装与总览分发确认后**入队即关窗**，后台串行执行
+  （install_plugin 逐项跑，避免并发 pnpm）；「下载管理」按钮（插件中心
+  头部，未终结项角标）打开队列面板：排队/安装中/待审批/完成/失败五态，
+  完成与失败经既有 toast 冒泡（store notifier 接 ProfileManager showToast）。
+- 审批门内联：撞 ignored_builds 的项转「待审批」，面板内直接展示被点名
+  allowBuilds 键的 允许/跳过 开关（默认跳过），批准即写该 profile 的
+  allowBuilds 并自动重试该项；跳过语义附带不可用告警（ADR 裁定）。模态
+  BuildApprovalDialog 自市场/分发两条路径退役（ProfileDetailPane 就地安装
+  保留同步流 + 原对话框——单 profile 固定目标，队列化无收益）。
+- 实现：lib/queue.ts 纯状态机（可单测）+ stores/queueStore.ts 编排（串行
+  pump、审批重试、失败重试、通知接线）+ QueuePanel；列表回填订阅
+  lastFinishedAt。profile 快照绑定原则贯穿入队项。Rust 进度流（Channel）
+  与 offline 透传为后续切片（ADR-0011 复审条件已挂）。
+- 设计闸门回归：重写 MarketInstallDialog 时把 UI/UX 批次已清理的任意字号/
+  dark: 变体/text-brand 文字色又带了回来（fork 前旧读数），contrast/
+  fontTokens 闸门当场拦下——已按刻度（micro/meta/label）与 brand-deep
+  修正；三个设计闸门重新全绿。
+- 凭据：前端 typecheck/lint/156 测试绿（新增 queue 纯逻辑 6 测）。

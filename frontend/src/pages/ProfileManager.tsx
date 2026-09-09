@@ -12,6 +12,7 @@ import { api } from "@/lib/tauri"
 import { useI18n, useI18nStore } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
+import { useQueueStore } from "@/stores/queueStore"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
@@ -60,6 +61,11 @@ export function ProfileManager() {
     setToast({ id: `${Date.now()}-${Math.random()}`, message, kind })
     setTimeout(() => setToast((curr) => (curr?.message === message ? null : curr)), 3500)
   }, [])
+
+  // 安装队列通知接线（095 #4：入队/完成/失败经 toast 冒泡；下载管理面板见 PluginHub）
+  useEffect(() => {
+    useQueueStore.getState().setNotifier((text, kind) => showToast(text, kind ?? "ok"))
+  }, [showToast])
 
   useEffect(() => {
     void load()

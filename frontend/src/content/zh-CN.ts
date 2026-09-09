@@ -629,6 +629,21 @@ export const t = {
     subtabInstalled: "已安装",
     expandCategories: (n: number) => `展开全部 (${n})`,
     collapseCategories: "收起分类",
+    // 下载管理队列（095 #4 / ADR-0011 队列形态：审批门内联审核）
+    installQueued: (pkg: string, prof: string) => `已加入下载队列：「${pkg}」→ ${prof}`,
+    queueTitle: "下载管理",
+    queueEmpty: "暂无下载任务",
+    queueClearDone: "清除已完成",
+    queueStatusQueued: "排队中",
+    queueStatusInstalling: "安装中",
+    queueStatusBlocked: "待审批",
+    queueStatusDone: "已安装",
+    queueStatusFailed: "失败",
+    queueApprove: "批准并重试",
+    queueDismiss: "放弃",
+    queueRetry: "重试",
+    queueGateHint: (prof: string) => `以下构建脚本需批准（写入 ${prof} 的 allowBuilds）`,
+    queueFailedNotice: (pkg: string, detail: string) => `「${pkg}」安装失败：${detail}`,
   },
   // pnpm 12 构建脚本审批门（ERR_PNPM_IGNORED_BUILDS 裁决对话框）
   buildGate: {

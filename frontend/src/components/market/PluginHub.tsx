@@ -4,6 +4,7 @@ import { Layers, Store } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import { MarketplaceView } from "@/components/market/MarketplaceView"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
+import { QueuePanel } from "@/components/market/QueuePanel"
 
 interface PluginHubProps {
   refreshKey: number
@@ -52,6 +53,9 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
             <span>{t.market.subtabInstalled}</span>
           </button>
         </div>
+
+        {/* 下载管理（095 #4：队列项状态 + 审批门内联审核） */}
+        <QueuePanel />
       </div>
 
       {/* 子视图渲染 */}

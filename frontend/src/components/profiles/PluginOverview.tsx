@@ -11,6 +11,7 @@ import {
   Send,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { useQueueStore } from "@/stores/queueStore"
 import { getProfileColorClass } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
@@ -31,18 +32,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
 
 const PAGE_SIZE_OPTIONS = [6, 9, 12, 18]
 
 export function PluginOverview({
   refreshKey,
-  onNotice,
 }: {
   refreshKey: number
   onNotice?: (text: string, kind?: "ok" | "warn") => void
 }) {
   const { t } = useI18n()
+  const enqueue = useQueueStore((s) => s.enqueue)
   const [list, setList] = useState<AggregatePlugin[] | null>(null)
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -62,12 +62,6 @@ export function PluginOverview({
   } | null>(null)
   const [selectedDest, setSelectedDest] = useState<string | null>(null)
   const [withConfig, setWithConfig] = useState(false)
-  const [distributing, setDistributing] = useState(false)
-  const [distributeError, setDistributeError] = useState<string | null>(null)
-  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试分发安装）。profile
-  // 与包名在门槛失败瞬间**快照绑定**（2026-09-09 裁定）：审批写入与自动重试
-  // 只认失败时的目标 profile，选择在此期间变化不可改写（同市场安装弹窗）。
-  const [gate, setGate] = useState<{ profile: string; pkgs: string[] } | null>(null)
 
   const loadData = () => {
     setLoading(true)
@@ -88,6 +82,12 @@ export function PluginOverview({
   useEffect(() => {
     loadData()
   }, [refreshKey])
+
+  // 队列项终结（安装完成/失败）→ 回填聚合列表（095 #4 队列化）
+  const lastFinishedAt = useQueueStore((s) => s.lastFinishedAt)
+  useEffect(() => {
+    if (lastFinishedAt) loadData()
+  }, [lastFinishedAt])
 
   // 过滤后的插件列表（按搜索关键词 + 按 Profile 筛选）
   const filteredList = useMemo(() => {
@@ -136,71 +136,21 @@ export function PluginOverview({
     )
   }, [profiles, distributeTarget])
 
-  // dest 显式传入 = 审批后的重试（绑定门槛发生时的 profile 快照）；缺省 =
-  // 用户当前选择。
-  const handleDistribute = async (destOverride?: string) => {
-    const dest = destOverride ?? selectedDest
-    if (!distributeTarget || !dest || distributing) return
-    setDistributing(true)
-    setDistributeError(null)
-
-    try {
-      // 1. 安装插件
-      const outcome = await api.installPlugin(
-        dest,
-        `${distributeTarget.pkg}@${distributeTarget.version}`,
-      )
-      if (!outcome.ok) {
-        if (outcome.ignored_builds?.length) {
-          // pnpm 12 构建审批门：转逐包裁决，保存后由 gate 重试整段分发
-          setGate({ profile: dest, pkgs: outcome.ignored_builds })
-          return
-        }
-        throw new Error(outcome.detail)
-      }
-
-      // 2. 如果勾选了带配置迁移，复制 patch 配置行。
-      //    2026-09-08 裁定：迁移结果必须如实通知——失败或未覆盖时**不得**仍弹
-      //    「分发完成」成功提示（用户勾了迁移却只看到成功，会以为配置也过去了）。
-      let notice: { text: string; kind: "ok" | "warn" } = {
-        text: t.profiles.distributeDone(distributeTarget.pkg, dest),
-        kind: "ok",
-      }
-      const sourceProfile = distributeTarget.sources[0]
-      if (withConfig && sourceProfile) {
-        try {
-          const outcome = await api.copyPluginConfig(
-            sourceProfile,
-            dest,
-            distributeTarget.pkg,
-          )
-          // copied === 0 且非 skipped 不会出现（来源无配置行时 Rust 侧直接报错）
-          if (outcome.skipped_existing) {
-            notice = {
-              text: t.profiles.distributeConfigSkipped(distributeTarget.pkg, dest),
-              kind: "warn",
-            }
-          }
-        } catch (e) {
-          notice = {
-            text: t.profiles.distributeConfigFailed(
-              distributeTarget.pkg,
-              dest,
-              String(e),
-            ),
-            kind: "warn",
-          }
-        }
-      }
-
-      onNotice?.(notice.text, notice.kind)
-      setDistributeTarget(null)
-      loadData()
-    } catch (e) {
-      setDistributeError(String(e))
-    } finally {
-      setDistributing(false)
-    }
+  // 分发入队（ADR-0011 队列形态）：目标 profile 入队瞬间快照绑定；安装与
+  // 连带配置迁移在队列中串行执行，审批门在下载管理面板内联处理。
+  const handleEnqueueDistribute = () => {
+    if (!distributeTarget || !selectedDest) return
+    enqueue({
+      pkg: distributeTarget.pkg,
+      spec: `${distributeTarget.pkg}@${distributeTarget.version}`,
+      profile: selectedDest,
+      kind: "distribute",
+      withConfig,
+      sourceProfile: withConfig ? distributeTarget.sources[0] : undefined,
+    })
+    setDistributeTarget(null)
+    setSelectedDest(null)
+    setWithConfig(false)
   }
 
   return (
@@ -383,7 +333,6 @@ export function PluginOverview({
                       })
                       setSelectedDest(null)
                       setWithConfig(false)
-                      setDistributeError(null)
                     }}
                     className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand-deep"
                   >
@@ -453,7 +402,6 @@ export function PluginOverview({
         onOpenChange={(open) => {
           if (!open) {
             setDistributeTarget(null)
-            setDistributeError(null)
           }
         }}
       >
@@ -467,12 +415,6 @@ export function PluginOverview({
               {t.profiles.distributeNote}
             </DialogDescription>
           </DialogHeader>
-
-          {distributeError && (
-            <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5 text-xs text-rose-700">
-              {distributeError}
-            </div>
-          )}
 
           {distributeTarget && (
             <div className="space-y-4 py-2 text-xs">
@@ -543,37 +485,19 @@ export function PluginOverview({
             <Button
               variant="outline"
               onClick={() => setDistributeTarget(null)}
-              disabled={distributing}
             >
               取消
             </Button>
             <Button
-              onClick={() => handleDistribute()}
-              disabled={distributing || !selectedDest}
+              onClick={() => handleEnqueueDistribute()}
+              disabled={!selectedDest}
               className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >
-              {distributing && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
-              <span>开始分发安装</span>
+              <span>加入分发队列</span>
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试整段分发（含配置迁移）。
-          绑定门槛失败时的 profile 快照，选择变化不可改写（2026-09-09） */}
-      {gate !== null && (
-        <BuildApprovalDialog
-          profile={gate.profile}
-          packages={gate.pkgs}
-          open={gate !== null}
-          onClose={() => setGate(null)}
-          onApproved={() => {
-            const dest = gate.profile
-            setGate(null)
-            void handleDistribute(dest)
-          }}
-        />
-      )}
     </div>
   )
 }

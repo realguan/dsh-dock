@@ -1,13 +1,14 @@
-// components/market/MarketInstallDialog.tsx —— 插件市场安装 / 分发模态对话框
+// components/market/MarketInstallDialog.tsx —— 插件市场安装 / 分发确认对话框
+// 2026-09-09 队列化（095 #4 / ADR-0011 队列形态）：确认目标与安装源后**入队**
+// 即关闭——后台串行执行、审批门在下载管理面板内联审核（不再于本弹窗处理）。
 import { useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
   Code2,
   Download,
-  Loader2,
   Package,
 } from "lucide-react"
-import { api } from "@/lib/tauri"
+import { useQueueStore } from "@/stores/queueStore"
 import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
 import type { MarketPlugin } from "@/types/market"
@@ -17,7 +18,6 @@ import {
   getPluginDescription,
   getPluginDisplayName,
 } from "@/lib/market"
-import { BuildApprovalDialog } from "@/components/profiles/BuildApprovalDialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -41,7 +41,6 @@ interface MarketInstallDialogProps {
   installedProfiles: string[]
   open: boolean
   onClose: () => void
-  onSuccess: (pluginName: string, targetProfile: string) => void
 }
 
 export function MarketInstallDialog({
@@ -50,17 +49,11 @@ export function MarketInstallDialog({
   installedProfiles,
   open,
   onClose,
-  onSuccess,
 }: MarketInstallDialogProps) {
   const { t, activeLocale } = useI18n()
   const [selectedProfile, setSelectedProfile] = useState<string>("")
-  const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试安装）。profile 与
-  // 包名在门槛失败瞬间**快照绑定**（2026-09-09 裁定）：审批写入与自动重试
-  // 只认失败时的目标 profile——用户选择/默认选中在此期间如何变化都不可改写
-  // 它，否则会出现「选 web 批准、装进 test」的串位。
-  const [gate, setGate] = useState<{ profile: string; pkgs: string[] } | null>(null)
+  const enqueue = useQueueStore((s) => s.enqueue)
 
   // 提取简短展示名与安装源元数据
   const displayName = useMemo(
@@ -93,42 +86,23 @@ export function MarketInstallDialog({
 
   const isAlreadyInstalled = installedProfiles.includes(selectedProfile)
 
-  // targetProfile 显式传入 = 审批后的重试（绑定门槛发生时的 profile 快照）；
-  // 缺省 = 用户当前选择。
-  const handleInstall = async (targetProfile?: string) => {
-    const profile = targetProfile ?? selectedProfile
-    if (!profile || !sourceInfo.spec.trim()) return
-    // 提交前预检（ADR-0011 齐口径）：market spec 坏形时给出可读文案而非
-    // 等后端校验失败再回显
-    const invalid = validatePluginSpec(sourceInfo.spec.trim())
+  // 入队（ADR-0011 队列形态）：预检 → 队列串行执行；目标 profile 入队瞬间
+  // 快照绑定，审批门在下载管理面板内联处理。
+  const handleEnqueue = () => {
+    if (!plugin || !selectedProfile || !sourceInfo.spec.trim()) return
+    const spec = sourceInfo.spec.trim()
+    const invalid = validatePluginSpec(spec)
     if (invalid) {
       setError(invalid)
       return
     }
-    setInstalling(true)
-    setError(null)
-
-    try {
-      const outcome = await api.installPlugin(profile, sourceInfo.spec.trim())
-      if (outcome.ok) {
-        onSuccess(plugin.name, profile)
-        onClose()
-      } else if (outcome.ignored_builds?.length) {
-        setGate({ profile, pkgs: outcome.ignored_builds })
-        setError(null)
-      } else {
-        setError(outcome.detail || "安装失败")
-      }
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setInstalling(false)
-    }
+    enqueue({ pkg: plugin.name, spec, profile: selectedProfile, kind: "install" })
+    onClose()
   }
 
   return (
     <>
-    <Dialog open={open} onOpenChange={(val) => !installing && !val && onClose()}>
+    <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
       <DialogContent className="max-w-md rounded-2xl border border-line bg-panel p-6 shadow-xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
@@ -155,7 +129,7 @@ export function MarketInstallDialog({
                   {displayName}
                 </div>
                 {displayName !== plugin.name && (
-                  <div className="text-meta text-faint font-mono truncate" title={plugin.name}>
+                  <div className="text-micro text-faint font-mono truncate" title={plugin.name}>
                     {plugin.name}
                   </div>
                 )}
@@ -174,20 +148,17 @@ export function MarketInstallDialog({
 
           {/* 目标 Profile 选择 */}
           <div className="space-y-1.5">
-            <span className="text-xs font-medium text-ink flex items-center justify-between">
+            <label className="text-xs font-medium text-ink flex items-center justify-between">
               <span>{t.market.selectProfile}</span>
               {selectedProfile && isAlreadyInstalled && (
-                <span className="text-meta text-amber-700 font-mono flex items-center gap-1">
+                <span className="text-meta text-amber-500 font-mono flex items-center gap-1">
                   <AlertCircle className="size-3" />
                   已在此 Profile 安装（将执行覆盖/重装）
                 </span>
               )}
-            </span>
-            <Select value={selectedProfile} onValueChange={setSelectedProfile} disabled={installing}>
-              <SelectTrigger
-                aria-label={t.market.selectProfile}
-                className="w-full h-9 rounded-xl border-line bg-panel text-ink text-xs"
-              >
+            </label>
+            <Select value={selectedProfile} onValueChange={setSelectedProfile}>
+              <SelectTrigger className="w-full h-9 rounded-xl border-line bg-panel text-ink text-xs">
                 <SelectValue placeholder={t.market.selectProfile} />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
@@ -201,7 +172,7 @@ export function MarketInstallDialog({
                           <span className="rounded bg-brand/10 px-1 py-0.2 text-micro text-brand-deep">Web</span>
                         )}
                         {hasIt && (
-                          <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-micro text-emerald-700">
+                          <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-micro text-emerald-600">
                             已安装
                           </span>
                         )}
@@ -216,12 +187,12 @@ export function MarketInstallDialog({
           {/* 安装规范 Spec（只读展示，自动识别 NPM / GitHub） */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-ink">
+              <label className="text-xs font-medium text-ink">
                 {t.market.installSpecLabel}
-              </span>
+              </label>
               {/* 自动识别徽标 */}
               {sourceInfo.type === "npm" ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-emerald-700 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-emerald-600 shadow-2xs">
                   <Package className="size-3" />
                   <span>{t.market.sourceNpm}</span>
                 </span>
@@ -248,53 +219,24 @@ export function MarketInstallDialog({
               <div className="flex-1 break-all">{error}</div>
             </div>
           )}
-
-          {/* 进行中提示 */}
-          {installing && (
-            <div className="flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 p-3 text-xs text-brand-deep animate-pulse">
-              <Loader2 className="size-4 shrink-0 animate-spin" />
-              <span>{t.market.installingBusy}</span>
-            </div>
-          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-line/60">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={installing} className="rounded-xl text-xs">
+          <Button variant="outline" size="sm" onClick={onClose} className="rounded-xl text-xs">
             {t.profiles.pluginInstallCancel}
           </Button>
           <Button
             size="sm"
-            onClick={() => handleInstall()}
-            disabled={installing || !selectedProfile || !sourceInfo.spec.trim()}
-            className="rounded-xl bg-brand-deep text-white hover:bg-brand-deep/90 text-xs font-medium gap-1.5 shadow-xs"
+            onClick={handleEnqueue}
+            disabled={!selectedProfile || !sourceInfo.spec.trim()}
+            className="rounded-xl bg-brand text-white hover:bg-brand/90 text-xs font-medium gap-1.5 shadow-xs"
           >
-            {installing ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <span>安装中…</span>
-              </>
-            ) : (
-              <>
-                <Download className="size-3.5" />
-                <span>{isAlreadyInstalled ? "重新安装" : t.market.installBtn}</span>
-              </>
-            )}
+            <Download className="size-3.5" />
+            <span>{isAlreadyInstalled ? "重新安装" : t.market.installBtn}</span>
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <BuildApprovalDialog
-      profile={gate?.profile ?? ""}
-      packages={gate?.pkgs ?? []}
-      open={gate !== null}
-      onClose={() => setGate(null)}
-      onApproved={() => {
-        // 快照绑定：审批写入与重试都只认门槛失败时的目标 profile
-        const target = gate?.profile
-        setGate(null)
-        if (target) void handleInstall(target)
-      }}
-    />
     </>
   )
 }

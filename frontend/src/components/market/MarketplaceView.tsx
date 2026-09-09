@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
+import { useQueueStore } from "@/stores/queueStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import type {
   MarketPlugin,
@@ -194,11 +195,11 @@ export function MarketplaceView({
     })
   }
 
-  // 安装成功回调
-  const handleInstallSuccess = (pluginName: string, targetProfile: string) => {
-    onNotice?.(t.market.installSuccess(pluginName, targetProfile), "ok")
-    void loadLocalData()
-  }
+  // 队列项终结（安装完成/失败）→ 回填本地已装状态（095 #4 队列化）
+  const lastFinishedAt = useQueueStore((s) => s.lastFinishedAt)
+  useEffect(() => {
+    if (lastFinishedAt) void loadLocalData()
+  }, [lastFinishedAt, loadLocalData])
 
   // 显示的分类集合（支持展开/折叠）
   const displayedCategories = useMemo(() => {
@@ -424,9 +425,9 @@ export function MarketplaceView({
                     categoryLabel={catLabel}
                     installedProfiles={installedProfs}
                     onInstall={(p) => setInstallTarget(p)}
-                    onOpenExternal={handleOpenExternal}
-                    onCopyNotice={(msg) => onNotice?.(msg, "ok")}
-                  />
+        onOpenExternal={handleOpenExternal}
+        onCopyNotice={(msg) => onNotice?.(msg, "ok")}
+      />
                 )
               })}
             </div>
@@ -514,7 +515,7 @@ export function MarketplaceView({
         </>
       )}
 
-      {/* 安装对话框 */}
+      {/* 安装对话框（确认后入队，后台串行执行） */}
       <MarketInstallDialog
         open={installTarget !== null}
         plugin={installTarget}
@@ -527,7 +528,6 @@ export function MarketplaceView({
             : []
         }
         onClose={() => setInstallTarget(null)}
-        onSuccess={handleInstallSuccess}
       />
     </div>
   )
