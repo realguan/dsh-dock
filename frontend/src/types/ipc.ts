@@ -148,6 +148,8 @@ export interface AggregateSource {
   profile: string
   /** 已装版本（node_modules 实读）；null = 声明未安装 */
   version: string | null
+  /** package.json 依赖声明值原样（git/tarball 来源 = 安装 spec，市场对齐键） */
+  spec?: string | null
 }
 
 export interface AggregatePlugin {

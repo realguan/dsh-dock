@@ -471,6 +471,7 @@ mod gate_tests {
             AggregateSource {
                 profile: String::new(),
                 version: None,
+                spec: None,
             }
         );
         assert_shape!(

@@ -27,6 +27,11 @@ pub struct PluginEntry {
     pub installed_version: Option<String>,
     /// package.json `description`（仅第三方且已安装时非空）。
     pub description: Option<String>,
+    /// package.json dependencies 声明值原样：npm 来源 = 版本区间；git/tarball
+    /// 来源 = 安装 spec（如 `github:o/r#path:/x`）。市场条目与已装依赖的
+    /// 连接键——git 形态的真实包名（@scope/xxx）可能与市场展示名不同
+    /// （ADR-0011）。
+    pub spec: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -71,11 +76,12 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
             kind: PluginKind::Bundle,
             installed_version: None,
             description: None,
+            spec: None,
         });
     }
     // 第三方依赖：manifest 声明序（BTreeMap 字典序）+ 安装实况。
     if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
-        for name in deps.keys() {
+        for (name, declared) in deps {
             let (version, description) = read_installed(
                 &home
                     .join("profiles")
@@ -88,6 +94,7 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
                 kind: PluginKind::Dependency,
                 installed_version: version,
                 description,
+                spec: declared.as_str().map(str::to_string),
             });
         }
     }
@@ -1329,6 +1336,9 @@ pub struct AggregateSource {
     pub profile: String,
     /// 已装版本（node_modules 实读）；None = 声明未安装（聚合容忍半初始化）。
     pub version: Option<String>,
+    /// package.json 依赖声明值原样（git/tarball 来源 = 安装 spec）——前端
+    /// 以 spec 对齐市场条目（市场名 ≠ 真实包名的 git 形态，ADR-0011）。
+    pub spec: Option<String>,
 }
 
 /// 插件总览聚合（只读纯文件扫描，零 dsh 子进程、零网络）：全部已物化 profile
@@ -1362,6 +1372,7 @@ pub fn aggregate_plugins_blocking(home: &Path) -> Vec<AggregatePlugin> {
             agg.sources.push(AggregateSource {
                 profile: p.name.clone(),
                 version: e.installed_version,
+                spec: e.spec,
             });
         }
     }
@@ -1547,6 +1558,32 @@ mod aggregate_copy_tests {
         let ghost = agg.iter().find(|a| a.name == "dsh-ghost").unwrap();
         assert_eq!(ghost.sources.len(), 1);
         assert_eq!(ghost.sources[0].version, None, "声明未安装 → None");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn aggregate_carries_declared_spec_for_git_form_deps() {
+        // git 来源：真实包名（@scope/pet）≠ 市场展示名（pet）——声明值即安装
+        // spec，是前端对齐市场条目的连接键（ADR-0011）。
+        let home = tmp();
+        write(
+            &home.join("profiles/web/package.json"),
+            r#"{"dependencies":{"@scope/pet":"github:o/r#path:/packages/pet"}}"#,
+        );
+        write(
+            &home.join("profiles/web/node_modules/@scope/pet/package.json"),
+            r#"{"name":"@scope/pet","version":"0.3.18"}"#,
+        );
+        let agg = aggregate_plugins_blocking(&home);
+        assert_eq!(agg.len(), 1, "{agg:?}");
+        assert_eq!(agg[0].name, "@scope/pet");
+        assert_eq!(agg[0].sources.len(), 1);
+        assert_eq!(agg[0].sources[0].profile, "web");
+        assert_eq!(agg[0].sources[0].version.as_deref(), Some("0.3.18"));
+        assert_eq!(
+            agg[0].sources[0].spec.as_deref(),
+            Some("github:o/r#path:/packages/pet")
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 

@@ -2049,3 +2049,19 @@
   本修复正是堵这个洞）。
 - 凭据：cargo test 224 绿 + fmt/clippy 干净（新增 UTC 锚点与追加/轮转
   行为测试）。
+
+### 2026-09-09 fix(market)：git 来源插件的已装状态判定——聚合补声明 spec 连接键 —— guan
+
+- 用户实测：test 装上的 dsh-pet，市场卡片仍显示「未安装」。根因：git 来源
+  的真实包名（@linxin666/dsh-pet）与市场展示名（dsh-pet）不同，installedMap
+  按「npm 名 / 市场名」双键匹配必然落空；唯一可靠连接键是安装 spec——
+  package.json 依赖声明值与市场条目 install 串尾段天然一致。
+- 修复：AggregateSource/PluginEntry 增 `spec` 字段（依赖声明值原样；IPC
+  形状闸门三处同步：ipc.rs 断言 / ipc-shapes.json fixture / 前端类型）；
+  前端 `installedProfilesFor` 纯函数——名字命中优先、安装 spec 兜底，
+  市场卡片按其对齐。npm 来源行为不变。
+- 同批日志结论（新追加式日志首次立功）：10:22 向 web profile 的安装停在
+  构建审批门（allowBuilds 按 profile 隔离，web 未批）——审批对话框不显示
+  错误文案属设计行为；web 侧完成审批即可装上。
+- 凭据：cargo test 225 绿 + fmt/clippy 干净；前端 typecheck/lint/150 绿
+  （双侧形状闸门同步更新）。

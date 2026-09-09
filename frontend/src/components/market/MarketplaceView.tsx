@@ -23,7 +23,7 @@ import type {
   MarketRegistry,
   MarketSortOption,
 } from "@/types/market"
-import { filterMarketPlugins, sortMarketPlugins } from "@/lib/market"
+import { filterMarketPlugins, installedProfilesFor, sortMarketPlugins } from "@/lib/market"
 import { MarketPluginCard } from "@/components/market/MarketPluginCard"
 import { MarketInstallDialog } from "@/components/market/MarketInstallDialog"
 import { Button } from "@/components/ui/button"
@@ -80,6 +80,14 @@ export function MarketplaceView({
       for (const p of allPlugins) {
         const profNames = p.sources.map((s) => s.profile)
         map.set(p.name, profNames)
+        // git/tarball 来源：依赖声明 spec 是与市场条目对齐的第二键——真实
+        // 包名可能与市场名不同（如 @linxin666/dsh-pet vs dsh-pet，ADR-0011）
+        for (const s of p.sources) {
+          if (!s.spec) continue
+          const bySpec = map.get(s.spec) ?? []
+          if (!bySpec.includes(s.profile)) bySpec.push(s.profile)
+          map.set(s.spec, bySpec)
+        }
       }
       setInstalledMap(map)
     } catch {
@@ -406,11 +414,8 @@ export function MarketplaceView({
                     : catObj.en || catObj.zh
                   : plugin.category
 
-                // 本地安装在哪些 Profile
-                const installedProfs =
-                  installedMap.get(plugin.npm || "") ||
-                  installedMap.get(plugin.name) ||
-                  []
+                // 本地安装在哪些 Profile（名字命中优先，安装 spec 兜底）
+                const installedProfs = installedProfilesFor(plugin, installedMap)
 
                 return (
                   <MarketPluginCard

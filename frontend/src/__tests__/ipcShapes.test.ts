@@ -114,6 +114,7 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
     expectShape<AggregateSource>("AggregateSource", {
       profile: true,
       version: true,
+      spec: true,
     })
     expectShape<CopyConfigOutcome>("CopyConfigOutcome", {
       copied: true,

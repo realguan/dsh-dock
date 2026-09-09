@@ -2,6 +2,23 @@
 import type { MarketPlugin, MarketPluginDescription, MarketSortOption } from "@/types/market"
 
 /**
+ * 市场条目在本机已安装的 profile 列表（ADR-0011）。npm 来源按 npm 包名
+ * 命中；git/tarball 来源的市场展示名可能与真实包名不同（如市场名 dsh-pet、
+ * 实际 @linxin666/dsh-pet）——此时以安装 spec（install 串尾段）对齐聚合的
+ * 依赖声明值。名字命中优先，spec 兜底。
+ */
+export function installedProfilesFor(
+  plugin: Pick<MarketPlugin, "name" | "npm" | "install">,
+  installedMap: Map<string, string[]>,
+): string[] {
+  const byName =
+    installedMap.get(plugin.npm || "") ?? installedMap.get(plugin.name) ?? []
+  if (byName.length > 0) return byName
+  const spec = extractInstallSpec(plugin.install)
+  return (spec ? installedMap.get(spec) : undefined) ?? []
+}
+
+/**
  * 从完整的 dsh plugin install 命令字符串中提取包名 / 安装 spec
  * 例如: "dsh plugin --profile web add @furongjun1999/dsh-memory" -> "@furongjun1999/dsh-memory"
  * 例如: "dsh plugin --profile web add github:foo/bar" -> "github:foo/bar"

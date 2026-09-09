@@ -6,7 +6,8 @@
   ],
   "AggregateSource": [
     "profile",
-    "version"
+    "version",
+    "spec"
   ],
   "BootErrorPayload": [
     "actions",

@@ -5,6 +5,7 @@ import {
   filterMarketPlugins,
   getPluginDescription,
   getPluginDisplayName,
+  installedProfilesFor,
   sortMarketPlugins,
 } from "@/lib/market"
 import type { MarketPlugin } from "@/types/market"
@@ -222,6 +223,58 @@ describe("lib/market.ts", () => {
     it("preserves scoped and plain package names", () => {
       expect(getPluginDisplayName("dsh-memory")).toBe("dsh-memory")
       expect(getPluginDisplayName("@deepseek-ai/dsh-base")).toBe("@deepseek-ai/dsh-base")
+    })
+  })
+
+  describe("installedProfilesFor（名字命中优先，git 形态以安装 spec 对齐，ADR-0011）", () => {
+    const base = {
+      owner: "zhu1090093659",
+      url: "https://github.com/zhu1090093659/dsh-web-ui",
+      page: "",
+      category: "fun",
+      description: "pet",
+      stars: 1,
+      downloads: 2,
+      added: "2025-01-01",
+    }
+
+    it("npm 来源：npm 包名命中", () => {
+      const p = {
+        ...base,
+        name: "dsh-memory-plugin",
+        npm: "@openviking/dsh-memory-plugin",
+        install: "dsh plugin --profile web add @openviking/dsh-memory-plugin",
+      }
+      const map = new Map([["@openviking/dsh-memory-plugin", ["web", "test"]]])
+      expect(installedProfilesFor(p, map)).toEqual(["web", "test"])
+    })
+
+    it("git 来源：市场名与真实包名不同，按安装 spec 兜底命中", () => {
+      const p = {
+        ...base,
+        name: "dsh-pet",
+        npm: null,
+        install:
+          "dsh plugin --profile test add github:zhu1090093659/dsh-web-ui#path:/packages/dsh-pet",
+      }
+      const map = new Map([
+        ["dsh-pet", []], // 聚合键是真实包名，市场名必落空
+        [
+          "github:zhu1090093659/dsh-web-ui#path:/packages/dsh-pet",
+          ["test"],
+        ],
+      ])
+      expect(installedProfilesFor(p, map)).toEqual(["test"])
+    })
+
+    it("未安装：双键全落空返回空数组", () => {
+      const p = {
+        ...base,
+        name: "dsh-pet",
+        npm: null,
+        install: "dsh plugin --profile web add github:o/r#path:/x",
+      }
+      expect(installedProfilesFor(p, new Map())).toEqual([])
     })
   })
 
