@@ -115,3 +115,7 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
 - registry 出现三形态之外的新 install 形态（如 `#semver:` 片段、`git+https://`）。
 - dsh/pnpm 升级改变 `plugin` 转发链对 git dep 的 reconcile 语义。
 - pnpm 12 构建审批门对 tarball/git 来源的 `ignored_builds` 行为与 npm 来源不一致。
+- dsh 上游若支持 pnpm reporter 透传（`--reporter=ndjson`，2026-09-09 实证引擎
+  pnpm 12.3.1 输出 `pnpm:stage/progress/stats` 统一事件流；环境变量注入实测
+  无效，reporter 为 CLI 专属选项）——安装进度解析层应从「非 TTY 计数行」
+  升级为 ndjson 事件流，届时重开解析设计。
