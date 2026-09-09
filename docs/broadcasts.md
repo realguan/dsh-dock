@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-09-09 快车道直推 · 插件安装飞行动画 + 下载管理 Popover 点外收起 + 引擎就绪秒级直达（5a5d279） —— guan（AI 协作）
+
+- 变更：
+  1. **插件安装飞行动画（问题记录-2026-09-09 §1.1）**：新增 `stores/installFlightStore.ts`、`lib/installFlight.ts`（抛物线几何计算）、`components/market/InstallFlight.tsx`（悬浮飞行层），以及 `QueuePanel.tsx` 锚点登记与落点角标 spring 弹跳及脉冲光环；市场安装与总览分发弹窗均已接入 launch 坐标；配套单测 `installFlight.test.ts`。
+  2. **下载管理 Popover 收起（问题记录-2026-09-09 §1.2）**：新增 `components/ui/popover.tsx`（Radix UI Popover 原语封装），替换原手写 absolute 展开，原生支持点击外部 dismiss 与 ESC 退出；配套闸门测试 `popoverDismissGate.test.ts`。
+  3. **启动引擎就绪短路（问题记录-2026-09-09 §2）**：`engines.rs` 引入 `probe_engine_if_ready` 与 `is_engine_ready`，`resolve.rs` 引入 `resolve_launch_engine_ready`，在 `LocalExecutor::probe` 中若引擎三件套已就绪则跳过步 0 和步 1 耗时等待，直达步 2「启动工作台」；配套单测全绿。
+- 影响：仅周知。
+- 凭据：`cargo test` 229 passed，`pnpm test` 170 passed，`oxlint` 0 warning，`cargo fmt` check 通过。
+
+### 2026-09-09 快车道直推 · 发版日志强契约门禁与提取脚本严格模式（1c82d36） —— guan（AI 协作）
+
+- 变更：CI 工作流中增加 `docs/RELEASE_NOTES.md` 版本匹配校验门禁；`scripts/extract-release-notes.py` 增加 `--strict` 模式与单元测试；`AGENTS.md` §8.8 补充发版日志强契约规范。
+- 影响：发版时必须先编写规范日志再打 tag。
+- 凭据：`python3 -m unittest scripts/tests/test_extract_release_notes.py` 6 passed。
+
 ### 2026-09-07 建档 · Spike 0004：DeepSeek Harness SDK 能力源码调研 —— guan（AI 会话协作）
 
 - 变更：新建 `docs/spikes/0004-dsh-sdk-capabilities-research.md`（+297 行，
