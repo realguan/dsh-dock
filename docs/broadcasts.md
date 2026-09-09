@@ -2082,3 +2082,15 @@
   重算，并注明缘由。ProfileDetailPane 的重试锚定 pane 固定 profile，无此
   风险，未动。
 - 凭据：前端 typecheck/lint/150 测试绿（纯前端改动，Rust 无涉）。
+
+### 2026-09-09 docs(adr)：分发机制调研结论落档 ADR-0011（cp 否决 + 队列内联审批裁定）—— guan
+
+- 「分发能不能 cp 过去」调研：否决文件级复制（hoisted 拍平无复制边界 /
+  pnpm 记账面失配即被对齐删除 / 绕过 reconcile），钉进 §3 方案 D 防再排队；
+  实证同机分发内容零下载（全局 store 命中），真正摩擦 = git 解析触网 +
+  per-profile 审批门。
+- 队列形态裁定（095 #4 设计输入，维护者确认）：审批门以**队列项内联审核**
+  呈现而非模态——待审批状态内联展示被点名包的 允许/跳过 开关，批准即写
+  allowBuilds 并自动重试该项，多 profile 分发的审批顺序清账。
+- 复审条件扩充：`--offline/--prefer-offline` 与 reporter 透传合并为 dsh
+  上游诉求（git 来源分发可完全离线）。

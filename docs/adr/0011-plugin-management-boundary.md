@@ -59,10 +59,24 @@
 
 ### 方案 C：全量收口插件中心（唯一管理面） —— ❌ 否决
 
-- 思路：插件中心接管更新/启停/卸载（跨 profile 批量），详情插件 Tab 退化只读。
+- 思路：插件中心接管更新/启停/卸载（跨 profile 批量），Profile 详情插件 Tab 退化只读。
 - 否决理由：与「profile 是插件组合的归属单元」心智冲突；启停/运行态语义
   锚定单 profile（patch 行 id），批量面会稀释运维精确性；grilling 裁定
   Q1 三选一明确落 A。
+
+### 方案 D：分发走文件级复制（cp node_modules 条目 + 抄声明） —— ❌ 否决（2026-09-09 调研）
+
+- 思路：同机 profile 就是磁盘目录，把 A 已装的插件目录与依赖声明直接复制
+  到 B，绕过 pnpm 的网络与构建环节。
+- 否决理由：① `nodeLinker: hoisted` 把全部依赖拍平进同一 node_modules 根，
+  插件的传递依赖与其他插件混布，复制边界无法划定，漏了传递依赖运行时才炸；
+  ② pnpm 记账面（`pnpm-lock.yaml` 完整性哈希、`node_modules/.pnpm/lock.yaml`、
+  `.modules.yaml`、`.pnpm-workspace-state-v1.json`）与实际内容失配后，下一次
+  插件操作会把「多余」目录对齐删除——白装；手改 lockfile 远超写入例外 #5
+  的单键边界；③ 绕过 `dsh plugin add` 即绕过 reconcile 记账。且收益比直觉
+  小：全局 store 内容寻址（`~/Library/pnpm/store/v11`）使同机分发内容零
+  下载（ndjson 实证 `found_in_store`），真正摩擦是 git 解析触网与 per-profile
+  审批门——分别归 dsh 上游透传诉求与队列内联审批（见行动项）。
 
 ## 4. 最终决策
 
@@ -106,7 +120,12 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
   路径通——单样本归纳是本类缺陷的共同根因
 - [ ] 「分发」取 spec 改从来源 profile `package.json` dependencies（小版本）
 - [ ] 跨 profile 更新检查 + 批量更新进插件中心（小版本，问题记录095 #4
-  下载队列随此设计）
+  下载队列随此设计）。队列形态裁定（2026-09-09 维护者确认）：**审批门以
+  队列项内联审核操作呈现，不再用模态对话框**——队列项状态机
+  `排队 → 解析/下载 → 待审批（内联展示被点名包的 允许/跳过 开关，阻塞该项）`
+  `→ 安装中 → 完成/失败`；批准即写该 profile 的 allowBuilds 并自动重试该项，
+  连续分发多 profile 的审批在队列中顺序清账（BuildApprovalDialog 的裁决行
+  逻辑复用为内联面板；跳过 = 装上但不跑构建脚本，需明示可能不可用的告警）。
 - [ ] 术语与死代码：动词统一「安装到…」、详情导入改「从其他 Profile 安装」、
   Tab 名改「插件」、删 `ProfileDetailDialog.tsx`（随小版本批）
 
@@ -118,4 +137,6 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
 - dsh 上游若支持 pnpm reporter 透传（`--reporter=ndjson`，2026-09-09 实证引擎
   pnpm 12.3.1 输出 `pnpm:stage/progress/stats` 统一事件流；环境变量注入实测
   无效，reporter 为 CLI 专属选项）——安装进度解析层应从「非 TTY 计数行」
-  升级为 ndjson 事件流，届时重开解析设计。
+  升级为 ndjson 事件流，届时重开解析设计。`--offline/--prefer-offline` 同属
+  此诉求（2026-09-09 分发调研：git 来源分发唯一触网点是解析，离线透传可让
+  同机分发完全离线，与 reporter 一并向 dsh 提出）。
