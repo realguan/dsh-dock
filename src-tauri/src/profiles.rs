@@ -376,6 +376,47 @@ pub fn run_toolchain_forward(
     )
 }
 
+/// 运维日志（plugin-op.log）单文件体量上限——超过即轮转为 `<path>.1`
+/// （单代历史，再旧让位）。
+const OP_LOG_ROTATE_BYTES: u64 = 512 * 1024;
+
+/// 打开运维日志：**追加式**（不截断——保留历史运行，2026-09-09 裁定），
+/// 现存体量超 `cap` 先轮转，随后写入本次运行的分隔头。后续安装进度的
+/// 增量 tail 也以该文件为底座（截断式写入会弄乱读取偏移）。
+fn open_op_log(log_path: &Path, cap: u64, header: &str) -> std::io::Result<std::fs::File> {
+    if log_path.metadata().map(|m| m.len()).unwrap_or(0) > cap {
+        let rotated = log_path.with_extension("log.1");
+        let _ = std::fs::remove_file(&rotated);
+        std::fs::rename(log_path, &rotated)?;
+    }
+    use std::io::Write as _;
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    log.write_all(header.as_bytes())?;
+    Ok(log)
+}
+
+/// Unix 秒 → `YYYY-MM-DDTHH:MM:SSZ`（UTC；civil 历法换算，不引时间依赖）。
+fn format_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, mi, s) = (rem / 3_600, (rem % 3_600) / 60, rem % 60);
+    // Howard Hinnant civil_from_days（epoch 恒为正，无负数取整分支）
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
 /// dsh 转发链统一内核（ADR-0010）：`program` + `prepend` 前置参数拼装命令行。
 /// 系统档 = (node, [lib/bin.js])；引擎档 = (engines/bin/dsh 启动器, [])——
 /// 启动器为 shebang 脚本（Unix）或 .cmd shim（Windows，child_cmd 吸收差异），
@@ -394,11 +435,20 @@ pub fn run_dsh_forward(
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(log_path)
+    // 追加式 + 轮转 + 分隔头（2026-09-09 裁定）：原 truncate 式写入让一次
+    // 运行的输出被下一次覆盖——连续失败时无据可查（dsh-pet 安装排查实证），
+    // 也无法作为后续进度可视化的增量 tail 底座。
+    let header = format!(
+        "\n==== {} | {} ====\n",
+        format_utc(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        ),
+        args.join(" "),
+    );
+    let log = open_op_log(log_path, OP_LOG_ROTATE_BYTES, &header)
         .map_err(|e| format!("打开日志 {} 失败：{e}", log_path.display()))?;
     let mut cmd = crate::child_cmd(program);
     cmd.args(prepend)
@@ -760,6 +810,37 @@ pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod profiles_tests {
     use super::*;
+
+    #[test]
+    fn format_utc_known_timestamps() {
+        assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc(86_400), "1970-01-02T00:00:00Z");
+        // 闰日两年份（ civil 换算的经典坑位）
+        assert_eq!(format_utc(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(format_utc(1_709_164_800), "2024-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn op_log_appends_with_header_and_rotates_by_size() {
+        let dir = tmp();
+        let path = dir.join("op.log");
+
+        // 首次：创建 + 写分隔头；小文件追加不轮转，历史保留
+        open_op_log(&path, 64, "==== h1 ====\n").unwrap();
+        open_op_log(&path, 64, "==== h2 ====\n").unwrap();
+        assert!(!dir.join("op.log.1").exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("h1") && content.contains("h2"));
+
+        // 超限：轮转为 .1（旧内容完整让位），新文件只含本次头
+        std::fs::write(&path, "x".repeat(65)).unwrap();
+        open_op_log(&path, 64, "==== h3 ====\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("op.log.1")).unwrap(),
+            "x".repeat(65)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "==== h3 ====\n");
+    }
 
     /// 内联 fixture 临时目录（settings.rs 既有风格：进程级递增编号防并发冲突）。
     fn tmp() -> std::path::PathBuf {
