@@ -97,7 +97,13 @@ npm spec（现规则不变）、`github:用户名/仓库名[:#frag]`（frag 字�
   市场弹窗提交前预检（2026-09-08 hotfix）
 - [x] `DialogContent` 基类 `max-h-[calc(100dvh-2rem)] overflow-y-auto`（2026-09-08）
 - [ ] **实测** git dep 的安装/更新/卸载各一轮（dev 环境，用户复测；更新语义
-  存疑——pnpm `update` 对 git dep 是否重新解析默认分支待证）
+  存疑——pnpm `update` 对 git dep 是否重新解析默认分支待证。2026-09-09 实测
+  安装段：坐实 git 来源走 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 门槛 + exact
+  key 为「名@完整tarball URL」——已随当日 hotfix 修入 build_approvals 解析与
+  键校验；更新/卸载两段仍待测）
+- [ ] 规程（2026-09-09 教训收编）：任何新增安装来源/错误形态，收口前必须
+  端到端跑通一轮（安装 → 门槛 → 审批 → 重试）；解析器 fixture 单测绿不等于
+  路径通——单样本归纳是本类缺陷的共同根因
 - [ ] 「分发」取 spec 改从来源 profile `package.json` dependencies（小版本）
 - [ ] 跨 profile 更新检查 + 批量更新进插件中心（小版本，问题记录095 #4
   下载队列随此设计）

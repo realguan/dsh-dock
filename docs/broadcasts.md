@@ -2012,3 +2012,23 @@
   各自 truncate 收口。实测复刻树验证：scrollWidth=clientWidth=383、零越界
   元素、spec 正确省略、footer 双按钮入卡。
 - 凭据：前端 typecheck/lint/147 测试绿；布局指标经浏览器实测（上）。
+
+### 2026-09-09 fix(plugins)：git 来源构建审批门解析修复——exact key + 第二错误码 —— guan
+
+- 用户实测 dsh-pet（github 来源）坐实 ADR-0011 复审条件预判的形态分叉：
+  git 托管包走 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`（非
+  `ERR_PNPM_IGNORED_BUILDS`），且 pnpm 不写 allowBuilds 模板文件、改在
+  help 示例给出 exact key（`名@完整tarball URL`，含 commit hash，被终端
+  折成三行）——旧解析按「最后一个 @ 剥版本段」会把 URL 剥没，写入键对
+  不上 pnpm 要求，审批对话框整体不触发，用户直面裸错误。
+- 修复（build_approvals）：错误码表驱动双形态路由；git gate 提取 help 示例
+  exact key（去空白重组折行，按最后一个冒号切键值，多条目无法可靠切分时
+  fail-closed 交人工）；IGNORED_BUILDS 列表遇 git 形态条目整条保留不剥；
+  `validate_build_pkg_name` 增 URL 分支（字符集 `@/:._#?&=%~-`、512 上限，
+  YAML 写入侧单引号包裹）。fixture 全部取自本机真实日志，锚定引擎自管的
+  pnpm 版本（ADR-0010 红利：外部依赖输出形态从开放集变引擎更新时的复核事件）。
+- 规程收编（ADR-0011 行动项）：任何新增安装来源/错误形态，收口前必须端到
+  端跑通一轮（安装→门槛→审批→重试）——本次两个逻辑 bug 都窝在从未跑通的
+  github 安装路径上，单测绿不等于路径通。
+- 凭据：cargo test 222 绿 + fmt/clippy 干净（解析器自测还抓出我首版漏
+  trim 值的错——fixture 即真实日志的价值）。

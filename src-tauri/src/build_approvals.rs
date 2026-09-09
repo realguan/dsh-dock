@@ -8,6 +8,13 @@
 //! ——本模块把这一步产品化：从 dsh 输出解析被点名包 → 用户逐包裁决 →
 //! 受控改写 allowBuilds 单键 → 前端重试原操作（红线不动 dsh 源码，复现点 12）。
 //!
+//! 第二种门槛形态（ADR-0011 复审条件预判、2026-09-09 用户实测坐实）：git/tarball
+//! 托管包走 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`——pnpm 不写模板文件，改为在
+//! help 示例里给出应加入 allowBuilds 的 exact key（`名@解析后来源`，含完整
+//! URL 与 commit hash，且被终端按宽度折行）。两种形态的解析都锚定本机引擎
+//! 所载 pnpm 版本（引擎自管，ADR-0010）——引擎更新 pnpm 时按 ADR-0011 复审
+//! 条件复核输出形态。
+//!
 //! 写入边界（ADR-0009 第六次修订，写入例外 #5）：只允许改写 pnpm 自己生成的
 //! allowBuilds 块（或文件无该键时追加），其余内容逐字节保留；YAML 结构超出
 //! 平面 `key: 标量` 时拒绝写入——宁可不自动化也不写坏用户文件。
@@ -22,14 +29,19 @@ pub struct BuildApproval {
 }
 
 const GATE_MARKER: &str = "ERR_PNPM_IGNORED_BUILDS";
+const GIT_GATE_MARKER: &str = "ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED";
 const LIST_HEAD: &str = "Ignored build scripts:";
 
-/// 从 dsh 转发链输出中解析被审批门点名的包名（去重保序，去版本段）。
-/// 输出无门槛标记（非该失败模式）时返回空——只在失败路径调用，但以
-/// `ERR_PNPM_IGNORED_BUILDS` 为前置条件，避免把 pnpm 10 式的纯警告当失败。
-/// pnpm 的列表可能因终端宽度折行（包名从连字符处断开，如 `node-` /
-/// `pty@1.1.0`），故收集到 help 行/空行为止后去除全部空白再切分。
+/// 从 dsh 转发链输出中解析被审批门点名的 allowBuilds 键（去重保序）。
+/// npm 来源：列表条目剥版本段（`ssh2@1.17.0` → `ssh2`）；git/tarball 来源
+/// （条目 `@` 后是 http(s) 链接）整条即键，不剥。输出无门槛标记（非已知
+/// 失败模式）时返回空——只在失败路径调用，但以错误码为前置条件，避免把
+/// pnpm 10 式的纯警告当失败。pnpm 的列表可能因终端宽度折行（包名从连字符
+/// 处断开），故收集到 help 行/空行为止后去除全部空白再切分。
 pub fn parse_ignored_builds(output: &str) -> Vec<String> {
+    if output.contains(GIT_GATE_MARKER) {
+        return parse_git_gate(output);
+    }
     if !output.contains(GATE_MARKER) {
         return Vec::new();
     }
@@ -66,9 +78,10 @@ pub fn parse_ignored_builds(output: &str) -> Vec<String> {
         if entry.is_empty() {
             continue;
         }
-        // name@version → 取最后一段 '@' 之前；@scope/name（无版本）整体保留
+        // name@version → 取最后一段 '@' 之前；@scope/name（无版本）整体保留。
+        // git/tarball 条目（'@' 后是链接）整条即 allowBuilds 键，不剥。
         let name = match entry.rfind('@') {
-            Some(p) if p > 0 => &entry[..p],
+            Some(p) if p > 0 && !entry[p + 1..].starts_with("http") => &entry[..p],
             _ => entry,
         };
         if !name.is_empty() && !out.iter().any(|n| n == name) {
@@ -78,11 +91,73 @@ pub fn parse_ignored_builds(output: &str) -> Vec<String> {
     out
 }
 
-/// allowBuilds 键合法性：npm 裸名（可带 scope），禁止版本段与 YAML 结构字符。
-/// 该名会作为 YAML 键写入，字符面收窄是注入防线（IPC 是信任边界）。
+/// git 托管包的审批门提取。pnpm 在 help 示例里给出应加入 allowBuilds 的
+/// exact key（`名@解析后来源`，被终端按宽度折行——2026-09-09 实锚：键折成
+/// 三行）。定位 `allowBuilds:` 行后收集到空行/dsh:/help:/错误图元为止，
+/// 去全部空白，按**最后一个**冒号切键值（键内含 `https://`、`#path:` 等
+/// 冒号），值必须是 true/false。多条目示例无法可靠切分时不猜，返回空交
+/// 人工（fail-closed）。
+fn parse_git_gate(output: &str) -> Vec<String> {
+    let mut lines = output.lines().skip_while(|l| !l.contains(GIT_GATE_MARKER));
+    for line in lines.by_ref() {
+        if line.trim() == "allowBuilds:" {
+            break;
+        }
+    }
+    let mut acc = String::new();
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty()
+            || t.starts_with("dsh:")
+            || t.starts_with("help:")
+            || t.starts_with('×')
+            || t.starts_with("╰")
+        {
+            break;
+        }
+        acc.push_str(t);
+    }
+    let Some((key, value)) = acc.rsplit_once(':') else {
+        return Vec::new();
+    };
+    let key = key.trim();
+    let value = value.trim();
+    if key.is_empty() || key.contains(": true") || key.contains(": false") {
+        return Vec::new();
+    }
+    if !matches!(value, "true" | "false") {
+        return Vec::new();
+    }
+    vec![key.to_string()]
+}
+
+/// allowBuilds 键合法性。npm 来源：裸名（可带 scope），禁止版本段与 YAML
+/// 结构字符——该名会作为 YAML 键写入，字符面收窄是注入防线（IPC 是信任
+/// 边界）。git/tarball 来源（ADR-0011）：pnpm 要求键逐字等于 `名@解析后
+/// 来源URL`，按 URL 口径放宽字符集与长度（YAML 写入侧由 yaml_scalar 单引号
+/// 包裹保安全）。
 pub fn validate_build_pkg_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("依赖名不能为空".to_string());
+    }
+    if name.contains("://") {
+        if name.len() > 512 {
+            return Err("依赖名过长（来源链接上限 512 字符）".to_string());
+        }
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '@')
+        {
+            return Err("依赖名必须以字母数字或 @scope 开头".to_string());
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@/:._#?&=%~-".contains(c))
+        {
+            return Err("依赖名只允许字母数字与 @/:._#?&=%~-".to_string());
+        }
+        return Ok(());
     }
     if name.len() > 214 {
         return Err("依赖名过长（npm 上限 214 字符）".to_string());
@@ -319,6 +394,49 @@ mod tests {
     fn parse_stops_list_at_help_line() {
         let out = "Error: ERR_PNPM_IGNORED_BUILDS\n  ╰─▶ Ignored build scripts: ssh2@1.0\n  help: Run \"pnpm approve-builds\"\n  dsh: pnpm failed\n";
         assert_eq!(parse_ignored_builds(out), vec!["ssh2"]);
+    }
+
+    /// git 托管包审批门的真实输出（2026-09-09 本机 plugin-op.log；键被终端
+    /// 折为三行。ADR-0011 复审条件预判、用户实测 dsh-pet 坐实的形态分叉）。
+    const REAL_GIT_OUTPUT: &str = "✓ Lockfile passes supply-chain policies (verified 16h ago)\nProgress: resolved 103, reused 102, downloaded 1, added 0\nError: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\n\n  × adding a new package\n  ╰─▶ The git-hosted package \"@linxin666/dsh-pet@0.3.18\" needs to execute\n      build scripts but is not in the \"allowBuilds\" allowlist.\n  help: Add the package to \"allowBuilds\" in your project's pnpm-workspace.yaml\n        to allow it to run scripts. For example:\n        allowBuilds:\n          @linxin666/dsh-pet@https://codeload.github.com/zhu1090093659/dsh-\n        web-ui/tar.gz/620e05141a0730df8a7efcc38499a1c592122d69#path:/packages/\n        dsh-pet: true\n\ndsh: pnpm failed in profile directory /Users/guan/.dsh/profiles/test\n";
+
+    /// 上例 help 示例中的 exact key（折行重组后）。
+    const GIT_KEY: &str = "@linxin666/dsh-pet@https://codeload.github.com/zhu1090093659/dsh-web-ui/tar.gz/620e05141a0730df8a7efcc38499a1c592122d69#path:/packages/dsh-pet";
+
+    #[test]
+    fn parse_extracts_exact_key_from_git_gate_output() {
+        assert_eq!(parse_ignored_builds(REAL_GIT_OUTPUT), vec![GIT_KEY]);
+    }
+
+    #[test]
+    fn parse_keeps_whole_entry_when_ignored_list_names_git_form() {
+        // IGNORED_BUILDS 列表也可能点名 git 形态：整条是键，不剥「版本段」
+        let out = "Error: ERR_PNPM_IGNORED_BUILDS\n  ╰─▶ Ignored build scripts: @scope/p@1.0, @s/g@https://x/y.tgz\n  help: x\n";
+        assert_eq!(
+            parse_ignored_builds(out),
+            vec!["@scope/p", "@s/g@https://x/y.tgz"]
+        );
+    }
+
+    #[test]
+    fn build_pkg_name_accepts_git_resolved_key_rejects_garbage() {
+        assert!(validate_build_pkg_name(GIT_KEY).is_ok());
+        // 注入面仍守：空白/元字符拒，长度 512 封顶（URL 分支）
+        assert!(validate_build_pkg_name(&format!("{GIT_KEY} extra")).is_err());
+        assert!(validate_build_pkg_name(&format!("https://x/{}", "y".repeat(520))).is_err());
+        // npm 分支上限不变
+        assert!(validate_build_pkg_name(&format!("a{}", "x".repeat(215))).is_err());
+    }
+
+    #[test]
+    fn apply_appends_quoted_git_key_block() {
+        // pnpm 对 git 来源不写模板文件（与 npm 来源不同）→ 走追加路径；
+        // 键含冒号/#，yaml_scalar 必须单引号包裹
+        let got = apply_build_approvals("packages:\n  - .\n", &[(GIT_KEY, true)]).unwrap();
+        assert_eq!(
+            got,
+            format!("packages:\n  - .\n\nallowBuilds:\n  '{GIT_KEY}': true\n")
+        );
     }
 
     #[test]
