@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useQueueStore } from "@/stores/queueStore"
+import { useInstallFlightStore } from "@/stores/installFlightStore"
 import { getProfileColorClass } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
@@ -137,8 +138,9 @@ export function PluginOverview({
   }, [profiles, distributeTarget])
 
   // 分发入队（ADR-0011 队列形态）：目标 profile 入队瞬间快照绑定；安装与
-  // 连带配置迁移在队列中串行执行，审批门在下载管理面板内联处理。
-  const handleEnqueueDistribute = () => {
+  // 连带配置迁移在队列中串行执行。2026-09-09（§1.1）：与市场安装同一条
+  // 飞行动画（落点都是下载管理按钮）。
+  const handleEnqueueDistribute = (e: React.MouseEvent) => {
     if (!distributeTarget || !selectedDest) return
     enqueue({
       pkg: distributeTarget.pkg,
@@ -148,6 +150,9 @@ export function PluginOverview({
       withConfig,
       sourceProfile: withConfig ? distributeTarget.sources[0] : undefined,
     })
+    useInstallFlightStore
+      .getState()
+      .launch({ x: e.clientX, y: e.clientY }, distributeTarget.pkg)
     setDistributeTarget(null)
     setSelectedDest(null)
     setWithConfig(false)
@@ -489,7 +494,7 @@ export function PluginOverview({
               取消
             </Button>
             <Button
-              onClick={() => handleEnqueueDistribute()}
+              onClick={(e) => handleEnqueueDistribute(e)}
               disabled={!selectedDest}
               className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >

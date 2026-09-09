@@ -387,6 +387,15 @@ fn engine_launch_spec(
     })
 }
 
+/// 引擎已就绪时的直接规格构造（跳过引导）：直接定位 node 与 dsh 启动器并构造 LaunchSpec。
+pub fn resolve_launch_engine_ready(
+    data_dir: &Path,
+    default_profile: String,
+    dsh_version: Option<&str>,
+) -> Result<LaunchSpec> {
+    engine_launch_spec(data_dir, dsh_version, false, default_profile)
+}
+
 /// bundle 档：fallback 三件套（相对 resources 根）。
 fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String) -> LaunchSpec {
     LaunchSpec {
@@ -752,6 +761,30 @@ mod tests {
             }
             DshEntry::NodeScript { .. } => panic!("引擎档应为启动器执行形态"),
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_launch_engine_ready_constructs_spec() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp();
+        let data_dir = root.join("data");
+        let bin = data_dir.join("engines/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let make = |name: &str, body: &str| {
+            let p = bin.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        make("node", "#!/bin/sh\necho v24.18.0\n");
+        make("dsh", "#!/bin/sh\necho 0.1.2\n");
+
+        let spec =
+            resolve_launch_engine_ready(&data_dir, "web".to_string(), Some("0.1.2")).unwrap();
+        assert_eq!(spec.tier, TierKind::Engine);
+        assert_eq!(spec.profile, "web");
+        assert!(!spec.first_bootstrap);
         std::fs::remove_dir_all(&root).ok();
     }
 

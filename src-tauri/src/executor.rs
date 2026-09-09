@@ -233,32 +233,58 @@ impl Executor for LocalExecutor {
         sink: BootSink<'_>,
         progress: DownloadProgress<'_>,
     ) -> Result<ProbeOutcome, String> {
-        sink(0, "running", "正在检查系统环境");
-        // 环境检测（清单/布局/三件探测）毫秒级，即刻收口——引擎引导全程归
-        // 「准备引擎」独占，避免下载期间双步骤同挂「运行中」。
-        sink(0, "done", "环境检测通过");
-        sink(
-            1,
-            "running",
-            "正在准备运行环境（首次使用需自动下载组件，请耐心等候）",
+        let is_engine_tier = matches!(
+            self.manifest.terminal.resolution.dsh.tiers.first(),
+            Some(crate::manifest::TierKind::Engine)
         );
-        let launch = crate::resolve::resolve_launch(
-            &self.manifest,
-            &self.resources_dir,
-            &self.path_env,
-            &self.data_dir,
-            progress,
-        )
-        .map_err(|e| {
-            sink(1, "error", &e.to_string());
-            e.to_string()
-        })?;
-        sink(1, "running", "环境准备完成，即将启动");
-        sink(
-            1,
-            "done",
-            &format!("环境已就绪（{}）", tier_label(launch.tier)),
-        );
+        let ready_status = if is_engine_tier {
+            crate::engines::probe_engine_if_ready(&self.data_dir, &self.path_env)
+        } else {
+            None
+        };
+
+        let launch = if let Some(status) = ready_status {
+            tracing::info!("引擎环境已完整就绪，跳过环境检测与准备引擎步骤，直接准备启动");
+            sink(0, "done", "环境检测通过");
+            sink(1, "done", "运行环境已就绪");
+            crate::resolve::resolve_launch_engine_ready(
+                &self.data_dir,
+                self.manifest.terminal.default_profile.clone(),
+                status.dsh.as_deref(),
+            )
+            .map_err(|e| {
+                sink(1, "error", &e.to_string());
+                e.to_string()
+            })?
+        } else {
+            sink(0, "running", "正在检查系统环境");
+            // 环境检测（清单/布局/三件探测）毫秒级，即刻收口——引擎引导全程归
+            // 「准备引擎」独占，避免下载期间双步骤同挂「运行中」。
+            sink(0, "done", "环境检测通过");
+            sink(
+                1,
+                "running",
+                "正在准备运行环境（首次使用需自动下载组件，请耐心等候）",
+            );
+            let launch = crate::resolve::resolve_launch(
+                &self.manifest,
+                &self.resources_dir,
+                &self.path_env,
+                &self.data_dir,
+                progress,
+            )
+            .map_err(|e| {
+                sink(1, "error", &e.to_string());
+                e.to_string()
+            })?;
+            sink(1, "running", "环境准备完成，即将启动");
+            sink(
+                1,
+                "done",
+                &format!("环境已就绪（{}）", tier_label(launch.tier)),
+            );
+            launch
+        };
         let home = crate::resolve::user_dsh_home();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
         // 4.3④ defaultProfile 消费（2026-08-28）：用户设过默认且在 webUi 候选

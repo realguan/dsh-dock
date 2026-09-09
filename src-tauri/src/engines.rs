@@ -235,6 +235,25 @@ pub fn probe_engine(data_dir: &Path, path_env: &str) -> EngineStatus {
     }
 }
 
+/// 探测引擎是否已完整就绪（三件都在且版本匹配）。
+/// 若已就绪，返回 Some(status)；否则返回 None。
+pub fn probe_engine_if_ready(data_dir: &Path, path_env: &str) -> Option<EngineStatus> {
+    let status = probe_engine(data_dir, path_env);
+    let expected = crate::updates::node_plan(data_dir).version;
+    if readiness_gaps(&status, &expected).is_empty() {
+        Some(status)
+    } else {
+        None
+    }
+}
+
+/// 引擎是否已完整就绪（三件都在且版本匹配）。
+/// 若已就绪，启动时可跳过步 0（环境检测）与步 1（准备引擎），直接进入步 2（启动工作台）。
+#[allow(dead_code)]
+pub fn is_engine_ready(data_dir: &Path, path_env: &str) -> bool {
+    probe_engine_if_ready(data_dir, path_env).is_some()
+}
+
 // ---------- 引导子过程 ----------
 
 /// 把打包期随壳内置的 pnpm 压缩包（@pnpm/exe.<platform> tgz，边界 A 裁定：
@@ -858,6 +877,10 @@ mod tests {
         assert_eq!(status.node.as_deref(), Some("v24.18.0"));
         assert_eq!(status.dsh.as_deref(), Some("0.1.1"));
         assert!(readiness_gaps(&status, "24.18.0").is_empty());
+        let ready = probe_engine_if_ready(&data_dir, "");
+        assert!(ready.is_some());
+        assert_eq!(ready.as_ref().unwrap().dsh.as_deref(), Some("0.1.1"));
+        assert!(is_engine_ready(&data_dir, ""));
         std::fs::remove_dir_all(&root).ok();
     }
 

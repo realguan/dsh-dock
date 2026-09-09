@@ -27,6 +27,16 @@ describe("bootStore.setStep 推演", () => {
     expect(useBootStore.getState().activeStep).toBe(3)
   })
 
+  it("引擎已就绪直接从 step 2 启动，前两步均为 done", () => {
+    useBootStore.getState().setStep({ step: 0, state: "done", detail: "环境检测通过" })
+    useBootStore.getState().setStep({ step: 1, state: "done", detail: "运行环境已就绪" })
+    useBootStore.getState().setStep({ step: 2, state: "running", detail: "正在启动「web」工作台" })
+    expect(stateOf(0)).toBe("done")
+    expect(stateOf(1)).toBe("done")
+    expect(stateOf(2)).toBe("running")
+    expect(useBootStore.getState().activeStep).toBe(2)
+  })
+
   it("已有状态的前置步骤不被误覆盖为 done", () => {
     useBootStore.getState().setStep({ step: 1, state: "error", detail: "环境解析失败" })
     useBootStore.getState().setStep({ step: 2, state: "running", detail: "" })

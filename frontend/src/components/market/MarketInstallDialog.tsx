@@ -1,6 +1,6 @@
 // components/market/MarketInstallDialog.tsx —— 插件市场安装 / 分发确认对话框
 // 2026-09-09 队列化（095 #4 / ADR-0011 队列形态）：确认目标与安装源后**入队**
-// 即关闭——后台串行执行、审批门在下载管理面板内联审核（不再于本弹窗处理）。
+// 即关闭——后台串行执行（构建脚本审批门已随 ADR-0013 退役，安装无中间态）。
 import { useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
@@ -9,6 +9,7 @@ import {
   Package,
 } from "lucide-react"
 import { useQueueStore } from "@/stores/queueStore"
+import { useInstallFlightStore } from "@/stores/installFlightStore"
 import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
 import type { MarketPlugin } from "@/types/market"
@@ -87,8 +88,9 @@ export function MarketInstallDialog({
   const isAlreadyInstalled = installedProfiles.includes(selectedProfile)
 
   // 入队（ADR-0011 队列形态）：预检 → 队列串行执行；目标 profile 入队瞬间
-  // 快照绑定，审批门在下载管理面板内联处理。
-  const handleEnqueue = () => {
+  // 快照绑定。2026-09-09（§1.1）：顺手起飞一颗胶囊到「下载管理」——入队本身
+  // 是后台静默动作，没有这步反馈新用户不知道东西去哪了。
+  const handleEnqueue = (e: React.MouseEvent) => {
     if (!plugin || !selectedProfile || !sourceInfo.spec.trim()) return
     const spec = sourceInfo.spec.trim()
     const invalid = validatePluginSpec(spec)
@@ -97,6 +99,7 @@ export function MarketInstallDialog({
       return
     }
     enqueue({ pkg: plugin.name, spec, profile: selectedProfile, kind: "install" })
+    useInstallFlightStore.getState().launch({ x: e.clientX, y: e.clientY }, displayName)
     onClose()
   }
 

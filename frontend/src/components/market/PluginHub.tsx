@@ -5,6 +5,7 @@ import { useI18n } from "@/stores/i18nStore"
 import { MarketplaceView } from "@/components/market/MarketplaceView"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { QueuePanel } from "@/components/market/QueuePanel"
+import { InstallFlight } from "@/components/market/InstallFlight"
 
 interface PluginHubProps {
   refreshKey: number
@@ -16,54 +17,60 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
   const [subTab, setSubTab] = useState<"market" | "installed">("market")
 
   return (
-    <div className="space-y-4">
-      {/* 插件中心内部子 Tab 切换器 */}
-      <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-3">
-        <div
-          role="tablist"
-          className="flex items-center gap-1 rounded-xl border border-line bg-wash p-1 shadow-2xs"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subTab === "market"}
-            onClick={() => setSubTab("market")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
-              subTab === "market"
-                ? "bg-panel text-ink shadow-xs font-semibold"
-                : "text-dim hover:text-ink hover:bg-panel/40"
-            }`}
+    <>
+      <div className="space-y-4">
+        {/* 插件中心内部子 Tab 切换器 */}
+        <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-3">
+          <div
+            role="tablist"
+            className="flex items-center gap-1 rounded-xl border border-line bg-wash p-1 shadow-2xs"
           >
-            <Store className={`size-3.5 ${subTab === "market" ? "text-brand-deep" : "text-faint"}`} />
-            <span>{t.market.subtabMarket}</span>
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "market"}
+              onClick={() => setSubTab("market")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
+                subTab === "market"
+                  ? "bg-panel text-ink shadow-xs font-semibold"
+                  : "text-dim hover:text-ink hover:bg-panel/40"
+              }`}
+            >
+              <Store className={`size-3.5 ${subTab === "market" ? "text-brand-deep" : "text-faint"}`} />
+              <span>{t.market.subtabMarket}</span>
+            </button>
 
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subTab === "installed"}
-            onClick={() => setSubTab("installed")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
-              subTab === "installed"
-                ? "bg-panel text-ink shadow-xs font-semibold"
-                : "text-dim hover:text-ink hover:bg-panel/40"
-            }`}
-          >
-            <Layers className={`size-3.5 ${subTab === "installed" ? "text-brand-deep" : "text-faint"}`} />
-            <span>{t.market.subtabInstalled}</span>
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "installed"}
+              onClick={() => setSubTab("installed")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
+                subTab === "installed"
+                  ? "bg-panel text-ink shadow-xs font-semibold"
+                  : "text-dim hover:text-ink hover:bg-panel/40"
+              }`}
+            >
+              <Layers className={`size-3.5 ${subTab === "installed" ? "text-brand-deep" : "text-faint"}`} />
+              <span>{t.market.subtabInstalled}</span>
+            </button>
+          </div>
+
+          {/* 下载管理（095 #4：队列项状态一览） */}
+          <QueuePanel />
         </div>
 
-        {/* 下载管理（095 #4：队列项状态 + 审批门内联审核） */}
-        <QueuePanel />
+        {/* 子视图渲染 */}
+        {subTab === "market" ? (
+          <MarketplaceView onNotice={onNotice} />
+        ) : (
+          <PluginOverview refreshKey={refreshKey} onNotice={onNotice} />
+        )}
       </div>
 
-      {/* 子视图渲染 */}
-      {subTab === "market" ? (
-        <MarketplaceView onNotice={onNotice} />
-      ) : (
-        <PluginOverview refreshKey={refreshKey} onNotice={onNotice} />
-      )}
-    </div>
+      {/* 入队飞行层（问题记录-2026-09-09 §1.1）：fixed 覆盖层，放在 space-y
+          容器之外——否则会被 `> * + *` 的 margin 推离视口边缘 */}
+      <InstallFlight />
+    </>
   )
 }
