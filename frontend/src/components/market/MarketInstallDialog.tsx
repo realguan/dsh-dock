@@ -56,8 +56,11 @@ export function MarketInstallDialog({
   const [selectedProfile, setSelectedProfile] = useState<string>("")
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试安装）
-  const [gatePkgs, setGatePkgs] = useState<string[] | null>(null)
+  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试安装）。profile 与
+  // 包名在门槛失败瞬间**快照绑定**（2026-09-09 裁定）：审批写入与自动重试
+  // 只认失败时的目标 profile——用户选择/默认选中在此期间如何变化都不可改写
+  // 它，否则会出现「选 web 批准、装进 test」的串位。
+  const [gate, setGate] = useState<{ profile: string; pkgs: string[] } | null>(null)
 
   // 提取简短展示名与安装源元数据
   const displayName = useMemo(
@@ -76,18 +79,25 @@ export function MarketInstallDialog({
   useEffect(() => {
     if (plugin) {
       setError(null)
-      // 默认选择第一个未安装该插件的 Profile，如果全装了则选第一个
+      // 默认选择第一个未安装该插件的 Profile，如果全装了则选第一个。
+      // 只随「换插件」重算——profiles/installedProfiles 的属性引用在父组件
+      // 每次 focus 刷新/装后回填时都会重建，纳入依赖会把用户手动改选的
+      // 目标静默重置回默认（2026-09-09「选 web 批准装进 test」根因之一）。
       const notInstalled = profiles.find((p) => !installedProfiles.includes(p.name))
       setSelectedProfile(notInstalled ? notInstalled.name : profiles[0]?.name || "web")
     }
-  }, [plugin, profiles, installedProfiles])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅随弹窗目标插件重算默认选中
+  }, [plugin])
 
   if (!plugin || !sourceInfo) return null
 
   const isAlreadyInstalled = installedProfiles.includes(selectedProfile)
 
-  const handleInstall = async () => {
-    if (!selectedProfile || !sourceInfo.spec.trim()) return
+  // targetProfile 显式传入 = 审批后的重试（绑定门槛发生时的 profile 快照）；
+  // 缺省 = 用户当前选择。
+  const handleInstall = async (targetProfile?: string) => {
+    const profile = targetProfile ?? selectedProfile
+    if (!profile || !sourceInfo.spec.trim()) return
     // 提交前预检（ADR-0011 齐口径）：market spec 坏形时给出可读文案而非
     // 等后端校验失败再回显
     const invalid = validatePluginSpec(sourceInfo.spec.trim())
@@ -99,12 +109,12 @@ export function MarketInstallDialog({
     setError(null)
 
     try {
-      const outcome = await api.installPlugin(selectedProfile, sourceInfo.spec.trim())
+      const outcome = await api.installPlugin(profile, sourceInfo.spec.trim())
       if (outcome.ok) {
-        onSuccess(plugin.name, selectedProfile)
+        onSuccess(plugin.name, profile)
         onClose()
       } else if (outcome.ignored_builds?.length) {
-        setGatePkgs(outcome.ignored_builds)
+        setGate({ profile, pkgs: outcome.ignored_builds })
         setError(null)
       } else {
         setError(outcome.detail || "安装失败")
@@ -254,7 +264,7 @@ export function MarketInstallDialog({
           </Button>
           <Button
             size="sm"
-            onClick={handleInstall}
+            onClick={() => handleInstall()}
             disabled={installing || !selectedProfile || !sourceInfo.spec.trim()}
             className="rounded-xl bg-brand-deep text-white hover:bg-brand-deep/90 text-xs font-medium gap-1.5 shadow-xs"
           >
@@ -274,13 +284,15 @@ export function MarketInstallDialog({
       </DialogContent>
     </Dialog>
     <BuildApprovalDialog
-      profile={selectedProfile}
-      packages={gatePkgs ?? []}
-      open={gatePkgs !== null}
-      onClose={() => setGatePkgs(null)}
+      profile={gate?.profile ?? ""}
+      packages={gate?.pkgs ?? []}
+      open={gate !== null}
+      onClose={() => setGate(null)}
       onApproved={() => {
-        setGatePkgs(null)
-        handleInstall()
+        // 快照绑定：审批写入与重试都只认门槛失败时的目标 profile
+        const target = gate?.profile
+        setGate(null)
+        if (target) void handleInstall(target)
       }}
     />
     </>

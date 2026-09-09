@@ -64,8 +64,10 @@ export function PluginOverview({
   const [withConfig, setWithConfig] = useState(false)
   const [distributing, setDistributing] = useState(false)
   const [distributeError, setDistributeError] = useState<string | null>(null)
-  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试分发安装）
-  const [gatePkgs, setGatePkgs] = useState<string[] | null>(null)
+  // pnpm 12 构建审批门：非空 = 弹逐包裁决框（保存后重试分发安装）。profile
+  // 与包名在门槛失败瞬间**快照绑定**（2026-09-09 裁定）：审批写入与自动重试
+  // 只认失败时的目标 profile，选择在此期间变化不可改写（同市场安装弹窗）。
+  const [gate, setGate] = useState<{ profile: string; pkgs: string[] } | null>(null)
 
   const loadData = () => {
     setLoading(true)
@@ -134,21 +136,24 @@ export function PluginOverview({
     )
   }, [profiles, distributeTarget])
 
-  const handleDistribute = async () => {
-    if (!distributeTarget || !selectedDest || distributing) return
+  // dest 显式传入 = 审批后的重试（绑定门槛发生时的 profile 快照）；缺省 =
+  // 用户当前选择。
+  const handleDistribute = async (destOverride?: string) => {
+    const dest = destOverride ?? selectedDest
+    if (!distributeTarget || !dest || distributing) return
     setDistributing(true)
     setDistributeError(null)
 
     try {
       // 1. 安装插件
       const outcome = await api.installPlugin(
-        selectedDest,
+        dest,
         `${distributeTarget.pkg}@${distributeTarget.version}`,
       )
       if (!outcome.ok) {
         if (outcome.ignored_builds?.length) {
           // pnpm 12 构建审批门：转逐包裁决，保存后由 gate 重试整段分发
-          setGatePkgs(outcome.ignored_builds)
+          setGate({ profile: dest, pkgs: outcome.ignored_builds })
           return
         }
         throw new Error(outcome.detail)
@@ -158,7 +163,7 @@ export function PluginOverview({
       //    2026-09-08 裁定：迁移结果必须如实通知——失败或未覆盖时**不得**仍弹
       //    「分发完成」成功提示（用户勾了迁移却只看到成功，会以为配置也过去了）。
       let notice: { text: string; kind: "ok" | "warn" } = {
-        text: t.profiles.distributeDone(distributeTarget.pkg, selectedDest),
+        text: t.profiles.distributeDone(distributeTarget.pkg, dest),
         kind: "ok",
       }
       const sourceProfile = distributeTarget.sources[0]
@@ -166,16 +171,13 @@ export function PluginOverview({
         try {
           const outcome = await api.copyPluginConfig(
             sourceProfile,
-            selectedDest,
+            dest,
             distributeTarget.pkg,
           )
           // copied === 0 且非 skipped 不会出现（来源无配置行时 Rust 侧直接报错）
           if (outcome.skipped_existing) {
             notice = {
-              text: t.profiles.distributeConfigSkipped(
-                distributeTarget.pkg,
-                selectedDest,
-              ),
+              text: t.profiles.distributeConfigSkipped(distributeTarget.pkg, dest),
               kind: "warn",
             }
           }
@@ -183,7 +185,7 @@ export function PluginOverview({
           notice = {
             text: t.profiles.distributeConfigFailed(
               distributeTarget.pkg,
-              selectedDest,
+              dest,
               String(e),
             ),
             kind: "warn",
@@ -546,7 +548,7 @@ export function PluginOverview({
               取消
             </Button>
             <Button
-              onClick={handleDistribute}
+              onClick={() => handleDistribute()}
               disabled={distributing || !selectedDest}
               className="bg-brand-deep text-white hover:bg-brand-deep/90"
             >
@@ -557,16 +559,18 @@ export function PluginOverview({
         </DialogContent>
       </Dialog>
 
-      {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试整段分发（含配置迁移） */}
-      {selectedDest && (
+      {/* pnpm 12 构建审批门：逐包裁决 → 保存后重试整段分发（含配置迁移）。
+          绑定门槛失败时的 profile 快照，选择变化不可改写（2026-09-09） */}
+      {gate !== null && (
         <BuildApprovalDialog
-          profile={selectedDest}
-          packages={gatePkgs ?? []}
-          open={gatePkgs !== null}
-          onClose={() => setGatePkgs(null)}
+          profile={gate.profile}
+          packages={gate.pkgs}
+          open={gate !== null}
+          onClose={() => setGate(null)}
           onApproved={() => {
-            setGatePkgs(null)
-            void handleDistribute()
+            const dest = gate.profile
+            setGate(null)
+            void handleDistribute(dest)
           }}
         />
       )}

@@ -2065,3 +2065,20 @@
   错误文案属设计行为；web 侧完成审批即可装上。
 - 凭据：cargo test 225 绿 + fmt/clippy 干净；前端 typecheck/lint/150 绿
   （双侧形状闸门同步更新）。
+
+### 2026-09-09 fix(market)：审批门批准后安装串位 profile（选 web 装进 test）—— guan
+
+- 用户实测：安装选 web → 撞审批门 → 批准 → 装进了 test。追加式日志实证
+  两次（10:22 web 失败 → 10:23 test 成功；10:42 → 10:45 同型），且 web 的
+  allowBuilds 始终没写上——审批写入与重试双双串位。
+- 根因（两层叠加）：①安装弹窗的「默认选中 profile」effect 依赖
+  profiles/installedProfiles 的**属性引用**，而父组件在窗口 focus 刷新/
+  装后回填时会重建这两者——批准对话框开着的时候一次刷新就把用户手动
+  改选的目标静默重置回默认值；②旧已装匹配 bug 下默认值恰为字典序第一个
+  （test）。审批写入与重试读的都是**实时** selectedProfile → 双双串位。
+- 修复：门槛失败瞬间**快照绑定** {profile, pkgs}——审批写入与自动重试
+  只认快照，选择期间任何变化不可改写（市场安装弹窗 + 总览分发两处同治，
+  含 onClick 直传事件对象的隐患）；默认选中 effect 改为仅随弹窗目标插件
+  重算，并注明缘由。ProfileDetailPane 的重试锚定 pane 固定 profile，无此
+  风险，未动。
+- 凭据：前端 typecheck/lint/150 测试绿（纯前端改动，Rust 无涉）。
