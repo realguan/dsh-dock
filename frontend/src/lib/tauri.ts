@@ -14,6 +14,7 @@ import type {
   CreateProfileOutcome,
   CredentialSummaryItem,
   DeleteOutcome,
+  DshVersionsResult,
   LifecycleOutcome,
   LogQueryResult,
   McpServerConfig,
@@ -48,15 +49,17 @@ export const api = {
   // 版本状态
   getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),
   checkUpdates: () => invoke<void>("check_updates"),
+  // DSH 版本列表（版本选择器数据源：全版本 + 通道 + 发布时间 + 相对关系）
+  listDshVersions: () => invoke<DshVersionsResult>("list_dsh_versions"),
 
   // 客户端自更新
   getClientUpdate: () => invoke<ClientUpdate>("get_client_update"),
   clientUpdateCheck: () => invoke<void>("client_update_check"),
   clientUpdateApply: () => invoke<void>("client_update_apply"),
 
-  // 错误卡动作
-  terminalAction: (action: TerminalAction) =>
-    invoke<void>("terminal_action", { action }),
+  // 错误卡动作（version = upgrade/upgrade_only 的显式目标版本；None = 最新可接受版）
+  terminalAction: (action: TerminalAction, version?: string | null) =>
+    invoke<void>("terminal_action", { action, version: version ?? null }),
 
   // 窗口/导航
   openExternal: (url: string) => invoke<void>("open_external", { url }),

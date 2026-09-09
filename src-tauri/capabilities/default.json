@@ -18,6 +18,7 @@
     "allow-terminal-action",
     "allow-get-update-status",
     "allow-check-updates",
+    "allow-list-dsh-versions",
     "allow-get-client-update",
     "allow-client-update-check",
     "allow-client-update-apply",

@@ -131,7 +131,9 @@
 ## 7. IPC 与网络面（例外册，登记制）
 
 - **IPC 命令登记**（新命令先登记再实现）：`choose_profile` `terminal_action`
-  `get_update_status` `check_updates` `get_client_update` `client_update_check`
+  `get_update_status` `check_updates` `list_dsh_versions`（DSH 版本列表·版本选择器
+  数据源：packument 全版本 + 通道归类 + 与已装版本相对关系，2026-09-09）
+  `get_client_update` `client_update_check`
   `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
   `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`
   `copy_profile` `rename_profile` `delete_profile` `set_default_profile`

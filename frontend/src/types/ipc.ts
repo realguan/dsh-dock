@@ -7,10 +7,34 @@
 export interface ComponentUpdate {
   /** 当前版本；检测失败为 null */
   current: string | null
+  /** 可升级口径最高版（dsh = 稳定/rc；client = 官方最新） */
   latest: string | null
   /** latest > current */
   newer: boolean
   error: string | null
+  /** 排序最高但不在升级口径内的预览版（alpha 等）；无或与 latest 同版为 null。
+      仅 dsh 维度使用——「有新版」只按可升级口径判定，预览版经版本列表显式选择 */
+  preview_latest: string | null
+}
+
+/// dsh 版本列表条目（形状锚定 src-tauri/src/updates.rs 的 DshVersionEntry）。
+export interface DshVersionEntry {
+  version: string
+  /** stable / rc / alpha / other（other = beta 等其余预发布标签） */
+  channel: "stable" | "rc" | "alpha" | "other"
+  /** 与当前已装版本的相对关系（后端按 semver 比较，前端不做第二套比较器）；
+      当前版本未检出时一律 newer */
+  relation: "newer" | "current" | "older"
+  /** 发布时间（RFC3339 原文）；registry 未记录为 null */
+  published_at: string | null
+}
+
+/// DSH 版本列表响应（list_dsh_versions）。
+export interface DshVersionsResult {
+  /** 探测到的当前已装版本；未检出为 null */
+  current: string | null
+  /** 降序全版本 */
+  versions: DshVersionEntry[]
 }
 
 export interface NodeRuntimeInfo {

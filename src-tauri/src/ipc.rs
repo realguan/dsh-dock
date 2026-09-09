@@ -16,6 +16,7 @@ pub const COMMANDS: &[&str] = &[
     "terminal_action",
     "get_update_status",
     "check_updates",
+    "list_dsh_versions",
     "get_client_update",
     "client_update_check",
     "client_update_apply",
@@ -420,6 +421,32 @@ mod gate_tests {
                 bundles: Vec::new(),
                 dependencies: Vec::new(),
                 web_ui: false,
+            }
+        );
+        assert_shape!(
+            "ComponentUpdate",
+            crate::updates::ComponentUpdate {
+                current: None,
+                latest: None,
+                newer: false,
+                error: None,
+                preview_latest: None,
+            }
+        );
+        assert_shape!(
+            "DshVersionEntry",
+            crate::updates::DshVersionEntry {
+                version: String::new(),
+                channel: "stable",
+                relation: "newer",
+                published_at: None,
+            }
+        );
+        assert_shape!(
+            "DshVersionsResult",
+            crate::updates::DshVersionsResult {
+                current: None,
+                versions: Vec::new(),
             }
         );
         assert_shape!(

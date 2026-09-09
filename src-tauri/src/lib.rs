@@ -258,12 +258,14 @@ pub fn run() {
                         latest: None,
                         newer: false,
                         error: None,
+                        preview_latest: None,
                     },
                     client: crate::updates::ComponentUpdate {
                         current: Some(env!("CARGO_PKG_VERSION").to_string()),
                         latest: None,
                         newer: false,
                         error: None,
+                        preview_latest: None,
                     },
                     node: None,
                 };
@@ -379,6 +381,7 @@ pub fn run() {
             commands::boot::terminal_action,
             commands::update::get_update_status,
             commands::update::check_updates,
+            commands::update::list_dsh_versions,
             commands::update::get_client_update,
             commands::update::client_update_check,
             commands::update::client_update_apply,

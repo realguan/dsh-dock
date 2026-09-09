@@ -371,6 +371,7 @@ pub(crate) fn empty_update_status() -> crate::updates::UpdateStatus {
         latest: None,
         newer: false,
         error: None,
+        preview_latest: None,
     };
     crate::updates::UpdateStatus {
         dsh: none_component.clone(),
@@ -688,11 +689,13 @@ pub(crate) fn download_progress_bridge(
 
 /// 发射 `dsh:upgrade` 事件（4.4⑤：DSH 升级链路 running/done/failed，detail =
 /// 失败时安装器错误链含 pnpm 输出尾部；广播全窗口，关于页升级按钮消费）。
-pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str) {
+/// `installed` 仅 done 阶段有意义：false = 目标版本与已装一致短路跳过
+/// （前端提示「已是最新」而非「升级完成」）。
+pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str, installed: bool) {
     use tauri::Emitter;
     let _ = app.emit(
         "dsh:upgrade",
-        serde_json::json!({ "phase": phase, "detail": detail }),
+        serde_json::json!({ "phase": phase, "detail": detail, "installed": installed }),
     );
 }
 

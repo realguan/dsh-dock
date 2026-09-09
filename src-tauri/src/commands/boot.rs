@@ -100,8 +100,14 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
 }
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
+/// `version`（2026-09-09 版本选择器）：upgrade / upgrade_only 的显式目标版本
+/// （含 alpha 预览版，经版本列表选择进入）；None = 最新可接受版（稳定/rc）。
 #[tauri::command]
-pub fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+pub fn terminal_action(
+    app: tauri::AppHandle,
+    action: String,
+    version: Option<String>,
+) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let handle = app.clone();
@@ -113,22 +119,40 @@ pub fn terminal_action(app: tauri::AppHandle, action: String) -> Result<(), Stri
         // 失败，错误无任何可见出口，用户视角 = 「点了没反应，等了也没升级」。
         let only = action == "upgrade_only";
         if only || action == "upgrade" {
-            emit_upgrade(&handle, "running", "");
-            emit_step(&handle, 2, "running", "正在升级官方 DSH 到最新稳定版…");
+            emit_upgrade(&handle, "running", "", false);
+            let step_detail = match &version {
+                Some(v) => format!("正在安装 DSH {v}…"),
+                None => "正在升级官方 DSH 到最新稳定版…".to_string(),
+            };
+            emit_step(&handle, 2, "running", &step_detail);
             // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
             // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
             let resources_dir = crate::ui::resolve_resources_dir(&handle);
             let path_env = crate::resolve::effective_path();
-            match crate::updates::upgrade_engine_dsh(&data_dir, &resources_dir, &path_env) {
-                Ok(version) => {
-                    emit_step(&handle, 2, "done", &format!("DSH 已升级到 {version}"));
+            match crate::updates::upgrade_engine_dsh(
+                &data_dir,
+                &resources_dir,
+                &path_env,
+                version.as_deref(),
+            ) {
+                Ok(plan) => {
+                    let (installed_version, installed) = match &plan {
+                        crate::updates::UpgradePlan::Install(v) => (v, true),
+                        crate::updates::UpgradePlan::Skip(v) => (v, false),
+                    };
+                    let msg = if installed {
+                        format!("DSH 已升级到 {installed_version}")
+                    } else {
+                        format!("DSH 已是最新（{installed_version}）")
+                    };
+                    emit_step(&handle, 2, "done", &msg);
                     // 刷新版本状态（托盘/前端 chip）
                     refresh_update_ui(&handle, &state);
-                    emit_upgrade(&handle, "done", &version);
+                    emit_upgrade(&handle, "done", installed_version, installed);
                 }
                 Err(e) => {
                     tracing::error!(err = ?e, "dsh 升级失败");
-                    emit_upgrade(&handle, "failed", &format!("{e:#}"));
+                    emit_upgrade(&handle, "failed", &format!("{e:#}"), false);
                     emit_boot_error(&handle, &format!("升级失败：{e:#}"), "");
                     return;
                 }

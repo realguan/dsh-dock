@@ -52,8 +52,8 @@ describe("bootStore.setStep 推演", () => {
     st.setProgress({ kind: "node", current: 5, total: 10 })
     st.setError({ title: "x", detail: "y" })
     st.setVersions({
-      dsh: { current: "1", latest: null, newer: false, error: null },
-      client: { current: "1", latest: null, newer: false, error: null },
+      dsh: { current: "1", latest: null, newer: false, error: null, preview_latest: null },
+      client: { current: "1", latest: null, newer: false, error: null, preview_latest: null },
       node: { version: "v1", origin: "system" },
     })
     st.reset()

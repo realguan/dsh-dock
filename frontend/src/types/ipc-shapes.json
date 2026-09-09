@@ -22,11 +22,28 @@
     "detail",
     "skipped_existing"
   ],
+  "ComponentUpdate": [
+    "current",
+    "error",
+    "latest",
+    "newer",
+    "preview_latest"
+  ],
   "DshDiagnosticInfo": [
     "isReady",
     "path",
     "source",
     "version"
+  ],
+  "DshVersionEntry": [
+    "channel",
+    "published_at",
+    "relation",
+    "version"
+  ],
+  "DshVersionsResult": [
+    "current",
+    "versions"
   ],
   "NodeDiagnosticInfo": [
     "isReady",

@@ -1,8 +1,10 @@
 //! updates.rs —— 宿主 dsh 版本管理 + download 档实装（docs/contract.md「运行时策略」）。
 //!
 //! 壳是终端的**唯一网络面**（纪律：本模块之外不得触网）：
-//!   - 版本获取：npm registry packument（镜像链 npmmirror → npmjs），排序最高 = 目标
-//!     （H-1：rc 也追，不认 dist-tag）。
+//!   - 版本获取：npm registry packument（镜像链 npmmirror → npmjs）。升级口径 =
+//!     排序最高**可接受**版本（稳定/rc；2026-09-09 裁定，检测与升级同口径——
+//!     此前检测追排序最高含 alpha，出现「有新版但升级装不上」的假角标）；
+//!     alpha 等预览版只进版本列表（`list_dsh_versions`），经用户显式选择安装。
 //!   - node 兜底：用户无 node 时优先从 npmmirror、再从 nodejs.org 下载到**私有缓存**
 //!     （不替用户全局装 node，Q2b 推论 5），充当执行器。
 //!   - dsh 全局安装：优先使用用户已有 pnpm，失败后用执行器自带的 npm-cli；两者都按
@@ -468,10 +470,85 @@ pub fn parse_versions(packument: &serde_json::Value) -> Vec<String> {
     vs
 }
 
-/// 官方最新（排序最高，rc 也追）。网络失败返回 None（调用方走人工提示路径）。
-pub fn fetch_latest_version() -> Option<String> {
-    let packument = fetch_packument().ok()?;
-    parse_versions(&packument).into_iter().next()
+/// 单次 packument 的 dsh 版本口径拆解（纯函数，供测试）：返回
+/// `(可升级口径最高版, 预览口径最高版)`。可升级 = 排序最高**可接受**版本
+/// （稳定/rc，`is_acceptable_dsh_version`）；预览 = 排序最高版本若不可接受
+/// （alpha 等）则为其，与可升级口径同版时为 None。
+pub fn split_dsh_versions(packument: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let vs = parse_versions(packument);
+    let preview = vs.first().cloned();
+    let upgradable = vs.into_iter().find(|v| is_acceptable_dsh_version(v));
+    let preview_latest = match (&preview, &upgradable) {
+        (Some(p), Some(u)) if p == u => None,
+        (Some(_), _) => preview,
+        _ => None,
+    };
+    (upgradable, preview_latest)
+}
+
+// ---------- dsh 版本列表（版本选择器，2026-09-09） ----------
+
+/// 版本列表条目（`list_dsh_versions`；`relation` 由后端按 semver 比较——
+/// 前端不做版本比较，避免两套比较器漂移）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DshVersionEntry {
+    pub version: String,
+    /// stable / rc / alpha / other（`DshVersionChannel::as_str`）。
+    pub channel: &'static str,
+    /// 与当前已装版本的相对关系；当前版本未检出时一律 newer（无法判定新旧，
+    /// 重复安装同版无害——pnpm 幂等重装）。
+    pub relation: &'static str,
+    /// 发布时间（packument `time` 原文 RFC3339；registry 未记录为 None）。
+    pub published_at: Option<String>,
+}
+
+/// 版本列表响应：当前已装版本 + 降序条目。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DshVersionsResult {
+    pub current: Option<String>,
+    pub versions: Vec<DshVersionEntry>,
+}
+
+/// packument → 版本列表条目（纯函数，供测试）。只读 `time` 中与版本键同名的
+/// 条目（`created` / `modified` 等元键不进列表）。
+pub fn parse_dsh_version_entries(
+    packument: &serde_json::Value,
+    current: Option<&str>,
+) -> Vec<DshVersionEntry> {
+    parse_versions(packument)
+        .into_iter()
+        .map(|version| {
+            let relation = match current {
+                Some(c) => match resolve::compare_versions_asc(&version, c) {
+                    std::cmp::Ordering::Greater => "newer",
+                    std::cmp::Ordering::Equal => "current",
+                    std::cmp::Ordering::Less => "older",
+                },
+                None => "newer",
+            };
+            let published_at = packument
+                .get("time")
+                .and_then(|t| t.get(&version))
+                .and_then(|t| t.as_str())
+                .map(String::from);
+            DshVersionEntry {
+                channel: dsh_version_channel(&version).as_str(),
+                version,
+                relation,
+                published_at,
+            }
+        })
+        .collect()
+}
+
+/// dsh 版本列表（版本选择器数据源）：一次 packument 拉取，降序 + 通道 +
+/// 发布时间 + 与已装版本的相对关系。网络失败返回 Err（前端列表内展示重试）。
+pub fn list_dsh_versions(current: Option<&str>) -> Result<DshVersionsResult, String> {
+    let packument = fetch_packument().map_err(|e| format!("无法获取官方版本列表：{e:#}"))?;
+    Ok(DshVersionsResult {
+        current: current.map(String::from),
+        versions: parse_dsh_version_entries(&packument, current),
+    })
 }
 
 // ---------- 版本状态（更新检测） ----------
@@ -483,6 +560,11 @@ pub struct ComponentUpdate {
     pub latest: Option<String>,
     pub newer: bool,
     pub error: Option<String>,
+    /// 排序最高但**不在升级口径内**的预览版（alpha 等）；无或与 `latest` 同版为
+    /// None。2026-09-09：检测与升级口径对齐的配套字段——「有新版/升级」只按
+    /// 可接受口径（稳定/rc）判定，预览版经版本列表显式选择，不再伪装成新版。
+    /// 仅 dsh 维度使用；client 维度恒为 None。
+    pub preview_latest: Option<String>,
 }
 
 /// Node 运行时维度（只读信息，无升级动作——版本由下载计划决定）。
@@ -575,16 +657,28 @@ fn component_update(
         latest,
         newer,
         error,
+        preview_latest: None,
     }
 }
 
+/// dsh 维度检测（`check_now` 与测试共用）：可升级口径（稳定/rc 最高版）+
+/// 预览口径（`preview_latest`）一次 packument 拆解。
+fn dsh_component_update(current: Option<String>, packument: &serde_json::Value) -> ComponentUpdate {
+    let (upgradable, preview) = split_dsh_versions(packument);
+    let mut d = component_update(current, upgradable, None);
+    d.preview_latest = preview;
+    d
+}
+
 /// 一次完整检测（三维度）。网络失败不视为致命：对应维度 error 展示。
+/// dsh 维度 = 可升级口径（稳定/rc 最高版），预览版（排序最高但不可接受）走
+/// `preview_latest`——一次 packument 同时拆出两个口径（2026-09-09 假角标修复）。
 pub fn check_now(data_dir: &Path) -> UpdateStatus {
     let engine_dsh = engine_status(data_dir).dsh;
-    let dsh = match fetch_latest_version() {
-        Some(latest) => component_update(Some(engine_dsh).flatten().or(None), Some(latest), None),
-        None => component_update(
-            Some(engine_dsh).flatten().or(None),
+    let dsh = match fetch_packument() {
+        Ok(packument) => dsh_component_update(engine_dsh, &packument),
+        Err(_) => component_update(
+            engine_dsh,
             None,
             Some("registry 不可达或返回异常".to_string()),
         ),
@@ -605,11 +699,73 @@ pub fn check_now(data_dir: &Path) -> UpdateStatus {
     }
 }
 
-/// 升级引擎内 dsh 到最新稳定版（ADR-0010：升级全显式 + 引擎私有——不碰
-/// 用户全局安装）。返回实际写入的 dsh 版本。引擎 pnpm 缺位（boot 未跑成/
-/// 目录被清）先从捆绑包重铺；dsh 版本比对排除预发布（latest_stable）。
-pub fn upgrade_engine_dsh(data_dir: &Path, resources_dir: &Path, path_env: &str) -> Result<String> {
-    let version = latest_stable_dsh_version()?;
+/// 升级执行计划（纯函数 `plan_explicit` / `plan_default` 产出）：Skip = 目标
+/// 与已装一致，短路跳过安装；Install = 实际执行 `add -g`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpgradePlan {
+    Skip(String),
+    Install(String),
+}
+
+/// 显式指定的安装目标版本形状校验（纯函数，供测试）。只做形状闸（semver-ish
+/// 字符集 + 长度上限），**不按通道过滤**——alpha 经版本列表显式选择是合法目标。
+/// fail-closed 防注入：版本号会拼进 `pnpm add -g pkg@<version>` 的同一 argv，
+/// 虽有 `pkg@` 前缀兜底，仍拒绝 `-` 开头与越界字符（flag 注入反例见测试）。
+pub fn is_valid_dsh_version_spec(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 64
+        && !v.starts_with('-')
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+}
+
+/// 显式目标的升级计划（纯函数，供测试）：形状闸 + 同版本短路。不触网——
+/// 离线回退 / 同版本短路均可判（2026-09-09：同版本短路，此前每次点击都
+/// 空跑一遍 pnpm 解析+网络，用户视角 = 「升级了但没变化」）。
+pub fn plan_explicit(target: &str, current: Option<&str>) -> Result<UpgradePlan> {
+    if !is_valid_dsh_version_spec(target) {
+        anyhow::bail!("非法的 DSH 版本号：{target}");
+    }
+    if current == Some(target) {
+        Ok(UpgradePlan::Skip(target.to_string()))
+    } else {
+        Ok(UpgradePlan::Install(target.to_string()))
+    }
+}
+
+/// 缺省目标的升级计划（纯函数，供测试）：目标 = 最新可接受版（稳定/rc），
+/// 与已装一致则短路。
+pub fn plan_default(current: Option<&str>, latest_stable: &str) -> UpgradePlan {
+    if current == Some(latest_stable) {
+        UpgradePlan::Skip(latest_stable.to_string())
+    } else {
+        UpgradePlan::Install(latest_stable.to_string())
+    }
+}
+
+/// 升级引擎内 dsh（ADR-0010：升级全显式 + 引擎私有——不碰用户全局安装）。
+/// `target` 缺省 = 最新可接受版（稳定/rc，触网解析）；显式版本（含 alpha，
+/// 版本列表选择进入）过形状闸后安装，计划解析零网络（离线回退可判）。
+/// 返回实际落位版本与是否真执行了安装。引擎 pnpm 缺位（boot 未跑成/目录被清）
+/// 先从捆绑包重铺。
+pub fn upgrade_engine_dsh(
+    data_dir: &Path,
+    resources_dir: &Path,
+    path_env: &str,
+    target: Option<&str>,
+) -> Result<UpgradePlan> {
+    let current = engine_status(data_dir).dsh;
+    let plan = match target {
+        Some(v) => plan_explicit(v, current.as_deref())?,
+        None => plan_default(current.as_deref(), &latest_stable_dsh_version()?),
+    };
+    let version = match &plan {
+        UpgradePlan::Skip(v) => {
+            tracing::info!(version = %v, "dsh 目标版本与已装一致，短路跳过安装");
+            return Ok(plan);
+        }
+        UpgradePlan::Install(v) => v.clone(),
+    };
     tracing::info!(
         data_dir = %data_dir.display(),
         target = %version,
@@ -623,7 +779,7 @@ pub fn upgrade_engine_dsh(data_dir: &Path, resources_dir: &Path, path_env: &str)
     // 升级入口有自己的 busy 呈现（更新按钮），不消费 boot 进度卡——空回调。
     crate::engines::install_dsh_global(data_dir, &version, path_env, &mut |_, _, _| {})?;
     tracing::info!(version = %version, "dsh 升级完成");
-    Ok(version)
+    Ok(plan)
 }
 
 // ---------- dsh 全局安装（pnpm 引擎内通道） ----------
@@ -682,15 +838,51 @@ pub(crate) fn pnpm_allow_build_flags() -> Vec<String> {
         .collect()
 }
 
+/// dsh 版本通道（2026-09-09）：升级可接受口径 = Stable | Rc（即
+/// `is_acceptable_dsh_version`，单一事实源）；Alpha / Other（beta 等其余预发布
+/// 标签）只进版本列表，经用户显式选择安装，永不进升级判定与「有新版」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DshVersionChannel {
+    Stable,
+    Rc,
+    Alpha,
+    Other,
+}
+
+impl DshVersionChannel {
+    /// 序列化口径（`DshVersionEntry.channel`，前端按此映射徽章与文案）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DshVersionChannel::Stable => "stable",
+            DshVersionChannel::Rc => "rc",
+            DshVersionChannel::Alpha => "alpha",
+            DshVersionChannel::Other => "other",
+        }
+    }
+}
+
+/// 版本通道归类（纯函数，供测试）。
+pub fn dsh_version_channel(v: &str) -> DshVersionChannel {
+    let lower = v.to_ascii_lowercase();
+    if lower.contains("alpha") {
+        DshVersionChannel::Alpha
+    } else if lower.contains("-rc") || lower.contains(".rc") {
+        DshVersionChannel::Rc
+    } else if !v.contains('-') {
+        DshVersionChannel::Stable
+    } else {
+        DshVersionChannel::Other
+    }
+}
+
 /// 判断 dsh 版本是否满足引导要求：
 /// 稳定版（无连字符）与 rc 候选版（包含 -rc）均可接受；
 /// alpha 等未稳定的前置预览版本明确拒绝（防依赖未完整发布等启动事故）。
 pub fn is_acceptable_dsh_version(v: &str) -> bool {
-    let lower = v.to_ascii_lowercase();
-    if lower.contains("alpha") {
-        return false;
-    }
-    !v.contains('-') || lower.contains("-rc") || lower.contains(".rc")
+    matches!(
+        dsh_version_channel(v),
+        DshVersionChannel::Stable | DshVersionChannel::Rc
+    )
 }
 
 /// dsh 引导目标版本：排序最高可接受版本（稳定版优先；无稳定版时接受 rc，明确排除 alpha 等未稳定版本）。
@@ -909,6 +1101,163 @@ mod packument_tests {
         assert!(is_acceptable_dsh_version("0.1.0-rc.8"));
         assert!(!is_acceptable_dsh_version("0.1.2-alpha.2"));
         assert!(!is_acceptable_dsh_version("0.1.2-alpha.5"));
+    }
+
+    // ---------- dsh 版本口径与版本列表（2026-09-09 假角标修复 + 版本选择器）----------
+    //
+    // 复现：registry 高位版本只有 alpha（如实况 0.1.5-alpha.1 > 0.1.2-rc.1）时，
+    // 检测按「排序最高」报有新版、升级按「排除 alpha」装回同版——用户视角 =
+    // 「点了升级不成功也不报错」。修复后检测与升级同口径：可升级判定只认
+    // 稳定/rc，alpha 进 preview_latest 走版本列表显式选择。
+
+    /// 实况镜像 fixture：dist-tags.latest = 0.1.2-rc.1，高位只有 alpha。
+    fn dsh_packument() -> serde_json::Value {
+        serde_json::json!({
+            "dist-tags": {"latest": "0.1.2-rc.1", "alpha": "0.1.5-alpha.1"},
+            "versions": {
+                "0.1.2-rc.1": {},
+                "0.1.3-alpha.2": {},
+                "0.1.5-alpha.1": {}
+            },
+            "time": {
+                "created": "2026-08-01T00:00:00Z",
+                "modified": "2026-09-07T00:00:00Z",
+                "0.1.2-rc.1": "2026-09-04T09:00:00.000Z",
+                "0.1.3-alpha.2": "2026-08-30T00:00:00.000Z",
+                "0.1.5-alpha.1": "2026-09-07T00:00:00.000Z"
+            }
+        })
+    }
+
+    #[test]
+    fn version_channel_classifies_stable_rc_alpha_other() {
+        assert_eq!(dsh_version_channel("0.1.2"), DshVersionChannel::Stable);
+        assert_eq!(dsh_version_channel("0.1.2-rc.1"), DshVersionChannel::Rc);
+        assert_eq!(dsh_version_channel("0.1.0-RC8"), DshVersionChannel::Rc);
+        assert_eq!(dsh_version_channel("0.1.2.rc1"), DshVersionChannel::Rc);
+        assert_eq!(
+            dsh_version_channel("0.1.2-alpha.5"),
+            DshVersionChannel::Alpha
+        );
+        assert_eq!(
+            dsh_version_channel("0.1.2-beta.1"),
+            DshVersionChannel::Other
+        );
+        // 通道归类与可接受口径单源一致
+        assert!(is_acceptable_dsh_version("0.1.2.rc1"));
+        assert!(!is_acceptable_dsh_version("0.1.2-beta.1"));
+    }
+
+    #[test]
+    fn split_versions_alpha_above_rc_keeps_upgradable_and_preview() {
+        let (upgradable, preview) = split_dsh_versions(&dsh_packument());
+        assert_eq!(upgradable.as_deref(), Some("0.1.2-rc.1"));
+        assert_eq!(preview.as_deref(), Some("0.1.5-alpha.1"));
+    }
+
+    #[test]
+    fn split_versions_highest_acceptable_means_no_preview() {
+        let mut p = dsh_packument();
+        // 0.1.6-rc.1 排序高于 0.1.5-alpha.1 且可接受 → 不再报预览
+        p["versions"]["0.1.6-rc.1"] = serde_json::json!({});
+        let (upgradable, preview) = split_dsh_versions(&p);
+        assert_eq!(upgradable.as_deref(), Some("0.1.6-rc.1"));
+        assert_eq!(preview, None, "排序最高是可接受版时不再报预览");
+    }
+
+    #[test]
+    fn split_versions_alpha_only_registry_has_no_upgradable() {
+        let p = serde_json::json!({"versions": {"0.1.5-alpha.1": {}}});
+        let (upgradable, preview) = split_dsh_versions(&p);
+        assert_eq!(upgradable, None);
+        assert_eq!(preview.as_deref(), Some("0.1.5-alpha.1"));
+    }
+
+    /// 假角标回归：current 已是可升级口径最高版 → newer=false（修复前
+    /// fetch_latest_version 取 0.1.5-alpha.1 会误报 newer=true）。
+    #[test]
+    fn dsh_component_update_current_at_upgradable_is_not_newer() {
+        let d = dsh_component_update(Some("0.1.2-rc.1".to_string()), &dsh_packument());
+        assert!(
+            !d.newer,
+            "0.1.2-rc.1 已是可升级口径最高版，不得报「有新版」"
+        );
+        assert_eq!(d.latest.as_deref(), Some("0.1.2-rc.1"));
+        assert_eq!(d.preview_latest.as_deref(), Some("0.1.5-alpha.1"));
+    }
+
+    #[test]
+    fn version_entries_relation_channel_and_time() {
+        let entries = parse_dsh_version_entries(&dsh_packument(), Some("0.1.3-alpha.2"));
+        let vs: Vec<&str> = entries.iter().map(|e| e.version.as_str()).collect();
+        assert_eq!(vs, ["0.1.5-alpha.1", "0.1.3-alpha.2", "0.1.2-rc.1"], "降序");
+        let by_v = |v: &str| entries.iter().find(|e| e.version == v).unwrap();
+        let alpha = by_v("0.1.5-alpha.1");
+        assert_eq!(alpha.channel, "alpha");
+        assert_eq!(alpha.relation, "newer");
+        assert_eq!(
+            alpha.published_at.as_deref(),
+            Some("2026-09-07T00:00:00.000Z")
+        );
+        assert_eq!(by_v("0.1.3-alpha.2").relation, "current");
+        let rc = by_v("0.1.2-rc.1");
+        assert_eq!(rc.relation, "older");
+        assert_eq!(rc.channel, "rc");
+        // time 元键（created/modified）不进版本列表
+        assert!(entries.iter().all(|e| e.version != "created"));
+    }
+
+    #[test]
+    fn version_entries_without_current_are_all_newer() {
+        let entries = parse_dsh_version_entries(&dsh_packument(), None);
+        assert!(entries.iter().all(|e| e.relation == "newer"));
+    }
+
+    #[test]
+    fn version_spec_shape_gate_rejects_injection_and_empty() {
+        // 正例：稳定 / rc / alpha / 带构建元数据
+        assert!(is_valid_dsh_version_spec("0.1.2"));
+        assert!(is_valid_dsh_version_spec("0.1.2-rc.1"));
+        assert!(is_valid_dsh_version_spec("0.1.5-alpha.1"));
+        assert!(is_valid_dsh_version_spec("0.1.5-alpha.1+build.7"));
+        // 反例：空 / flag 注入 / 越界字符 / 过长
+        assert!(!is_valid_dsh_version_spec(""));
+        assert!(!is_valid_dsh_version_spec(
+            "0.1.2 --registry=http://evil.example"
+        ));
+        assert!(!is_valid_dsh_version_spec("-flag"));
+        assert!(!is_valid_dsh_version_spec("0.1.2/../../etc"));
+        assert!(!is_valid_dsh_version_spec(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn plan_upgrade_defaults_latest_short_circuits_same_and_gates_shape() {
+        use UpgradePlan::{Install, Skip};
+        // 缺省目标 = 最新可接受版；与已装一致 → 短路（同版本空跑修复）
+        assert_eq!(
+            plan_default(Some("0.1.2-rc.1"), "0.1.2-rc.1"),
+            Skip("0.1.2-rc.1".to_string())
+        );
+        assert_eq!(
+            plan_default(Some("0.1.1-rc.2"), "0.1.2-rc.1"),
+            Install("0.1.2-rc.1".to_string())
+        );
+        // 显式 alpha 是合法目标（版本列表选择进入）；与已装一致 → 短路
+        assert_eq!(
+            plan_explicit("0.1.5-alpha.1", None).unwrap(),
+            Install("0.1.5-alpha.1".to_string())
+        );
+        assert_eq!(
+            plan_explicit("0.1.5-alpha.1", Some("0.1.5-alpha.1")).unwrap(),
+            Skip("0.1.5-alpha.1".to_string())
+        );
+        // 当前版本未检出 → 不短路（pnpm 幂等重装无害）
+        assert_eq!(
+            plan_explicit("0.1.2-rc.1", None).unwrap(),
+            Install("0.1.2-rc.1".to_string())
+        );
+        // 非法形状（flag 注入反例）拒绝
+        assert!(plan_explicit("x --registry=http://evil", None).is_err());
     }
 
     // ---------- HTTP seam（离线，2026-09-08 架构评审批次 5 · P6）----------

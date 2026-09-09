@@ -13,8 +13,11 @@ import type {
   AggregatePlugin,
   BootErrorPayload,
   AggregateSource,
+  ComponentUpdate,
   CopyConfigOutcome,
   DshDiagnosticInfo,
+  DshVersionEntry,
+  DshVersionsResult,
   NodeDiagnosticInfo,
   PlatformDiagnosticInfo,
   PluginRowState,
@@ -128,6 +131,26 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       sessionId: true,
       success: true,
       message: true,
+    })
+  })
+
+  it("更新域（2026-09-09 版本选择器：ComponentUpdate / DshVersionEntry / DshVersionsResult）", () => {
+    expectShape<ComponentUpdate>("ComponentUpdate", {
+      current: true,
+      latest: true,
+      newer: true,
+      error: true,
+      preview_latest: true,
+    })
+    expectShape<DshVersionEntry>("DshVersionEntry", {
+      version: true,
+      channel: true,
+      relation: true,
+      published_at: true,
+    })
+    expectShape<DshVersionsResult>("DshVersionsResult", {
+      current: true,
+      versions: true,
     })
   })
 

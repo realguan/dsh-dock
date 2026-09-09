@@ -24,6 +24,21 @@ pub fn check_updates(app: tauri::AppHandle) -> Result<(), String> {
     std::thread::spawn(move || refresh_update_ui(&handle, &state));
     Ok(())
 }
+/// DSH 版本列表（版本选择器数据源，2026-09-09）：packument 镜像链拉取 +
+/// 通道归类 + 与已装版本的相对关系（比较在后端做，前端不实现第二套比较器）。
+#[tauri::command]
+pub async fn list_dsh_versions(
+    app: tauri::AppHandle,
+) -> Result<crate::updates::DshVersionsResult, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::updates::list_dsh_versions(
+            crate::updates::detect_current_version(&data_dir).as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("版本列表任务异常终止：{e}"))?
+}
 /// 读取桌面客户端自更新状态（即读，不触网；前端初始渲染）。
 #[tauri::command]
 pub fn get_client_update(app: tauri::AppHandle) -> Result<crate::updater::ClientUpdate, String> {
