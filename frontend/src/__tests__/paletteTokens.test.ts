@@ -18,6 +18,13 @@ const RAW_SOURCES = import.meta.glob("../**/*.{ts,tsx,css,js}", {
   eager: true,
 }) as Record<string, string>
 
+/** index.html 是 SPA 入口，不在上面 glob 的范围内（在 frontend/ 根而非 src/）。 */
+const INDEX_HTML = import.meta.glob("../../index.html", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>
+
 /** 被 token 取代的原生色系（收口范围）。
  *  rose/amber/emerald/sky = 状态四族；purple/violet/indigo = 分类档；
  *  slate = 深色终端面。gray/zinc/neutral/stone 一并禁——它们是「没有语义的灰」，
@@ -89,9 +96,51 @@ describe("调色板 token 收口闸门", () => {
     expect("text-emerald-700".match(BANNED)).toHaveLength(1)
     expect("bg-amber-500/10".match(BANNED)).toHaveLength(1)
     expect("border-slate-800".match(BANNED)).toHaveLength(1)
+    // 变体前缀与任意值也必须拦下（2026-09-10 实测探针验证）
+    expect("hover:bg-purple-500".match(BANNED)).toHaveLength(1)
+    expect("md:text-sky-700".match(BANNED)).toHaveLength(1)
+    expect("data-[state=open]:text-teal-700".match(BANNED)).toHaveLength(1)
+    expect("bg-emerald-500/[0.07]".match(BANNED)).toHaveLength(1)
     expect("text-ok".match(BANNED)).toBeNull()
     expect("bg-term-panel".match(BANNED)).toBeNull()
     expect("text-dim".match(BANNED)).toBeNull()
+  })
+
+  it("不得用内联 style 绕过 token（类名闸门的盲区）", () => {
+    // 探针实测：`style={{ color: "#047857" }}` 不会被类名正则命中——
+    // 这条堵住该盲区。样式需动态时请用 CSS 变量或 @theme token。
+    const INLINE_COLOR = /style=\{\{[^}]*(?:#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\()/
+    const offenders = Object.entries(RAW_SOURCES)
+      .filter(([path]) => !path.endsWith("/paletteTokens.test.ts"))
+      .filter(([path]) => !isExempt(path))
+      .filter(([, src]) => INLINE_COLOR.test(src))
+      .map(([path]) => path)
+    expect(offenders, "内联 style 里的色值绕过了 token 体系——请改用 token 类名").toEqual([])
+  })
+
+  it("冷启动底色：index.html 首帧与 --color-bg 逐值一致", () => {
+    // 「冷启动无闪色」要求首帧 HTML 底色 = CSS --color-bg = 原生窗口 background_color。
+    // 2026-09-10 批次 E 发现这三处**长期不一致**（HTML/CSS 是 #f7f8fb，
+    // ui.rs 是 #f9fafb），注释宣称同调而事实不符。
+    // 本闸门覆盖前两处；第三处（ui.rs）由 Rust 侧
+    // `ui::window_background_tests` 从同一份 index.css 解析比对——前端测试无法
+    // 读取 frontend/ 之外的源码，故拆两处而非强行合并。
+    const html = Object.entries(INDEX_HTML).find(([path]) =>
+      path.endsWith("/index.html"),
+    )
+    const css = Object.entries(RAW_SOURCES).find(([path]) => path.endsWith("/index.css"))
+    expect(html, "未找到 index.html").toBeDefined()
+    expect(css, "未找到 index.css").toBeDefined()
+    const htmlHex = html![1].match(/html\s*\{[^}]*background:\s*(#[0-9a-fA-F]{6})/)?.[1]
+    const cssHex = css![1]
+      .slice(css![1].indexOf("@theme {"))
+      .match(/--color-bg:\s*(#[0-9a-fA-F]{6})/)?.[1]
+    expect(htmlHex, "index.html 首帧底色未取到").toBeDefined()
+    expect(cssHex, "index.css --color-bg 未取到").toBeDefined()
+    expect(
+      htmlHex!.toLowerCase(),
+      "index.html 首帧底色与 --color-bg 不一致——WebView 首帧会闪色",
+    ).toBe(cssHex!.toLowerCase())
   })
 
   it("shadcn 语义层由 :root 映射到 token，不得再手抄 hex", () => {

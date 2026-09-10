@@ -12,6 +12,16 @@ use tauri::Manager;
 use crate::boot::ShellState;
 use crate::is_allowed_external_url;
 
+/// 主窗口原生底色 = `frontend/src/index.css` 的 `--color-bg`。
+///
+/// 「冷启动无闪色」要求首帧 HTML 底色、CSS `--color-bg`、原生窗口
+/// `background_color` 三处**逐值一致**。2026-09-10 批次 E 发现这三处长期不一致
+/// （HTML/CSS 是 #f7f8fb，本文件是 #f9fafb），注释宣称同调而事实不符。
+/// 现由 `background_color_matches_theme_token` 测试逐值锁定——改 index.css 的
+/// `--color-bg` 而漏改此处即测试红。
+const WINDOW_BACKGROUND: tauri::utils::config::Color =
+    tauri::utils::config::Color(241, 244, 249, 255);
+
 /// 创建主窗口（含外链拦截）。原静态配置（tauri.conf.json windows）等价迁移：
 /// 1280x820、min 960x640、可缩放、居中、浅色底。
 ///
@@ -75,10 +85,8 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
         .min_inner_size(960.0, 640.0)
         .resizable(true)
         .center()
-        // 2026-09-10 批次 E：原值 (249,250,251)=#f9fafb 与本仓库 CSS `--color-bg`
-        // 从来**就不一致**（旧值 #f7f8fb），"冷启动无闪色"的注释与事实不符。
-        // 本批随 token 收口把 bg 定为 #f1f4f9=(241,244,249) 并在此对齐。
-        .background_color(tauri::utils::config::Color(241, 244, 249, 255))
+        // 2026-09-10 批次 E：底色见 WINDOW_BACKGROUND 常量（三处一致性有测试锁定）。
+        .background_color(WINDOW_BACKGROUND)
         .on_navigation(move |url| {
             // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
             //
@@ -450,4 +458,72 @@ pub(crate) fn shell_app_url(app: &tauri::AppHandle) -> tauri::Url {
         "tauri://localhost/"
     };
     tauri::Url::parse(s).expect("valid shell url")
+}
+
+#[cfg(test)]
+mod window_background_tests {
+    use super::WINDOW_BACKGROUND;
+
+    /// 冷启动底色三处一致性闸门（2026-09-10 批次 E）。
+    ///
+    /// 「冷启动无闪色」= 首帧 HTML 底色 ≡ CSS `--color-bg` ≡ 原生窗口
+    /// `background_color`。批次 E 发现三处长期不一致（HTML/CSS #f7f8fb、
+    /// 本文件 #f9fafb），注释宣称同调而事实不符。此处从**源码**解析
+    /// `--color-bg` 与 index.html 的首帧底色逐值比对——改一处漏改另两处即红。
+    fn parse_theme_bg(css: &str) -> (u8, u8, u8) {
+        let start = css.find("@theme {").expect("index.css 缺少 @theme 块");
+        let end = css[start..].find("\n}").expect("index.css @theme 块未闭合") + start;
+        let block = &css[start..end];
+        let key = "--color-bg:";
+        let at = block.find(key).expect("index.css 缺少 --color-bg");
+        let hex = block[at + key.len()..]
+            .trim_start()
+            .split(|c: char| !c.is_ascii_hexdigit() && c != '#')
+            .next()
+            .expect("--color-bg 取值解析失败");
+        let hex = hex.trim_start_matches('#');
+        assert_eq!(hex.len(), 6, "--color-bg 应为 6 位 hex，实际 {hex}");
+        let b = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex 解析失败");
+        (b(0), b(2), b(4))
+    }
+
+    #[test]
+    fn background_color_matches_theme_token() {
+        let css = include_str!("../../frontend/src/index.css");
+        let (r, g, b) = parse_theme_bg(css);
+        assert_eq!(
+            (
+                WINDOW_BACKGROUND.0,
+                WINDOW_BACKGROUND.1,
+                WINDOW_BACKGROUND.2
+            ),
+            (r, g, b),
+            "ui.rs 的 WINDOW_BACKGROUND 与 index.css 的 --color-bg 不一致——\
+             冷启动会闪色。请同步（并检查 frontend/index.html 的首帧底色）"
+        );
+        assert_eq!(WINDOW_BACKGROUND.3, 255, "窗口底色必须不透明");
+    }
+
+    #[test]
+    fn index_html_first_paint_matches_theme_token() {
+        let css = include_str!("../../frontend/src/index.css");
+        let html = include_str!("../../frontend/index.html");
+        let (r, g, b) = parse_theme_bg(css);
+        let expect = format!("#{r:02x}{g:02x}{b:02x}");
+        let at = html.find("html {").expect("index.html 缺少首帧底色样式块");
+        let block = &html[at..];
+        assert!(
+            block.contains(&expect),
+            "frontend/index.html 的首帧底色应为 {expect}（与 --color-bg 一致），\
+             否则 WebView 首帧会闪色"
+        );
+    }
+
+    #[test]
+    fn theme_bg_parser_rejects_missing_token() {
+        // 闸门自检：解析器必须在 token 缺失时 panic，而不是静默返回假值。
+        let result =
+            std::panic::catch_unwind(|| parse_theme_bg("@theme {\n  --color-ink: #191d27;\n}"));
+        assert!(result.is_err(), "缺少 --color-bg 时解析器应报错");
+    }
 }

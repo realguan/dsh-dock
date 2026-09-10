@@ -6,10 +6,13 @@
     <title>DSH Dock</title>
     <link rel="icon" type="image/png" href="/icon.png" />
     <!-- 首帧保险：CSS 模块加载前的底色 = @theme --color-bg，与原生窗口
-         background_color (#f9fafb) 同调，避免冷启动闪色。 -->
+         background_color 同调，避免冷启动闪色。
+         2026-09-10 批次 E：此处与 ui.rs 的 (241,244,249) 必须逐值一致——
+         三处（本文件 / index.css / ui.rs）由 paletteTokens.test.ts 闸门锁定，
+         任一处改色漏改另两处即测试红。 -->
     <style>
       html {
-        background: #f7f8fb;
+        background: #f1f4f9;
       }
     </style>
   </head>
