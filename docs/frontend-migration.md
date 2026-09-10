@@ -7,6 +7,13 @@
 > **计数口径（2026-09-08 补注）**：本文是迁移期记录，文中「12 个命令」是当时的数量，
 > **不是**现行数量。现行命令清单的唯一事实源是 `src-tauri/src/ipc.rs::COMMANDS`
 > （2026-09-08 为 55 条），且由 `ipc::gate_tests` 与 `lib/tauri.ts` 双向闸门钉住。
+>
+> **品牌口径（2026-09-10 补注）**：本文提到的 `mark.svg`（DeepSeek 官方鲸标几何 +
+> CSS mask）是迁移期方案。2026-09-10 品牌换代后，页内徽章改由 `Emblem` 组件渲染
+> `frontend/public/icon.png` / `whale-chan-cutout.png`，`mark.svg` 已删除
+> （连带 `index.css` 的 `.emblem::after` mask 规则）。**现行品牌规则的唯一事实源
+> = AGENTS §3**；下文 §0 契约区、§目录树、§4.4 规范等处的 `mark.svg` 表述一律读作
+> 迁移期状态。
 
 ---
 

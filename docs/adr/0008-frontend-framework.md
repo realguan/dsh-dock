@@ -30,6 +30,11 @@
   > 历史决策记录保持原状，后续以 AGENTS §0/§6 为准。
 - **三平台 CI 必须全绿**：macOS / Windows / Linux 构建和测试通过。
 - **品牌规则不变**：官方徽章用 `mark.svg` + CSS mask，禁止手绘 logo。
+  > **注（2026-09-10 品牌换代，取代本条）**：徽章**不再**用 `mark.svg` + CSS mask。
+  > 现行品牌为 dsh dock 专属 3D 鲸鱼娘 Whale-chan，页内徽章统一经 `Emblem` 组件渲染
+  > `frontend/public/icon.png`（`framed`）或 `whale-chan-cutout.png`（透明立绘），
+  > `frontend/public/mark.svg` 已随本次清理删除。**现行品牌规则的唯一事实源 = AGENTS §3**；
+  > 本条与下方方案 A 对照项中的品牌表述均为 2026-08-26 决策当时的状态。
 - **零数据库**：前端状态在内存中（Zustand），不引入持久化 store。
 
 ## 3. 备选方案及评估
