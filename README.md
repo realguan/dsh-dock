@@ -36,7 +36,7 @@
 
 **DSH Dock** 是为 DSH 打造的**跨平台桌面客户端与独立控制中心**（基于 Tauri v2 + Rust + React 19），补齐官方 CLI 尚未提供的可视化管理体验：
 
-- 🪶 **安装包 18 MB 起** — 各平台独立打包，内置 pnpm 引导器，不预装 Node.js 与 DSH
+- 🪶 **安装包 22 MB 起** — 各平台独立打包，内置 pnpm 引导器，不预装 Node.js 与 DSH
 - 🛡️ **严守 Non-Fork 原则** — 不修改上游 DSH 任何源码，通过官方 CLI 规范与文件契约协同，与上游始终保持同步
 - 🌐 **多语言界面** — 支持中文与 English，跟随系统语言自动切换
 - ⚡ **开箱即用** — 无需预装 Node.js / pnpm / DSH，首次启动自动补齐
@@ -239,9 +239,9 @@ DSH 长任务会话在遭遇断电、进程强杀后，日志序列可能出现�
 
 | 操作系统 | 支持架构 | 安装包格式 | 体积（约） | 说明 |
 | :--- | :--- | :--- | ---: | :--- |
-| **macOS** | Apple Silicon (arm64) | `.dmg` | 18 MB | 原生 ARM64，开箱即用 |
-| **Windows** | x64 | `.exe` (NSIS) / `.msi` | 38 / 39 MB | 支持 Win 10 / 11，内置 WSL2 穿透；ARM64 设备经系统仿真运行 |
-| **Linux** | x64 (amd64) | `.deb` / `.rpm` | 22 MB | Ubuntu / Debian / Fedora 等主流发行版 |
+| **macOS** | Apple Silicon (arm64) | `.dmg` | 22 MB | 原生 ARM64，开箱即用 |
+| **Windows** | x64 | `.exe` (NSIS) / `.msi` | 39 / 40 MB | 支持 Win 10 / 11，内置 WSL2 穿透；ARM64 设备经系统仿真运行 |
+| **Linux** | x64 (amd64) | `.deb` / `.rpm` | 23 MB | Ubuntu / Debian / Fedora 等主流发行版 |
 | **Linux** | x64 (amd64) | `.AppImage` | 94 MB | 免安装单文件；因内置 WebKit 运行时故体积偏大 |
 
 > [!IMPORTANT]
