@@ -8,12 +8,119 @@
 //! `commands/*` 与 `lib.rs::run` → `boot::`。不反向依赖 `commands::`。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
 use crate::{manifest, settings, shell, ui};
+
+/// 交接（handoff）意图类型（ADR-0014）：控制中心发起时的语义分叉——
+/// 目标与当前会话同一 profile = 重启；不同 = 切换；无会话在跑 = 启动。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HandoffKind {
+    Start,
+    Restart,
+    Switch,
+}
+
+/// 交接阶段（ADR-0014）：四段导轨的真相源，由壳在已知节点推进
+/// （停旧 → 起新 → 等就绪 → 进工作台）。前端另有基于 boot:step 的兜底折算。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HandoffPhase {
+    /// 已受理，正在停旧会话（teardown 等 grace，最长 3s）
+    Stopping,
+    /// 停毕，正在解析/准备环境并 spawn 新会话
+    Booting,
+    /// 会话已起，等待 DSH 服务就绪（日志轮询）
+    Waiting,
+    /// 已就绪，正在导航进工作台（含 Cookie 预注入）
+    Entering,
+    /// 已导航（工作台页面自行加载）
+    Ready,
+    /// 启动失败（错误卡已在主窗口渲染）
+    Failed,
+}
+
+/// 交接意图：一次「停旧 → 起新 → 进工作台」的贯穿状态（ADR-0014）。
+/// 只活在内存（壳运行时无状态）；`started_at_ms` 让两个窗口的计时器
+/// **跨文档同源**——主窗口整文档替换后计数不归零，这正是"贯穿"的观感来源。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Handoff {
+    pub(crate) target: String,
+    pub(crate) kind: HandoffKind,
+    pub(crate) phase: HandoffPhase,
+    /// 交接起始时刻（Unix ms）：两窗计时器同源，跨文档不归零。
+    /// JSON 字段名固定 `startedAt`（前端契约，见 handoff_json_shape 测试）。
+    #[serde(rename = "startedAt")]
+    pub(crate) started_at_ms: u64,
+    /// 启动代际令牌（与本意图同批次的启动线程持有）
+    pub(crate) generation: u64,
+}
+
+/// 交接意图视为"仍在途"的时间上限：超过即判陈旧，前端据此收起导轨、幕布不再
+/// 自发现。取值与 `BOOT_TIMEOUT`（启动等待硬上限 90s）对齐——一次启动最迟在这个
+/// 窗口内落成 Ready 或 Failed，还停在中间阶段的只可能是被遗弃的意图。
+/// 代价：交接后 90s 内手动刷新工作台会闪一帧幕布（首帧内容一出即撤），
+/// 观感上等同"刷新有过渡"，可接受。
+pub(crate) const HANDOFF_TTL_MS: u64 = 90_000;
+
+impl Handoff {
+    pub(crate) fn begin(target: String, kind: HandoffKind, generation: u64) -> Self {
+        Self {
+            target,
+            kind,
+            phase: HandoffPhase::Stopping,
+            started_at_ms: now_ms(),
+            generation,
+        }
+    }
+
+    /// 幕布显示判据（纯函数，供单测）：阶段仍在途且未超 TTL。
+    pub(crate) fn curtain_visible(&self, now_ms: u64) -> bool {
+        matches!(
+            self.phase,
+            HandoffPhase::Stopping
+                | HandoffPhase::Booting
+                | HandoffPhase::Waiting
+                | HandoffPhase::Entering
+                | HandoffPhase::Ready
+        ) && now_ms.saturating_sub(self.started_at_ms) < HANDOFF_TTL_MS
+    }
+
+    /// 快照 JSON：`get_boot_status.intent` 与 `switch_profile` 返回值**同一形状**
+    /// （意图字段 + Rust 裁决的 `active`）。TTL 只在 Rust 这一处持有，注入脚本与
+    /// 前端都不再各抄一份常量。形状由 `ipc-shapes.json` 的 `HandoffSnapshot` 闸住。
+    pub(crate) fn snapshot_json(&self, now_ms: u64) -> serde_json::Value {
+        let Ok(mut value) = serde_json::to_value(self) else {
+            return serde_json::Value::Null;
+        };
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "active".to_string(),
+                serde_json::Value::Bool(self.curtain_visible(now_ms)),
+            );
+        }
+        value
+    }
+}
+
+/// 毫秒时间戳（交接计时用；SystemTime 异常回退 0，不 panic）。
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 启动代际闸门（纯函数，供单测）：令牌不等于当前代际、或应用正在退出
+/// → 本次启动已被取代，**必须在 spawn 之前静默退出**（ADR-0014 §3 方案 A）。
+pub(crate) fn boot_token_stale(current: u64, token: u64, shutting_down: bool) -> bool {
+    shutting_down || current != token
+}
 
 /// 壳运行时状态：当前执行环境会话（executor）+ 主窗口句柄 + 待选 profile 的会话。
 pub(crate) struct ShellState {
@@ -46,6 +153,16 @@ pub(crate) struct ShellState {
     pub(crate) boot_error: Mutex<Option<serde_json::Value>>,
     /// 最近发射的 boot:step 列表（用于前端挂载后经 get_boot_status 补水）。
     pub(crate) boot_steps: Mutex<Vec<serde_json::Value>>,
+    /// 启动代际令牌源（2026-09-10，ADR-0014）：每次「开始一次启动」自增；
+    /// 启动线程持令牌，各分叉点校验——被取代者在 spawn 前静默退出，
+    /// 从根上消灭并发双 spawn（旧实现里后到者会覆盖会话槽丢掉旧会话）。
+    pub(crate) boot_generation: AtomicU64,
+    /// 应用退出中（2026-09-10，ADR-0014）：RunEvent::Exit 先置位再收会话，
+    /// 阻断在途启动线程在退出之后 spawn 出无人认领的 dsh。
+    pub(crate) shutting_down: AtomicBool,
+    /// 交接意图（2026-09-10，ADR-0014）：重启/切换的贯穿状态，两窗共用；
+    /// 经 get_boot_status 暴露给前端（含主窗口整文档替换后的首次补水）。
+    pub(crate) handoff: Mutex<Option<Handoff>>,
 }
 
 impl ShellState {
@@ -57,16 +174,70 @@ impl ShellState {
             steps.clear();
         }
     }
+
+    /// 开启一次启动：代际自增并返回本次令牌（所有启动路径的唯一入口）。
+    pub(crate) fn begin_boot(&self) -> u64 {
+        self.boot_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// 本次启动是否已被取代（含应用退出）：各分叉点在 spawn / 导航前调用。
+    pub(crate) fn boot_superseded(&self, token: u64) -> bool {
+        boot_token_stale(
+            self.boot_generation.load(Ordering::SeqCst),
+            token,
+            self.shutting_down.load(Ordering::SeqCst),
+        )
+    }
+
+    /// 推进在途交接的阶段（无交接或已终结时静默：不复活旧意图）。
+    pub(crate) fn advance_handoff(&self, phase: HandoffPhase) {
+        let mut guard = match self.handoff.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if let Some(h) = guard.as_mut() {
+            h.phase = phase;
+        }
+    }
+
+    /// 当前交接意图的快照（JSON；无则 null）。`active` 由 Rust 统一裁决。
+    pub(crate) fn handoff_json(&self) -> serde_json::Value {
+        let Ok(guard) = self.handoff.lock() else {
+            return serde_json::Value::Null;
+        };
+        match guard.as_ref() {
+            Some(h) => h.snapshot_json(now_ms()),
+            None => serde_json::Value::Null,
+        }
+    }
 }
 
 /// 启动当前会话（probe 已完成）：start → 就绪等待 → 导航 → 监护。
 /// 统一入口，与执行环境（local / wsl）无关——具体动作经 BootSink 上抛、
 /// 就绪经 executor::log_path + check_exited 轮询。
+///
+/// `token` = 本次启动的代际令牌（`ShellState::begin_boot` 发放，ADR-0014）：
+/// 每个分叉点校验，被取代者**在 spawn 之前**静默退出；已 spawn 才被取代的
+/// 就地收口（teardown），绝不留无人认领的子进程。
 pub(crate) fn run_executor_session(
     state: Arc<ShellState>,
     app: tauri::AppHandle,
     mut executor: Box<dyn crate::executor::Executor>,
+    token: u64,
 ) -> Result<(), String> {
+    if state.boot_superseded(token) {
+        tracing::info!("启动代际已刷新，放弃本次会话（未 spawn）");
+        return Ok(());
+    }
+    // 会话槽纪律（ADR-0014 §3 方案 A）：落新会话前必须先收旧会话。槽位是
+    // `Option<Box<dyn Executor>>` 赋值，直接覆盖 = 把旧 dsh 丢在地上（进程继续跑、
+    // 壳再也收不走，连 RunEvent::Exit 都够不着）。此处在 spawn 之前收，避免
+    // 同一 profile 出现两个 dsh。
+    reap_previous_session(&state);
+    if state.boot_superseded(token) {
+        tracing::info!("收口旧会话期间启动代际被刷新，放弃本次会话（未 spawn）");
+        return Ok(());
+    }
     tracing::info!("启动 {} 执行环境会话", executor.kind().as_str());
     {
         let mut sink = boot_sink(&app);
@@ -76,11 +247,18 @@ pub(crate) fn run_executor_session(
             return Err(e);
         }
     } // sink 借 app 结束，之后 app 可安全 move 进监护线程
+      // spawn 之后才被取代（双击重启 / 退出竞态）：就地收口刚起的会话。
+    if state.boot_superseded(token) {
+        tracing::warn!("会话已 spawn 但启动代际被刷新，就地收口（不留孤儿）");
+        let _ = executor.teardown();
+        return Ok(());
+    }
     let log = executor.log_path();
     // 记录本线程的会话代际：若等待期间会话被外部切换（teardown_session），
     // 旧线程据此静默退出，不误报错误卡、不误导航/监护新会话。
     let epoch = state.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
     *state.session.lock().unwrap() = Some(executor);
+    state.advance_handoff(HandoffPhase::Waiting);
 
     std::thread::spawn(move || {
         // 短锁轮询：每轮锁一次会话槽检查是否已退出（不独占锁 90s，
@@ -111,7 +289,7 @@ pub(crate) fn run_executor_session(
         match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT)
         {
             shell::ReadyOutcome::Exited(code) => {
-                if !session_is_current(&state, epoch) {
+                if !session_is_current(&state, epoch) || state.boot_superseded(token) {
                     return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
                 }
                 // 会话先退出了：真失败，立即报错（不等满上限）。
@@ -126,7 +304,7 @@ pub(crate) fn run_executor_session(
                 );
             }
             shell::ReadyOutcome::Stalled => {
-                if !session_is_current(&state, epoch) {
+                if !session_is_current(&state, epoch) || state.boot_superseded(token) {
                     return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
                 }
                 // 进程活着但长时间未就绪：停掉旧会话再报错，重试不残留孤儿。
@@ -137,7 +315,7 @@ pub(crate) fn run_executor_session(
                 emit_boot_error(&app, &format!("DSH 未在预期时间内就绪{detail}"), &tail);
             }
             shell::ReadyOutcome::Ready(raw) => {
-                if !session_is_current(&state, epoch) {
+                if !session_is_current(&state, epoch) || state.boot_superseded(token) {
                     return; // 就绪前被切走：不再导航/监护新会话
                 }
                 match tauri::Url::parse(&raw) {
@@ -157,7 +335,11 @@ pub(crate) fn run_executor_session(
                                 url.clone()
                             }
                         };
+                        // 交接阶段推进（ADR-0014）：导航前标记「进入工作台」，
+                        // 主窗口新文档首帧即按此渲染同款幕布，直到 React 接管。
+                        state.advance_handoff(HandoffPhase::Entering);
                         let _ = state.window.navigate(navigate_url);
+                        state.advance_handoff(HandoffPhase::Ready);
                         emit_step(&app, 4, "done", "已进入工作台");
                         guard_session(&app, &state, &log, epoch);
                     }
@@ -249,6 +431,19 @@ pub(crate) fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {
     Ok(())
 }
 
+/// 会话槽纪律（2026-09-10，ADR-0014）：落新会话前先收旧会话。
+/// 与 `teardown_session` 的差别 = 语义：本函数是**防御性收口**，命中即说明
+/// 上层漏了一次 teardown（并发启动 / 竞态），必须 warn 留痕而不是静默覆盖。
+pub(crate) fn reap_previous_session(state: &Arc<ShellState>) {
+    let previous = state.session.lock().unwrap().take();
+    if let Some(mut ex) = previous {
+        tracing::warn!("会话槽仍有在途会话，落新会话前先行收口（防子进程逃逸）");
+        if let Err(e) = ex.teardown() {
+            tracing::error!("收口旧会话失败（进程可能残留）：{e}");
+        }
+    }
+}
+
 /// dsh 就绪后的监护：会话与壳同生命周期——会话退出即错误卡。
 /// 在就绪导航成功后的同一监护线程内持续运行（不新开线程，避免竞态）。
 /// 只监护自己启动的代际：会话被外部切换后立即静默退出（不误监护新会话）。
@@ -327,6 +522,9 @@ pub(crate) fn guard_session(
                     .unwrap()
                     .unwrap_or(crate::settings::Mode::Local);
 
+                // 自动拉起同样是一次全新的启动：刷新代际令牌（ADR-0014），
+                // 使任何在途的旧启动线程立即失效，不与本次自动恢复抢会话槽。
+                let token = state.begin_boot();
                 let _ = teardown_session(state);
 
                 std::thread::spawn(move || {
@@ -334,7 +532,9 @@ pub(crate) fn guard_session(
                     let shell_url = ui::shell_app_url(&handle);
                     let _ = state_clone.window.navigate(shell_url);
                     match executor_for_mode(mode, &handle, data_dir) {
-                        Ok(executor) => launch_executor_after_probe(state_clone, handle, executor),
+                        Ok(executor) => {
+                            launch_executor_after_probe(state_clone, handle, executor, token)
+                        }
                         Err(e) => emit_boot_error(&handle, &format!("自动恢复启动失败: {e}"), ""),
                     }
                 });
@@ -425,16 +625,22 @@ pub(crate) fn ensure_switchable_profile(
 
 /// probe 完成后的统一分派：NeedsProfile → 出选择器（沿用 F-b）；Ready → 启动会话。
 /// setup 启动线程 / retry 重试 / boot_in_wsl 切换共用——执行环境不感知。
+///
+/// 失效判据（2026-09-10 起，ADR-0014）：**代际令牌**取代原先"进入函数时才读
+/// epoch"的写法。旧写法在两次快速切换下会读到同一个（最新的）epoch，两道都放行
+/// → 双方各 spawn 一个 dsh，后到者覆盖会话槽、丢掉前者的子进程。令牌在发起侧
+/// （switch_profile / switch_mode / 首启 / 重试 / 崩溃守护）同步领取：后到者作废
+/// 前者的全部后续动作，先到者只要没被取代就照常启动。
 pub(crate) fn launch_executor_after_probe(
     state: Arc<ShellState>,
     app: tauri::AppHandle,
     mut executor: Box<dyn crate::executor::Executor>,
+    token: u64,
 ) {
-    // 记录 probe 开始时的会话代际：probe 期间（可能长达分钟级——WSL 自动安装
-    // dsh）用户若经菜单/托盘切换了环境，`switch_mode` 会 teardown + epoch++；
-    // 旧 probe 线程完成后必须静默丢弃，否则会覆盖新会话（自动安装让窗口变长，
-    // 0.4.2 修复前该竞态一直存在，只是窗口小）。
-    let probe_epoch = state.session_epoch.load(Ordering::SeqCst);
+    if state.boot_superseded(token) {
+        tracing::info!("启动代际已刷新，丢弃本次探测（未 spawn）");
+        return;
+    }
     // 强制目标注入（4.3⑥ 管理器切换 / 错误卡重试延续）：probe 内按档位消费。
     // 首启与模式切换此处为 None（switch_mode 清空后重走常规解析）。
     executor.set_forced_profile(state.forced_profile.lock().unwrap().clone());
@@ -445,8 +651,9 @@ pub(crate) fn launch_executor_after_probe(
         let mut progress = download_progress_bridge(&app);
         executor.probe(&mut sink, &mut progress)
     };
-    if probe_epoch != state.session_epoch.load(Ordering::SeqCst) {
-        tracing::info!("probe 期间会话被切换（epoch 变更），丢弃本次探测结果");
+    // probe 期间（可能长达分钟级——WSL 自动安装 dsh）被取代：静默丢弃。
+    if state.boot_superseded(token) {
+        tracing::info!("probe 期间启动代际被刷新，丢弃本次探测结果");
         return;
     }
     match probe_result {
@@ -472,7 +679,7 @@ pub(crate) fn launch_executor_after_probe(
                 let hd = app.clone();
                 std::thread::spawn(move || refresh_update_ui(&hd, &st));
             }
-            if let Err(e) = run_executor_session(state, app.clone(), executor) {
+            if let Err(e) = run_executor_session(state, app.clone(), executor, token) {
                 tracing::error!("启动 DSH 失败: {e}");
             }
         }
@@ -516,7 +723,14 @@ pub(crate) fn executor_for_mode(
 
 /// retry/upgrade 共用：按**当前会话的运行环境**重建执行器并重新走 probe →
 /// 分派（不再是永远 local——WSL 会话挂掉后重试仍留在 WSL）。
-pub(crate) fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data_dir: PathBuf) {
+/// `token` 由调用方在动作发起时领取（重试也是一次新启动，须作废在途的旧启动）；
+/// 交接场景下由 switch_profile 传同一令牌，保持「一次意图 = 一个代际」。
+pub(crate) fn lib_boot_again(
+    state: Arc<ShellState>,
+    app: tauri::AppHandle,
+    data_dir: PathBuf,
+    token: u64,
+) {
     state.clear_boot_cache();
     let mode = state
         .active_mode
@@ -524,8 +738,10 @@ pub(crate) fn lib_boot_again(state: Arc<ShellState>, app: tauri::AppHandle, data
         .unwrap()
         .unwrap_or(settings::Mode::Local);
     *state.active_mode.lock().unwrap() = Some(mode);
+    // 交接阶段推进：旧会话已停、环境解析与 spawn 归「启动新会话」（ADR-0014）。
+    state.advance_handoff(HandoffPhase::Booting);
     match executor_for_mode(mode, &app, data_dir) {
-        Ok(executor) => launch_executor_after_probe(state, app, executor),
+        Ok(executor) => launch_executor_after_probe(state, app, executor, token),
         Err(e) => emit_boot_error(&app, &e, ""),
     }
 }
@@ -539,8 +755,12 @@ pub(crate) fn switch_mode(
     data_dir: PathBuf,
 ) {
     tracing::info!("切换运行环境 → {}", mode.as_str());
+    // 先领令牌再动手（ADR-0014）：模式切换同样是一次新启动，在途启动线程即刻作废。
+    let token = state.begin_boot();
     let _ = teardown_session(&state);
     state.clear_boot_cache();
+    // 模式切换不是 profile 交接：清掉交接意图，控制中心导轨也随之收起。
+    *state.handoff.lock().unwrap() = None;
     // 清空强制目标：模式切换重走常规解析（defaultProfile → 选择器），
     // 不继承上一次的 profile 切换目标（4.3⑥）。
     *state.forced_profile.lock().unwrap() = None;
@@ -564,10 +784,42 @@ pub(crate) fn switch_mode(
         let shell_url = ui::shell_app_url(&app_handle);
         let _ = state.window.navigate(shell_url);
         match executor_for_mode(mode, &app, data_dir) {
-            Ok(executor) => launch_executor_after_probe(state, app, executor),
+            Ok(executor) => launch_executor_after_probe(state, app, executor, token),
             Err(e) => emit_boot_error(&app, &e, ""),
         }
     });
+}
+
+/// 主窗口当前是否停在 dsh 工作台上（宿主 origin 精确比对，同 switcher.js 判据）。
+/// 幕布只往工作台页面盖——壳页面（启动屏/选择器）由 React 自己画，不需要幕布。
+pub(crate) fn workbench_page_visible(window: &tauri::WebviewWindow, state: &ShellState) -> bool {
+    let Some(workbench) = state.workbench_url.lock().unwrap().clone() else {
+        return false;
+    };
+    let Ok(current) = window.url() else {
+        return false;
+    };
+    current.origin() == workbench.origin()
+}
+
+/// 在**当前文档**上落下交接幕布（ADR-0014）：停旧会话之前调用，用户看到的是
+/// 「正在重启「X」」而不是一个已经死掉的工作台页面。脚本由主窗口
+/// document-start 注入（injected/handoff-curtain.js）提供，未注入（旧文档/
+/// 浏览器预览）时是空操作。参数即交接意图，与启动屏/控制中心同源同款。
+///
+/// `{sticky:true}`：本页马上会被 navigate 换掉，幕布不按"页面 load 完就撤"
+/// 的常规判据收起，只由脚本内的硬上限（12s）兜底——否则会在 teardown 的
+/// 那几秒里先撤幕、把死页面重新露出来。
+pub(crate) fn show_handoff_curtain(window: &tauri::WebviewWindow, handoff: &Handoff) {
+    let Ok(params) = serde_json::to_string(handoff) else {
+        return;
+    };
+    let script = format!(
+        "window.__dshDockCurtain && window.__dshDockCurtain.show({params}, {{ sticky: true }});"
+    );
+    if let Err(e) = window.eval(script) {
+        tracing::warn!("交接幕布注入失败（不阻断切换）：{e}");
+    }
 }
 
 /// dsh 启动等待的硬上限（2026-08-24 放宽）：Windows 冷启动被 Defender 首扫 /
@@ -720,6 +972,9 @@ pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &s
         if let Ok(mut err) = shell_state.boot_error.lock() {
             *err = Some(value.clone());
         }
+        // 交接失败 → 控制中心导轨推进到终态（失败必须在用户所在窗口可见，
+        // ADR-0014 §2.7）。emit_boot_error 是所有失败路径的唯一出口，故在此收口。
+        shell_state.advance_handoff(HandoffPhase::Failed);
     }
     let _ = app.emit("boot:error", value);
 }
@@ -799,3 +1054,92 @@ extern "C" fn signal_exit_handler(_: i32) {
 #[cfg(unix)]
 pub(crate) static SIGNAL_EXIT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+
+    /// 交接意图的语义分叉与幕布可见性（ADR-0014）：四段在途阶段可见，
+    /// 失败/超 TTL 不可见——防上一次交接的意图让工作台普通刷新误显幕布。
+    #[test]
+    fn curtain_visible_only_while_in_flight_and_fresh() {
+        for (phase, expected) in [
+            (HandoffPhase::Stopping, true),
+            (HandoffPhase::Booting, true),
+            (HandoffPhase::Waiting, true),
+            (HandoffPhase::Entering, true),
+            (HandoffPhase::Ready, true),
+            (HandoffPhase::Failed, false),
+        ] {
+            let h = Handoff {
+                target: "web".into(),
+                kind: HandoffKind::Restart,
+                phase,
+                started_at_ms: 1_000,
+                generation: 7,
+            };
+            assert_eq!(
+                h.curtain_visible(1_500),
+                expected,
+                "阶段 {phase:?} 的幕布可见性判定不符"
+            );
+        }
+        let h = Handoff {
+            target: "web".into(),
+            kind: HandoffKind::Restart,
+            phase: HandoffPhase::Ready,
+            started_at_ms: 1_000,
+            generation: 7,
+        };
+        assert!(
+            !h.curtain_visible(1_000 + HANDOFF_TTL_MS),
+            "超出 TTL 的陈旧交接不得再显幕布"
+        );
+        // 护栏：TTL 必须覆盖一次启动的硬上限（BOOT_TIMEOUT），否则慢启动
+        // （首次下载/冷加载）会被误判成"被遗弃"，导轨中途消失。
+        assert!(
+            HANDOFF_TTL_MS >= BOOT_TIMEOUT.as_millis() as u64,
+            "交接 TTL 不得短于启动等待硬上限"
+        );
+        // 时钟回拨（now < started）不得误判为活跃窗口内
+        assert!(h.curtain_visible(1_001));
+    }
+
+    /// 交接起始状态：阶段 = 停旧会话，计时基准点即创建时刻（两窗共用同一时间戳）。
+    #[test]
+    fn handoff_begins_in_stopping_phase() {
+        let h = Handoff::begin("web".into(), HandoffKind::Switch, 3);
+        assert_eq!(h.phase, HandoffPhase::Stopping);
+        assert_eq!(h.generation, 3);
+        assert_eq!(h.target, "web");
+        assert!(h.started_at_ms > 0, "计时基准必须来自真实时钟");
+    }
+
+    /// 启动代际闸门（ADR-0014 §3 方案 A）：同代际且未退出 → 放行；
+    /// 代际被刷新（后到者作废前者）或应用退出中 → 一律拦截。
+    #[test]
+    fn boot_token_gate_blocks_superseded_and_shutdown() {
+        assert!(!boot_token_stale(5, 5, false), "同代际且未退出应放行");
+        assert!(boot_token_stale(6, 5, false), "代际被刷新应拦截");
+        assert!(boot_token_stale(5, 5, true), "应用退出中应拦截");
+        assert!(boot_token_stale(6, 5, true), "退出且代际刷新同样拦截");
+    }
+
+    /// 交接意图的 JSON 形状是前端消费契约（camelCase 字段 + snake_case 枚举）。
+    #[test]
+    fn handoff_json_shape_is_frontend_contract() {
+        let h = Handoff {
+            target: "web".into(),
+            kind: HandoffKind::Restart,
+            phase: HandoffPhase::Waiting,
+            started_at_ms: 1_700_000_000_000,
+            generation: 9,
+        };
+        let v = serde_json::to_value(&h).unwrap();
+        assert_eq!(v["target"], "web");
+        assert_eq!(v["kind"], "restart");
+        assert_eq!(v["phase"], "waiting");
+        assert_eq!(v["startedAt"], 1_700_000_000_000u64);
+        assert_eq!(v["generation"], 9);
+    }
+}

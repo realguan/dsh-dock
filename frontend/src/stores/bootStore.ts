@@ -10,6 +10,7 @@ import type {
   BootStepState,
   VersionsSnapshot,
 } from "@/types/events"
+import type { HandoffIntent, HandoffSnapshot } from "@/types/ipc"
 
 export const STEP_COUNT = 5
 
@@ -64,11 +65,19 @@ interface BootState {
   progress: DownloadProgressState | null
   error: BootErrorEvent | null
   versions: VersionsSnapshot | null
+  /**
+   * 交接意图（ADR-0014）：一次重启/切换的贯穿状态。两个窗口各自持有，
+   * 但**内容同源**——控制中心由 `switchProfile` 的返回值播种，主窗口在
+   * 整文档重载后经 `get_boot_status` 补水；`startedAt` 相同故计时连续。
+   */
+  intent: (HandoffIntent & { active?: boolean }) | null
 
   setStep: (e: BootStepEvent) => void
   setProgress: (p: BootProgressEvent) => void
   setError: (e: BootErrorEvent) => void
   setVersions: (v: VersionsSnapshot) => void
+  /** 播种/更新交接意图（null = 清除，导轨随之收起） */
+  setIntent: (intent: HandoffSnapshot | HandoffIntent | null) => void
   clearError: () => void
   reset: () => void
 }
@@ -87,6 +96,7 @@ export const useBootStore = create<BootState>((set) => ({
   progress: null,
   error: null,
   versions: null,
+  intent: null,
 
   setStep: (e) =>
     set((st) => {
@@ -122,6 +132,7 @@ export const useBootStore = create<BootState>((set) => ({
 
   setError: (e) => set({ error: e }),
   setVersions: (v) => set({ versions: v }),
+  setIntent: (intent) => set({ intent }),
   clearError: () => set({ error: null }),
   reset: () =>
     set(() => {
@@ -132,6 +143,8 @@ export const useBootStore = create<BootState>((set) => ({
         progress: null,
         error: null,
         versions: null,
+        // 意图不随 reset 清空：reset 是「开始新一轮启动」的语义（旧步骤作废），
+        // 而意图正是这一轮的贯穿标识——清掉它导轨就断了。
       }
     }),
 }))

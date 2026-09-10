@@ -18,6 +18,7 @@ import type {
   DshDiagnosticInfo,
   DshVersionEntry,
   DshVersionsResult,
+  HandoffSnapshot,
   NodeDiagnosticInfo,
   PlatformDiagnosticInfo,
   PluginRowState,
@@ -73,6 +74,17 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       bundles: true,
       dependencies: true,
       web_ui: true,
+    })
+  })
+
+  it("HandoffSnapshot（camelCase：交接意图 + Rust 裁决的 active，ADR-0014）", () => {
+    expectShape<HandoffSnapshot>("HandoffSnapshot", {
+      target: true,
+      kind: true,
+      phase: true,
+      startedAt: true,
+      generation: true,
+      active: true,
     })
   })
 

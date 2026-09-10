@@ -1,10 +1,12 @@
 // 切换确认对话框（4.3⑥，ADR-0009 §4 三次修订）。切换 = 停当前 dsh 以目标
 // profile 重启：进行中任务会中断，这是唯一需要用户点头的点——要素文案不得精简。
 // 无活跃会话时管理器不弹本窗（无损操作，直接切）。
+//
+// 2026-09-10（ADR-0014）：真正的切换动作上提为页面传入的 `onSubmit`——切完
+// 控制中心要立刻起贯穿导轨（交接意图由 Rust 返回，两窗共用同一 startedAt），
+// 对话框不再自己拿这个状态，只保留"忙碌/失败就地反馈"的局部态。
 import { useState } from "react"
-import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
-import { useProfilesStore } from "@/stores/profilesStore"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -19,6 +21,7 @@ export function ProfileSwitchDialog({
   target,
   active,
   restart = false,
+  onSubmit,
   onClose,
   onDone,
 }: {
@@ -28,6 +31,8 @@ export function ProfileSwitchDialog({
   active: string | null
   /** target === active：重启语义（同 profile 停止重起），文案分叉 */
   restart?: boolean
+  /** 执行切换（页面层：调 IPC + 播种交接意图）；抛错则本窗就地展示 */
+  onSubmit: (target: string) => Promise<void>
   onClose: () => void
   /** 切换指令已被壳受理后的页面级提示 */
   onDone: () => void
@@ -47,10 +52,7 @@ export function ProfileSwitchDialog({
     if (!target || busy) return
     setBusy(true)
     setError(null)
-    // 立即清空活跃 profile 态，防止重启时因为旧值残留瞬间跳过 loading 过渡态
-    useProfilesStore.setState({ activeProfile: null })
-    api
-      .switchProfile(target)
+    onSubmit(target)
       .then(() => {
         setBusy(false)
         onDone()

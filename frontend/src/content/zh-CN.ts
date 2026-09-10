@@ -39,6 +39,28 @@ export const t = {
     viewTimeline: "查看启动详情",
     hideTimeline: "收起详情",
   },
+  // 交接（ADR-0014）：一次重启/切换的四段贯穿状态。同一条导轨同时出现在
+  // 控制中心与主窗口启动屏（同一视图模型），计时器跨窗口、跨文档连续。
+  handoff: {
+    titleStart: (name: string) => `正在启动「${name}」`,
+    titleRestart: (name: string) => `正在重启「${name}」`,
+    titleSwitch: (name: string) => `正在切换到「${name}」`,
+    stageStopping: "停止旧会话",
+    stageBooting: "启动新会话",
+    stageWaiting: "等待就绪",
+    stageEntering: "进入工作台",
+    phaseStopping: "正在停止当前会话…",
+    phaseBooting: "正在准备并启动新会话…",
+    phaseWaiting: "服务已启动，正在等待就绪…",
+    phaseEntering: "已就绪，正在打开工作台界面…",
+    phaseReady: "工作台已就绪",
+    phaseFailed: "启动中断——详情见主窗口错误卡",
+    elapsedTitle: "本次操作已用时（跨窗口连续计时）",
+    focusWorkbench: "查看进度",
+    enterWorkbench: "进入工作台",
+    viewFailure: "查看错误详情",
+    dismissFailure: "收起这条失败提示",
+  },
   // 错误动作文案表：boot:error payload 的 actions[] 只给 id，文案在此映射；
   // 组件层以 t.error.actions[id] ?? id 兜底。
   error: {

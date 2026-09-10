@@ -21,6 +21,7 @@ export function BootTimeline({
   subtitle,
   danger = false,
   banner,
+  meta,
 }: {
   /** 卡头标题：当前步骤名 / 下载准备期文案 / 错误标题（调用方推演） */
   title: string
@@ -29,6 +30,8 @@ export function BootTimeline({
   danger?: boolean
   /** 卡头与步骤列表之间的瞬态区块（下载进度条） */
   banner?: ReactNode
+  /** 卡头右侧附加信息（交接计时等），排布在分段进度左侧 */
+  meta?: ReactNode
 }) {
   const { t } = useI18n()
   const steps = useBootStore((s) => s.steps)
@@ -62,6 +65,7 @@ export function BootTimeline({
             </p>
           )}
         </div>
+        {meta && <div className="shrink-0">{meta}</div>}
         <div
           className="flex shrink-0 items-center gap-1"
           role="progressbar"

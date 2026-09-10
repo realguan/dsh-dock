@@ -25,15 +25,20 @@ pub fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), Stri
         .ok_or_else(|| "无待启动任务（请重新打开终端）".to_string())?;
     executor.select_profile(profile);
     let handle = app.clone();
+    // 选择器落地也是一次新启动（ADR-0014 代际令牌）：领新令牌，作废在途启动线程。
+    let token = state.begin_boot();
     // 后台线程启动（npm/下载动作不阻塞）
     std::thread::spawn(move || {
-        if let Err(e) = run_executor_session(state, handle.clone(), executor) {
+        if let Err(e) = run_executor_session(state, handle.clone(), executor, token) {
             tracing::error!("启动 DSH 失败: {e}");
         }
     });
     Ok(())
 }
 /// 读取启动阶段缓存的状态与错误（前端挂载时补水，解决 early emit 竞态丢失事件的问题）。
+/// 2026-09-10（ADR-0014）：新增 `intent`（交接意图）——主窗口在切换/重启后是**整文档
+/// 重载**，新文档只剩这一条通道能拿到「我是被谁重启的、从什么时候开始」，
+/// 于是启动屏与幕布才能续上控制中心那条导轨与计时器。
 #[tauri::command]
 pub fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
@@ -47,11 +52,13 @@ pub fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         Ok(serde_json::json!({
             "steps": steps,
             "error": error,
+            "intent": shell_state.handoff_json(),
         }))
     } else {
         Ok(serde_json::json!({
             "steps": [],
             "error": null,
+            "intent": serde_json::Value::Null,
         }))
     }
 }
@@ -83,6 +90,9 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     let state = app.state::<Arc<ShellState>>().inner().clone();
     state.clear_boot_cache();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 选择落地同样是一次全新启动（ADR-0014）：领令牌作废在途启动线程。
+    let token = state.begin_boot();
+    *state.handoff.lock().unwrap() = None;
     if set_default {
         // load-modify-save：同 switch_mode，不得抹掉其他已存字段。
         let mut shell_settings = crate::settings::load(&data_dir);
@@ -93,7 +103,7 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     *state.active_mode.lock().unwrap() = Some(m);
     let handle = app.clone();
     std::thread::spawn(move || match executor_for_mode(m, &handle, data_dir) {
-        Ok(executor) => launch_executor_after_probe(state, handle, executor),
+        Ok(executor) => launch_executor_after_probe(state, handle, executor, token),
         Err(e) => emit_boot_error(&handle, &e, ""),
     });
     Ok(())
@@ -162,8 +172,9 @@ pub fn terminal_action(
                 return;
             }
         }
-        // 重新走解析链 + 启动
-        crate::boot::lib_boot_again(state, handle.clone(), data_dir);
+        // 重新走解析链 + 启动（重试同样领新令牌：作废在途的旧启动线程）
+        let token = state.begin_boot();
+        crate::boot::lib_boot_again(state, handle.clone(), data_dir, token);
         let _ = handle;
     });
     Ok(())

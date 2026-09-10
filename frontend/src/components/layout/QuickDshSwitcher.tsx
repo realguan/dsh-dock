@@ -1,12 +1,17 @@
 // QuickDshSwitcher: 控制中心顶栏返回 DSH 主工作台的精致胶囊挂件。
 // 视觉上采用半透毛玻璃胶囊设计，平时精简展示「返回工作台」，Hover 时平滑展开快捷键徽章。
 // 支持与主工作台共用一组快捷键（⌘, / Ctrl+,）实现双向来回一键 Toggle 切换。
+//
+// 2026-09-10（ADR-0014）：交接（重启/切换）期间这颗胶囊不再假装工作台活着——
+// 呼吸灯转琥珀、文案转「启动中…」、就绪后转「进入工作台」，与控制中心导轨同一
+// 真相（bootStore.intent）。旧实现里绿色呼吸灯在 dsh 已被杀掉的几秒里照常亮着。
 import { useEffect, useState } from "react"
 import { ArrowUpRight } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { listen } from "@tauri-apps/api/event"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n } from "@/stores/i18nStore"
+import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { logger } from "@/lib/logger"
 import type { ShellSettings } from "@/types/ipc"
@@ -16,8 +21,13 @@ export function QuickDshSwitcher() {
   const { platform } = usePlatform()
   const isMac = platform.os === "macos"
   const { activeProfile } = useProfilesStore()
+  const intent = useBootStore((s) => s.intent)
   const [switching, setSwitching] = useState(false)
   const [shortcutKey, setShortcutKey] = useState<string>("default")
+
+  // 交接三态：in-flight（停机并在启动）/ ready（工作台已导航）/ 无交接
+  const handoffReady = intent ? intent.phase === "ready" : false
+  const handoffBusy = intent !== null && !handoffReady && intent.phase !== "failed"
 
   useEffect(() => {
     api.getShellSettings()
@@ -88,15 +98,27 @@ export function QuickDshSwitcher() {
       aria-label={t.profiles.switchToDshTip}
       className="group relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line bg-panel/80 px-2.5 text-xs font-semibold text-ink shadow-2xs backdrop-blur-md transition-all duration-200 hover:border-brand/40 hover:bg-panel hover:shadow-xs active:scale-95 cursor-pointer disabled:opacity-70"
     >
-      {/* 活跃状态微型呼吸指示灯 */}
+      {/* 活跃状态微型呼吸指示灯（交接期间转琥珀：工作台此刻并不活着） */}
       <span className="relative flex size-2 shrink-0 items-center justify-center">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+        <span
+          className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 ${
+            handoffBusy ? "bg-amber-400" : "bg-emerald-400"
+          }`}
+        />
+        <span
+          className={`relative inline-flex size-1.5 rounded-full ${
+            handoffBusy ? "bg-amber-500" : "bg-emerald-500"
+          }`}
+        />
       </span>
 
       {/* 文本主体 */}
       <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand-deep transition-colors whitespace-nowrap">
-        {t.profiles.switchToDsh}
+        {handoffBusy
+          ? t.profiles.reloadingWorkbench
+          : handoffReady
+            ? t.handoff.enterWorkbench
+            : t.profiles.switchToDsh}
       </span>
 
       {/* 关联 Profile 简要标记（若存在） */}

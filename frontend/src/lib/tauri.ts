@@ -25,6 +25,7 @@ import type {
   PluginUpdateReport,
   ProfileDetail,
   ProfileSummary,
+  HandoffSnapshot,
   RepairOutcome,
   SessionItem,
   ShellSettings,
@@ -36,6 +37,8 @@ import type {
 export interface BootStatusResult {
   steps: unknown[]
   error: unknown | null
+  /** 交接意图（ADR-0014）：主窗口整文档重载后靠它续上控制中心那条导轨与计时 */
+  intent?: HandoffSnapshot | null
 }
 
 export const api = {
@@ -81,8 +84,10 @@ export const api = {
   deleteProfile: (profile: string) => invoke<DeleteOutcome>("delete_profile", { profile }),
   setDefaultProfile: (profile: string) => invoke<void>("set_default_profile", { profile }),
   getDefaultProfile: () => invoke<string | null>("get_default_profile"),
-  // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）
-  switchProfile: (profile: string) => invoke<void>("switch_profile", { profile }),
+  // 切换 = 停当前会话以目标 profile 重启（ADR-0009 §4 三次修订；确认在前端）。
+  // 返回交接意图（ADR-0014）：控制中心据此立刻起贯穿导轨，与主窗口共享同一
+  // startedAt/generation（两窗计时器同源，跨文档不归零）。
+  switchProfile: (profile: string) => invoke<HandoffSnapshot>("switch_profile", { profile }),
   getActiveProfile: () => invoke<string | null>("get_active_profile"),
   // 4.4① 插件清单：静态读文件层；运行态 = 回环只读快照（仅活跃会话有数据）
   listProfilePlugins: (profile: string) =>

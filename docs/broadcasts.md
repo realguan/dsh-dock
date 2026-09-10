@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-09-10 宪法级（AGENTS §9 索引）· ADR-0014 重启/切换交接带 + 启动代际闸门 + Windows 进程树收口 —— guan（AI 协作）
+
+- 变更（ADR-0014，`docs/adr/0014-restart-handoff-continuity.md`）：
+  1. **交接意图（handoff）**：`boot.rs::Handoff`（target/kind/phase/startedAt/generation）为内存态贯穿状态，`switch_profile` 返回、`get_boot_status.intent` 补水；两个窗口用同一纯模型 `lib/handoff.ts::deriveHandoff` 折算同一条四段导轨（停旧/起新/等就绪/进工作台）+ 同一计时器（startedAt 跨文档不归零）。
+  2. **主窗口三段承接**：新增 `frontend/src/injected/handoff-curtain.js`（document-start 幕布，自发现 + Rust `eval` sticky 注入），覆盖「旧工作台 → 壳启动屏 → 新工作台」两次整文档替换的空档；React 一挂载即接管。
+  3. **控制中心不再说谎**：删掉 1.2s 轮询 + 15s 兜底的临时过渡态，改由导轨讲述真相；「运行中」徽标在交接结束前不点亮（旧实现早于真实可用状态）。
+  4. **子进程逃逸修复（审计发现）**：① 会话槽 `Option<Box<dyn Executor>>` 直接赋值会把旧 dsh 丢在地上——落新会话前 `reap_previous_session` 先收口；② `probe_epoch` 晚读导致两次快速切换双双放行 → 改为**启动代际令牌**（`begin_boot` / `boot_superseded`），spawn 前/后逐个分叉点校验；③ `RunEvent::Exit` 先置 `shutting_down` 再收会话，退出竞态不再留孤儿；④ Windows `stop_dsh` 由 `child.kill()`（只杀 `cmd.exe` 壳层，pnpm shim 的 node 继续跑）改为 `taskkill /PID /T /F` 整树收口。
+  5. 契约闸门：`ipc-shapes.json` 增 `HandoffSnapshot`（Rust `handoff_json_shape` ↔ TS `ipcShapes.test`）。
+- 影响：AGENTS §9 索引新增 0014 行（宪法级改动，已落档）；`switch_profile` 返回值由 `()` 变交接意图快照（前端同步）；`get_boot_status` payload 增 `intent` 字段（向后兼容）。行为可见变化：重启/切换全程有连续 loading 贯穿，失败在控制中心可见。
+- 凭据：`cargo test` 241 绿（新增 5：交接阶段/意图起始/代际闸门/快照形状/Windows 收树参数）；`cargo fmt --check` + `clippy -D warnings` 绿；前端 `typecheck`/`lint`/`test` 绿（190，新增 handoff 模型 13 例）；实机验证清单（macOS/Windows/WSL）待排期，见 ADR-0014 §5。
+
 ### 2026-09-09 快车道直推 · 迁移器拒绝会话归类修正——不再误标「需自愈」（实测 8650d6f2） —— guan（AI 协作）
 
 - 变更：

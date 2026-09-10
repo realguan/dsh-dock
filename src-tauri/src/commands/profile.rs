@@ -171,25 +171,49 @@ pub fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, Stri
 /// = 星标）；失败落错误卡，重试经 forced_profile 延续同一目标，不自动回滚。
 /// 仅 webUi 候选（非 webUi 无工作台 URL 可导航）；bundle 快照档由 probe 内
 /// 档位守卫忽略强制目标。WSL 模式同链路（guest 脚本已参数化）。
+///
+/// 2026-09-10（ADR-0014）交接化重构，返回交接意图（供控制中心立即起导轨）：
+/// 1. 先领启动代际令牌——在途的旧启动线程就此作废（并发双击不再双 spawn）；
+/// 2. 建交接意图（两窗贯穿状态，`get_boot_status` 暴露给刚重载的主窗口）；
+/// 3. **先落幕布再杀进程**：主窗口若正停在工作台上，先给它盖上「正在重启…」，
+///    用户不会看到一个已经死掉的工作台页面（旧顺序 = 先 teardown 再导航）；
+/// 4. teardown 旧会话 → 带令牌回启动屏重启。
 #[tauri::command]
-pub fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+pub fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<serde_json::Value, String> {
     crate::profiles::validate_profile_name(&profile)?;
     let candidates = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
     ensure_switchable_profile(&profile, &candidates)?;
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 语义分叉（导轨文案/首启与重启不同款）：目标 == 当前会话占用 = 重启。
+    let kind = match active_session_profile(&app) {
+        Some(active) if active == profile => crate::boot::HandoffKind::Restart,
+        Some(_) => crate::boot::HandoffKind::Switch,
+        None => crate::boot::HandoffKind::Start,
+    };
+    // 1) 代际令牌：本次启动是唯一有效的一次（ADR-0014）。
+    let token = state.begin_boot();
+    // 2) 交接意图：两窗共用（含主窗口整文档重载后的补水）。
+    let handoff = crate::boot::Handoff::begin(profile.clone(), kind, token);
+    let handoff_json = handoff.snapshot_json(crate::boot::now_ms());
+    *state.handoff.lock().unwrap() = Some(handoff.clone());
+    // 3) 幕布：仅当主窗口此刻确实停在工作台上（壳页面不需要——React 自己画）。
+    if crate::boot::workbench_page_visible(&state.window, &state) {
+        crate::boot::show_handoff_curtain(&state.window, &handoff);
+    }
+    // 4) 停旧 → 带令牌重启。
     let _ = teardown_session(&state);
     *state.forced_profile.lock().unwrap() = Some(profile.clone());
-    tracing::info!("切换 profile → {profile}");
+    tracing::info!("切换 profile → {profile}（kind={kind:?}, gen={token}）");
     let handle = app.clone();
     std::thread::spawn(move || {
         // 先回壳 boot 屏再启动：事件总线模块加载期装配——晚挂监听吞首发
         // 遥测（AGENTS §4.3）；就绪后 run_executor_session 导航进新工作台。
         let shell_url = crate::ui::shell_app_url(&handle);
         let _ = state.window.navigate(shell_url);
-        lib_boot_again(state, handle, data_dir);
+        lib_boot_again(state, handle, data_dir, token);
     });
-    Ok(())
+    Ok(handoff_json)
 }
 /// 当前会话占用的 profile（None = 无活跃会话）：管理器「运行中」徽标与切换
 /// 确认文案的数据源（读侧，与删除/重命名防护同源 `active_session_profile`）。

@@ -449,6 +449,19 @@ mod gate_tests {
                 versions: Vec::new(),
             }
         );
+        // 交接快照（ADR-0014）：get_boot_status.intent 与 switch_profile 返回值
+        // 同一形状；`active` 由 Rust 裁决（TTL 不外泄到前端/注入脚本）。
+        assert_shape!(
+            "HandoffSnapshot",
+            crate::boot::Handoff {
+                target: String::new(),
+                kind: crate::boot::HandoffKind::Restart,
+                phase: crate::boot::HandoffPhase::Stopping,
+                started_at_ms: 0,
+                generation: 0,
+            }
+            .snapshot_json(0)
+        );
         assert_shape!(
             "SessionItem",
             SessionItem {

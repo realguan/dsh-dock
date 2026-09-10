@@ -8,6 +8,7 @@ export function setupDevMock() {
 
   const forcedLabel = new URLSearchParams(window.location.search).get("_label") || "profiles"
   mockWindows(forcedLabel)
+  const handoffDemo = new URLSearchParams(window.location.search).get("_handoff") === "1"
 
   const mockProfiles = [
     {
@@ -128,6 +129,40 @@ export function setupDevMock() {
 
   mockIPC((cmd, args: any) => {
     switch (cmd) {
+      // 交接导轨/幕布设计走查（ADR-0014）：`?_handoff=1` 时给一份**在途**意图，
+      // 于是纯浏览器预览（pnpm dev）也能看到控制中心导轨与启动屏交接态。
+      // 默认（无参数）返回空意图，保持原预览行为不变。
+      case "get_boot_status":
+        return handoffDemo
+          ? {
+              steps: [
+                { step: 0, state: "done", detail: "环境检测通过" },
+                { step: 1, state: "done", detail: "环境已就绪（内置引擎）" },
+                { step: 2, state: "done", detail: "「default」工作台已启动" },
+                { step: 3, state: "running", detail: "等待 DSH 服务就绪…" },
+              ],
+              error: null,
+              intent: {
+                target: "default",
+                kind: "restart",
+                phase: "waiting",
+                startedAt: Date.now() - 4200,
+                generation: 7,
+                active: true,
+              },
+            }
+          : { steps: [], error: null, intent: null }
+      case "switch_profile":
+        return {
+          target: args?.profile ?? "default",
+          kind: "restart",
+          phase: "stopping",
+          startedAt: Date.now(),
+          generation: 8,
+          active: true,
+        }
+      case "focus_main_window":
+        return undefined
       case "list_profiles":
         return mockProfiles
       case "get_default_profile":
@@ -244,8 +279,6 @@ export function setupDevMock() {
         return JSON.stringify(sampleMarket)
       case "list_sessions":
         return mockSessions
-      case "get_boot_status":
-        return { steps: [], error: null }
       case "get_client_update":
         return { phase: "idle" }
       case "get_update_status":

@@ -342,3 +342,32 @@ export interface BootErrorPayload {
   actions: string[]
   log: string
 }
+
+/// 交接意图（ADR-0014）：一次「停旧 → 起新 → 进工作台」的贯穿状态。
+/// 形状锚定 `boot.rs::Handoff` 的 serde 序列化（camelCase 字段 + snake_case 枚举），
+/// 由 `ipc-shapes.json` 的 `Handoff` 条目跨语言闸住。
+export type HandoffKind = "start" | "restart" | "switch"
+
+export type HandoffPhase =
+  | "stopping"
+  | "booting"
+  | "waiting"
+  | "entering"
+  | "ready"
+  | "failed"
+
+export interface HandoffIntent {
+  target: string
+  kind: HandoffKind
+  phase: HandoffPhase
+  /// 发起时刻（Unix ms）：两窗计时器同源，跨文档替换**不归零**
+  startedAt: number
+  /// 启动代际令牌（同批次启动线程持有；前端只用于去重展示）
+  generation: number
+}
+
+/// `get_boot_status.intent` 的实际载荷：意图 + Rust 裁决的 `active`
+/// （仍在途且未超 TTL）——TTL 只由 Rust 持有，前端与注入脚本都不再各抄一份。
+export interface HandoffSnapshot extends HandoffIntent {
+  active: boolean
+}

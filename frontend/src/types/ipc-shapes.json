@@ -45,6 +45,14 @@
     "current",
     "versions"
   ],
+  "HandoffSnapshot": [
+    "active",
+    "generation",
+    "kind",
+    "phase",
+    "startedAt",
+    "target"
+  ],
   "NodeDiagnosticInfo": [
     "isReady",
     "path",

@@ -211,6 +211,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0011](docs/adr/0011-plugin-management-boundary.md) | 插件职责边界：跨 profile 归插件中心、单 profile 归详情；安装来源三形态白名单（npm / github / tarball），更新检查保持严格 npm 判别 |
 | [0012](docs/adr/0012-typed-boot-failure.md) | 启动失败错误类型化：boot 路径引入 `BootFailure` 枚举，子串分类降级为 `from_legacy_detail` 兜底；其余模块 `Result<_, String>` 不动 |
 | [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
+| [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
 
 ## 10. 试验协议
 

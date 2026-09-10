@@ -3,7 +3,7 @@
 // （标题/副题逐字复现步骤行）。现在控制台卡是唯一主角：卡头讲述「现在怎样」
 // （徽标 + 当前状态 + 分段进度），步骤列表讲述「到哪了」；下载进度经 banner
 // 槽位入卡；出错时卡头转警示态、ErrorCard 就地展开。
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { TerminalSquare } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
@@ -12,15 +12,29 @@ import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import { normalizeError, normalizeStep } from "@/lib/events"
 import { useBootStore } from "@/stores/bootStore"
+import { deriveHandoff } from "@/lib/handoff"
+import { handoffHeadline } from "@/components/boot/HandoffRail"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
 import { ErrorCard } from "@/components/boot/ErrorCard"
 import { UpdateBanner } from "@/components/update/UpdateBanner"
 import { Emblem } from "@/components/layout/Emblem"
 import { PulseBar } from "@/components/boot/PulseBar"
+import { ElapsedChip } from "@/components/boot/ElapsedChip"
+import { HandoffRail } from "@/components/boot/HandoffRail"
 
-/// StrictMode 双挂载下去重同一份握手参数（choose_mode 会 teardown+重启会话）
-let lastHandoff = ""
+/// StrictMode 双挂载下去重同一份握手参数（choose_mode 会 teardown+重启会话）。
+/// 名字不与 ADR-0014 的「交接意图（handoff）」混用：这里指的是 URL 参数握手。
+let lastModeHandoff = ""
+
+/// 注入幕布交接（ADR-0014）：主窗口 document-start 由 injected/handoff-curtain.js
+/// 先画同款首帧（旧工作台→壳页面→新工作台 三段都不断），React 一挂载就接管。
+/// 幕布缺席（浏览器预览/旧文档）时是空操作。
+declare global {
+  interface Window {
+    __dshDockCurtain?: { show?: (payload: unknown) => void; hide?: () => void }
+  }
+}
 
 export function BootIndex() {
   const { t } = useI18n()
@@ -39,9 +53,18 @@ export function BootIndex() {
   const activeStep = useBootStore((s) => s.activeStep)
   const error = useBootStore((s) => s.error)
   const progress = useBootStore((s) => s.progress)
+  const intent = useBootStore((s) => s.intent)
   const clearError = useBootStore((s) => s.clearError)
 
   const shownError: BootErrorEvent | null = localError ?? error
+
+  // 交接视图（ADR-0014）：本页与「控制中心」读同一份纯模型 —— 同一条导轨、
+  // 同一个计时起点（startedAt 来自 Rust，跨本页的两次整文档替换都不归零）。
+  const handoff = useMemo(() => deriveHandoff(intent, steps), [intent, steps])
+  const handoffText = useMemo(
+    () => (handoff ? handoffHeadline(handoff, t) : null),
+    [handoff, t],
+  )
 
   // 当前模式感知（URL params 经 choose_mode 落地时携带 mode=local|wsl）
   const currentMode = params.get("mode") || "local"
@@ -55,6 +78,9 @@ export function BootIndex() {
 
   // 播种早期启动状态与错误（规避 WebView 挂载前事件丢失的竞态）
   useEffect(() => {
+    // 幕布交接：React 首帧已就位，撤掉 document-start 注入的幕布（同款构图，
+    // 用户看到的是"幕布 → 启动屏"无缝接管，而不是先闪一下再加载）。
+    window.__dshDockCurtain?.hide?.()
     let alive = true
     api
       .getBootStatus()
@@ -70,6 +96,9 @@ export function BootIndex() {
           const err = normalizeError(status.error)
           if (err) useBootStore.getState().setError(err)
         }
+        // 交接意图补水（整文档重载后唯一来源）：控制中心发起 → 主窗口新文档
+        // 首帧即从壳读到「谁在重启、从何时开始」，于是导轨与计时接着走。
+        useBootStore.getState().setIntent(status.intent ?? null)
       })
       .catch(() => {})
     return () => {
@@ -82,8 +111,8 @@ export function BootIndex() {
     const mode = params.get("mode")
     if (mode !== "local" && mode !== "wsl") return
     const key = `${mode}:${params.get("default") === "1"}`
-    if (key === lastHandoff) return
-    lastHandoff = key
+    if (key === lastModeHandoff) return
+    lastModeHandoff = key
     api.chooseMode(mode, params.get("default") === "1").catch(() => {})
   }, [params])
 
@@ -116,7 +145,7 @@ export function BootIndex() {
     setWslBusy(false)
   }, [error])
 
-  // —— 卡头文案推演：错误 > 下载准备期 > 当前步骤名（detail 兜底回 hint） ——
+  // —— 卡头文案推演：错误 > 交接 > 下载准备期 > 当前步骤名（detail 兜底回 hint） ——
   const idx = Math.min(lastRunning, 4)
   const inDownload = !hideDownload && progress !== null && maxStepSeen < 2
   const title = shownError
@@ -128,12 +157,17 @@ export function BootIndex() {
     ? undefined
     : inDownload
       ? t.selector.preparingSub
-      : steps[idx]?.detail || t.boot.steps[idx].hint
+      : handoffText && !handoff?.failed
+        ? handoffText.subtitle
+        : steps[idx]?.detail || t.boot.steps[idx].hint
 
   // 区分「首次安装准备向导」与「日常秒启 Splash」：
   // 只有在发生环境下载、出现错误或手动请求时才展示 5 步向导列表；
   // 普通秒级直启展示高保真极简启动屏，彻底消除每次打开装机自检的割裂感。
-  const isSetupMode = hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline
+  // 交接（重启/切换）例外：用户刚点下重启，此刻**必须**看到步骤与阶段，
+  // 否则又是一次"与刚才操作无关的空白等待"（ADR-0014 §1）。
+  const isSetupMode =
+    hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline || handoff !== null
 
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
@@ -176,6 +210,13 @@ export function BootIndex() {
       {/* 主工作区 */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
         <section className="w-full max-w-xl">
+          {/* 交接导轨（ADR-0014）：与控制中心**同一条**视图模型（标题/四段/计时），
+              这就是"loading 贯穿两窗、跨越三次文档替换"的那根线。两种情形不叠：
+              错误态（错误卡已把话说清楚）、以及意图已过期却仍未落定（陈旧的意图
+              不该继续转圈——"永远在等待"比不显示更伤人）。 */}
+          {handoff && !shownError && (handoff.inflight || handoff.done || handoff.failed) && (
+            <HandoffRail view={handoff} className="mb-3" />
+          )}
           {isSetupMode ? (
             <>
               <BootTimeline
@@ -183,6 +224,11 @@ export function BootIndex() {
                 subtitle={subtitle}
                 danger={!!shownError}
                 banner={inDownload ? <DownloadProgress /> : undefined}
+                // 计时只在导轨缺席时补位（错误态：导轨让位错误卡，但"这次花了多久"
+                // 仍是排障要读的数）——两处同时显示同一个秒表只会显得啰嗦。
+                meta={
+                  handoff && shownError ? <ElapsedChip startedAt={handoff.startedAt} /> : undefined
+                }
               />
               {!shownError && hasEverDownloaded && (
                 <div className="mt-3 text-center">

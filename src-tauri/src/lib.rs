@@ -37,7 +37,7 @@ mod updates;
 
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, RunEvent};
@@ -190,6 +190,10 @@ pub fn run() {
                 crash_timestamps: Mutex::new(Vec::new()),
                 boot_error: Mutex::new(None),
                 boot_steps: Mutex::new(Vec::new()),
+                // 首启代际从 0 起：首启线程用 begin_boot() 领 1（ADR-0014）。
+                boot_generation: AtomicU64::new(0),
+                shutting_down: AtomicBool::new(false),
+                handoff: Mutex::new(None),
             });
             app.manage(state.clone());
             // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
@@ -253,6 +257,9 @@ pub fn run() {
             let boot_app = app_handle.clone();
             let boot_data = data_dir.clone();
             std::thread::spawn(move || {
+                // 首启代际令牌（ADR-0014）：与后续切换/重试同一条闸门——
+                // 用户在首启尚未完成时就点重启，首启线程随之作废，不会双 spawn。
+                let token = boot_state.begin_boot();
                 let settings = crate::settings::load(&boot_data);
                 let mode = settings.default_mode.unwrap_or(settings::Mode::Local);
                 // 非 Windows：WSL 不存在（执行器编译为报错）——settings 里残留的
@@ -266,7 +273,7 @@ pub fn run() {
                 *boot_state.active_mode.lock().unwrap() = Some(mode);
                 match boot::executor_for_mode(mode, &boot_app, boot_data) {
                     Ok(executor) => {
-                        boot::launch_executor_after_probe(boot_state, boot_app, executor)
+                        boot::launch_executor_after_probe(boot_state, boot_app, executor, token)
                     }
                     Err(e) => {
                         tracing::error!("启动失败（{e}）");
@@ -386,6 +393,15 @@ pub fn run() {
             // 应用退出 → 会话式 teardown（壳退 = 环境停：停子进程 / 断隧道，同生命周期）。
             if let RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<Arc<boot::ShellState>>() {
+                    // 先置退出标志再收会话（2026-09-10，ADR-0014）：在途启动线程
+                    // （首启 / 切换 / 崩溃自动拉起）在 spawn 前会校验该标志并放弃，
+                    // 否则退出后仍可能 spawn 出一个没有任何人认领的 dsh（实测逃逸路径）。
+                    state
+                        .shutting_down
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    state
+                        .session_epoch
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     if let Some(mut ex) = state.session.lock().unwrap().take() {
                         let _ = ex.teardown();
                     }

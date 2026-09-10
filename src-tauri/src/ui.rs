@@ -45,6 +45,16 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     // 6. 支持鼠标拖拽（Draggable）：用户可随心拖动到任意无遮挡位置。
     let switcher_script = include_str!("../../frontend/src/injected/switcher.js");
 
+    // 交接幕布（2026-09-10，ADR-0014）：重启/切换时主窗口要经历两次跨 origin 的
+    // 整文档替换（旧工作台 → 壳启动屏 → 新工作台）。壳启动屏那屏由 React 渲染，
+    // 两端的工作台页面属于 dsh（源码不可改，红线 1），于是本脚本在 document-start
+    // 先画一层与启动屏同构图的幕布：
+    //   - 自发现路径：新文档若确为工作台 origin 且壳侧交接仍在途，首帧即亮幕；
+    //   - 注入路径：Rust 在 teardown 之前 eval `show(intent,{sticky:true})`，
+    //     盖住"进程已死、页面还在"的那几秒。
+    // 与 switcher.js 的分工：幕布管"进/出工作台的过渡"，胶囊管"常驻互跳入口"。
+    let handoff_curtain_script = include_str!("../../frontend/src/injected/handoff-curtain.js");
+
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
     // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
@@ -113,6 +123,7 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
         .initialization_script(hook_script)
         .initialization_script(webview_memory_policy)
         .initialization_script(switcher_script)
+        .initialization_script(handoff_curtain_script)
         .build()
 }
 

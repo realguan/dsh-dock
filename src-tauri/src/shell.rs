@@ -199,9 +199,17 @@ pub fn parse_detected_url(text: &str) -> Option<String> {
         .map(|url| url.trim_end_matches(['/', ',', ';']).to_string())
 }
 
-/// 优雅停止 dsh：unix 发 SIGTERM 等待 grace，超时 SIGKILL；Windows 直接 kill。
+/// 优雅停止 dsh：unix 发 SIGTERM 等待 grace，超时 SIGKILL；Windows 收进程树。
 /// dsh 对 SIGTERM 以 exit 0 收尾，正常路径秒退。
-/// （Windows 分支不使用 grace 参数，故按平台允许未用变量。）
+///
+/// Windows 进程树收口（2026-09-10，ADR-0014 §3 方案 A）：
+/// 旧实现就是 `child.kill()` = TerminateProcess(直接子进程)。而 `.cmd/.bat`
+/// 经 `child_cmd` 包了一层 `cmd.exe /C`（AGENTS §4.1），pnpm 的 Windows shim
+/// 也会再拉一个 node —— **Windows 不连坐子进程**，于是"停止"只杀掉了壳层，
+/// 真正的 dsh(node) 继续跑：占端口、继续写 DSH_HOME，重启实际变成"再起一个"。
+/// 现改走系统自带 `taskkill /PID <pid> /T /F`（/T = 整棵进程树），失败再回退
+/// `kill()`（进程可能已退出/被回收）。`grace` 参数在 Windows 分支不适用
+/// （Windows 无 POSIX 信号面），保留签名统一调用点。
 #[cfg_attr(not(unix), allow(unused_variables))]
 pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
     #[cfg(unix)]
@@ -226,9 +234,48 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
     }
     #[cfg(not(unix))]
     {
-        let _ = child.kill();
-        child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+        let pid = child.id();
+        let args = windows_kill_args(pid);
+        let killed = match crate::child_cmd(Path::new("taskkill")).args(&args).output() {
+            Ok(out) => {
+                if !out.status.success() {
+                    tracing::warn!(
+                        "taskkill 退出码非零（pid={pid}）：{}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                }
+                out.status.success()
+            }
+            Err(e) => {
+                tracing::warn!("taskkill 调用失败（pid={pid}）：{e}");
+                false
+            }
+        };
+        if !killed {
+            // 回退：直接终结子进程（典型场景＝进程已经自己退了，taskkill 报未找到）。
+            let _ = child.kill();
+        }
+        match child.wait() {
+            Ok(s) => s.code().unwrap_or(-1),
+            Err(e) => {
+                tracing::error!("等待子进程回收失败（pid={pid}）：{e}");
+                -1
+            }
+        }
     }
+}
+
+/// `taskkill` 参数（纯函数，供单测）：`/T` 整棵树、`/F` 强制。
+/// Windows 无 POSIX 信号，`/F` 即 TerminateProcess——与旧行为同强度，
+/// 区别只在**覆盖整棵树**（旧行为漏掉 node 后代）。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn windows_kill_args(pid: u32) -> Vec<String> {
+    vec![
+        "/PID".to_string(),
+        pid.to_string(),
+        "/T".to_string(),
+        "/F".to_string(),
+    ]
 }
 
 #[cfg(test)]
@@ -318,6 +365,14 @@ mod tests {
             "SIGTERM 路径应在 grace 内提前退出"
         );
         assert!(child.try_wait().unwrap().is_some(), "子进程应已回收");
+    }
+
+    /// Windows 停止参数（2026-09-10，ADR-0014）：必须是整棵树 + 强制。
+    /// 少了 `/T` 就退回「只杀 cmd.exe 壳层、node 继续跑」的老漏洞。
+    #[test]
+    fn windows_kill_args_cover_whole_tree() {
+        let args = windows_kill_args(4321);
+        assert_eq!(args, vec!["/PID", "4321", "/T", "/F"]);
     }
 
     /// 进程存活感知等待：

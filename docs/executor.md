@@ -101,6 +101,20 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
   退出：不在 90s 后误报错误卡、不误导航/监护新会话。**probe 阶段同样受代际保护**
   （0.4.2）：probe 开始记录 epoch，完成后不一致 → 丢弃探测结果（probe 可长达分钟
   级——WSL 自动安装 dsh——期间切换环境不得残留旧会话覆盖新会话）。
+- `ShellState.boot_generation: AtomicU64` + `shutting_down: AtomicBool`（2026-09-10，
+  ADR-0014）：**启动代际令牌**。每次「开始一次启动」（首启 / 切换 profile / 模式切换 /
+  选择器落地 / 错误卡重试 / 崩溃自动拉起）经 `begin_boot()` 领令牌，启动线程在
+  probe 后、spawn 前、spawn 后落槽前、导航前逐一校验；被取代者**在 spawn 之前**
+  静默退出，已 spawn 才被取代的就地 teardown。旧写法在 `launch_executor_after_probe`
+  **进入函数时**才读 epoch，两次快速切换会读到同一（最新）代际而双双放行 → 双 spawn，
+  后到者覆盖会话槽、把前一个 dsh 丢在地上（进程继续跑、壳再也收不回）。
+- **会话槽纪律**：落新会话前 `reap_previous_session` 先 `take()` 并 teardown 旧会话
+  （槽位是 `Option<Box<dyn Executor>>` 赋值，直接覆盖 = 丢进程）；`RunEvent::Exit`
+  先置 `shutting_down` 再收会话，退出竞态不再 spawn 出无人认领的 dsh。
+- **交接（handoff）**：`ShellState.handoff`（target/kind/phase/startedAt/generation）
+  为一次重启/切换的贯穿状态，经 `get_boot_status.intent` 与 `switch_profile` 返回值
+  暴露给两个窗口（同一 `startedAt` → 计时跨文档连续）。生命周期与 UI 见 ADR-0014 与
+  `frontend/src/lib/handoff.ts`。
 
 ## 运行环境的用户主权（首次选择 / 默认 / 菜单切换）
 
@@ -127,7 +141,13 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 
 ## 验证状态
 
-- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（74 tests）。
+- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（241 tests，
+  2026-09-10）。
 - **Windows 实机未验**：WSL 运行时行为（`wsl -l -v` 实机输出、localhost 转发、
   stop 标志 teardown、rc source）需按 ADR-0004 的执行要求验证。
   shell.log / dsh-wsl.log 位于 `%APPDATA%\io.github.realguan.dsh-dock\`。
+- **交接/进程树实机清单待排期**（ADR-0014 §5）：① macOS 重启全程"一条 loading 贯穿"
+  （控制中心导轨 ↔ 主窗口启动屏 ↔ 工作台，计时不归零）；② Windows `taskkill /T`
+  收口——重启后 `tasklist | findstr node` 不得残留旧 dsh（旧实现只杀 `cmd.exe` 壳层）；
+  ③ 双击重启 / 重启与模式切换撞车，只允许一个新 dsh 起来；④ WSL 客体重启后
+  `ps aux | grep dsh` 无残留。
