@@ -2219,3 +2219,52 @@
   notes 需带版本选择器；`cargo tdev` 成为贡献者推荐调试入口。
 - 凭据：cargo test 228 绿 + fmt/clippy 干净；前端 typecheck / oxlint / 161 测试绿
   （新增 `lib/dshVersions.ts` 纯逻辑测试 8 条）。
+
+### 2026-09-10 品牌升级 · 引入 dsh dock 专属品牌 Logo（方案二：鲸鱼娘抽象几何与 Dock 徽标） —— guan（AI 协作）
+
+- 变更：
+  - `brand(assets)`：`assets/icon-master.svg` 全量更新为全新设计的方案二几何抽象徽标（顶部双鲸尾发髻剪影 + 中部纯白科技调度耳麦与眨眼面庞 + 底部多槽位 Dock 状态托盘）；
+  - `chore(scripts)`：`scripts/regen-icons.sh` 增强对 macOS 原生 `qlmanage` 的自动后备支持（当缺少 `rsvg-convert` 时无缝降级）；全量重编译 `src-tauri/app-icon.png` 与 `src-tauri/icons/*`（`.icns`、`.ico`、全尺寸 png）；
+  - `style(frontend)`：`frontend/public/mark.svg`（及 dist 同步）更新为新标几何遮罩，供 `Emblem` 组件在页内徽章统一呈现；
+  - `docs(constitution)`：`AGENTS.md` §3 品牌规则同步升格，确立采用专属方案二徽标。
+- 影响：全平台客户端应用图标、Dock 栏、页内 Emblem 徽章视觉统一演进为兼顾 DeepSeek 蓝与桌面管理容器（Dock）隐喻的专属形象；无代码逻辑与 IPC 契约影响。
+- 凭据：`scripts/regen-icons.sh` 执行 0 报错、三端图标全产物成功生成；Rust `cargo test` 235 测试全绿；前端 Vitest 173 测试全绿。
+
+### 2026-09-10 发版 · DSH Dock v1.0.0（品牌换代 + README 重写 + 前端交互批次落盘） —— guan（AI 协作）
+
+- 变更（本次落盘 10 笔，按序）：
+  - `6a5273f fix(shell)`：主窗口回壳启动屏改用 `ui::shell_app_url()`，弃用注入
+    `location.assign('/')`——远程工作台页面下按当前 origin 解析，切运行模式 / 崩溃
+    自恢复 / 切 profile 时主窗口并未回到壳启动屏（白屏与竞态根因）。
+  - `f96797e feat(plugins)`：官方桌面运行时 `desktop-packages/*.tgz` 归为内置 Bundle，
+    不再混入外挂插件清单（新增 `is_desktop_internal_spec()` 判据 + 分类测试）。
+  - `79ec2a8 feat(profiles)`：控制台切换重载过渡态、手动刷新入口、URL 参数深链、
+    底座运行时说明卡、页码条与图标居中。
+  - `f5be401 feat(market)`：手动安装对话框、入队 Toast 反馈、来源图标、页码省略号、
+    安装胶囊锚点视口钳制、插件中心子 Tab 吸顶。
+  - `9f5670c fix(ui)`：`font-synthesis: none` 根治低 DPI 外接屏文字发虚；弹窗 / Toast /
+    输入框图标改布局层整数居中；品牌蓝按「填充 vs 文字」双档回退。
+  - `ca3b932 feat(brand)`：鲸鱼娘 Whale-chan 品牌落地（图标产物全平台重生成 +
+    Emblem 双形态 + AGENTS §3 升格）。
+  - `93ab00f feat(dev)`：devMock 样本数据（DEV 守卫、生产摇树移除）供截图与纯前端联调。
+  - `835235f docs(readme)`：README 全量重写 + 14 张实拍图 + 首图文案修正脚本。
+  - `0c1639d chore(release)`：版本号 0.9.6 → 1.0.0 + `## [v1.0.0] - 2026-09-10`
+    发版日志 + `minimumSystemVersion = "10.13"` 显式声明。
+  - 本笔 `docs(broadcasts)`：落档本条。
+- 发版核对：tag `v1.0.0` ↔ 代码内版本号四处一致（build.yml 闸门同款校验通过）；
+  `scripts/extract-release-notes.py v1.0.0` 提取通过（1973 字符）；Rust `cargo test`
+  236 绿 + `fmt --check` / `clippy -D warnings` 干净；前端 typecheck / oxlint 0 warning /
+  179 测试绿；生产产物无 devMock 特征串。
+- **前条更正**（append-only，故不追改上一条「品牌升级」广播）：该条描述的是当时状态，
+  其后品牌方向定为鲸鱼娘 —— ① `assets/icon-master.svg` 现为**内嵌位图 master**
+  （非几何 path）；② `scripts/regen-icons.sh` 走 SVG 内嵌 base64 提取 + PIL 四周透明度
+  门禁，**不使用 `qlmanage`**（脚本内已明写禁用）；③ `frontend/public/mark.svg` 本次
+  未被触及，`Emblem` 已改引 `/icon.png` 与 `/whale-chan-cutout.png`，该文件现为
+  0 引用死资产（清理待专项提交，`docs/adr/0008` 与 `docs/frontend-migration.md` 中
+  把 mark.svg 写作品牌锚点的表述同步待清理）。
+- 待办（发版后专项，勿夹带）：`lib/market.ts` 的 `buildInstallCmd` 与 4 个
+  `market.*` i18n 键为 0 引用死代码（原「按 Profile 复制安装命令」子功能未落地）；
+  `market.copyCmd` / `market.copied` 成孤儿文案；`ProfileManager.tsx` 的
+  `dialog=delete` 默认目标硬编码 `data-analysis`（截图痕迹，生产代码读 URL 参数）；
+  `frontend/public/{app-icon.png,icon-wave.png}` 与根目录 `release_notes.md` 未入库
+  （前两者 0 引用，后者为游离草稿，与 `docs/RELEASE_NOTES.md` 内容不一致）。
