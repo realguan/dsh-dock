@@ -1,0 +1,1195 @@
+{
+  "name": "awesome-dsh-plugin",
+  "url": "https://awesome-dsh-plugin.com",
+  "source": "https://github.com/awesome-dsh-plugin/awesome-dsh-plugin",
+  "updated": "2026-09-08",
+  "count": 3408,
+  "categories": {
+    "agi": {
+      "en": "AGI Architecture Exploration",
+      "zh": "AGI 架构探索"
+    },
+    "ui": {
+      "en": "UI Enhancements",
+      "zh": "UI 增强"
+    },
+    "usage": {
+      "en": "Usage & Billing",
+      "zh": "用量与计费"
+    },
+    "theme": {
+      "en": "Themes & Appearance",
+      "zh": "主题与外观"
+    },
+    "model": {
+      "en": "Models & Providers",
+      "zh": "模型与账号接入"
+    },
+    "identity": {
+      "en": "Identity & Communication",
+      "zh": "身份与通信"
+    },
+    "session": {
+      "en": "Sessions & Messages",
+      "zh": "会话与消息"
+    },
+    "memory": {
+      "en": "Memory",
+      "zh": "记忆"
+    },
+    "tools": {
+      "en": "Tools & Capabilities",
+      "zh": "工具与能力"
+    },
+    "wsl": {
+      "en": "WSL & Windows Interop",
+      "zh": "WSL 与 Windows 互操作"
+    },
+    "browser": {
+      "en": "Browser & Web",
+      "zh": "浏览器与网页"
+    },
+    "vision": {
+      "en": "Vision & Multimodal",
+      "zh": "视觉与多模态"
+    },
+    "voice": {
+      "en": "Voice & Audio",
+      "zh": "语音与音频"
+    },
+    "docs": {
+      "en": "Docs & Rendering",
+      "zh": "文档与渲染"
+    },
+    "skill": {
+      "en": "Skills",
+      "zh": "技能包"
+    },
+    "workflow": {
+      "en": "Workflow & Automation",
+      "zh": "工作流与自动化"
+    },
+    "git": {
+      "en": "Git & Code Review",
+      "zh": "Git 与代码评审"
+    },
+    "notify": {
+      "en": "Notifications & Integrations",
+      "zh": "通知与集成"
+    },
+    "dev": {
+      "en": "Development & Runtime",
+      "zh": "开发与运行时"
+    },
+    "security": {
+      "en": "Security & Permissions",
+      "zh": "安全与权限"
+    },
+    "remote": {
+      "en": "Remote & Mobile",
+      "zh": "远程与移动端"
+    },
+    "market": {
+      "en": "Plugin Markets & Managers",
+      "zh": "插件市场与管理"
+    },
+    "fun": {
+      "en": "Just for Fun",
+      "zh": "娱乐"
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-quality-review",
+      "owner": "CAI-MH",
+      "url": "https://github.com/CAI-MH/dsh-quality-review",
+      "page": "https://awesome-dsh-plugin.com/p/CAI-MH/dsh-quality-review/",
+      "category": "agi",
+      "description": {
+        "en": "Audit each finished assistant turn with an independent reviewer model and steer the agent to fix failed output, with at most 2 review rounds per turn.",
+        "zh": "每轮回复结束时用独立审查模型审核输出，判定不合格则引导 agent 修复，每轮最多追问 2 次。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 0,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:CAI-MH/dsh-quality-review",
+      "added": "2026-09-06"
+    },
+    {
+      "name": "dsh-memory",
+      "owner": "FuRongJun-1999",
+      "url": "https://github.com/FuRongJun-1999/dsh-memory",
+      "page": "https://awesome-dsh-plugin.com/p/FuRongJun-1999/dsh-memory/",
+      "category": "agi",
+      "description": {
+        "en": "White-box AGI architecture exploration: metacognition (self-cognition loop), continual learning (knowledge flywheel), world model (condition space, spatiotemporal memory graph), self-improvement (bootstrap discipline), zero-LLM white-box pipeline, and auditable trust guardrails.",
+        "zh": "白箱AGI架构探索：元认知（自我认知循环）、持续学习（知识飞轮）、世界模型（条件空间+语义时空图）、自我改进（自举纪律）、零LLM白箱管线与可审计信任护栏。"
+      },
+      "npm": "@furongjun1999/dsh-memory",
+      "tarball": "https://github.com/FuRongJun-1999/dsh-memory/releases/download/v0.3.0/furongjun1999-dsh-memory-0.3.0.tgz",
+      "version": "0.4.3",
+      "stars": 143,
+      "downloads": 6988,
+      "install": "dsh plugin --profile web add @furongjun1999/dsh-memory",
+      "added": "2026-08-14"
+    },
+    {
+      "name": "dsh-gungnir#dsh-plugin",
+      "owner": "Jonah-Wu23",
+      "url": "https://github.com/Jonah-Wu23/dsh-gungnir/tree/main/packages/dsh-plugin",
+      "page": "https://awesome-dsh-plugin.com/p/Jonah-Wu23/dsh-gungnir--packages-dsh-plugin/",
+      "category": "agi",
+      "description": {
+        "en": "Evidence-driven goal verification plugin for DeepSeek Harness. Locks goals via /ultragoal and verifies completion against command exit codes and generated artifacts, preventing the model from falsely reporting task completion.",
+        "zh": "面向 DeepSeek Harness 的证据驱动目标校验插件。通过 /ultragoal 锁定目标，并依据命令退出码与生成产物验证完成状态，防止模型虚报任务完成。"
+      },
+      "npm": "dsh-gungnir",
+      "version": "0.2.1",
+      "stars": 1,
+      "downloads": 511,
+      "install": "dsh plugin --profile web add dsh-gungnir",
+      "added": "2026-09-03"
+    },
+    {
+      "name": "dsh-status-rotator",
+      "owner": "01Virex",
+      "url": "https://github.com/01Virex/dsh-status-rotator",
+      "page": "https://awesome-dsh-plugin.com/p/01Virex/dsh-status-rotator/",
+      "category": "ui",
+      "description": {
+        "en": "Replaces the \"Deep diving...\" turn-status label with rotating meme-worthy phrases, with typewriter and gradient effects.",
+        "zh": "把回合状态那句 \"Deep diving...\" 替换成更有梗的自定义文案，按阶段轮换，支持打字机与流动渐变。"
+      },
+      "npm": "dsh-status-rotator",
+      "version": "0.15.1",
+      "stars": 72,
+      "downloads": 5559,
+      "install": "dsh plugin --profile web add dsh-status-rotator",
+      "added": "2026-08-14"
+    },
+    {
+      "name": "dsh-workspace-menu",
+      "owner": "0imzero",
+      "url": "https://github.com/0imzero/dsh-workspace-menu",
+      "page": "https://awesome-dsh-plugin.com/p/0imzero/dsh-workspace-menu/",
+      "category": "ui",
+      "description": {
+        "en": "Workspace/chat context menu for the DSH home page: pin, rename, open in file explorer, archive, fork, copy, and open in a new window.",
+        "zh": "DSH 主页工作区/会话增强菜单：置顶、重命名、资源管理器打开、归档、分叉、复制、新窗口打开。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 3,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:0imzero/dsh-workspace-menu",
+      "added": "2026-08-26"
+    },
+    {
+      "name": "dsh-spotlight",
+      "owner": "0xsline",
+      "url": "https://github.com/0xsline/dsh-spotlight",
+      "page": "https://awesome-dsh-plugin.com/p/0xsline/dsh-spotlight/",
+      "category": "ui",
+      "description": {
+        "en": "Keyboard-first command palette for the DSH Web UI.",
+        "zh": "键盘优先的命令面板（command palette）。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 22,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:0xsline/dsh-spotlight",
+      "added": "2026-08-13"
+    },
+    {
+      "name": "dsh-about",
+      "owner": "1010n111",
+      "url": "https://github.com/1010n111/dsh-about",
+      "page": "https://awesome-dsh-plugin.com/p/1010n111/dsh-about/",
+      "category": "ui",
+      "description": {
+        "en": "Adds an \"About\" settings page to the DeepSeek Harness web interface, showing the running DSH version and recent release notes.",
+        "zh": "为 DeepSeek Harness Web 设置面板添加“关于”页，展示运行中的 DSH 版本与最近更新日志。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 1,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:1010n111/dsh-about",
+      "added": "2026-09-04"
+    },
+    {
+      "name": "dph-taskboard",
+      "owner": "1070296335-create",
+      "url": "https://github.com/1070296335-create/dph-taskboard",
+      "page": "https://awesome-dsh-plugin.com/p/1070296335-create/dph-taskboard/",
+      "category": "ui",
+      "description": {
+        "en": "Session-based task board in the sidebar: drag sessions into todo/doing/review/done columns, create sessions with model and reasoning-effort selection, trash with restore, notes, export/import.",
+        "zh": "侧边栏会话化任务看板：拖拽会话到待办/进行中/评审中/已完成四列，新建会话可选模型与推理强度，回收站可恢复，支持备注与导出导入。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 5,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:1070296335-create/dph-taskboard",
+      "added": "2026-08-19"
+    },
+    {
+      "name": "dsh-composer-expand",
+      "owner": "13071301808",
+      "url": "https://github.com/13071301808/dsh-composer-expand",
+      "page": "https://awesome-dsh-plugin.com/p/13071301808/dsh-composer-expand/",
+      "category": "ui",
+      "description": {
+        "en": "Composer expand/collapse toggle for the Web UI: a ⬆/⬇ button in the composer tool row grows the input to a tall 70vh writing view for long drafts.",
+        "zh": "Web UI 输入框展开/收起：composer 工具行新增 ⬆/⬇ 按钮，一键把输入框扩大到 70vh 高度，方便写长 prompt。"
+      },
+      "npm": "dsh-composer-expand",
+      "version": "0.1.4",
+      "stars": 6,
+      "downloads": 1462,
+      "install": "dsh plugin --profile web add dsh-composer-expand",
+      "added": "2026-08-15"
+    },
+    {
+      "name": "dsh-prompt-polish",
+      "owner": "1321928757",
+      "url": "https://github.com/1321928757/dsh-prompt-polish",
+      "page": "https://awesome-dsh-plugin.com/p/1321928757/dsh-prompt-polish/",
+      "category": "ui",
+      "description": {
+        "en": "Input-bar prompt optimizer: rewrites drafts with 6 strategies × 3 languages plus custom instructions, optional goal/todo/compaction-summary/tool-result and chat context, a confirm dialog, last-5 history and three-tier settings persistence.",
+        "zh": "输入栏提示词优化：6 种策略 × 3 种语言与自定义指令重写草稿，可选携带目标、任务清单、压缩摘要、工具结果与聊天上下文，附结果确认弹窗、最近 5 次历史与三级设置持久化。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 2,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:1321928757/dsh-prompt-polish",
+      "added": "2026-08-30",
+      "screenshots": [
+        "https://raw.githubusercontent.com/1321928757/dsh-prompt-polish/HEAD/assets/composer.png",
+        "https://raw.githubusercontent.com/1321928757/dsh-prompt-polish/HEAD/assets/dialog.png",
+        "https://raw.githubusercontent.com/1321928757/dsh-prompt-polish/HEAD/assets/settings.png"
+      ]
+    },
+    {
+      "name": "dsh-harness-chat-control",
+      "owner": "1985899182",
+      "url": "https://github.com/1985899182/dsh-harness-chat-control",
+      "page": "https://awesome-dsh-plugin.com/p/1985899182/dsh-harness-chat-control/",
+      "category": "ui",
+      "description": {
+        "en": "Adds ChatGPT-style stop, edit-and-resend, native quote annotations, and an independent sidebar follow-up chat with model and image input for DeepSeek Harness Desktop.",
+        "zh": "为 DeepSeek Harness Desktop 增加接近 ChatGPT 的停止、编辑重发、原生引用注释，以及支持模型和图片输入的独立侧边栏追问对话。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 0,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:1985899182/dsh-harness-chat-control",
+      "added": "2026-09-07"
+    },
+    {
+      "name": "dsh-effort-slider",
+      "owner": "2768651338",
+      "url": "https://github.com/2768651338/dsh-effort-slider",
+      "page": "https://awesome-dsh-plugin.com/p/2768651338/dsh-effort-slider/",
+      "category": "ui",
+      "description": {
+        "en": "A Claude Code-style reasoning-effort slider for the DSH Web UI: stepless drag, snap-on-release, a WebGL fire trail, and real, working thinking-effort control for any custom third-party model or provider.",
+        "zh": "仿 Claude Code 的推理等级滑块：无极拖动、松手吸附、WebGL 火焰跟随，任何自定义第三方模型/提供商都能获得真实生效的思考强度调节。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 16,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:2768651338/dsh-effort-slider",
+      "added": "2026-08-17"
+    },
+    {
+      "name": "dsh-plugin-open-app",
+      "owner": "2nd1st",
+      "url": "https://github.com/2nd1st/dsh-plugin-open-app",
+      "page": "https://awesome-dsh-plugin.com/p/2nd1st/dsh-plugin-open-app/",
+      "category": "ui",
+      "description": {
+        "en": "Runs open-mcp-apps inside DSH: every MCP app gets its own sidebar container with a separate workspace, session, and App mode, an agent status strip under the app, and inline app rendering in ordinary chats.",
+        "zh": "把 open-mcp-apps 接进 DSH：每个 MCP app 都是侧边栏里自己的容器，带独立 workspace、会话与 App mode，应用下方是 agent 状态条，普通聊天里也能行内渲染 app。"
+      },
+      "npm": "@2nd1st/dsh-plugin-open-app",
+      "version": "0.1.2",
+      "stars": 7,
+      "downloads": 535,
+      "install": "dsh plugin --profile web add @2nd1st/dsh-plugin-open-app",
+      "added": "2026-08-15",
+      "screenshots": [
+        "https://raw.githubusercontent.com/2nd1st/dsh-plugin-open-app/main/docs/screenshot-app-container.jpg",
+        "https://raw.githubusercontent.com/2nd1st/dsh-plugin-open-app/main/docs/screenshot-inline.jpg"
+      ]
+    },
+    {
+      "name": "chicheng-peak",
+      "owner": "534119219",
+      "url": "https://github.com/534119219/chicheng-peak",
+      "page": "https://awesome-dsh-plugin.com/p/534119219/chicheng-peak/",
+      "category": "ui",
+      "description": {
+        "en": "Edge breathing border showing DeepSeek peak/valley hours, with flowing light and scheduled push reminders.",
+        "zh": "DeepSeek 峰谷提醒：贴屏呼吸边框（高峰橙/低峰蓝）、流光效果与消息推送提醒。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 2,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:534119219/chicheng-peak",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "chicheng-quickinput",
+      "owner": "534119219",
+      "url": "https://github.com/534119219/chicheng-quickinput",
+      "page": "https://awesome-dsh-plugin.com/p/534119219/chicheng-quickinput/",
+      "category": "ui",
+      "description": {
+        "en": "Vault button beside the DSH composer: save keys, servers, phone numbers, addresses and URLs, auto-collected from conversations, password-protected with WebDAV backup; click to insert, Ctrl+click to send.",
+        "zh": "输入栏旁的保险箱按钮：保存密钥、服务器、手机号、地址与网址，自动识别会话中的敏感信息提醒收录，密码保护并支持 WebDAV 备份；点击填入输入框，Ctrl+点击直接发送。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 3,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:534119219/chicheng-quickinput",
+      "added": "2026-08-23"
+    },
+    {
+      "name": "dsh-chat-width",
+      "owner": "764475881",
+      "url": "https://github.com/764475881/dsh-chat-width",
+      "page": "https://awesome-dsh-plugin.com/p/764475881/dsh-chat-width/",
+      "category": "ui",
+      "description": {
+        "en": "Drag-to-resize the chat content width in the DeepSeek Harness web UI: a handle on the column right edge overrides the built-in 748px width (default 1040px, 520-2400 range, persisted per browser, double-click resets).",
+        "zh": "为 DeepSeek Harness 网页界面提供可拖拽的聊天内容宽度：文字列右缘的把手覆盖内置的 748px 宽度（默认 1040px、范围 520~2400、按浏览器记忆，双击恢复默认）。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 4,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:764475881/dsh-chat-width",
+      "added": "2026-08-24"
+    },
+    {
+      "name": "dsh-model-search",
+      "owner": "a1073097082",
+      "url": "https://github.com/a1073097082/dsh-model-search",
+      "page": "https://awesome-dsh-plugin.com/p/a1073097082/dsh-model-search/",
+      "category": "ui",
+      "description": {
+        "en": "Adds searchable filtering to the model selector by provider, model name, and model ID; spaces act as wildcards.",
+        "zh": "为模型选择器增加按提供方、模型名称和模型 ID 搜索的筛选框，空格表示任意字符。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 4,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:a1073097082/dsh-model-search",
+      "added": "2026-08-15"
+    },
+    {
+      "name": "dsh-auto-collapse",
+      "owner": "a179-sanae",
+      "url": "https://github.com/a179-sanae/dsh-auto-collapse",
+      "page": "https://awesome-dsh-plugin.com/p/a179-sanae/dsh-auto-collapse/",
+      "category": "ui",
+      "description": {
+        "en": "Codex-style workflow auto-collapse: finished turns fold into a single \"processed in Xs\" row leaving only the final answer; tool calls and think blocks collapse into live-summary chips that follow streaming; expand level by level, fully reversible on uninstall.",
+        "zh": "Codex 风格工作流自动折叠：回合完成收成一行「已处理 X秒」只留最终正文，工具/思考块折叠成实时摘要 chip（运行中跟随流式滚动），逐级点击展开；卸载完整还原。"
+      },
+      "npm": "dsh-auto-collapse",
+      "version": "0.2.1",
+      "stars": 55,
+      "downloads": 1707,
+      "install": "dsh plugin --profile web add dsh-auto-collapse",
+      "added": "2026-08-15",
+      "screenshots": [
+        "https://raw.githubusercontent.com/a179-sanae/dsh-auto-collapse/main/assets/screenshot.png"
+      ]
+    },
+    {
+      "name": "dsh-skill-picker",
+      "owner": "a735624258",
+      "url": "https://github.com/a735624258/dsh-skill-picker",
+      "page": "https://awesome-dsh-plugin.com/p/a735624258/dsh-skill-picker/",
+      "category": "ui",
+      "description": {
+        "en": "WorkBuddy-style skill picker: a button beside the composer opens a searchable list of installed skills; picking one inserts the official /skill-name gesture, so the skill loads with your message.",
+        "zh": "WorkBuddy 同款技能选择器：输入框旁 ⚡ 按钮弹出全部技能列表，支持搜索与最近/常用排序，点选即插入官方 `/技能名` 手势，随消息发出自动加载执行。"
+      },
+      "npm": "dsh-skill-picker",
+      "version": "0.5.6",
+      "stars": 27,
+      "downloads": 2463,
+      "install": "dsh plugin --profile web add dsh-skill-picker",
+      "added": "2026-08-16"
+    },
+    {
+      "name": "dsh-chat-toc",
+      "owner": "a792883583",
+      "url": "https://github.com/a792883583/dsh-chat-toc",
+      "page": "https://awesome-dsh-plugin.com/p/a792883583/dsh-chat-toc/",
+      "category": "ui",
+      "description": {
+        "en": "Interactive chat table of contents with bookmarks, turn pinning, global shortcuts, and heading extraction.",
+        "zh": "对话大纲目录导航：支持书签标记、轮次置顶钉住、全局快捷键与智能标题提取。"
+      },
+      "npm": "dsh-chat-toc",
+      "version": "0.4.5",
+      "stars": 1,
+      "downloads": 3436,
+      "install": "dsh plugin --profile web add dsh-chat-toc",
+      "added": "2026-09-07"
+    },
+    {
+      "name": "dsh-file-mentions",
+      "owner": "a903067276-rgb",
+      "url": "https://github.com/a903067276-rgb/dsh-file-mentions",
+      "page": "https://awesome-dsh-plugin.com/p/a903067276-rgb/dsh-file-mentions/",
+      "category": "ui",
+      "description": {
+        "en": "Clickable file paths in DSH replies: Codex-style inline open, reveal in file manager, and a mentioned-files chip list at the turn tail.",
+        "zh": "DSH 回复中的文件路径可点击：Codex 风格行内打开、文件管理器定位、回合尾部文件 chip 列表。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 12,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:a903067276-rgb/dsh-file-mentions",
+      "added": "2026-08-14",
+      "screenshots": [
+        "https://raw.githubusercontent.com/a903067276-rgb/dsh-file-mentions/HEAD/assets/screenshot.png"
+      ]
+    },
+    {
+      "name": "dsh-file-upload",
+      "owner": "a903067276-rgb",
+      "url": "https://github.com/a903067276-rgb/dsh-file-upload",
+      "page": "https://awesome-dsh-plugin.com/p/a903067276-rgb/dsh-file-upload/",
+      "category": "ui",
+      "description": {
+        "en": "One upload button plus drag-and-drop files into the conversation as local paths: save to the project's uploads/, path text into the input box, works with any vision tool.",
+        "zh": "统一上传按钮 + 拖拽文件直进对话：文件保存到项目 uploads/，路径文本自动进输入框，可配合任意视觉工具看图。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 11,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:a903067276-rgb/dsh-file-upload",
+      "added": "2026-08-17",
+      "screenshots": [
+        "https://raw.githubusercontent.com/a903067276-rgb/dsh-file-upload/HEAD/assets/screenshot.png"
+      ]
+    },
+    {
+      "name": "dsh-hud",
+      "owner": "a903067276-rgb",
+      "url": "https://github.com/a903067276-rgb/dsh-hud",
+      "page": "https://awesome-dsh-plugin.com/p/a903067276-rgb/dsh-hud/",
+      "category": "ui",
+      "description": {
+        "en": "HUD status panel: Git status, MCP servers, skills, model and token usage in a floating side panel.",
+        "zh": "HUD 状态面板：Git 状态、MCP 服务器、技能列表、模型与 token 用量，悬浮侧栏一览无余。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 10,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:a903067276-rgb/dsh-hud",
+      "added": "2026-08-14",
+      "screenshots": [
+        "https://raw.githubusercontent.com/a903067276-rgb/dsh-hud/HEAD/assets/hud-panel.png"
+      ]
+    },
+    {
+      "name": "dsh-plan-switch",
+      "owner": "a903067276-rgb",
+      "url": "https://github.com/a903067276-rgb/dsh-plan-switch",
+      "page": "https://awesome-dsh-plugin.com/p/a903067276-rgb/dsh-plan-switch/",
+      "category": "ui",
+      "description": {
+        "en": "One-click enter/exit Plan mode for the DSH web input bar, a quick-click shortcut for /plan.",
+        "zh": "输入框一键进/出 Plan 模式（/plan 的快捷点击），常驻小按钮。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 6,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:a903067276-rgb/dsh-plan-switch",
+      "added": "2026-08-17",
+      "screenshots": [
+        "https://raw.githubusercontent.com/a903067276-rgb/dsh-plan-switch/HEAD/assets/plan-button.png"
+      ]
+    },
+    {
+      "name": "dsh-panel-tint",
+      "owner": "abbccdd",
+      "url": "https://github.com/abbccdd/dsh-panel-tint",
+      "page": "https://awesome-dsh-plugin.com/p/abbccdd/dsh-panel-tint/",
+      "category": "ui",
+      "description": {
+        "en": "Add independent opacity controls for the sidebar, message panels and composer in dsh web.",
+        "zh": "为 dsh web 的侧边栏、正文框和输入框提供独立的不透明度控制。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 0,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:abbccdd/dsh-panel-tint",
+      "added": "2026-08-29",
+      "screenshots": [
+        "https://raw.githubusercontent.com/abbccdd/dsh-panel-tint/HEAD/assets/screenshot-panel-tint-blue.png",
+        "https://raw.githubusercontent.com/abbccdd/dsh-panel-tint/HEAD/assets/screenshot-panel-tint-default.png"
+      ]
+    },
+    {
+      "name": "dsh-question-nav",
+      "owner": "AbelKeithsun",
+      "url": "https://github.com/AbelKeithsun/dsh-question-nav",
+      "page": "https://awesome-dsh-plugin.com/p/AbelKeithsun/dsh-question-nav/",
+      "category": "ui",
+      "description": {
+        "en": "In-session question navigator for the DSH Web UI: a dot minimap on the conversation edge (left or right, configurable in settings), one dot per user question — hover shows the full question text, click jumps to it.",
+        "zh": "DSH Web UI 会话内提问导航：对话栏左/右缘（可在设置中切换）的圆点迷你地图，一个圆点对应一个用户提问——悬停显示全文，点击跳转到该提问。"
+      },
+      "npm": "@luziyang2026/dsh-question-nav",
+      "version": "0.7.8",
+      "stars": 5,
+      "downloads": 3388,
+      "install": "dsh plugin --profile web add @luziyang2026/dsh-question-nav",
+      "added": "2026-08-27",
+      "screenshots": [
+        "https://raw.githubusercontent.com/AbelKeithsun/dsh-question-nav/HEAD/assets/screenshots/01-main.png",
+        "https://raw.githubusercontent.com/AbelKeithsun/dsh-question-nav/HEAD/assets/screenshots/02-settings.png"
+      ]
+    },
+    {
+      "name": "dsh-web-mobile-fix",
+      "owner": "AcidGr",
+      "url": "https://github.com/AcidGr/dsh-web-mobile-fix",
+      "page": "https://awesome-dsh-plugin.com/p/AcidGr/dsh-web-mobile-fix/",
+      "category": "ui",
+      "description": {
+        "en": "Mobile layout fixes for the Web UI on narrow screens: full-screen settings panel, one-row plugin nav, full-screen sidebar, centered popups, icon-only session-log button.",
+        "zh": "Web UI 移动端布局修复：窄屏下设置面板全屏化、插件导航单行排满、侧边栏全屏、弹层居中、会话日志按钮图标化。"
+      },
+      "npm": "dsh-web-mobile-fix",
+      "version": "1.0.2",
+      "stars": 8,
+      "downloads": 1573,
+      "install": "dsh plugin --profile web add dsh-web-mobile-fix",
+      "added": "2026-08-14",
+      "screenshots": [
+        "https://raw.githubusercontent.com/AcidGr/dsh-web-mobile-fix/main/assets/screenshot-1.jpg",
+        "https://raw.githubusercontent.com/AcidGr/dsh-web-mobile-fix/main/assets/screenshot-2.jpg"
+      ]
+    },
+    {
+      "name": "dsh-tmux-cc",
+      "owner": "adrianleb",
+      "url": "https://github.com/adrianleb/dsh-tmux-cc",
+      "page": "https://awesome-dsh-plugin.com/p/adrianleb/dsh-tmux-cc/",
+      "category": "ui",
+      "description": {
+        "en": "Persistent tmux control-mode cockpit for DSH Web that mirrors native panes in a dock.",
+        "zh": "为 DSH Web 提供持久的 tmux 控制模式驾驶舱，在停靠栏中镜像原生窗格。"
+      },
+      "npm": "dsh-tmux-cc",
+      "version": "0.6.0",
+      "stars": 0,
+      "downloads": 501,
+      "install": "dsh plugin --profile web add dsh-tmux-cc",
+      "added": "2026-08-29",
+      "screenshots": [
+        "https://raw.githubusercontent.com/adrianleb/dsh-tmux-cc/HEAD/assets/dsh-tmux-cc-desktop.png",
+        "https://raw.githubusercontent.com/adrianleb/dsh-tmux-cc/HEAD/assets/dsh-tmux-cc-desktop-right.png",
+        "https://raw.githubusercontent.com/adrianleb/dsh-tmux-cc/HEAD/assets/dsh-tmux-cc-mobile.png",
+        "https://raw.githubusercontent.com/adrianleb/dsh-tmux-cc/HEAD/assets/dsh-tmux-cc-mobile-zoom.png"
+      ]
+    },
+    {
+      "name": "dsh-conversation-map",
+      "owner": "afoxsss",
+      "url": "https://github.com/afoxsss/dsh-conversation-map",
+      "page": "https://awesome-dsh-plugin.com/p/afoxsss/dsh-conversation-map/",
+      "category": "ui",
+      "description": {
+        "en": "Conversation minimap docked on the right edge of the dsh Web chat: colour-block and to-scale thumbnail modes, drag-to-resize (10–320px), hover loupe preview, click-to-jump and drag-to-scroll with a live viewport indicator, and collapse to a 4px strip.",
+        "zh": "停靠在 dsh Web 对话区右缘的会话代码地图：色块/缩略图双模式、拖动调宽（10–320px）、悬停放大镜预览、点击跳转与拖动滚动（带实时视口指示条）、可收起为 4px 细条。"
+      },
+      "npm": "dsh-conversation-map",
+      "version": "0.1.6",
+      "stars": 2,
+      "downloads": 1081,
+      "install": "dsh plugin --profile web add dsh-conversation-map",
+      "added": "2026-08-28",
+      "screenshots": [
+        "https://raw.githubusercontent.com/afoxsss/dsh-conversation-map/HEAD/assets/screenshots/ex1.jpg",
+        "https://raw.githubusercontent.com/afoxsss/dsh-conversation-map/HEAD/assets/screenshots/ex2.jpg"
+      ]
+    },
+    {
+      "name": "dsh-docking-layout",
+      "owner": "ai-eks",
+      "url": "https://github.com/ai-eks/dsh-docking-layout",
+      "page": "https://awesome-dsh-plugin.com/p/ai-eks/dsh-docking-layout/",
+      "category": "ui",
+      "description": {
+        "en": "Dockable DSH Web UI layout that organizes conversations as tabs across draggable split groups.",
+        "zh": "可停靠的 DSH Web UI 布局插件，将对话组织为标签页，并支持拖拽拆分对话分组。"
+      },
+      "npm": "@ai-eks/dsh-docking-layout",
+      "version": "0.1.2-rc.1",
+      "stars": 5,
+      "downloads": 484,
+      "install": "dsh plugin --profile web add @ai-eks/dsh-docking-layout",
+      "added": "2026-08-24"
+    },
+    {
+      "name": "dsh-anchored-monitor",
+      "owner": "Aik358",
+      "url": "https://github.com/Aik358/dsh-anchored-monitor",
+      "page": "https://awesome-dsh-plugin.com/p/Aik358/dsh-anchored-monitor/",
+      "category": "ui",
+      "description": {
+        "en": "A whip for DeepSeek V4 Pro: it watches the reasoning fingerprint of every thinking block and pulls the model back when it slips from focused \"We will / I will\" mode into scattered \"let me\" mode.",
+        "zh": "给 DeepSeek V4 Pro 的鞭子：实时监听每个思维块的指纹，当模型从专注的 We will / I will 模式滑向发散的 let me 模式时把它拉回来。"
+      },
+      "npm": "@a9i5k4/dsh-anchored-monitor",
+      "version": "0.3.1",
+      "stars": 11,
+      "downloads": 2513,
+      "install": "dsh plugin --profile web add @a9i5k4/dsh-anchored-monitor",
+      "added": "2026-08-18"
+    },
+    {
+      "name": "dsh-alive",
+      "owner": "AikenFra",
+      "url": "https://github.com/AikenFra/dsh-alive",
+      "page": "https://awesome-dsh-plugin.com/p/AikenFra/dsh-alive/",
+      "category": "ui",
+      "description": {
+        "en": "Zero-token online status indicator for the DeepSeek Harness web UI: an always-visible online/offline dot in the conversation header, auto-refreshed every 15 seconds with no LLM calls.",
+        "zh": "零 token 在线状态指示器：会话头部常驻显示 ● 在线 / ● 离线 状态点，每 15 秒自动检测一次，不调用任何 LLM。"
+      },
+      "npm": "dsh-alive",
+      "version": "0.1.1",
+      "stars": 2,
+      "downloads": 550,
+      "install": "dsh plugin --profile web add dsh-alive",
+      "added": "2026-08-16"
+    },
+    {
+      "name": "dsh-drag-and-drop",
+      "owner": "AKIRACOD",
+      "url": "https://github.com/AKIRACOD/dsh-drag-and-drop",
+      "page": "https://awesome-dsh-plugin.com/p/AKIRACOD/dsh-drag-and-drop/",
+      "category": "ui",
+      "description": {
+        "en": "File-drag fork: drop documents as removable chips above the composer, send without typing.",
+        "zh": "拖放 fork：文档以可删除「文件芯片」挂在输入框上方，不打字也能发送。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 7,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:AKIRACOD/dsh-drag-and-drop",
+      "added": "2026-08-14"
+    },
+    {
+      "name": "dock",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock/",
+      "category": "ui",
+      "description": {
+        "en": "VSCode-style workbench shell for the DSH Web UI: activity bar, side bar, editor area, panel and status bar, with a registry service (ctx.workbench) for mounting panels, views and commands.",
+        "zh": "DSH Web 工作台基座插件：提供 VSCode 风格布局外壳（活动栏/侧边栏/编辑器区/面板/状态栏）和 ctx.workbench 开放注册表，供功能插件挂载面板、视图与命令。"
+      },
+      "npm": "dock-base",
+      "version": "0.1.2",
+      "stars": 7,
+      "downloads": 719,
+      "install": "dsh plugin --profile web add dock-base",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dock-editor",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock-editor",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock-editor/",
+      "category": "ui",
+      "description": {
+        "en": "Text viewer and editor for the dock workbench: undo/redo, Ctrl+S save, unsaved-change confirmation and binary detection, registered as the default file viewer.",
+        "zh": "dock 系列文本查看与编辑器：支持撤销重做、Ctrl+S 保存、未保存确认和二进制检测，作为 dock-files 的默认文本查看器。"
+      },
+      "npm": "dock-editor",
+      "version": "0.2.1",
+      "stars": 4,
+      "downloads": 551,
+      "install": "dsh plugin --profile web add dock-editor",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dock-files",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock-files",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock-files/",
+      "category": "ui",
+      "description": {
+        "en": "File explorer for the dock workbench: tree browsing of the session workspace with create/rename/copy-paste/delete, drag-and-drop import and paste of local files and clipboard images.",
+        "zh": "dock 系列文件浏览插件：侧边栏目录树浏览会话工作区，支持新建/重命名/复制粘贴/删除、拖放导入、粘贴本地文件与剪贴板图片。"
+      },
+      "npm": "dock-files",
+      "version": "0.2.1",
+      "stars": 5,
+      "downloads": 657,
+      "install": "dsh plugin --profile web add dock-files",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dock-git",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock-git",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock-git/",
+      "category": "ui",
+      "description": {
+        "en": "Git history visualization for the dock workbench: swimlane commit graph, branch and tag management, stage/commit/push and remote operations.",
+        "zh": "dock 系列 Git 历史可视化插件：泳道式提交图、分支/标签管理、暂存/提交/推送与远端操作。"
+      },
+      "npm": "dock-git",
+      "version": "0.3.3",
+      "stars": 4,
+      "downloads": 839,
+      "install": "dsh plugin --profile web add dock-git",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dock-images",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock-images",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock-images/",
+      "category": "ui",
+      "description": {
+        "en": "Image viewer for the dock workbench: PNG, JPEG, GIF, WebP, BMP, SVG, ICO and AVIF, with SVG rendered as image data only.",
+        "zh": "dock 系列图片查看器：支持 PNG/JPEG/GIF/WebP/BMP/SVG/ICO/AVIF 格式，SVG 仅以安全方式渲染。"
+      },
+      "npm": "dock-images",
+      "version": "0.1.1",
+      "stars": 4,
+      "downloads": 368,
+      "install": "dsh plugin --profile web add dock-images",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dock-markdown",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dock-markdown",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dock-markdown/",
+      "category": "ui",
+      "description": {
+        "en": "Markdown viewer for the dock workbench: GFM rendering with DOMPurify sanitization, document outline and relative-path image/link resolution, with one-click switch to editing.",
+        "zh": "dock 系列 Markdown 查看器：GFM 渲染 + DOMPurify 消毒、文档大纲、相对路径图片/链接解析，可一键切换编辑。"
+      },
+      "npm": "dock-markdown",
+      "version": "0.1.1",
+      "stars": 3,
+      "downloads": 351,
+      "install": "dsh plugin --profile web add dock-markdown",
+      "added": "2026-08-22"
+    },
+    {
+      "name": "dsh-sysmon",
+      "owner": "AKS1st",
+      "url": "https://github.com/AKS1st/dsh-sysmon",
+      "page": "https://awesome-dsh-plugin.com/p/AKS1st/dsh-sysmon/",
+      "category": "ui",
+      "description": {
+        "en": "System status floating widget: live CPU/memory/disk usage in the bottom-right corner of the DSH Web UI with threshold colour warnings.",
+        "zh": "DSH Web 右下角系统状态悬浮窗：实时显示 CPU、内存、磁盘占用率，带阈值变色告警。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 3,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:AKS1st/dsh-sysmon",
+      "added": "2026-08-15"
+    },
+    {
+      "name": "dsh-custom-plugin",
+      "owner": "AlexPeng07",
+      "url": "https://github.com/AlexPeng07/dsh-custom-plugin",
+      "page": "https://awesome-dsh-plugin.com/p/AlexPeng07/dsh-custom-plugin/",
+      "category": "ui",
+      "description": {
+        "en": "Web GUI convenience suite with appearance controls, timeline navigation, project folders, prompts, conversation export, Mermaid rendering, quote reply, and DeepSeek balance and daily token usage.",
+        "zh": "DSH Web GUI 便利套件，提供外观控制、时间线导航、项目文件夹、提示词、会话导出、Mermaid 渲染、引用回复，以及 DeepSeek 余额和每日 token 用量。"
+      },
+      "npm": "@alexpeng/dsh-custom-plugin",
+      "version": "0.4.0",
+      "stars": 5,
+      "downloads": 1651,
+      "install": "dsh plugin --profile web add @alexpeng/dsh-custom-plugin",
+      "added": "2026-08-24"
+    },
+    {
+      "name": "dsh-ui-enhancer",
+      "owner": "AlexYin-Tongji",
+      "url": "https://github.com/AlexYin-Tongji/dsh-ui-enhancer",
+      "page": "https://awesome-dsh-plugin.com/p/AlexYin-Tongji/dsh-ui-enhancer/",
+      "category": "ui",
+      "description": {
+        "en": "Desktop-style UI enhancements for the DSH Web client: adaptive wallpapers, a desktop pet companion with an activity feed and feeding economy, @file workspace references, and the resizable file/preview right panel.",
+        "zh": "面向 DSH Web 客户端的桌面化 UI 增强：自适应对比度壁纸、带活动流与投喂玩法的桌面宠物、@file 工作区文件引用，以及可缩放的文件/预览右侧面板。"
+      },
+      "npm": "dsh-ui-enhancer",
+      "version": "0.2.0",
+      "stars": 2,
+      "downloads": 711,
+      "install": "dsh plugin --profile web add dsh-ui-enhancer",
+      "added": "2026-08-20"
+    },
+    {
+      "name": "dsh-thumb",
+      "owner": "AliceLJY",
+      "url": "https://github.com/AliceLJY/dsh-thumb",
+      "page": "https://awesome-dsh-plugin.com/p/AliceLJY/dsh-thumb/",
+      "category": "ui",
+      "description": {
+        "en": "A phone shell for the web GUI - the sidebar becomes an overlay drawer that closes when a session is tapped, the settings sheet goes full-screen single column, and the transcript is retuned for phone reading.",
+        "zh": "网页版界面的手机外壳：侧栏改为覆盖式抽屉、点会话自动收起，设置面板改全屏单列，正文排版按手机阅读距离重调。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 1,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:AliceLJY/dsh-thumb",
+      "added": "2026-08-27"
+    },
+    {
+      "name": "ui-status-label",
+      "owner": "alingalingling",
+      "url": "https://github.com/alingalingling/ui-status-label",
+      "page": "https://awesome-dsh-plugin.com/p/alingalingling/ui-status-label/",
+      "category": "ui",
+      "description": {
+        "en": "Customize the \"deep diving\" thinking status label to anything you like.",
+        "zh": "把鲸鱼娘思考时的 \"deep diving\" 状态文案自定义成任意你想要的样子。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 44,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:alingalingling/ui-status-label",
+      "added": "2026-08-13"
+    },
+    {
+      "name": "dsh-soul",
+      "owner": "Aliuyanfeng",
+      "url": "https://github.com/Aliuyanfeng/dsh-soul",
+      "page": "https://awesome-dsh-plugin.com/p/Aliuyanfeng/dsh-soul/",
+      "category": "ui",
+      "description": {
+        "en": "Personalization for the agent: a Web UI panel (about-you, reply style & tone, traits for headings/lists and emoji, output language, custom instructions) and `/soul` commands, with nickname/occupation/bio/style/traits/language compiled into a system prompt and re-injected into active sessions. Exposes `soulConfig` for other plugins and a `set_persona` tool the agent can call.",
+        "zh": "为 Agent 提供个性化设置：Web 设置栏目（关于你、回复风格和语调、标题与列表 / 表情符号特质、输出语言、自定义指令）与 `/soul` 命令；昵称 / 职业 / 介绍 / 风格 / 特质 / 语言编译进提示词并推送给所有活动会话。向其他插件暴露 `soulConfig` 服务，并注册 Agent 可调用的 `set_persona` 工具。"
+      },
+      "npm": "dsh-soul",
+      "version": "0.5.0",
+      "stars": 3,
+      "downloads": 1069,
+      "install": "dsh plugin --profile web add dsh-soul",
+      "added": "2026-09-01",
+      "screenshots": [
+        "https://raw.githubusercontent.com/Aliuyanfeng/dsh-soul/HEAD/screenshots/image0.png",
+        "https://raw.githubusercontent.com/Aliuyanfeng/dsh-soul/HEAD/screenshots/image1.png",
+        "https://raw.githubusercontent.com/Aliuyanfeng/dsh-soul/HEAD/screenshots/image2.png",
+        "https://raw.githubusercontent.com/Aliuyanfeng/dsh-soul/HEAD/screenshots/image3.png"
+      ]
+    },
+    {
+      "name": "dsh-better-sidebar-N23",
+      "owner": "All3nCN",
+      "url": "https://github.com/All3nCN/dsh-better-sidebar-N23",
+      "page": "https://awesome-dsh-plugin.com/p/All3nCN/dsh-better-sidebar-N23/",
+      "category": "ui",
+      "description": {
+        "en": "Full workbench fork of dsh-better-sidebar: explorer, editor, terminal, Git, browser and split panes, plus a VSCode-like shell refactor with a full-width compact header and activity rail; publishes as @all3cn/dsh-better-sidebar-n23 on npm.",
+        "zh": "dsh-better-sidebar 完整工作台 fork：资源管理器、编辑器、终端、Git、浏览器与分屏，外加仿 VSCode 外壳重构（全宽紧凑顶栏与活动栏）；npm 包名 @all3cn/dsh-better-sidebar-n23。"
+      },
+      "npm": "@all3cn/dsh-better-sidebar-n23",
+      "version": "0.1.0",
+      "stars": 0,
+      "downloads": 147,
+      "install": "dsh plugin --profile web add @all3cn/dsh-better-sidebar-n23",
+      "added": "2026-09-01"
+    },
+    {
+      "name": "dsh-settings-hub",
+      "owner": "Amengclass",
+      "url": "https://github.com/Amengclass/dsh-settings-hub",
+      "page": "https://awesome-dsh-plugin.com/p/Amengclass/dsh-settings-hub/",
+      "category": "ui",
+      "description": {
+        "en": "Unify third-party plugin settings in DeepSeek Harness. Auto-discover, group, and reorder plugin settings under one collapsible nav entry with drag-and-drop support.",
+        "zh": "统一收纳 DeepSeek Harness 里的第三方插件设置：自动发现、分组，并在一个可折叠的导航入口下拖拽排序。"
+      },
+      "npm": "dsh-settings-hub",
+      "version": "0.1.2",
+      "stars": 0,
+      "downloads": 539,
+      "install": "dsh plugin --profile web add dsh-settings-hub",
+      "added": "2026-08-29",
+      "screenshots": [
+        "https://raw.githubusercontent.com/Amengclass/dsh-settings-hub/HEAD/assets/screenshot-collapsed.png",
+        "https://raw.githubusercontent.com/Amengclass/dsh-settings-hub/HEAD/assets/screenshot-expanded.png"
+      ]
+    },
+    {
+      "name": "dsh-turn-outline",
+      "owner": "Andor-Z",
+      "url": "https://github.com/Andor-Z/dsh-turn-outline",
+      "page": "https://awesome-dsh-plugin.com/p/Andor-Z/dsh-turn-outline/",
+      "category": "ui",
+      "description": {
+        "en": "Adds a sidebar tab that folds a session into user turns (input, tool steps, output) with one-click jump back into the conversation.",
+        "zh": "在侧边栏按用户轮次折叠会话（输入、工具步骤、输出），一键跳回对话原位。"
+      },
+      "npm": "dsh-turn-outline",
+      "version": "0.2.7",
+      "stars": 1,
+      "downloads": 408,
+      "install": "dsh plugin --profile web add dsh-turn-outline",
+      "added": "2026-09-05"
+    },
+    {
+      "name": "dsh-plugin-video-player",
+      "owner": "anitman",
+      "url": "https://github.com/anitman/dsh-plugin-video-player",
+      "page": "https://awesome-dsh-plugin.com/p/anitman/dsh-plugin-video-player/",
+      "category": "ui",
+      "description": {
+        "en": "TikTok-style video feed in a floating sidebar window: swipe local or SMB-NAS folders, or paste online video URLs (yt-dlp, bilibili/YouTube, cookies.txt login state); the window auto-fits the video aspect ratio, with fullscreen, drag-resize, Range streaming and an agent video-queue endpoint.",
+        "zh": "侧栏浮动窗口里的抖音式刷视频：本地/SMB NAS 文件夹上下滑动，或粘贴在线视频地址（yt-dlp 解析，支持 bilibili/YouTube 与 cookies.txt 登录态）；窗口随视频宽高比自适应，支持全屏、拖动缩放、Range 流式播放，并提供 agent 视频推送队列端点。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 3,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:anitman/dsh-plugin-video-player",
+      "added": "2026-08-19"
+    },
+    {
+      "name": "dsh-live2d-pet",
+      "owner": "ankesu",
+      "url": "https://github.com/ankesu/dsh-live2d-pet",
+      "page": "https://awesome-dsh-plugin.com/p/ankesu/dsh-live2d-pet/",
+      "category": "ui",
+      "description": {
+        "en": "Live2D companion for DSH: a floating Cubism model with state-driven expressions and mouse tracking; config-driven geometry (size/position from the plugin config); official Haru sample bundled (© Live2D Inc.).",
+        "zh": "DSH 的 Live2D 桌宠：悬浮的 Cubism 模型，表情随状态变化并跟随鼠标；尺寸与位置由插件配置驱动；内置官方 Haru 示例模型（© Live2D Inc.）。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 4,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:ankesu/dsh-live2d-pet",
+      "added": "2026-08-19"
+    },
+    {
+      "name": "dsh-simplify",
+      "owner": "Anna-la",
+      "url": "https://github.com/Anna-la/dsh-simplify",
+      "page": "https://awesome-dsh-plugin.com/p/Anna-la/dsh-simplify/",
+      "category": "ui",
+      "description": {
+        "en": "Clean-mode for the Web GUI: hover any element and right-click to remove it; removals survive reloads and are restorable from the settings page.",
+        "zh": "Web 界面清理：清理模式下悬浮元素右键即可移除，刷新后依然生效，设置页中可原样恢复。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 0,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:Anna-la/dsh-simplify",
+      "added": "2026-08-29"
+    },
+    {
+      "name": "dsh-desk-pet",
+      "owner": "anneheartrecord",
+      "url": "https://github.com/anneheartrecord/dsh-desk-pet",
+      "page": "https://awesome-dsh-plugin.com/p/anneheartrecord/dsh-desk-pet/",
+      "category": "ui",
+      "description": {
+        "en": "macOS desk pet that lives outside the DSH page: a real always-on-top window that clears fullscreen Spaces, six states driven by local DSH, a native right-click menu with quiet mode and a session list, and a bundled skill that turns one photo into a full eighteen-pose skin on your own image tool and credentials; system Python and ctypes, no Electron and no dependencies.",
+        "zh": "装在 DSH 页面之外的 macOS 桌宠：一个真的置顶窗口，全屏 Space 也盖得住；六种状态跟着本地 DSH 走，原生右键菜单里有免打扰与会话清单；自带的 skill 用你自己的画图工具和额度，把一张照片变成整套十八个姿势的皮肤。跑系统自带的 Python 与 ctypes，不用 Electron，零依赖。"
+      },
+      "npm": "deepseek-desk-pet",
+      "version": "0.3.0",
+      "stars": 5,
+      "downloads": 567,
+      "install": "dsh plugin --profile web add deepseek-desk-pet",
+      "added": "2026-08-19",
+      "screenshots": [
+        "https://raw.githubusercontent.com/anneheartrecord/dsh-desk-pet/main/docs/media/diy-skin.png",
+        "https://raw.githubusercontent.com/anneheartrecord/dsh-desk-pet/main/docs/media/floats-above.png",
+        "https://raw.githubusercontent.com/anneheartrecord/dsh-desk-pet/main/docs/media/skins.png",
+        "https://raw.githubusercontent.com/anneheartrecord/dsh-desk-pet/main/docs/media/states.png"
+      ]
+    },
+    {
+      "name": "dsh-shell-card-plus",
+      "owner": "antnesswcm",
+      "url": "https://github.com/antnesswcm/dsh-shell-card-plus",
+      "page": "https://awesome-dsh-plugin.com/p/antnesswcm/dsh-shell-card-plus/",
+      "category": "ui",
+      "description": {
+        "en": "Replaces the stock bash/pwsh terminal rows in the DSH web UI with shell command cards: long commands soft-wrap with line numbers instead of truncating, plus separate copy-command and copy-output buttons.",
+        "zh": "用自定义 Shell 命令卡片替换 DSH Web 原版 bash/pwsh 工具行：长命令自动换行带行号不再截断，并提供独立的复制命令/复制输出按钮。"
+      },
+      "npm": "dsh-shell-card-plus",
+      "version": "0.3.2",
+      "stars": 0,
+      "downloads": 302,
+      "install": "dsh plugin --profile web add dsh-shell-card-plus",
+      "added": "2026-09-02",
+      "screenshots": [
+        "https://raw.githubusercontent.com/antnesswcm/dsh-shell-card-plus/HEAD/docs/preview/shell-card-plus-expanded.png",
+        "https://raw.githubusercontent.com/antnesswcm/dsh-shell-card-plus/HEAD/docs/preview/official-expanded.png"
+      ]
+    },
+    {
+      "name": "DragView",
+      "owner": "anzhaohao",
+      "url": "https://github.com/anzhaohao/DragView",
+      "page": "https://awesome-dsh-plugin.com/p/anzhaohao/DragView/",
+      "category": "ui",
+      "description": {
+        "en": "Drag-and-drop file attachments as Codex-style cards, with in-app PDF/text/video/audio previews and system-default opening for other formats.",
+        "zh": "拖拽文件以 Codex 风格附件卡片呈现，支持 PDF/文本/音视频应用内预览，其余格式调用系统默认应用打开。"
+      },
+      "npm": "dsh-dragview",
+      "version": "0.1.1",
+      "stars": 1,
+      "downloads": 419,
+      "install": "dsh plugin --profile web add dsh-dragview",
+      "added": "2026-08-25"
+    },
+    {
+      "name": "dsh-WallpaperAndCost",
+      "owner": "AppliedYuu",
+      "url": "https://github.com/AppliedYuu/dsh-WallpaperAndCost",
+      "page": "https://awesome-dsh-plugin.com/p/AppliedYuu/dsh-WallpaperAndCost/",
+      "category": "ui",
+      "description": {
+        "en": "Merged plugin: wallpaper customization (original-resolution uploads, crop editor, per-area opacity, MP4/WebM dynamic wallpapers) + Steam Workshop wallpaper extraction (parses scene.pkg/.tex via a bundled Python script, preview/download) + DeepSeek balance & usage widget + OpenCode Go plan usage (rolling/weekly/monthly percents in a top header pill; expand for progress bars & reset countdowns). API keys are read from DSH's credential store by the host — never stored in source or the browser.",
+        "zh": "合并插件：壁纸定制（原图不压缩、裁剪编辑器、左/中/右分区不透明度、MP4/WebM 动态壁纸）＋ Steam 创意工坊壁纸提取（内置 scripts/extract_scene_pkg.py 解析 scene.pkg/.tex，支持预览/下载）＋ DeepSeek 余额与用量小组件 ＋ OpenCode Go 套餐用量（会话顶部药丸按钮显示滚动/周/月用量百分比，点开展开进度条与重置倒计时）。各 API key 均由 host 从 DSH 凭据库读取，不入源码/浏览器。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 4,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:AppliedYuu/dsh-WallpaperAndCost",
+      "added": "2026-08-19"
+    },
+    {
+      "name": "dsh-multi-lang-ui",
+      "owner": "asd13006",
+      "url": "https://github.com/asd13006/dsh-multi-lang-ui",
+      "page": "https://awesome-dsh-plugin.com/p/asd13006/dsh-multi-lang-ui/",
+      "category": "ui",
+      "description": {
+        "en": "Add six languages (繁體中文, 日本語, 한국어, Français, Deutsch, Español) to the DeepSeek Harness Web UI language options, with hand-polished per-language translations and automatic fallbacks (Simplified-to-Traditional conversion for zh-TW, English for the others) covering upstream updates and third-party plugins.",
+        "zh": "為 DeepSeek Harness Web UI 語言選單新增六種語言（繁體中文、日本語、한국어、Français、Deutsch、Español）：各語言逐條精譯，缺字串自動兜底（繁中即時簡轉繁、其他語言回退英文），官方更新與第三方插件都能覆蓋。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 2,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:asd13006/dsh-multi-lang-ui",
+      "added": "2026-08-18"
+    },
+    {
+      "name": "dsh-message-preview",
+      "owner": "asukasec",
+      "url": "https://github.com/asukasec/dsh-message-preview",
+      "page": "https://awesome-dsh-plugin.com/p/asukasec/dsh-message-preview/",
+      "category": "ui",
+      "description": {
+        "en": "Right-edge user-message navigator with an adaptive block layout that fits the available height, plus hover previews, keyboard controls, and click-to-jump navigation.",
+        "zh": "右侧用户消息导航条，根据消息数量与可用高度自适应排布导航块，并支持悬停预览、键盘操作与点击跳转。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 7,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:asukasec/dsh-message-preview",
+      "added": "2026-08-14"
+    },
+    {
+      "name": "dsh-sleep-send",
+      "owner": "Awu12277",
+      "url": "https://github.com/Awu12277/dsh-sleep-send",
+      "page": "https://awesome-dsh-plugin.com/p/Awu12277/dsh-sleep-send/",
+      "category": "ui",
+      "description": {
+        "en": "Schedule-send button and panel to the right of the composer, with smart time slots, a custom date/time picker, several queued sends at once, and localStorage persistence that restores pending tasks after a page reload.",
+        "zh": "在输入框右侧提供「定时发送」按钮与配置面板，支持智能时段、自定义日期时间、多个定时任务并行，任务经 localStorage 持久化，刷新页面后自动恢复。"
+      },
+      "npm": "dsh-sleep-send",
+      "version": "1.2.3",
+      "stars": 6,
+      "downloads": 1120,
+      "install": "dsh plugin --profile web add dsh-sleep-send",
+      "added": "2026-08-18"
+    },
+    {
+      "name": "dsh-trail#bundle",
+      "owner": "ayahunter",
+      "url": "https://github.com/ayahunter/dsh-trail/tree/main/packages/bundle",
+      "page": "https://awesome-dsh-plugin.com/p/ayahunter/dsh-trail--packages-bundle/",
+      "category": "ui",
+      "description": {
+        "en": "Replaces the Web GUI trajectory tab with a new-user-friendly round-by-round storyline, plain-language tool labels, category filters and fuzzy search.",
+        "zh": "把 Web GUI 的轨迹页签替换为新手友好的回合故事线：工具名通俗中文化，支持类别筛选与模糊搜索。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 7,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:ayahunter/dsh-trail#path:/packages/bundle",
+      "added": "2026-08-17",
+      "screenshots": [
+        "https://raw.githubusercontent.com/ayahunter/dsh-trail/main/docs/screenshot.png",
+        "https://raw.githubusercontent.com/ayahunter/dsh-trail/main/docs/screenshots/rounds-view.png",
+        "https://raw.githubusercontent.com/ayahunter/dsh-trail/main/docs/screenshots/tool-details.png"
+      ]
+    },
+    {
+      "name": "dsh-web-launcher",
+      "owner": "ayingQAQ",
+      "url": "https://github.com/ayingQAQ/dsh-web-launcher",
+      "page": "https://awesome-dsh-plugin.com/p/ayingQAQ/dsh-web-launcher/",
+      "category": "ui",
+      "description": {
+        "en": "Windows desktop launcher bundle for DSH Web that creates a managed shortcut, then restarts DSH in the background and refreshes the existing browser page.",
+        "zh": "DSH Web 的 Windows 桌面启动器插件，创建受管理的快捷方式，后续启动会在后台重启 DSH 并刷新已有浏览器页面。"
+      },
+      "npm": null,
+      "version": null,
+      "stars": 5,
+      "downloads": null,
+      "install": "dsh plugin --profile web add github:ayingQAQ/dsh-web-launcher",
+      "added": "2026-08-18"
+    }
+  ]
+}
