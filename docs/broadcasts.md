@@ -32,6 +32,34 @@
 
 ## 三、记录
 
+### 2026-09-10 fix(uiux)：批次 E 对抗式审查修复（bde32ae）—— 失败态误用警告色 + 闸门五处可绕过 —— guan（AI 起草）
+
+- **方法**：批次 E 完成后请独立子 agent 做对抗式复核（目标是**证伪**而非确认），
+  产出 22 条，逐条核实后修复 21 条、登记 1 条。核心发现：**批次 E 修好了「成功/
+  进行中」的同义多色，却让「失败」继承了旧 warn**——token 层把 warn/danger 拆开了，
+  但既有 warn 调用点从未按新语义重判；旧 `--color-warn` 是红橙 #c2410c（语义兼容
+  失败），新 warn 是琥珀 #8d4e10（纯「需注意」），于是真正的失败渲染成琥珀、别处
+  错误是绛红，「一个概念两个色」只是从「成功」搬到了「失败」。
+- 修复（`bde32ae`，31 文件）：① 失败态全线改 danger（ErrorCard 启动失败卡、
+  BootTimeline error、ClientUpdateCard failed、DshVersionListDialog 加载失败、
+  PluginImportPickerDialog 导入失败、confirm-dialog 的 error），并拆开
+  ProfileCreateDialog 里 pending 与 failed **逐字节相同**的死三元；
+  ② npm 来源徽标**第三处**漏改（MarketCustomInstallDialog 仍成功绿，与同框
+  「已安装」撞色）；③ 状态 token 被当分类色（诊断页存储条用 `bg-ok` 表示
+  「会话数据」分类）→ 新增组成图色阶 `chart-1/2/3`（同色相梯度 + 中性收尾——
+  状态四族已占满色环，新色相必然撞车，实测最小 ΔOKLab 低至 0.007）；
+  ④ `switcher.js`（注入 dsh 页面的**用户可见**悬浮胶囊）整个在收口之外；
+  ⑤ 新增 `term-brand`（`brand-deep` 在 term 底上仅 3.40，文字不可读）。
+- **闸门五处可绕过（均为实证）**：shape/contrast 只扫 `.tsx` 而类名工厂在 `.ts`；
+  任意值与裸色值全放行（`bg-[#047857]`、`.css` 里的 hex、`style={{color:"tomato"}}`、
+  方向性边框 `border-s-rose-500`、`ring-offset-amber-500`）；裸 `rounded`（隐式
+  4px 第四档）完全不被识别；对比度的「闸门」实为硬编码清单（新 token 可零触发），
+  且解析正则 `[a-z-]+` **不含数字**（`--color-chart-1` 被静默跳过）；`components/ui/*`
+  整目录豁免过宽。全部补齐，`themeTokens` 正则修正后 `chart-*` 才真正纳入受检。
+- 登记未做（`docs/roadmap.md` §4.15）：CVD（色觉障碍）模拟、闸门解析器的块切分脆弱性。
+- 凭据：`cargo test` **244 绿** · fmt+clippy 绿 · 前端 typecheck 0 err ·
+  oxlint 0 warning · test **214 绿** · 诊断页与错误态经浏览器复核。
+
 ### 2026-09-10 refactor(uiux)：设计 token 收口——语义四族、真三级灰阶、elevation 与圆角梯度（评审批次 E）—— guan（AI 起草）
 
 - **起因（维护者）**：「主题 token 设计的不好看」。实测诊断后确认根因**不是配色不好，
