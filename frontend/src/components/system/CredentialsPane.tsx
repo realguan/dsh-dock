@@ -173,7 +173,7 @@ export function CredentialsPane({
             value={rawContent}
             onChange={(e) => setRawContent(e.target.value)}
             rows={14}
-            className="w-full resize-y rounded-xl border border-line bg-term p-3.5 font-mono text-xs leading-relaxed text-term-ink focus:border-brand focus:outline-none"
+            className="w-full resize-y rounded-xl border border-term-line bg-term p-3.5 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
             placeholder={t.console.credentialsEmpty}
           />
         </div>

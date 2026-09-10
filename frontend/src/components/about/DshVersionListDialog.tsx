@@ -28,8 +28,8 @@ const FILTERS: VersionFilter[] = ["all", "upgradable", "preview"]
 const CHANNEL_DOT: Record<DshVersionEntry["channel"], string> = {
   stable: "bg-ok",
   rc: "bg-brand",
-  alpha: "bg-warn",
-  other: "bg-warn",
+  alpha: "bg-alt",
+  other: "bg-alt",
 }
 
 export function DshVersionListDialog({
@@ -138,7 +138,7 @@ export function DshVersionListDialog({
 
         {error && (
           <div className="flex items-center justify-between gap-2">
-            <span className="text-warn text-xs">{t.about.listLoadFailed}</span>
+            <span className="text-danger text-xs">{t.about.listLoadFailed}</span>
             <Button
               size="xs"
               variant="outline"

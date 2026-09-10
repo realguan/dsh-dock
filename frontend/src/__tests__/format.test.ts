@@ -6,9 +6,10 @@ import {
   fmtPercent,
   fmtSpeed,
   getPaginationPages,
-  getProfileColorClass,
+  PROFILE_CHIP_CLASS,
   localizeLogTimestamp,
 } from "@/lib/format"
+import indexCss from "@/index.css?raw"
 
 describe("fmtBytes", () => {
   it("字节级按整数输出", () => {
@@ -67,21 +68,34 @@ describe("fmtPercent", () => {
   })
 })
 
-describe("getProfileColorClass", () => {
+describe("PROFILE_CHIP_CLASS", () => {
   // 2026-09-10 批次 E：身份色不再与 profile 名相关（旧实现 = 7 色彩虹哈希 +
   // web 特判品牌蓝）。原因见 format.ts 注释：名字才是信息，彩虹在等明度约束下
-  // 分不开，且借用了状态色域。现为单一分类档 token。
-  it("所有 profile 派发同一分类档 token（不再哈希彩虹）", () => {
-    const a = getProfileColorClass("web")
-    const b = getProfileColorClass("frontend-dev")
-    expect(a).toBe(b)
-    expect(a).toContain("text-alt")
-    expect(a).toContain("bg-alt-soft")
+  // 分不开（实测最小 ΔOKLab <0.10），且借用了状态色域。
+  //
+  // 2026-09-10 复核修正：原测试断言「常量等于自己」（同义反复，等于没测）。
+  // 现改为断言**类名里的每个 token 都真实存在于 index.css**——写错 token 名
+  // （如 text-altx）会静默生成一个不存在的类、样式全丢，这类错误以前无人拦。
+  it("每个类名都引用真实存在的 @theme token", () => {
+    const themeStart = indexCss.indexOf("@theme {")
+    const themeEnd = indexCss.indexOf("\n}", themeStart)
+    const theme = indexCss.slice(themeStart, themeEnd)
+    const declared = new Set(
+      [...theme.matchAll(/--(color|radius|shadow|text)-([a-z0-9-]+):/g)].map((m) => m[2]),
+    )
+    // 按空白切出每个类名，再剥离前缀与透明度后缀取 token：
+    // `bg-alt-soft` → alt-soft，`border-alt/30` → alt
+    const used = PROFILE_CHIP_CLASS.split(/\s+/)
+      .map((cls) => cls.match(/^(?:bg|text|border)-([a-z-]+?)(?:\/\d+)?$/)?.[1])
+      .filter((t): t is string => Boolean(t))
+      .map((t) => (declared.has(t) ? t : t.replace(/-soft$/, "")))
+    expect(used.length).toBeGreaterThan(0)
+    const missing = used.filter((t) => !declared.has(t))
+    expect(missing, "身份芯片引用了不存在的 token——样式会静默丢失").toEqual([])
   })
 
   it("身份色不借用状态色域（ok/info/warn/danger）", () => {
-    const cls = getProfileColorClass("anything")
-    expect(cls).not.toMatch(/text-(ok|info|warn|danger)\b/)
+    expect(PROFILE_CHIP_CLASS).not.toMatch(/text-(ok|info|warn|danger)\b/)
   })
 })
 

@@ -45,7 +45,7 @@ export function fmtPercent(current: number, total: number | null): number | null
  * Profile 身份芯片样式（2026-09-10 批次 E 重写）。
  *
  * 旧实现按 profile 名哈希派发 **7 色彩虹**（sky/violet/emerald/amber/rose/teal/indigo），
- * 外加 7 处 `dark:` 变体（`.dark` 从未启用 = 死代码）。三处问题：
+ * 外加 7 处暗色变体前缀（`.dark` 从未启用 = 死代码）。三处问题：
  *   ① 颜色不承载信息——芯片里就有 profile **名字**，颜色是冗余装饰；
  *   ② 7 个色相在等明度约束下互相挤压（实测最小 ΔOKLab < 0.10，低于可辨阈值），
  *      且在色域夹紧后明度参差——正是「散」的来源；
@@ -53,11 +53,10 @@ export function fmtPercent(current: number, total: number | null): number | null
  * 改为单一分类档 token：`alt` 是语义中性的「分类/身份」色（见 index.css），
  * 与状态四族互不冒充。名字是信息，颜色只负责「这是个标签」。
  *
- * 参数保留是为了不改三处调用点签名；身份色不再与名字相关。
+ * 2026-09-10 复核：既然色不再与名字相关，**参数与调用点解析一并移除**——
+ * 保留一个从不读取的参数只会让下个读者以为这里还有按名派发的逻辑。
  */
-export function getProfileColorClass(_profileName: string): string {
-  return "border-alt/30 bg-alt-soft text-alt font-medium"
-}
+export const PROFILE_CHIP_CLASS = "border-alt/30 bg-alt-soft text-alt font-medium"
 
 /**
  * 将日志行中的 ISO8601 UTC 时间戳转换为本地时区显示（日志时区修复，

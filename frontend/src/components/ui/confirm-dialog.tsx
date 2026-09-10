@@ -80,7 +80,7 @@ export function ConfirmDialog({
         {children}
 
         {error && (
-          <div className="bg-warn-soft text-warn rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
+          <div className="bg-danger-soft text-danger rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
             {error}
           </div>
         )}

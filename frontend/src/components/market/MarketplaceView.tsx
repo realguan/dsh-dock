@@ -256,25 +256,25 @@ export function MarketplaceView({
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
                 <SelectItem value="stars">
                   <div className="flex items-center gap-2">
-                    <Star className="size-3.5 text-brand-deep" />
+                    <Star className="size-3.5" />
                     <span>{t.market.sortStars}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="downloads">
                   <div className="flex items-center gap-2">
-                    <Download className="size-3.5 text-info" />
+                    <Download className="size-3.5" />
                     <span>{t.market.sortDownloads}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="newest">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="size-3.5 text-alt" />
+                    <Sparkles className="size-3.5" />
                     <span>{t.market.sortNewest}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="name">
                   <div className="flex items-center gap-2">
-                    <ArrowDownAZ className="size-3.5 text-alt" />
+                    <ArrowDownAZ className="size-3.5" />
                     <span>{t.market.sortName}</span>
                   </div>
                 </SelectItem>
@@ -322,7 +322,7 @@ export function MarketplaceView({
               >
                 <span>{t.market.allCategories}</span>
                 <span
-                  className={`text-meta font-mono rounded px-1 py-0.2 ${
+                  className={`text-meta font-mono rounded-md px-1 py-0.2 ${
                     selectedCategory === "all"
                       ? "bg-white/20 text-white"
                       : "bg-panel text-faint"
@@ -346,7 +346,7 @@ export function MarketplaceView({
                 >
                   <span>{cat.label}</span>
                   <span
-                    className={`text-meta font-mono rounded px-1 py-0.2 ${
+                    className={`text-meta font-mono rounded-md px-1 py-0.2 ${
                       selectedCategory === cat.key
                         ? "bg-white/20 text-white"
                         : "bg-panel text-faint"
@@ -405,12 +405,12 @@ export function MarketplaceView({
               <div className="flex items-center gap-3">
                 <div className="size-9 rounded-lg bg-wash" />
                 <div className="space-y-1.5 flex-1">
-                  <div className="h-3.5 w-24 rounded bg-wash" />
-                  <div className="h-2.5 w-16 rounded bg-wash" />
+                  <div className="h-3.5 w-24 rounded-md bg-wash" />
+                  <div className="h-2.5 w-16 rounded-md bg-wash" />
                 </div>
               </div>
-              <div className="h-3 w-full rounded bg-wash" />
-              <div className="h-3 w-3/4 rounded bg-wash" />
+              <div className="h-3 w-full rounded-md bg-wash" />
+              <div className="h-3 w-3/4 rounded-md bg-wash" />
               <div className="h-8 w-full rounded-lg bg-wash mt-4" />
             </div>
           ))}

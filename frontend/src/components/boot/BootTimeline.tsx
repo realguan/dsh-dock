@@ -12,7 +12,7 @@ import type { BootStepState } from "@/types/events"
 const SEG_CLS: Record<BootStepState, string> = {
   done: "bg-ok/60",
   running: "bg-brand animate-pulse motion-reduce:animate-none",
-  error: "bg-warn",
+  error: "bg-danger",
   pending: "bg-line",
 }
 
@@ -41,7 +41,7 @@ export function BootTimeline({
   return (
     <section
       className={`w-full rounded-2xl border bg-panel/95 shadow-xs backdrop-blur-md ${
-        danger ? "border-warn/30" : "border-line/80"
+        danger ? "border-danger/30" : "border-line/80"
       }`}
     >
       {/* 卡头：徽标 + 当前状态 + 分段进度 */}
@@ -53,7 +53,7 @@ export function BootTimeline({
         <div className="min-w-0 flex-1">
           <h1
             className={`truncate text-sm font-semibold tracking-tight ${
-              danger ? "text-warn" : "text-ink"
+              danger ? "text-danger" : "text-ink"
             }`}
             title={title}
           >

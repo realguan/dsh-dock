@@ -325,7 +325,7 @@ export function McpManager({
                       <button
                         type="button"
                         onClick={() => copyPrefix(s.name)}
-                        className="flex items-center gap-1 font-mono text-meta text-faint hover:text-ink rounded px-1.5 py-0.5 border border-line bg-bg transition-colors"
+                        className="flex items-center gap-1 font-mono text-meta text-faint hover:text-ink rounded-md px-1.5 py-0.5 border border-line bg-bg transition-colors"
                         title="复制工具前缀"
                       >
                         {copiedName === s.name ? (
@@ -377,7 +377,7 @@ export function McpManager({
                     <div className="flex flex-wrap items-center gap-1.5 pt-1 text-label text-faint">
                       <span className="font-semibold text-ink">ENV:</span>
                       {Object.keys(s.env).map((k) => (
-                        <span key={k} className="rounded bg-line px-1.5 py-0.5 font-mono text-meta">
+                        <span key={k} className="rounded-md bg-line px-1.5 py-0.5 font-mono text-meta">
                           {k}=••••
                         </span>
                       ))}
@@ -393,7 +393,7 @@ export function McpManager({
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {activeTools.map((tool) => (
-                          <span key={tool} className="rounded bg-ok-soft px-1.5 py-0.5 font-mono text-meta text-ok">
+                          <span key={tool} className="rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-meta text-ok">
                             {tool}
                           </span>
                         ))}

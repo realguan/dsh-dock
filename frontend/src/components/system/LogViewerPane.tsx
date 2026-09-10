@@ -209,11 +209,11 @@ export function LogViewerPane({
       </div>
 
       {/* 极客暗色终端日志面板 */}
-      <div className="relative flex flex-col overflow-hidden rounded-2xl border border-line bg-term shadow-md">
+      <div className="relative flex flex-col overflow-hidden rounded-2xl border border-term-line bg-term shadow-md">
         {/* 终端顶栏 */}
         <div className="flex items-center justify-between border-b border-term-line bg-term-panel/90 px-4 py-2 text-xs">
           <div className="flex items-center gap-2 font-mono text-term-ink">
-            <Terminal className="size-3.5 text-brand-deep" />
+            <Terminal className="size-3.5 text-term-brand" />
             <span className="font-semibold">{logData?.source || source}</span>
           </div>
           <span className="font-mono text-meta text-term-faint truncate max-w-xs" title={logData?.path}>
@@ -228,7 +228,7 @@ export function LogViewerPane({
         >
           {loading && !logData ? (
             <div className="flex h-full items-center justify-center text-term-faint">
-              <LoaderCircle className="mr-2 size-4 animate-spin text-brand-deep" />
+              <LoaderCircle className="mr-2 size-4 animate-spin text-term-brand" />
               <span>正在读取日志流…</span>
             </div>
           ) : filteredLines.length === 0 ? (
@@ -250,7 +250,7 @@ export function LogViewerPane({
                 return (
                   <div
                     key={`${idx}-${line.slice(0, 15)}`}
-                    className="flex items-start gap-3 hover:bg-term-panel/60 rounded px-1 -mx-1"
+                    className="flex items-start gap-3 hover:bg-term-panel/60 rounded-md px-1 -mx-1"
                   >
                     <span className="select-none text-meta text-term-faint w-8 text-right shrink-0 pt-0.5">
                       {idx + 1}

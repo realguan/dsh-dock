@@ -82,39 +82,44 @@
 
         var wrap = document.createElement('div');
         wrap.innerHTML = '<style>' +
+          // 色值 = index.css token 的**镜像**（本脚本经 include_str! 注入 dsh 文档，
+          // 拿不到壳的 CSS 变量，只能硬编码）。2026-09-10 批次 E 复核时发现此处
+          // 仍是收口前的原始调色板（blue-600/zinc-800/zinc-500…），而它是**用户
+          // 可见面**却完全在闸门之外。现同步 token，并纳入
+          // __tests__/paletteTokens.test.ts 的镜像逐值锁定。
           '.capsule{' +
             'display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px 0 7px;' +
             'border-radius:9999px;background:rgba(255,255,255,0.85);' +
             'backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);' +
-            'border:1px solid rgba(0,0,0,0.08);' +
-            'box-shadow:0 2px 8px rgba(0,0,0,0.04),0 1px 2px rgba(0,0,0,0.02);' +
-            'color:#27272a;font-size:11px;font-weight:600;cursor:grab;' +
+            'border:1px solid #e2e7f0;' +
+            'box-shadow:0 2px 8px rgba(23,37,84,0.06),0 1px 2px rgba(23,37,84,0.04);' +
+            'color:#191d27;font-size:11px;font-weight:600;cursor:grab;' +
             'transition:all 0.2s cubic-bezier(0.16,1,0.3,1);outline:none;' +
           '}' +
           '.capsule.dragging{cursor:grabbing;opacity:0.9;}' +
           '@media(prefers-color-scheme:dark){' +
-            '.capsule{background:rgba(24,24,27,0.85);border-color:rgba(255,255,255,0.12);box-shadow:0 2px 10px rgba(0,0,0,0.35);color:#f4f4f5;}' +
+            '.capsule{background:rgba(22,29,46,0.85);border-color:#28324a;box-shadow:0 2px 10px rgba(0,0,0,0.35);color:#e8ecf6;}' +
           '}' +
           '.capsule:hover{' +
-            'background:rgba(255,255,255,0.98);border-color:rgba(59,130,246,0.45);' +
-            'box-shadow:0 4px 14px rgba(59,130,246,0.18),0 2px 4px rgba(0,0,0,0.04);' +
+            'background:rgba(255,255,255,0.98);border-color:rgba(65,118,230,0.45);' +
+            'box-shadow:0 4px 14px rgba(65,118,230,0.18),0 2px 4px rgba(23,37,84,0.04);' +
           '}' +
           '@media(prefers-color-scheme:dark){' +
-            '.capsule:hover{background:rgba(39,39,42,0.98);border-color:rgba(96,165,250,0.5);box-shadow:0 4px 16px rgba(96,165,250,0.25);}' +
+            '.capsule:hover{background:rgba(28,37,58,0.98);border-color:rgba(108,156,251,0.5);box-shadow:0 4px 16px rgba(108,156,251,0.25);}' +
           '}' +
-          '.icon{display:flex;align-items:center;justify-content:center;width:13px;height:13px;color:#2563eb;}' +
-          '@media(prefers-color-scheme:dark){.icon{color:#60a5fa;}}' +
+          '.icon{display:flex;align-items:center;justify-content:center;width:13px;height:13px;color:#4176e6;}' +
+          '@media(prefers-color-scheme:dark){.icon{color:#6c9cfb;}}' +
           '.label{letter-spacing:-0.01em;line-height:1;}' +
           '.badge{' +
             'display:none;align-items:center;justify-content:center;' +
             'padding:1px 4px;margin-left:2px;border-radius:4px;' +
-            'background:rgba(0,0,0,0.06);color:#71717a;' +
+            'background:#e6ecf5;color:#626978;' +
             'font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;' +
             'font-size:9px;font-weight:500;line-height:1;white-space:nowrap;flex-shrink:0;' +
           '}' +
           '.capsule:hover .badge{display:inline-flex;}' +
           '@media(prefers-color-scheme:dark){' +
-            '.badge{background:rgba(255,255,255,0.08);color:#a1a1aa;}' +
+            '.badge{background:rgba(255,255,255,0.08);color:#9aa5bd;}' +
           '}' +
         '</style>' +
         '<div class="capsule" id="btn" title="控制中心 (' + shortcutText + ') · 可拖拽移动">' +

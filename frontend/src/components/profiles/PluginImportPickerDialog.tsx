@@ -11,7 +11,7 @@ import {
   type PickerCandidate,
 } from "@/lib/profiles"
 import { getPluginDisplayName } from "@/lib/market"
-import { getProfileColorClass } from "@/lib/format"
+import { PROFILE_CHIP_CLASS } from "@/lib/format"
 import type { AggregatePlugin, PluginRowState } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import {
@@ -196,7 +196,7 @@ export function PluginImportPickerDialog({
 
         {/* 主体四态：loading / picking / running / done；播种失败 = 错误卡 + 关闭 */}
         {loadError ? (
-          <div className="bg-warn-soft text-warn rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
+          <div className="bg-danger-soft text-danger rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
             {loadError}
           </div>
         ) : phase.kind === "loading" ? (
@@ -236,7 +236,7 @@ export function PluginImportPickerDialog({
                             type="checkbox"
                             checked={picked}
                             onChange={() => togglePkg(g.pkg)}
-                            className="accent-brand mt-0.5 size-4 shrink-0 rounded"
+                            className="accent-brand mt-0.5 size-4 shrink-0 rounded-md"
                           />
                           <span className="min-w-0 flex-1">
                             <span className="flex flex-wrap items-center gap-2">
@@ -291,7 +291,6 @@ export function PluginImportPickerDialog({
                         <span className="text-faint">来源：</span>
                         {g.sources.map((src) => {
                           const isSelectedSrc = src.profile === currentSrcName
-                          const colorCls = getProfileColorClass(src.profile)
                           return (
                             <button
                               key={src.profile}
@@ -299,7 +298,7 @@ export function PluginImportPickerDialog({
                               onClick={() => setPkgSource(g.pkg, src.profile)}
                               className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-meta transition-all ${
                                 isSelectedSrc
-                                  ? `${colorCls} ring-1 ring-brand/40 font-semibold shadow-2xs`
+                                  ? `${PROFILE_CHIP_CLASS} ring-1 ring-brand/40 font-semibold shadow-2xs`
                                   : "bg-panel text-dim hover:bg-line-soft opacity-75"
                               }`}
                               title={`从 ${src.profile} (v${src.version}) 导入${src.hasConfig ? "，包含配置" : ""}`}
@@ -337,18 +336,18 @@ export function PluginImportPickerDialog({
             <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto pr-1">
               <div
                 className={`rounded-lg px-3 py-2 text-xs ${
-                  s.failCount === 0 ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"
+                  s.failCount === 0 ? "bg-ok-soft text-ok" : "bg-danger-soft text-danger"
                 }`}
               >
                 {t.profiles.importDone(s.okCount, s.failCount)}
               </div>
               {s.failures.length > 0 && (
                 <div className="border-line bg-bg divide-line-soft rounded-lg border divide-y">
-                  <div className="text-warn px-3 py-1.5 text-meta">{t.profiles.importFailures}</div>
+                  <div className="text-danger px-3 py-1.5 text-meta">{t.profiles.importFailures}</div>
                   {s.failures.map((f) => (
                     <div key={f.pkg} className="px-3 py-2">
                       <div className="text-ink font-mono text-xs">{f.pkg}</div>
-                      <div className="text-warn mt-0.5 text-xs whitespace-pre-wrap">{f.detail}</div>
+                      <div className="text-danger mt-0.5 text-xs whitespace-pre-wrap">{f.detail}</div>
                     </div>
                   ))}
                 </div>

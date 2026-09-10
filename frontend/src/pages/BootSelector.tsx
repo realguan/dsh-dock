@@ -291,7 +291,7 @@ export function BootSelector() {
                         <h2 className="text-base font-semibold tracking-tight text-ink group-hover:text-brand-deep">
                           {p.title}
                         </h2>
-                        <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
+                        <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
                           {p.name}
                         </span>
                       </div>
@@ -363,7 +363,7 @@ export function BootSelector() {
               type="checkbox"
               checked={rememberChoice}
               onChange={(e) => setRememberChoice(e.target.checked)}
-              className="accent-brand size-4 rounded"
+              className="accent-brand size-4 rounded-md"
             />
             <span>{t.selector.rememberChoice}</span>
           </label>

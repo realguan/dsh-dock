@@ -81,18 +81,18 @@ export function ErrorCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={`overflow-hidden rounded-2xl border bg-panel shadow-sm ${
-        diag ? "w-full border-warn/30" : "mx-auto mt-6 w-full max-w-xl border-warn/35 shadow-md"
+        diag ? "w-full border-danger/30" : "mx-auto mt-6 w-full max-w-xl border-danger/35 shadow-md"
       }`}
       role="alert"
       data-failure-kind={payload.failure?.kind ?? "none"}
     >
       {/* 诊断状态头 */}
-      <div className="flex items-center justify-between border-b border-warn/20 bg-warn-soft/40 px-4 py-2.5">
+      <div className="flex items-center justify-between border-b border-danger/20 bg-danger-soft/40 px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="flex size-5 items-center justify-center rounded-full bg-warn text-white">
+          <span className="flex size-5 items-center justify-center rounded-full bg-danger text-white">
             <AlertTriangle className="size-3" />
           </span>
-          <span className="font-mono text-xs font-semibold tracking-wide text-warn">
+          <span className="font-mono text-xs font-semibold tracking-wide text-danger">
             {diag ? t.error.diagHeader : t.error.cardHeader}
           </span>
         </div>
@@ -106,7 +106,7 @@ export function ErrorCard({
 
         {/* 错误详情 */}
         {payload.detail && (
-          <div className="mt-2.5 rounded-xl border border-warn/20 bg-warn-soft/30 p-3 text-xs leading-relaxed text-dim break-words">
+          <div className="mt-2.5 rounded-xl border border-danger/20 bg-danger-soft/30 p-3 text-xs leading-relaxed text-dim break-words">
             {payload.detail}
           </div>
         )}
@@ -123,7 +123,7 @@ export function ErrorCard({
         )}
 
         {actionError && (
-          <div className="mt-3 rounded-lg bg-warn/10 p-2.5 text-xs text-warn break-words">
+          <div className="mt-3 rounded-lg bg-danger/10 p-2.5 text-xs text-danger break-words">
             {actionError}
           </div>
         )}
@@ -180,7 +180,7 @@ export function ErrorCard({
               </div>
               <ChevronDown className="size-3.5 text-faint transition-transform group-open:rotate-180" />
             </summary>
-            <div className="relative border-t border-line bg-term p-3">
+            <div className="relative border-t border-term-line bg-term p-3">
               <button
                 type="button"
                 onClick={handleCopyLog}

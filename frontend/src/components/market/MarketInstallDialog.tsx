@@ -174,10 +174,10 @@ export function MarketInstallDialog({
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-medium">{p.name}</span>
                         {p.web_ui && (
-                          <span className="rounded bg-brand/10 px-1 py-0.2 text-micro text-brand-deep">Web</span>
+                          <span className="rounded-md bg-brand/10 px-1 py-0.2 text-micro text-brand-deep">Web</span>
                         )}
                         {hasIt && (
-                          <span className="rounded bg-ok-soft px-1 py-0.2 text-micro text-ok">
+                          <span className="rounded-md bg-ok-soft px-1 py-0.2 text-micro text-ok">
                             已安装
                           </span>
                         )}

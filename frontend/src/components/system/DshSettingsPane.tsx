@@ -134,7 +134,7 @@ export function DshSettingsPane({
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={16}
-          className="w-full resize-y rounded-xl border border-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-brand focus:outline-none"
+          className="w-full resize-y rounded-xl border border-term-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
           placeholder="# DSH settings.yaml\n# model: deepseek-chat\n# defaultProvider: deepseek"
         />
       </div>

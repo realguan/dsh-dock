@@ -54,10 +54,23 @@ const BANNED_HUES = [
   "stone",
 ]
 
+// 前缀表补全（2026-09-10 复核）：原表漏了**方向性边框**（border-s/e/t/r/b/l/x/y）、
+// ring-offset、inset-shadow、text-shadow——探针 `border-s-rose-500` 与
+// `ring-offset-amber-500` 原本可以穿过。
 const BANNED = new RegExp(
-  String.raw`\b(?:bg|text|border|ring|from|to|via|shadow|divide|fill|stroke|decoration|outline|accent|caret|placeholder)-(?:${BANNED_HUES.join("|")})-(?:[0-9]{2,3})\b`,
+  String.raw`\b(?:bg|text|border|border-[sexytrbl]|ring|ring-offset|from|to|via|shadow|inset-shadow|text-shadow|divide|fill|stroke|decoration|outline|accent|caret|placeholder)-(?:${BANNED_HUES.join("|")})-(?:[0-9]{2,3})\b`,
   "g",
 )
+
+/** 任意值色（Tailwind arbitrary value）：`bg-[#047857]` / `text-[rgb(...)]` /
+ *  `bg-[oklch(...)]`——探针实测原闸门全部放行。注意排除 `color-mix(...var(--color-*))`
+ *  这类**令牌引用**（那是合法的）。 */
+const ARBITRARY_COLOR =
+  /\b(?:bg|text|border|ring|from|to|via|shadow|divide|fill|stroke|decoration|outline|placeholder)-\[[^\]]*(?:#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\(|oklch\(|oklab\(|lch\(|lab\()[^\]]*\]/g
+
+/** 裸的十六进制 / rgb() 字面量（CSS 文件与 TS/TSX 里的字符串）。
+ *  @theme 块内的 token 定义是唯一合法来源，由下方用例排除。 */
+const RAW_COLOR_LITERAL = /(?:#[0-9a-fA-F]{3,8}\b|\brgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+)/g
 
 /** 豁免清单（按文件路径后缀匹配）。2026-09-10 批次 E 收尾时已清空——
  *  `components/ui/toast.tsx` 曾在此豁免（理由：深色胶囊自带独立配色），
@@ -68,6 +81,14 @@ const EXEMPT_PATHS: string[] = []
 
 function isExempt(path: string): boolean {
   return EXEMPT_PATHS.some((p) => path.endsWith(p))
+}
+
+/** 取 index.css 的 `@theme { … }` 块正文。 */
+function themeBlockOf(cssSrc: string): string {
+  const start = cssSrc.indexOf("@theme {")
+  const end = cssSrc.indexOf("\n}", start)
+  if (start < 0 || end < 0) throw new Error("index.css 缺少完整的 @theme 块")
+  return cssSrc.slice(start, end)
 }
 
 describe("调色板 token 收口闸门", () => {
@@ -103,15 +124,62 @@ describe("调色板 token 收口闸门", () => {
     expect("md:text-sky-700".match(BANNED)).toHaveLength(1)
     expect("data-[state=open]:text-teal-700".match(BANNED)).toHaveLength(1)
     expect("bg-emerald-500/[0.07]".match(BANNED)).toHaveLength(1)
+    // 2026-09-10 复核补：方向性边框与 ring-offset 原可穿过
+    expect("border-s-rose-500".match(BANNED)).toHaveLength(1)
+    expect("ring-offset-amber-500".match(BANNED)).toHaveLength(1)
+    expect("border-b-emerald-600".match(BANNED)).toHaveLength(1)
+    expect("border-line".match(BANNED)).toBeNull()
     expect("text-ok".match(BANNED)).toBeNull()
     expect("bg-term-panel".match(BANNED)).toBeNull()
     expect("text-dim".match(BANNED)).toBeNull()
   })
 
+  it("不得使用任意值颜色（bg-[#047857] / text-[rgb(...)] / bg-[oklch(...)]）", () => {
+    // 探针实测（2026-09-10 复核）：原闸门只认「色系-档位」形态，
+    // `bg-[#047857]`、`text-[rgb(4,120,87)]`、`bg-[oklch(0.5_0.1_150)]` 全部放行。
+    const offenders = Object.entries(RAW_SOURCES)
+      .filter(([path]) => !path.endsWith("/paletteTokens.test.ts"))
+      .filter(([path]) => !isExempt(path))
+      .flatMap(([path, src]) => {
+        const hits = [...src.matchAll(ARBITRARY_COLOR)].map((m) => m[0])
+        return hits.length ? [`${path}: ${[...new Set(hits)].join(" ")}`] : []
+      })
+    expect(offenders, "任意值颜色绕过 token——请改用 @theme 语义 token").toEqual([])
+  })
+
+  it("源码里的裸色值只能是 index.css 的 @theme 定义（或白/透明）", () => {
+    // 探针实测：普通 .css 里写 `#ef4444` / `border-radius:7px` 无人拦；
+    // `style={{ color: "tomato" }}` 一类具名色同样漏网（故同时禁任意值类名）。
+    // 合法来源 = index.css 的 @theme 块（token 定义）与 index.html 的首帧底色
+    // （由专门用例与 Rust 侧双向锁定）。其余位置出现裸色值即红。
+    const offenders: string[] = []
+    for (const [path, src] of Object.entries(RAW_SOURCES)) {
+      // 测试文件以色值为 fixture 做断言（如 contrast.test.ts 内联反例），跳过。
+      if (/\.test\.tsx?$/.test(path)) continue
+      if (path.endsWith("/index.css")) continue // token 定义源本身
+      // 注入脚本：跨文档拿不到壳的 CSS 变量，只能镜像硬编码——
+      // 由「幕布/胶囊镜像色值必须与 token 同步」的专门用例逐值锁定。
+      if (path.endsWith("/injected/handoff-curtain.js")) continue
+      if (path.endsWith("/injected/switcher.js")) continue
+      for (const m of src.matchAll(RAW_COLOR_LITERAL)) {
+        const lit = m[0].toLowerCase()
+        // 白与纯黑（阴影/遮罩/mask 用）不属调色板语义，放行。
+        if (lit === "#ffffff" || lit === "#fff" || lit === "#000000" || lit === "#000") continue
+        offenders.push(`${path}: ${m[0]} @${m.index}`)
+      }
+    }
+    expect(
+      offenders,
+      "裸色值绕过 token 体系——请改用 @theme token（需要新色先加 token 并同步 contrast.test.ts）",
+    ).toEqual([])
+  })
+
   it("不得用内联 style 绕过 token（类名闸门的盲区）", () => {
-    // 探针实测：`style={{ color: "#047857" }}` 不会被类名正则命中——
-    // 这条堵住该盲区。样式需动态时请用 CSS 变量或 @theme token。
-    const INLINE_COLOR = /style=\{\{[^}]*(?:#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\()/
+    // 探针实测：`style={{ color: "#047857" }}`、`style={{ color: "tomato" }}`
+    // 不会被类名正则命中。上一条已覆盖裸字面量；本条额外禁内联 style 里的
+    // **具名色/函数色**（tomato / currentcolor 之外的 CSS 颜色关键字）。
+    const INLINE_COLOR =
+      /style=\{\{[^}]*(?:#[0-9a-fA-F]{3,8}|\b(?:rgba?|hsla?|oklch|oklab|lch|lab|color-mix|color)\()/
     const offenders = Object.entries(RAW_SOURCES)
       .filter(([path]) => !path.endsWith("/paletteTokens.test.ts"))
       .filter(([path]) => !isExempt(path))
@@ -161,9 +229,11 @@ describe("调色板 token 收口闸门", () => {
     expect(offenders, ":root 请用 var(--color-*) 引用 @theme token").toEqual([])
   })
 
-  it("幕布脚本的色值必须与 index.css token 同步（跨文档无法用变量）", () => {
-    // handoff-curtain.js 注入 dsh 文档，拿不到壳的 CSS 变量，只能镜像硬编码。
-    // 本条闸门把它钉在 token 上：改 token 忘改镜像 = 测试红。
+  it("注入脚本的色值必须与 index.css token 同步（跨文档无法用变量）", () => {
+    // 注入脚本（幕布 + 悬浮胶囊）跑在 dsh 文档里，拿不到壳的 CSS 变量，只能镜像
+    // 硬编码。本条闸门把它们钉在 token 上：改 token 忘改镜像 = 测试红。
+    // 2026-09-10 复核补：原只锁 handoff-curtain.js，而 switcher.js（用户可见的
+    // 悬浮胶囊）整个漏在收口之外——它当时仍是收口前的 blue/zinc 原始调色板。
     const indexCss = Object.entries(RAW_SOURCES).find(([path]) =>
       path.endsWith("/index.css"),
     )
@@ -175,9 +245,7 @@ describe("调色板 token 收口闸门", () => {
     const [, cssSrc] = indexCss!
     const [, curtainSrc] = curtain!
 
-    const themeStart = cssSrc.indexOf("@theme {")
-    const themeEnd = cssSrc.indexOf("\n}", themeStart)
-    const themeBlock = cssSrc.slice(themeStart, themeEnd)
+    const themeBlock = themeBlockOf(cssSrc)
     const token = (name: string) => {
       const m = themeBlock.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})`))
       if (!m) throw new Error(`index.css 缺少 --color-${name}`)
@@ -203,5 +271,28 @@ describe("调色板 token 收口闸门", () => {
       missing.map((n) => `${n}=${token(n)}`),
       "幕布脚本缺少这些 token 的镜像色值——请同步 handoff-curtain.js 的 css()",
     ).toEqual([])
+
+    // 悬浮胶囊（switcher.js）镜像同样逐值锁定。
+    const switcher = Object.entries(RAW_SOURCES).find(([path]) =>
+      path.endsWith("/injected/switcher.js"),
+    )
+    expect(switcher, "未找到 switcher.js").toBeDefined()
+    const [, switcherSrc] = switcher!
+    // 胶囊是毛玻璃半透明件，部分色以 rgba(r,g,b,a) 形式表达——等价接受。
+    const asRgbTriplet = (hex: string) =>
+      [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(",")
+    const mirroredIn = (src: string, hex: string) =>
+      src.includes(hex) || src.replace(/\s/g, "").includes(asRgbTriplet(hex))
+    // 不含 `bg`：胶囊是浮在 dsh 页面上的半透明件，不承载页面底色。
+    const capMirrored = ["ink", "line", "line-soft", "faint", "brand", "term-panel", "term-line", "term-ink", "term-dim"]
+    const capMissing = capMirrored.filter((name) => !mirroredIn(switcherSrc, token(name)))
+    expect(
+      capMissing.map((n) => `${n}=${token(n)}`),
+      "悬浮胶囊缺少这些 token 的镜像色值——请同步 switcher.js 的胶囊 CSS",
+    ).toEqual([])
+    // term-brand 是非 hex token 值之外唯一的例外（品牌蓝深底档），单独校验。
+    const termBrand = themeBlockOf(cssSrc).match(/--color-term-brand:\s*(#[0-9a-fA-F]{6})/)?.[1]
+    expect(termBrand, "index.css 缺少 --color-term-brand").toBeDefined()
+    expect(switcherSrc, "悬浮胶囊缺少 term-brand 镜像").toContain(termBrand!)
   })
 })

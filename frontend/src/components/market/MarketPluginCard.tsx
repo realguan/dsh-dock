@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import type { MarketPlugin } from "@/types/market"
-import { getProfileColorClass } from "@/lib/format"
+import { PROFILE_CHIP_CLASS } from "@/lib/format"
 import { getPluginDescription, getPluginDisplayName } from "@/lib/market"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -118,13 +118,13 @@ export function MarketPluginCard({
         {/* 指标栏 (Stars, Downloads, Added) */}
         <div className="mt-3 flex items-center gap-3 text-label text-faint font-mono">
           <div className="flex items-center gap-1 text-ink/70" title="GitHub Stars">
-            <Star className="size-3 text-brand-deep fill-brand/20" />
+            <Star className="size-3 fill-dim/30" />
             <span>{plugin.stars?.toLocaleString() ?? 0}</span>
           </div>
 
           {plugin.downloads !== null && plugin.downloads !== undefined && (
             <div className="flex items-center gap-1 text-ink/70" title="NPM Downloads">
-              <Download className="size-3 text-brand-deep" />
+              <Download className="size-3" />
               <span>{plugin.downloads >= 1000 ? `${(plugin.downloads / 1000).toFixed(1)}k` : plugin.downloads}</span>
             </div>
           )}
@@ -144,11 +144,10 @@ export function MarketPluginCard({
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 max-w-[200px]">
             {isInstalled ? (
               installedProfiles.map((prof) => {
-                const colorClass = getProfileColorClass(prof)
                 return (
                   <span
                     key={prof}
-                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta font-mono font-medium shrink-0 shadow-2xs ${colorClass}`}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta font-mono font-medium shrink-0 shadow-2xs ${PROFILE_CHIP_CLASS}`}
                     title={`已安装在 ${prof}`}
                   >
                     <span className="size-1 rounded-full bg-current opacity-80" />

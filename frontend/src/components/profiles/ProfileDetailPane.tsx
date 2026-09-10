@@ -650,7 +650,7 @@ export function ProfileDetailPane({
                           {/* 运行态徽标 */}
                           {!shellDisabled && chip && (
                             <span
-                              className={`rounded px-1.5 py-0.5 text-meta leading-none ${
+                              className={`rounded-md px-1.5 py-0.5 text-meta leading-none ${
                                 chip.failed
                                   ? "bg-warn-soft text-warn"
                                   : "bg-ok-soft text-ok font-medium"
@@ -661,7 +661,7 @@ export function ProfileDetailPane({
                           )}
 
                           {shellDisabled && (
-                            <span className="border border-line text-faint rounded px-1.5 py-0.5 text-meta leading-none">
+                            <span className="border border-line text-faint rounded-md px-1.5 py-0.5 text-meta leading-none">
                               {t.profiles.pluginDisabled}
                             </span>
                           )}
@@ -744,7 +744,7 @@ export function ProfileDetailPane({
                   <span className="font-mono text-xs font-semibold text-ink">
                     DeepSeek 官方桌面客户端底座运行时
                   </span>
-                  <span className="bg-brand/10 text-brand-deep border border-brand/20 rounded px-1.5 py-0.5 text-meta font-medium">
+                  <span className="bg-brand/10 text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 text-meta font-medium">
                     官方桌面版
                   </span>
                 </div>
@@ -777,7 +777,7 @@ export function ProfileDetailPane({
                           {b}
                         </span>
                         {isBase && (
-                          <span className="bg-line-soft text-dim rounded px-1.5 py-0.5 text-meta">
+                          <span className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta">
                             系统核心
                           </span>
                         )}
@@ -791,7 +791,7 @@ export function ProfileDetailPane({
 
                     {chip && (
                       <span
-                        className={`rounded px-2 py-0.5 text-meta font-medium leading-none ${
+                        className={`rounded-md px-2 py-0.5 text-meta font-medium leading-none ${
                           chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
                         }`}
                       >
@@ -843,7 +843,7 @@ export function ProfileDetailPane({
             </div>
 
             {detail?.patch_yaml ? (
-              <div className="relative overflow-hidden rounded-xl border border-line bg-term p-4 font-mono text-xs text-term-ink">
+              <div className="relative overflow-hidden rounded-xl border border-term-line bg-term p-4 font-mono text-xs text-term-ink">
                 <pre className="max-h-[420px] overflow-auto leading-relaxed whitespace-pre font-mono selection:bg-brand/30">
                   {detail.patch_yaml}
                 </pre>
@@ -909,12 +909,12 @@ export function ProfileDetailPane({
                     >
                       <span className="text-ink font-mono text-xs">{v}</span>
                       {isLatest && (
-                        <span className="bg-ok-soft text-ok rounded px-1.5 text-meta leading-none">
+                        <span className="bg-ok-soft text-ok rounded-md px-1.5 text-meta leading-none">
                           {t.profiles.versionLatest}
                         </span>
                       )}
                       {isCurrent && (
-                        <span className="border border-line text-faint ml-auto rounded px-1.5 text-meta leading-none">
+                        <span className="border border-line text-faint ml-auto rounded-md px-1.5 text-meta leading-none">
                           {t.profiles.versionCurrent}
                         </span>
                       )}

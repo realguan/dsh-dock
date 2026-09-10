@@ -12,7 +12,7 @@ export function NodeVersionCard() {
           <span className="font-mono text-xs font-semibold text-ink">
             {node.version}
           </span>
-          <span className="rounded bg-line-soft px-1.5 py-0.5 font-mono text-meta text-dim">
+          <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-dim">
             <DimNote>
           {node.origin === "engine"
             ? t.about.nodeFromEngine

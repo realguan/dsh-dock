@@ -72,7 +72,12 @@ export function ProfileRow({
         isSelected
           ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
           : "border-line bg-panel hover:border-line hover:bg-panel hover:shadow-xs"
-      } ${materialized ? "" : "border-dashed"} ${isSwitching ? "ring-1 ring-info/40 bg-info/5" : ""}`}
+      } ${materialized ? "" : "border-dashed"} ${
+        // 交接期间用 info 环标记；底色不动——旧实现同时写 bg-panel 与 bg-info/5，
+        // 两者冲突且 bg-panel 恒定胜出（dist 中 .bg-panel 在 .bg-info\/5 之后），
+        // 即那层 wash 从未渲染过。2026-09-10 批次 E 复核修正为「只加环」。
+        isSwitching ? "ring-1 ring-info/40" : ""
+      }`}
     >
       {/* 活跃/重载指示条 */}
       {isSwitching ? (

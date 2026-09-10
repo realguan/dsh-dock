@@ -132,7 +132,7 @@ export function ProfileCreateDialog({
                   ? "bg-ok-soft text-ok"
                   : status === "pending"
                     ? "bg-warn-soft text-warn"
-                    : "bg-warn-soft text-warn"
+                    : "bg-danger-soft text-danger"
               }`}
             >
               {status === "ready"

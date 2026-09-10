@@ -20,12 +20,12 @@ import { Progress } from "@/components/ui/progress"
 
 const BUSY_PHASES = new Set(["checking", "downloading", "installing", "relaunching"])
 
-type PhaseTone = "idle" | "busy" | "ok" | "accent" | "warn"
+type PhaseTone = "idle" | "busy" | "ok" | "accent" | "danger"
 
 function phaseTone(phase: string): PhaseTone {
   if (phase === "upToDate" || phase === "done") return "ok"
   if (phase === "available") return "accent"
-  if (phase === "failed") return "warn"
+  if (phase === "failed") return "danger"
   if (BUSY_PHASES.has(phase)) return "busy"
   return "idle"
 }
@@ -93,8 +93,8 @@ export function ClientUpdateCard() {
               ? "bg-ok-soft text-ok"
               : tone === "accent"
                 ? "bg-brand/10 text-brand-deep border border-brand/20"
-                : tone === "warn"
-                  ? "bg-warn-soft text-warn"
+                : tone === "danger"
+                  ? "bg-danger-soft text-danger"
                   : tone === "busy"
                     ? "bg-line-soft text-dim"
                     : "bg-bg text-faint border border-line"
@@ -119,7 +119,7 @@ export function ClientUpdateCard() {
           <p
             className={`text-sm font-semibold tracking-tight ${
               phase === "failed"
-                ? "text-warn"
+                ? "text-danger"
                 : phase === "available" || phase === "done"
                   ? "text-brand-deep"
                   : "text-ink"
@@ -161,7 +161,7 @@ export function ClientUpdateCard() {
 
           {/* 错误详情 */}
           {phase === "failed" && snapshot && snapshot.phase === "failed" && (
-            <div className="rounded-xl bg-warn-soft p-3 text-xs text-warn break-all">
+            <div className="rounded-xl bg-danger-soft p-3 text-xs text-danger break-all">
               {snapshot.message}
             </div>
           )}

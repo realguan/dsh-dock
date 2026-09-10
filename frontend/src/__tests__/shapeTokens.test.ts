@@ -13,17 +13,38 @@
 import { describe, expect, it } from "vitest"
 import indexCss from "@/index.css?raw"
 
-const RAW_TSX = import.meta.glob("../**/*.tsx", {
+// 2026-09-10 复核修正：原只扫 .tsx（探针 .ts 可穿过）——见 contrast.test.ts 同注。
+const RAW_TSX = import.meta.glob("../**/*.{ts,tsx}", {
   query: "?raw",
   import: "default",
   eager: true,
 }) as Record<string, string>
 
-/** 页面代码（排除 shadcn 预设组件与闸门自身）。 */
+/** shadcn 预设组件（vendor 性质）：其内部小圆角不参与页面梯度。
+ *  2026-09-10 复核收窄：原按**整个目录**豁免，但 `components/ui/confirm-dialog.tsx`
+ *  是本仓库自有的业务组件（中文文案、删除确认语义），不该躲在 vendor 豁免里；
+ *  `toast.tsx` 亦然。按**文件名**白名单，新增自有组件不会被自动豁免。 */
+const VENDOR_FILES = new Set([
+  "badge.tsx",
+  "button.tsx",
+  "dialog.tsx",
+  "input.tsx",
+  "popover.tsx",
+  "progress.tsx",
+  "select.tsx",
+  "switch.tsx",
+  "tabs.tsx",
+  "tooltip.tsx",
+])
+
+/** 页面代码（排除 vendor 预设组件与闸门自身）。 */
 function featureSources(): [string, string][] {
-  return Object.entries(RAW_TSX).filter(
-    ([path]) => !path.includes("/components/ui/") && !path.endsWith("/shapeTokens.test.ts"),
-  )
+  return Object.entries(RAW_TSX).filter(([path]) => {
+    if (path.endsWith("/shapeTokens.test.ts")) return false
+    const m = path.match(/\/components\/ui\/([^/]+)$/)
+    if (m) return !VENDOR_FILES.has(m[1])
+    return true
+  })
 }
 
 /** 允许的圆角档位：sm(8) / md=lg(10 控制件) / xl=2xl(14 面) / full(胶囊)。
@@ -31,6 +52,10 @@ function featureSources(): [string, string][] {
  *  新代码按角色选用即可（控制件用 md 或 lg 均可，面用 xl 或 2xl 均可）。 */
 const ALLOWED_RADIUS = new Set(["sm", "md", "lg", "xl", "2xl", "full", "none"])
 
+// 裸 `rounded`（Tailwind 默认 4px）曾完全不被识别（正则要求 `-<档位>` 后缀）——
+// 它是事实上的**第四档**，与小徽标/代码块的实际圆角不一致。2026-09-10 复核修正：
+// 显式捕获裸 `rounded`（不含 `rounded-full` 等），要求改用 @theme 档位或 full。
+const BARE_ROUNDED = /\brounded(?![-a-z0-9])/g
 const RADIUS_CLASS = /\brounded(?:-(?:t|r|b|l|tl|tr|br|bl|s|e))?-([a-z0-9]+)\b/g
 const ARBITRARY_RADIUS = /\brounded(?:-[trbl]{1,2})?-\[[^\]]+\]/g
 /** 任意值阴影——含 `drop-shadow-[…]`（滤镜光晕同理须走 token）。 */
@@ -47,6 +72,18 @@ describe("形状 / 高度 token 闸门", () => {
     expect(
       offenders,
       "新圆角档位请先在 index.css 的 @theme 定义 --radius-*（当前梯度：控制件 10 / 面 14 / 胶囊 full）",
+    ).toEqual([])
+  })
+
+  it("页面代码不得使用裸 `rounded`（隐式 4px 第四档）", () => {
+    const offenders: string[] = []
+    for (const [path, src] of featureSources()) {
+      if (BARE_ROUNDED.test(src)) offenders.push(path)
+      BARE_ROUNDED.lastIndex = 0
+    }
+    expect(
+      offenders,
+      "裸 `rounded` 是 Tailwind 默认 4px，属 @theme 之外的第四档——请用 rounded-md(控制件) / rounded-xl(面) / rounded-full(胶囊)",
     ).toEqual([])
   })
 
@@ -101,6 +138,9 @@ describe("形状 / 高度 token 闸门", () => {
     expect(ALLOWED_RADIUS.has("3xl")).toBe(false)
     expect("rounded-[7px]".match(ARBITRARY_RADIUS)).toHaveLength(1)
     expect(rad("rounded-tl-md")).toBe("md")
+    expect("rounded".match(BARE_ROUNDED)).toHaveLength(1)
+    expect("rounded-full".match(BARE_ROUNDED)).toBeNull()
+    expect("rounded-md".match(BARE_ROUNDED)).toBeNull()
     expect("shadow-[0_0_8px_red]".match(ARBITRARY_SHADOW)).toHaveLength(1)
     expect("drop-shadow-[0_1px_2px_red]".match(ARBITRARY_SHADOW)).toHaveLength(1)
     expect("shadow-2xs".match(ARBITRARY_SHADOW)).toBeNull()

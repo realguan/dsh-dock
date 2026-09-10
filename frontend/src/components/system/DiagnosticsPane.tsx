@@ -178,7 +178,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-ok-soft text-ok">
+              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
                 <Cpu className="size-4" />
               </div>
               <span
@@ -207,7 +207,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-alt-soft text-alt">
+              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
                 <Package className="size-4" />
               </div>
               <span
@@ -236,7 +236,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
+              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
                 <Server className="size-4" />
               </div>
               <span
@@ -265,7 +265,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-alt-soft text-alt">
+              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
                 <HardDrive className="size-4" />
               </div>
               <span className="rounded-full bg-line px-2 py-0.5 font-mono text-meta text-faint">
@@ -304,24 +304,24 @@ export function DiagnosticsPane({
           <div
             style={{ width: `${profilesPercent}%` }}
             title={`Profiles: ${formatBytes(storage.profilesBytes)} (${profilesPercent}%)`}
-            className="bg-brand transition-all"
+            className="bg-chart-1 transition-all"
           />
           <div
             style={{ width: `${sessionsPercent}%` }}
             title={`Sessions: ${formatBytes(storage.sessionsBytes)} (${sessionsPercent}%)`}
-            className="bg-ok transition-all"
+            className="bg-chart-2 transition-all"
           />
           <div
             style={{ width: `${otherPercent}%` }}
             title={`Cache & Other: ${otherPercent}%`}
-            className="bg-line-soft transition-all"
+            className="bg-chart-3 transition-all"
           />
         </div>
 
         {/* 分布图例 */}
         <div className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
-            <span className="size-2.5 rounded-full bg-brand shrink-0" />
+            <span className="size-2.5 rounded-full bg-chart-1 shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">Profile 工作台</span>
               <p className="font-mono text-label text-faint truncate">
@@ -334,7 +334,7 @@ export function DiagnosticsPane({
           </div>
 
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
-            <span className="size-2.5 rounded-full bg-ok shrink-0" />
+            <span className="size-2.5 rounded-full bg-chart-2 shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">会话数据 (Sessions)</span>
               <p className="font-mono text-label text-faint truncate">
@@ -347,7 +347,7 @@ export function DiagnosticsPane({
           </div>
 
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
-            <span className="size-2.5 rounded-full bg-line-soft shrink-0" />
+            <span className="size-2.5 rounded-full bg-chart-3 shrink-0" />
             <div className="min-w-0">
               <span className="text-ink font-medium">系统缓存与其他</span>
               <p className="font-mono text-label text-faint truncate">

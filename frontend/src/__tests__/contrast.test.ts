@@ -16,7 +16,9 @@
 import { describe, expect, it } from "vitest"
 import indexCss from "@/index.css?raw"
 
-const RAW_TSX = import.meta.glob("../**/*.tsx", {
+// 2026-09-10 复核修正：原只扫 .tsx，而类名工厂就在 .ts（lib/format.ts 自己
+// 就返回类名字符串）——探针 `src/x.ts` 含 `text-brand` 可穿过全部闸门。
+const RAW_TSX = import.meta.glob("../**/*.{ts,tsx}", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -80,7 +82,9 @@ function themeTokens(): Record<string, string> {
   const end = indexCss.indexOf("\n}", start)
   const block = indexCss.slice(start, end)
   const out: Record<string, string> = {}
-  for (const m of block.matchAll(/--color-([a-z-]+):\s*(#[0-9a-fA-F]{6}|rgba?\([^)]*\))/g)) {
+  // 2026-09-10 复核修正：原字符类 `[a-z-]+` **不含数字**，`--color-chart-1` 一类
+  // 带序号的 token 会被静默跳过（连「必须登记」那条闸门也看不见它）。
+  for (const m of block.matchAll(/--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6}|rgba?\([^)]*\))/g)) {
     out[m[1]] = m[2]
   }
   return out
@@ -220,6 +224,25 @@ describe("设计 token 对比度闸门", () => {
     expect(failures, "底色分不出层——卡片/凹陷轨道会失去边界").toEqual([])
   })
 
+  it("组成图色阶：相邻两阶可辨（ΔOKLab ≥0.12），且末阶自身可见（≥3:1）", () => {
+    // 2026-09-10 批次 E 复核补：存储占用条曾用 bg-ok（成功色）表示「会话数据」这
+    // 一**分类**，让中性读数看起来像状态。改为同色相梯度 + 中性收尾后，本闸门
+    // 锁住它作为「组成图」而非「状态色」的两条硬指标。
+    const ladder = ["chart-1", "chart-2", "chart-3"]
+    const failures: string[] = []
+    for (let i = 0; i < ladder.length - 1; i++) {
+      const d = deltaOk(T[ladder[i]], T[ladder[i + 1]])
+      if (d < 0.12) failures.push(`${ladder[i]}×${ladder[i + 1]} = ${d.toFixed(3)}`)
+    }
+    expect(failures, "组成图相邻阶分不开——堆叠条会糊成一片").toEqual([])
+    // 末阶要作图例小圆点，须在两种底色上可见（非文本对比度 3:1）。
+    for (const bg of ["panel", "bg"]) {
+      const r = contrast(T["chart-3"], T[bg])
+      if (r < 3) failures.push(`chart-3 on ${bg} = ${r.toFixed(2)}`)
+    }
+    expect(failures, "chart-3 图例圆点不可见").toEqual([])
+  })
+
   it("已知边际：白字在 brand 填充档上 ≥ 4.2（2026-09-10 维护者裁定记录在案）", () => {
     // 批次 C 曾把填充色也一并加深到 brand-deep(#3163cf)，观感偏暗被维护者退回：
     // 填充/图形象回到 brand(#4176e6)，文字档保持 brand-deep。白字压 brand = 4.23，
@@ -238,6 +261,49 @@ describe("设计 token 对比度闸门", () => {
     expect(
       offenders,
       "brand(#4176e6) 在白底仅 4.23——文字一律用 brand-deep(#3163cf, 5.31)",
+    ).toEqual([])
+  })
+
+  it("每个 @theme 色 token 都必须被本闸门登记（禁止无主新色）", () => {
+    // 2026-09-10 复核补：原闸门的「闸门」其实是上面几份**硬编码清单**——
+    // 新加 `--color-foo: #ff0000` + `text-foo` 可以完全不触发任何断言。
+    // 本条要求 @theme 里的每个 --color-* 要么在受检清单里，要么在此显式登记为
+    // 「仅信息/结构色，不参与文字或填充对比度校验」。
+    const INFO_ONLY = new Set([
+      "wash", // 品牌 hover 底（7% 透明填充）
+      "ok-soft",
+      "info-soft",
+      "warn-soft",
+      "danger-soft",
+      "alt-soft", // soft 填充由 composite() 专项校验
+    ])
+    const checked = new Set([
+      ...TEXT_TOKENS,
+      ...TERM_TEXT_TOKENS,
+      ...FILL_TOKENS,
+      "brand", // 图形象档（白字 4.23 记录在案）
+      "term", // 深色面底色
+      "term-panel",
+      "term-line",
+      "term-ok",
+      "term-info",
+      "term-warn",
+      "term-danger",
+      "term-brand",
+      "bg",
+      "panel",
+      "line",
+      "line-soft",
+      "chart-1",
+      "chart-2",
+      "chart-3",
+    ])
+    const unregistered = Object.keys(T)
+      .filter((name) => !checked.has(name) && !INFO_ONLY.has(name))
+      .sort()
+    expect(
+      unregistered,
+      "新增色 token 未登记——请加入 TEXT_TOKENS / FILL_TOKENS 参与校验，或登记进 INFO_ONLY 并说明理由",
     ).toEqual([])
   })
 
