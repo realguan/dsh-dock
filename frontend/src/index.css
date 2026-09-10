@@ -23,41 +23,91 @@
 }
 
 /* ---------------- dsh 设计基调（契约区，frontend-migration §3.5） ----------------
-   ↓↓↓ 目标值 2026-08-27 逐变量对照 ui/assets/app.css 校对；与原生窗口背景
-   (#f9fafb) 一致，冷启动无闪色。基调内色彩微调随设计稿迭代；整组换底色/
-   切换明暗属基调变更，若将来立项须同步 lib.rs 的 background_color。 */
+   2026-09-10 批次 E（token 收口）：本批只动 token 层与调用点，不换基调色相。
+   起因——「主题 token 不好看」的实测根因不是配色不好，而是 token 体系名存实亡：
+     · 状态语义有 token 却在 200 处被 Tailwind 原生调色板绕过（ok 28 次 vs
+       emerald 46 次、warn 41 vs amber 59、rose 45 处无对应 token），
+       同一件事有 2–3 个色，「散」由此而来；
+     · 灰阶 dim/faint 分离度仅 0.028（ΔOKLab），圆角 4 档、阴影 6 档无规则。
+   约束由 __tests__/contrast.test.ts（对比度 + 族间分离度）与
+   __tests__/paletteTokens.test.ts（禁止原生调色板回流）钉住。 */
 @theme {
-  --color-bg: #f7f8fb;
+  /* ---- 中性层：真三级灰阶 + 三档底色 ----------------------------------
+     灰阶：ink > dim > faint，三档在 bg/panel/line-soft **三种底色**上均
+     ≥4.5:1，且相邻两档 ΔOKLab ≥0.12（肉眼可辨）。批次 C 曾断言「浅底上三级
+     灰阶不存在」——该前提只对「提亮三级」成立；正解是把二级**压深**
+     （旧 dim #626a7a 与 faint #6b7280 分离度仅 0.028，是**一级**）。
+     实测三级阶梯：ink→dim 0.148 / dim→faint 0.141，近似均匀。
+     底色：bg/line-soft/line = 「页面底 / 凹陷填充 / 分隔线」，三档两两可辨。
+     line-soft 以填充为主（42 处填充 vs 1 处分隔线），故须同时压过 panel 与 bg。 */
+  --color-bg: #f1f4f9;
   --color-panel: #ffffff;
-  --color-line: #e5e9f1;
-  --color-line-soft: #eef1f6;
+  --color-line: #e2e7f0;
+  --color-line-soft: #e6ecf5;
   --color-ink: #191d27;
-  --color-dim: #626a7a;
-  /* 2026-09-08 批次 C（U6）：原 #a0a7b6 在 bg/panel/line-soft 上仅 2.13–2.41，
-     远低于 4.5:1。实测「既 ≥4.5 又能与 dim 明显区分」的灰阶不存在——浅底上
-     需要约 #656d7c，与 dim(#626a7a) 已无差别，故三级灰阶压缩为两级：
-     ink（主）→ dim / faint（次）。faint 定为 #6b7280（bg 4.55 / panel 4.83 /
-     line-soft 4.27）。约束由 __tests__/contrast.test.ts 钉住。 */
-  --color-faint: #6b7280;
-  --color-brand: #4176e6;
-  /* 品牌蓝双档（2026-09-10 维护者裁定：回退批次 C 对填充色的过度应用）：
+  --color-dim: #3c4250;
+  --color-faint: #626978;
+
+  /* ---- 品牌蓝双档（2026-09-10 维护者裁定：回退批次 C 对填充色的过度应用）----
      - brand(#4176e6) = **填充/图形象档**——按钮、徽标、选中态、色块与点一律用它
-       （昨日观感；白字压其上 4.23，≥4.2 边际，见 contrast.test.ts 记录项）；
-     - brand-deep(#3163cf) = **文字档**——白底/浅底上的品牌色文本（5.50）一律用它。
+       （白字压其上 4.23，属 UI 组件档 ≥3:1，见 contrast.test.ts 记录项）；
+     - brand-deep(#3163cf) = **文字档**——白底/浅底上的品牌色文本一律用它（5.50）。
      判据：token 语义按「填充 vs 文字」分档，不按「品牌蓝 vs 深品牌蓝」分档。 */
+  --color-brand: #4176e6;
   --color-brand-deep: #3163cf;
   --color-wash: rgba(65, 118, 230, 0.07);
-  /* 命名裁定（2026-08-27）：shadcn 语义层的 --color-muted/--color-accent 已占用
-     「muted=浅色填充 / accent=hover 底」含义，域 token 改名避免工具类被
-     @theme inline 的后置映射覆盖——灰字用 dim，品牌蓝用 brand。 */
-  /* 2026-09-08 批次 C（U6）：ok/warn 原值在白底仅 3.45/4.30，白字在其上同样不达标，
-     逐档加深到 5.41/5.18（浅底 4.78/4.57）。 */
-  --color-ok: #27793a;
-  --color-ok-soft: rgba(39, 121, 58, 0.1);
-  --color-warn: #c2410c;
-  --color-warn-soft: rgba(194, 65, 12, 0.08);
-  --color-badge-a: #1d2637;
-  --color-badge-b: #0e1524;
+
+  /* ---- 状态四族 + 分类（2026-09-10 批次 E 新建）------------------------
+     每族两档产出：base（文字/图形）与 soft（同色 10% 填充底）；描边由调用点
+     直接叠 base 透明度（如 border-ok/30），不另设 token。
+     soft 的 RGB 三元组**必须**等于同族 base——改基色忘改 soft 会被
+     contrast.test.ts 的派生闸门拦下（旧 ok-soft 手抄 RGB，属静默失联隐患）。
+
+     取值判据（可执行，非目测）：四族 base 在 OKLCH 里等明度（L≈0.49），
+     这是「看起来是同一个世界」的定义；且在 bg / panel / line-soft / 自身 soft
+     四种底色上**全部** ≥4.5，族间两两 ΔOKLab ≥0.12（最差对 info×brand 0.124）。
+     唯一明度例外 = danger 压到 L=0.48：warn 与 danger 色相本就相邻（琥珀↔红），
+     靠色相拉不开，改用明度差换分离度。
+
+     命名裁定：danger 与 shadcn 语义层的 destructive 并存——域 token 用 danger
+     （与 ok/warn/info 同构），destructive 保留给 shadcn 组件内部并由 :root
+     映射到 danger。旧口径下 destructive 与 warn **同值** #c2410c，而红色实际
+     由 rose 承担，属「token 在说谎」，本批拆开。 */
+  --color-ok: #037441;
+  --color-ok-soft: rgba(3, 116, 65, 0.1);
+  --color-info: #0b6a87;
+  --color-info-soft: rgba(11, 106, 135, 0.1);
+  --color-warn: #8d4e10;
+  --color-warn-soft: rgba(141, 78, 16, 0.1);
+  --color-danger: #af0532;
+  --color-danger-soft: rgba(175, 5, 50, 0.1);
+  /* 分类档：来源、排序、分组一类**语义中性**的区分色（旧口径拿 rose 危险红
+     当「NPM 官方包」，purple/violet/indigo 三色混编——红色在暗示错误）。 */
+  --color-alt: #7843a0;
+  --color-alt-soft: rgba(120, 67, 160, 0.1);
+
+  /* ---- 深色终端面（日志/凭据/设置原文）2026-09-10 批次 E 新建 ----------
+     旧口径散用 slate-950/900/800/500/300/200 六个原生档（20 处）。四族在
+     term 底上均 ≥4.5，色相与浅色侧同源，明暗两套属同一体系。 */
+  --color-term: #0d121f;
+  --color-term-panel: #161d2e;
+  --color-term-line: #28324a;
+  --color-term-ink: #e8ecf6;
+  --color-term-dim: #9aa5bd;
+  --color-term-faint: #727d99;
+  --color-term-ok: #5ec386;
+  --color-term-info: #2ebbe8;
+  --color-term-warn: #e79551;
+  --color-term-danger: #f28881;
+
+  /* 2026-09-10 批次 E：原 badge-a(#1d2637)/badge-b(#0e1524) 退役——
+     badge-a 零引用（死 token），badge-b 仅 ErrorCard 原始日志面板一处，
+     与 term 语义重复。深色面统一走 term-*。 */
+
+  /* ---- 命名裁定（2026-08-27）----
+     shadcn 语义层的 --color-muted/--color-accent 已占用「muted=浅色填充 /
+     accent=hover 底」含义，域 token 改名避免工具类被 @theme inline 的后置映射
+     覆盖——灰字用 dim，品牌蓝用 brand。 */
 
   /* 契约区：系统字体栈（无外部字体文件——壳运行时不发起新网络请求） */
   --font-sans:
@@ -72,30 +122,82 @@
   --text-label: 11px; /* 小标签 / 等宽元数据 */
   --text-note: 13px; /* 次级正文 */
   --text-lead: 15px; /* 强调正文 */
+
+  /* ---- 圆角梯度（2026-09-10 批次 E 收敛：4 档 → 2 档 + 胶囊）----
+     旧口径 md(8)/lg(10)/xl(14)/2xl(18) 四档并用，且**同类元素分属两档**：
+     卡片既有 24 处 rounded-2xl 也有大量 rounded-xl，8 与 10 肉眼无从分辨。
+     收敛判据按**元素角色**而非尺寸：
+       · 控制件（按钮/输入框/下拉/分段器/图标钮/小徽标）= 10px → md 与 lg 合一
+       · 面（卡片/面板/对话框/终端块）                = 14px → xl 与 2xl 合一
+       · 胶囊（点/头像/状态徽标）                    = full（类名直接写）
+     sm 仅供 shadcn 预设组件内部的小 kbd 使用，不参与页面梯度。 */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 14px;
+
+  /* ---- 高度语义（elevation）2026-09-10 批次 E 重建 --------------------
+     旧口径直接用 Tailwind 默认阴影——纯黑投影压在冷灰底上发脏，且 6 档之间
+     无递进逻辑（2xs 与 xs 几乎同值）。新值：(a) 投影带冷色偏（rgb 23,37,84，
+     即 ink 的冷化），(b) 每档双层（近距离接触影 + 远距离扩散影），
+     (c) 覆盖 Tailwind 原生档位名而非另起炉灶——131 处调用点零改动即获得
+     新语义，避免制造第三套命名。档位角色：
+       2xs = 静态微凸（列表项、徽标）      xs = 卡片静置
+       sm  = 卡片悬停                     md  = 选中/抬升
+       lg  = 下拉浮层                     xl  = 对话框
+       2xl = 最高模态                     inner = 凹陷（进度槽） */
+  --shadow-2xs: 0 1px 2px rgba(23, 37, 84, 0.05);
+  --shadow-xs:
+    0 1px 2px rgba(23, 37, 84, 0.06), 0 1px 3px rgba(23, 37, 84, 0.04);
+  --shadow-sm:
+    0 2px 4px rgba(23, 37, 84, 0.06), 0 1px 2px rgba(23, 37, 84, 0.04);
+  --shadow-md:
+    0 4px 8px -2px rgba(23, 37, 84, 0.08), 0 2px 4px -2px rgba(23, 37, 84, 0.05);
+  --shadow-lg:
+    0 8px 20px -6px rgba(23, 37, 84, 0.12), 0 4px 8px -4px rgba(23, 37, 84, 0.06);
+  --shadow-xl:
+    0 16px 36px -10px rgba(23, 37, 84, 0.16), 0 6px 14px -6px rgba(23, 37, 84, 0.08);
+  --shadow-2xl: 0 24px 56px -14px rgba(23, 37, 84, 0.2);
+  --shadow-inner: inset 0 1px 2px rgba(23, 37, 84, 0.06);
+
+  /* ---- 品牌光晕（glow）2026-09-10 批次 E 新建 --------------------------
+     光晕是「发光」而非「投影」——职责与 elevation 不同，故独立命名而非挤进
+     上面的档位梯度。旧口径散落 3 处任意值，其中 Emblem 还硬编码了 sky-500
+     (#0ea5e9) 这个**非本仓库品牌色**（旧品牌换代残留）。 */
+  --shadow-glow: 0 0 12px rgba(65, 118, 230, 0.45);
+  --shadow-glow-sm: 0 0 8px rgba(65, 118, 230, 0.35);
+  --drop-shadow-glow: 0 4px 12px rgba(65, 118, 230, 0.18);
 }
 
-/* ---------------- shadcn/ui 语义层（映射到 dsh 基调值） ---------------- */
+/* ---------------- shadcn/ui 语义层（映射到 dsh 基调值） ----------------
+   2026-09-10 批次 E：改为**引用** @theme token，不再手抄 hex。
+   旧口径此处把 bg/ink/line/brand 等基色又硬编码了一遍（第三份真相源），
+   改 @theme 忘改此处 = 组件与页面底色静默分叉。var() 在 computed-value
+   阶段解析，与声明顺序无关。 */
 :root {
-  --background: #f7f8fb;
-  --foreground: #191d27;
-  --card: #ffffff;
-  --card-foreground: #191d27;
-  --popover: #ffffff;
-  --popover-foreground: #191d27;
-  --primary: #4176e6;
+  --background: var(--color-bg);
+  --foreground: var(--color-ink);
+  --card: var(--color-panel);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-panel);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-brand);
   --primary-foreground: #ffffff;
-  --secondary: #eef1f6;
-  --secondary-foreground: #191d27;
-  --muted: #eef1f6;
-  --muted-foreground: #626a7a;
-  --accent: rgba(65, 118, 230, 0.07);
-  --accent-foreground: #191d27;
-  --destructive: #c2410c;
+  --secondary: var(--color-line-soft);
+  --secondary-foreground: var(--color-ink);
+  --muted: var(--color-line-soft);
+  --muted-foreground: var(--color-dim);
+  --accent: var(--color-wash);
+  --accent-foreground: var(--color-ink);
+  --destructive: var(--color-danger);
   --destructive-foreground: #ffffff;
-  --border: #e5e9f1;
-  --input: #e5e9f1;
-  --ring: #4176e6;
-  --radius: 0.625rem;
+  --border: var(--color-line);
+  --input: var(--color-line);
+  --ring: var(--color-brand);
+  /* 2026-09-10 批次 E：原 `--radius: 0.625rem` 退役——旧口径由 @theme inline 的
+     calc() 从它派生 radius-md/lg/xl/2xl，等于圆角有两份真相源。现圆角直写于
+     @theme 的 --radius-* 命名空间，此处不再保留。 */
 }
 
 @theme inline {
@@ -118,12 +220,6 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
 }
 
 @layer base {

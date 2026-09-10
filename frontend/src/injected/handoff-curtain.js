@@ -60,34 +60,38 @@
     return (navigator.language || 'zh').toLowerCase().indexOf('zh') === 0 ? ZH : EN;
   }
 
+  // 色值 = index.css token 的**镜像**：本脚本注入 dsh 文档，拿不到壳的 CSS 变量，
+  // 只能硬编码。2026-09-10 批次 E 同步；漂移由 __tests__/curtainTokens.test.ts
+  // 逐值比对 index.css 拦下（改 token 忘改此处 = 测试红）。
   function css() {
     return [
       '#' + ROOT_ID + '{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;',
-      'background:#f7f8fb;color:#191d27;opacity:1;transition:opacity .22s ease;',
+      'background:#f1f4f9;color:#191d27;opacity:1;transition:opacity .22s ease;',
       'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}',
       '#' + ROOT_ID + '.dsh-curtain-out{opacity:0}',
       '#' + ROOT_ID + ' .dsh-curtain-glow{position:absolute;left:0;right:0;top:0;height:24rem;pointer-events:none;',
       'background:radial-gradient(ellipse 80% 60% at 50% -20%,rgba(65,118,230,.12),transparent 70%)}',
       '#' + ROOT_ID + ' .dsh-curtain-box{position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;padding:0 24px;text-align:center}',
       '#' + ROOT_ID + ' .dsh-curtain-mark{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:16px;',
-      'background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px -12px rgba(65,118,230,.35)}',
+      'background:#fff;box-shadow:0 1px 2px rgba(23,37,84,.06),0 8px 24px -12px rgba(65,118,230,.35)}',
       '#' + ROOT_ID + ' .dsh-curtain-mark svg{width:34px;height:34px;display:block}',
       '#' + ROOT_ID + ' .dsh-curtain-mark path{fill:#4176e6}',
       '#' + ROOT_ID + ' .dsh-curtain-title{font-size:15px;font-weight:600;letter-spacing:-.01em}',
-      '#' + ROOT_ID + ' .dsh-curtain-sub{font-size:12px;color:#626a7a;min-height:1.2em}',
-      '#' + ROOT_ID + ' .dsh-curtain-bar{position:relative;width:220px;height:6px;border-radius:999px;border:1px solid #e5e9f1;background:#eef1f6;overflow:hidden}',
+      '#' + ROOT_ID + ' .dsh-curtain-sub{font-size:12px;color:#3c4250;min-height:1.2em}',
+      '#' + ROOT_ID + ' .dsh-curtain-bar{position:relative;width:220px;height:6px;border-radius:999px;border:1px solid #e2e7f0;background:#e6ecf5;overflow:hidden}',
       '#' + ROOT_ID + ' .dsh-curtain-fill{position:absolute;top:0;bottom:0;width:38%;border-radius:3px;',
       'background:linear-gradient(90deg,transparent,#4176e6,#7d9cf2,transparent);animation:dsh-curtain-slide 1.3s cubic-bezier(.45,0,.55,1) infinite}',
-      '#' + ROOT_ID + ' .dsh-curtain-timer{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;color:#6b7280;font-variant-numeric:tabular-nums}',
+      '#' + ROOT_ID + ' .dsh-curtain-timer{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;color:#626978;font-variant-numeric:tabular-nums}',
       '@keyframes dsh-curtain-slide{0%{left:-40%}100%{left:100%}}',
       '@media (prefers-reduced-motion: reduce){#' + ROOT_ID + ' .dsh-curtain-fill{animation:none;left:30%}}',
+      // 暗色走 index.css 的 term-* 深色面，与日志/凭据面板同一套暗色。
       '@media (prefers-color-scheme: dark){',
-      '#' + ROOT_ID + '{background:#14161c;color:#e8eaf0}',
-      '#' + ROOT_ID + ' .dsh-curtain-mark{background:#1d2029;box-shadow:0 8px 24px -12px rgba(0,0,0,.6)}',
-      '#' + ROOT_ID + ' .dsh-curtain-mark path{fill:#e8eaf0}',
-      '#' + ROOT_ID + ' .dsh-curtain-sub{color:#9aa3b2}',
-      '#' + ROOT_ID + ' .dsh-curtain-bar{border-color:#2a2e3a;background:#1d2029}',
-      '#' + ROOT_ID + ' .dsh-curtain-timer{color:#9aa3b2}}',
+      '#' + ROOT_ID + '{background:#0d121f;color:#e8ecf6}',
+      '#' + ROOT_ID + ' .dsh-curtain-mark{background:#161d2e;box-shadow:0 8px 24px -12px rgba(0,0,0,.6)}',
+      '#' + ROOT_ID + ' .dsh-curtain-mark path{fill:#e8ecf6}',
+      '#' + ROOT_ID + ' .dsh-curtain-sub{color:#9aa5bd}',
+      '#' + ROOT_ID + ' .dsh-curtain-bar{border-color:#28324a;background:#161d2e}',
+      '#' + ROOT_ID + ' .dsh-curtain-timer{color:#9aa5bd}}',
     ].join('');
   }
 

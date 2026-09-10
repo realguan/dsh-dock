@@ -75,7 +75,10 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
         .min_inner_size(960.0, 640.0)
         .resizable(true)
         .center()
-        .background_color(tauri::utils::config::Color(249, 250, 251, 255))
+        // 2026-09-10 批次 E：原值 (249,250,251)=#f9fafb 与本仓库 CSS `--color-bg`
+        // 从来**就不一致**（旧值 #f7f8fb），"冷启动无闪色"的注释与事实不符。
+        // 本批随 token 收口把 bg 定为 #f1f4f9=(241,244,249) 并在此对齐。
+        .background_color(tauri::utils::config::Color(241, 244, 249, 255))
         .on_navigation(move |url| {
             // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
             //

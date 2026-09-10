@@ -391,6 +391,11 @@ export function initEventBus(): () => void {
 
 ### 3.5 设计 token 与样式
 
+> **2026-09-10 批次 E（token 收口）为当前有效口径**，取值与约束的单一真相源是
+> `frontend/src/index.css` 的 `@theme` 块。下文代码块保留 2026-08-27 迁移当时的
+> 形态以存史；**改动 token 请只改 index.css**，并以
+> `__tests__/contrast.test.ts` + `__tests__/paletteTokens.test.ts` 两道闸门为准。
+
 #### index.css（Tailwind v4 @theme）
 
 ```css
@@ -445,9 +450,32 @@ export function initEventBus(): () => void {
 ```
 
 **颜色使用规范**：
-- ✅ `bg-bg`、`text-ink`、`text-accent`、`border-line`（走 token）
+- ✅ `bg-bg`、`text-ink`、`text-brand-deep`、`border-line`（走 token）
 - ❌ `bg-[#0f1220]`、`text-[#e8ecf4]`（不硬编码 hex）
+- ❌ `text-emerald-700`、`bg-amber-500/10`、`bg-slate-950` 一类**原生调色板档位**
+  （2026-09-10 批次 E 起由 `paletteTokens.test.ts` 机器拦截）
 - 未来暗色模式经 `data-theme` 属性覆盖变量实现，Tailwind 类名不变
+
+**语义 token 对照表（2026-09-10 批次 E）**：
+
+| 语义 | 文字/图形 | 填充底 | 说明 |
+|:---|:---|:---|:---|
+| 主/次/三级文字 | `text-ink` / `text-dim` / `text-faint` | — | 真三级，相邻 ΔOKLab ≥0.12 |
+| 品牌（文字档） | `text-brand-deep` | `bg-brand/10` | 浅底上的品牌色文本 |
+| 品牌（填充档） | `bg-brand` | `bg-wash` | 按钮/选中态/色块（白字 4.23，仅控件） |
+| 成功 / 健康 | `text-ok` | `bg-ok-soft` | 旧 emerald 系归此 |
+| 进行中 / 信息 | `text-info` | `bg-info-soft` | 旧 sky 系归此；**不是警告** |
+| 需注意 | `text-warn` | `bg-warn-soft` | 旧 amber 系归此 |
+| 失败 / 删除 | `text-danger` | `bg-danger-soft` | 旧 rose 系归此 |
+| 分类（语义中性） | `text-alt` | `bg-alt-soft` | 来源/排序/分组/profile 身份 |
+| 深色终端面 | `text-term-ink` / `-dim` / `-faint` | `bg-term` / `bg-term-panel` | 日志/凭据/设置原文 |
+| 日志级别 | `text-term-ok` / `-info` / `-warn` / `-danger` | — | 深底专用浅色档 |
+
+**为什么值得收口**（批次 E 实测）：收口前 ok(28 处) 与 emerald(46 处) 并存、
+warn(41) 与 amber(59) 并存，rose(45) 无对应 token 且被当成「NPM 官方包」的分类色，
+purple/violet/indigo 三者混编——同一件事有 2–3 个色。观感「散」的根因是
+**token 体系被绕过**，不是配色不好。收口后四族在 OKLCH 等明度，
+两两 ΔOKLab ≥0.12，且在 bg/panel/line-soft/自身 soft 四种底色上全部 ≥4.5:1。
 
 #### Emblem 组件
 
