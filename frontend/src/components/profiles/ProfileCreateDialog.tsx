@@ -34,7 +34,9 @@ export function ProfileCreateDialog({
   onRefresh: () => void
 }) {
   const { t } = useI18n()
-  const [name, setName] = useState("")
+  const [name, setName] = useState(() => {
+    return new URLSearchParams(window.location.search).get("createName") || ""
+  })
   const [phase, setPhase] = useState<Phase>({ kind: "form" })
 
   const trimmed = name.trim()

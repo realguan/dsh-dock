@@ -33,17 +33,36 @@ export function ProfileManager() {
   const { list, defaultProfile, activeProfile, loading, loadError, load } = useProfilesStore()
 
   // 选中的 Profile（默认为当前运行中的 Profile 或第一个 Profile）
-  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [selectedName, setSelectedName] = useState<string | null>(() => {
+    return new URLSearchParams(window.location.search).get("selected") || null
+  })
 
   // 对话框状态
-  const [createOpen, setCreateOpen] = useState(false)
-  const [nameOp, setNameOp] = useState<{ mode: NameOpMode; source: string } | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [createOpen, setCreateOpen] = useState(() => {
+    return new URLSearchParams(window.location.search).get("dialog") === "create"
+  })
+  const [nameOp, setNameOp] = useState<{ mode: NameOpMode; source: string } | null>(() => {
+    const d = new URLSearchParams(window.location.search).get("dialog")
+    const src = new URLSearchParams(window.location.search).get("target") || "default"
+    if (d === "copy" || d === "rename") return { mode: d, source: src }
+    return null
+  })
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(() => {
+    return new URLSearchParams(window.location.search).get("dialog") === "delete"
+      ? new URLSearchParams(window.location.search).get("target") || "data-analysis"
+      : null
+  })
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
   const [rowBusy, setRowBusy] = useState<string | null>(null)
+  const [switchingTarget, setSwitchingTarget] = useState<string | null>(null)
+  const [isRefreshingData, setIsRefreshingData] = useState(false)
 
   // 视图切换（Profile 管理列表 vs 插件中心 vs 会话维护与自愈 vs 系统控制台）
-  const [view, setView] = useState<"list" | "plugins" | "sessions" | "console">("list")
+  const [view, setView] = useState<"list" | "plugins" | "sessions" | "console">(() => {
+    const p = new URLSearchParams(window.location.search).get("view")
+    if (p === "plugins" || p === "sessions" || p === "console" || p === "list") return p
+    return "list"
+  })
   const [overviewTick, setOverviewTick] = useState(0)
 
   // 初始化语言
@@ -92,6 +111,32 @@ export function ProfileManager() {
     [refreshAll],
   )
 
+  // 会话重载状态监听：当检测到目标 Profile 已就绪或已成功成为 activeProfile 时平滑解除过渡态
+  useEffect(() => {
+    if (!switchingTarget) return
+    if (activeProfile === switchingTarget) {
+      const timer = setTimeout(() => {
+        setSwitchingTarget(null)
+      }, 700)
+      return () => clearTimeout(timer)
+    }
+  }, [switchingTarget, activeProfile])
+
+  // 重载探活轮询（安全守卫：切换期间每秒探活，最长 15 秒兜底，防死锁）
+  useEffect(() => {
+    if (!switchingTarget) return
+    const interval = setInterval(() => {
+      void load()
+    }, 1200)
+    const timeout = setTimeout(() => {
+      setSwitchingTarget(null)
+    }, 15000)
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [switchingTarget, load])
+
   // 首次加载或列表变更时自动选定 Profile
   useEffect(() => {
     if (list.length === 0) return
@@ -133,14 +178,19 @@ export function ProfileManager() {
   }
 
   const doSwitch = (name: string) => {
+    setSwitchingTarget(name)
     setRowBusy(name)
+    useProfilesStore.setState({ activeProfile: null })
     api
       .switchProfile(name)
       .then(() => {
         showToast(t.profiles.switchDone(name), "ok")
         refreshAll()
       })
-      .catch((e) => showToast(String(e), "warn"))
+      .catch((e) => {
+        showToast(String(e), "warn")
+        setSwitchingTarget(null)
+      })
       .finally(() => setRowBusy(null))
   }
 
@@ -161,10 +211,10 @@ export function ProfileManager() {
           2026-09-08 批次 D / U10：吸顶——长列表滚动后「视图切换」入口不再消失；
           负外边距抵消 PageShell 的 px-4/6/8，半透明底 + 模糊保证滚动内容不穿透。 */}
       <header className="sticky top-0 z-20 -mx-4 mb-4 flex items-center justify-between gap-3 bg-bg/90 px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6 md:-mx-8 md:px-8">
-        <div className="flex items-center gap-3 min-w-0">
-          <Emblem size={32} />
+        <div className="flex items-center gap-3.5 min-w-0">
+          <Emblem size={48} framed={true} />
           <div className="min-w-0">
-            <h1 className="text-ink text-base font-bold tracking-tight truncate" title={t.profiles.title}>
+            <h1 className="text-ink text-base sm:text-lg font-bold tracking-tight truncate" title={t.profiles.title}>
               {t.profiles.title}
             </h1>
             <p className="text-faint text-xs truncate" title={t.profiles.subtitle}>
@@ -240,20 +290,22 @@ export function ProfileManager() {
             </button>
           </div>
 
-          {/* 检查更新冗余入口（与托盘/关于页同源 check_updates）：结果经
-              app:update 广播刷新菜单徽标与关于页卡片，这里只发起 + 提示。 */}
+          {/* 控制台数据与状态手动刷新（带旋转反馈与清晰语义） */}
           <Button
             size="sm"
             variant="outline"
-            title={t.profiles.checkUpdatesBtn}
-            aria-label={t.profiles.checkUpdatesBtn}
+            title={t.profiles.refreshData}
+            aria-label={t.profiles.refreshData}
             onClick={() => {
-              showToast(t.profiles.updateCheckStarted, "ok")
-              api.checkUpdates().catch(() => showToast(t.error.actionFailed, "warn"))
+              setIsRefreshingData(true)
+              refreshAll()
+              showToast(t.profiles.dataRefreshed, "ok")
+              setTimeout(() => setIsRefreshingData(false), 600)
             }}
-            className="size-8 p-0"
+            disabled={isRefreshingData}
+            className="size-8 p-0 rounded-xl"
           >
-            <RefreshCw className="size-3.5" />
+            <RefreshCw className={`size-3.5 ${isRefreshingData ? "animate-spin text-brand-deep" : ""}`} />
           </Button>
 
           {/* 返回 DSH 主工作台操作入口 */}
@@ -283,7 +335,7 @@ export function ProfileManager() {
             {/* 新建 Profile 专属醒目操作条 */}
             <Button
               onClick={() => setCreateOpen(true)}
-              className="w-full gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs shadow-xs h-9 rounded-xl font-medium"
+              className="w-full gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs h-9 rounded-xl font-medium"
             >
               <Plus className="size-4" />
               <span>{t.profiles.createBtn}</span>
@@ -291,7 +343,7 @@ export function ProfileManager() {
 
             {/* 搜索框 */}
             <div className="relative">
-              <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+              <Search className="text-faint absolute inset-y-0 left-2.5 my-auto size-3.5" />
               <input
                 value={profileFilter}
                 onChange={(e) => setProfileFilter(e.target.value)}
@@ -321,6 +373,7 @@ export function ProfileManager() {
                     isSelected={selectedName === p.name}
                     isDefault={defaultProfile === p.name}
                     isRunning={activeProfile === p.name}
+                    isSwitching={switchingTarget === p.name}
                     busy={rowBusy === p.name}
                     onSelect={() => setSelectedName(p.name)}
                     onDetail={() => setSelectedName(p.name)}
@@ -350,6 +403,7 @@ export function ProfileManager() {
               name={currentSelectedProfile?.name ?? null}
               isDefault={defaultProfile === currentSelectedProfile?.name}
               isRunning={activeProfile === currentSelectedProfile?.name}
+              isSwitching={switchingTarget === currentSelectedProfile?.name}
               busy={rowBusy === currentSelectedProfile?.name}
               onLaunch={() => currentSelectedProfile && handleLaunch(currentSelectedProfile.name)}
               onRestart={() =>
@@ -385,6 +439,10 @@ export function ProfileManager() {
         restart={switchTarget !== null && switchTarget === activeProfile}
         onClose={() => setSwitchTarget(null)}
         onDone={() => {
+          if (switchTarget) {
+            setSwitchingTarget(switchTarget)
+            useProfilesStore.setState({ activeProfile: null })
+          }
           showToast(t.profiles.switchDone(switchTarget ?? ""), "ok")
           refreshAll()
         }}

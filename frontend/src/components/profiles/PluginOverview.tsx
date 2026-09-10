@@ -13,7 +13,7 @@ import {
 import { api } from "@/lib/tauri"
 import { useQueueStore } from "@/stores/queueStore"
 import { useInstallFlightStore } from "@/stores/installFlightStore"
-import { getProfileColorClass } from "@/lib/format"
+import { getPaginationPages, getProfileColorClass } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
@@ -167,7 +167,7 @@ export function PluginOverview({
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
           {/* 搜索框 */}
           <div className="relative flex-1 min-w-[200px]">
-            <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+            <Search className="text-faint absolute inset-y-0 left-3 my-auto size-3.5" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -371,20 +371,30 @@ export function PluginOverview({
             </Button>
 
             <div className="flex items-center gap-1 px-1">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                <button
-                  key={page}
-                  type="button"
-                  onClick={() => setCurrentPage(page)}
-                  className={`size-7 rounded-lg text-xs font-mono transition-colors ${
-                    currentPage === page
-                      ? "bg-brand-deep text-white font-bold"
-                      : "text-dim hover:bg-line"
-                  }`}
-                >
-                  {page}
-                </button>
-              ))}
+              {getPaginationPages(currentPage, totalPages).map((item, idx) =>
+                item === "..." ? (
+                  <span
+                    key={`ellipsis-${idx}`}
+                    className="flex size-7 items-center justify-center text-xs font-mono text-faint select-none"
+                    aria-hidden="true"
+                  >
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setCurrentPage(item)}
+                    className={`size-7 rounded-lg text-xs font-mono transition-colors ${
+                      currentPage === item
+                        ? "bg-brand text-white font-bold"
+                        : "text-dim hover:bg-line"
+                    }`}
+                  >
+                    {item}
+                  </button>
+                ),
+              )}
             </div>
 
             <Button
@@ -496,7 +506,7 @@ export function PluginOverview({
             <Button
               onClick={(e) => handleEnqueueDistribute(e)}
               disabled={!selectedDest}
-              className="bg-brand-deep text-white hover:bg-brand-deep/90"
+              className="bg-brand text-white hover:bg-brand/90"
             >
               <span>加入分发队列</span>
             </Button>

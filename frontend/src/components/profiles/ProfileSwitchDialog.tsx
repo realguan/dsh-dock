@@ -4,6 +4,7 @@
 import { useState } from "react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
+import { useProfilesStore } from "@/stores/profilesStore"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -46,6 +47,8 @@ export function ProfileSwitchDialog({
     if (!target || busy) return
     setBusy(true)
     setError(null)
+    // 立即清空活跃 profile 态，防止重启时因为旧值残留瞬间跳过 loading 过渡态
+    useProfilesStore.setState({ activeProfile: null })
     api
       .switchProfile(target)
       .then(() => {

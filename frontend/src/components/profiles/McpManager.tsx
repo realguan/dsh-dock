@@ -263,7 +263,7 @@ export function McpManager({
           <Button
             size="sm"
             onClick={openCreateDialog}
-            className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs shadow-xs"
+            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
           >
             <Plus className="size-3.5" />
             <span>{t.profiles.mcpAddBtn}</span>
@@ -592,7 +592,7 @@ export function McpManager({
             <Button
               onClick={handleSaveServer}
               disabled={saving || !formName.trim()}
-              className="bg-brand-deep text-white hover:bg-brand-deep/90"
+              className="bg-brand text-white hover:bg-brand/90"
             >
               {saving && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>{t.profiles.mcpSaveBtn}</span>

@@ -20,6 +20,7 @@ interface ProfileRowProps {
   isDefault: boolean
   isSelected: boolean
   isRunning: boolean
+  isSwitching?: boolean
   busy: boolean
   index: number
   onSelect: () => void
@@ -37,6 +38,7 @@ export function ProfileRow({
   isDefault,
   isSelected,
   isRunning,
+  isSwitching = false,
   busy,
   index,
   onSelect,
@@ -59,21 +61,23 @@ export function ProfileRow({
       ].join(` ${t.profiles.metaSep} `)
     : t.profiles.templateHint
 
-  // 2026-09-08 裁定：整卡不可改成 <button>（内部还有启动/更多菜单按钮，嵌套交互元素
-  // 非法且读屏会乱）。改为「名字即主控件」——键盘 Tab 到名字按钮回车即选中，卡片用
-  // focus-within 呈现整卡焦点环，指针点击行为不变。
   return (
+    // 2026-09-08 裁定：整卡不可改成 <button>（内部还有启动/更多菜单按钮，嵌套交互元素
+    // 非法且读屏会乱）。改为「名字即主控件」——键盘 Tab 到名字按钮回车即选中，卡片用
+    // focus-within 呈现整卡焦点环，指针点击行为不变。
     <div
       onClick={onSelect}
       style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
       className={`page-rise group relative cursor-pointer rounded-xl border p-3 transition-all duration-200 focus-within:ring-2 focus-within:ring-brand/50 ${
         isSelected
           ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
-          : "border-line bg-panel/80 hover:border-line hover:bg-panel hover:shadow-xs"
-      } ${materialized ? "" : "border-dashed"}`}
+          : "border-line bg-panel hover:border-line hover:bg-panel hover:shadow-xs"
+      } ${materialized ? "" : "border-dashed"} ${isSwitching ? "ring-1 ring-amber-500/40 bg-amber-500/5" : ""}`}
     >
-      {/* 活跃指示条 */}
-      {isRunning ? (
+      {/* 活跃/重载指示条 */}
+      {isSwitching ? (
+        <span className="bg-amber-500 absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-amber-500/50 animate-pulse" />
+      ) : isRunning ? (
         <span className="bg-ok absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-emerald-500/50" />
       ) : isSelected ? (
         <span className="bg-brand absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" />
@@ -98,13 +102,19 @@ export function ProfileRow({
               {name}
             </button>
 
-            {/* 运行中：翡翠绿脉动点 */}
-            {isRunning && (
+            {/* 重载过渡中：琥珀色脉动 */}
+            {isSwitching ? (
+              <span className="bg-amber-500/10 text-amber-700 border border-amber-500/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none animate-pulse">
+                <LoaderCircle className="size-3 animate-spin text-amber-700" aria-hidden />
+                <span>{isRunning ? t.profiles.reloadingWorkbench : t.profiles.launchingProfile}</span>
+              </span>
+            ) : isRunning ? (
+              /* 运行中：翡翠绿脉动点 */
               <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <span className="bg-ok size-1.5 animate-pulse rounded-full" aria-hidden />
                 {t.profiles.runningBadge}
               </span>
-            )}
+            ) : null}
 
             {/* 默认启动 */}
             {isDefault && (
@@ -133,8 +143,17 @@ export function ProfileRow({
           className="flex shrink-0 items-center gap-1 pt-0.5"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 主动作：启动或重启 */}
-          {isRunning ? (
+          {/* 主动作：重载中、启动或重启 */}
+          {isSwitching ? (
+            <button
+              type="button"
+              disabled
+              className="border-line/80 text-amber-700 bg-amber-500/10 inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium cursor-wait shadow-2xs"
+            >
+              <LoaderCircle className="size-3 animate-spin text-amber-700" aria-hidden />
+              <span>{t.profiles.launchWorking}</span>
+            </button>
+          ) : isRunning ? (
             <button
               type="button"
               title={busy ? t.profiles.launchWorking : t.profiles.restart}

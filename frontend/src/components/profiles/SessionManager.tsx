@@ -551,7 +551,7 @@ export function SessionManager({
               className={`gap-1.5 text-xs shadow-xs ${
                 stats.needsRepair > 0
                   ? "bg-amber-700 text-white hover:bg-amber-700/90"
-                  : "bg-brand/80 text-white opacity-55 hover:bg-brand-deep/80 cursor-not-allowed"
+                  : "bg-brand/80 text-white opacity-55 hover:bg-brand/80 cursor-not-allowed"
               }`}
             >
               {batchRepairing ? (
@@ -607,7 +607,7 @@ export function SessionManager({
       {/* 搜索与视图切换 */}
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <div className="relative min-w-[220px] flex-1">
-          <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+          <Search className="text-faint absolute inset-y-0 left-3 my-auto size-3.5" />
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}

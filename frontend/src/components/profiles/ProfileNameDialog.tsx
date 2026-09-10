@@ -36,7 +36,9 @@ export function ProfileNameDialog({
   onDone: (newName: string, warnings: string[]) => void
 }) {
   const { t } = useI18n()
-  const [name, setName] = useState("")
+  const [name, setName] = useState(() => {
+    return new URLSearchParams(window.location.search).get("copyName") || ""
+  })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[] | null>(null)

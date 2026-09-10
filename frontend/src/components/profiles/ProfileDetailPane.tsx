@@ -10,8 +10,8 @@ import {
   LoaderCircle,
   Package,
   Plus,
+  RefreshCw,
   Search,
-  SearchCheck,
   Star,
   Trash2,
 } from "lucide-react"
@@ -44,6 +44,7 @@ export function ProfileDetailPane({
   name,
   isDefault,
   isRunning,
+  isSwitching = false,
   busy: _busy,
   onLaunch: _onLaunch,
   onRestart: _onRestart,
@@ -53,6 +54,7 @@ export function ProfileDetailPane({
   name: string | null
   isDefault: boolean
   isRunning: boolean
+  isSwitching?: boolean
   busy: boolean
   onLaunch: () => void
   onRestart: () => void
@@ -331,15 +333,27 @@ export function ProfileDetailPane({
               >
                 {name}
               </h2>
-              {isRunning && (
+              {isSwitching ? (
+                <span className="bg-amber-500/10 text-amber-700 border border-amber-500/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium animate-pulse">
+                  <LoaderCircle className="size-3 animate-spin text-amber-700" />
+                  <span>{isRunning ? t.profiles.reloadingWorkbench : t.profiles.launchingProfile}</span>
+                </span>
+              ) : isRunning ? (
                 <span className="bg-ok-soft text-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium">
                   <span className="bg-ok size-1.5 animate-pulse rounded-full" />
                   {t.profiles.runningBadge}
                 </span>
-              )}
+              ) : null}
             </div>
             <p className="text-faint mt-0.5 text-xs">
-              {detail ? `清单名: ${detail.package_name}` : "正在加载配置档案..."}
+              {detail ? (
+                <>
+                  <span>清单名: </span>
+                  <span className="font-mono font-medium text-ink">{detail.package_name}</span>
+                </>
+              ) : (
+                "正在加载配置档案..."
+              )}
             </p>
           </div>
 
@@ -453,7 +467,7 @@ export function ProfileDetailPane({
             {/* 插件工具栏：搜索 + 安装 + 导入 + 检查更新 */}
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <div className="relative min-w-[180px] flex-1">
-                <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+                <Search className="text-faint absolute inset-y-0 left-2.5 my-auto size-3.5" />
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -493,15 +507,16 @@ export function ProfileDetailPane({
                   size="sm"
                   variant="outline"
                   title={t.profiles.checkUpdatesBtn}
-                  disabled={opBusy !== null || depCount === 0}
+                  disabled={opBusy !== null || depCount === 0 || checkState === "busy"}
                   onClick={runUpdateCheck}
-                  className="size-8 p-0"
+                  className="gap-1.5 text-xs font-medium"
                 >
                   {checkState === "busy" ? (
                     <LoaderCircle className="size-3.5 animate-spin text-brand-deep" />
                   ) : (
-                    <SearchCheck className="size-3.5" />
+                    <RefreshCw className="size-3.5" />
                   )}
+                  <span>{checkState === "busy" ? t.profiles.checkingBtn : t.profiles.checkUpdatesBtn}</span>
                 </Button>
               </div>
             </div>
@@ -599,7 +614,7 @@ export function ProfileDetailPane({
                     <div
                       key={p.name}
                       className={`group flex items-center justify-between gap-3 p-3.5 transition-colors hover:bg-wash/30 ${
-                        shellDisabled ? "opacity-60 bg-bg/50" : ""
+                        shellDisabled ? "bg-bg/40" : ""
                       }`}
                     >
                       <div className="min-w-0 flex-1">
@@ -723,6 +738,25 @@ export function ProfileDetailPane({
         {/* ================= Tab 2: 底座组合架构 ================= */}
         {tab === "bundles" && (
           <div className="space-y-3">
+            {detail?.package_name === "@deepseek-ai/dsh-desktop-runtime" && (
+              <div className="rounded-xl border border-line bg-wash/50 p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-semibold text-ink">
+                    DeepSeek 官方桌面客户端底座运行时
+                  </span>
+                  <span className="bg-brand/10 text-brand-deep border border-brand/20 rounded px-1.5 py-0.5 text-meta font-medium">
+                    官方桌面版
+                  </span>
+                </div>
+                <p className="text-dim text-xs leading-relaxed">
+                  该 Profile 归属于 DeepSeek 官方桌面客户端（<code>@deepseek-ai/dsh-desktop-runtime</code>），内含 240+ 项本地预置底座服务与核心组件（存放在 <code>desktop-packages/</code> 本地包目录）。
+                </p>
+                <p className="text-faint text-meta">
+                  注：这些核心组件由客户端底座统一部署维护，属于内置底座体系，不计入第三方外挂插件。在此 Profile 安装的自定义扩展将独立展示在「外挂插件」列表中。
+                </p>
+              </div>
+            )}
+
             <p className="text-dim text-xs leading-relaxed">
               底座组合由 Profile 初始化时写入（<code>dsh.profile.bundles</code>
               ），定义了工作台的基础界面宿主与系统能力：
