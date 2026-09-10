@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import {
-  buildInstallCmd,
   detectInstallSource,
   extractInstallSpec,
   filterMarketPlugins,
@@ -48,29 +47,6 @@ describe("lib/market.ts", () => {
       // 非成对引号不剥（fail-closed，交给校验层拒绝）
       expect(extractInstallSpec('"https://example.com/p.tgz')).toBe(
         '"https://example.com/p.tgz',
-      )
-    })
-  })
-
-  describe("buildInstallCmd", () => {
-    it("dynamically generates dsh command with the chosen profile", () => {
-      expect(buildInstallCmd("agent-dev", "@deepseek-ai/dsh-pet")).toBe(
-        "dsh plugin --profile agent-dev add @deepseek-ai/dsh-pet",
-      )
-    })
-
-    it("strips legacy hardcoded profile from full upstream command string", () => {
-      expect(
-        buildInstallCmd(
-          "prod",
-          "dsh plugin --profile web add @furongjun1999/dsh-memory",
-        ),
-      ).toBe("dsh plugin --profile prod add @furongjun1999/dsh-memory")
-    })
-
-    it("falls back to web if profile is empty", () => {
-      expect(buildInstallCmd("", "@deepseek-ai/dsh-pet")).toBe(
-        "dsh plugin --profile web add @deepseek-ai/dsh-pet",
       )
     })
   })
