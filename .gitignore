@@ -19,3 +19,5 @@ node-map-private.key
 .zcode
 docs/known-issues
 docs/archify-demo
+# 发版日志提取脚本的默认产物（scripts/extract-release-notes.py 生成，CI 运行时消费）
+release_notes.md
