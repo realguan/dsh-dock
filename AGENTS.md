@@ -53,10 +53,11 @@
 
 ## 3. 品牌
 
-- 图标 / 徽章一律 **dsh 官方标，禁止手绘或自造 logo**；改 `assets/icon-master.svg` →
-  `scripts/regen-icons.sh` 重生成，`src-tauri/icons/` 是产物**勿手改**。
-- 页内徽章统一 `Emblem` 组件（CSS mask + `frontend/public/mark.svg`），禁止内联
-  第二份鲸鱼 path；几何溯源于 `assets/dsh-logo.svg`。
+- 图标采用 **dsh dock 专属 3D 鲸鱼娘（透明背景主形象 + macOS HIG 浅色陶瓷圆角方框，100% 透明角与微投影，胸前 DeepSeek 官方鲸标，默认比耶 Wink 款）**；主图 `assets/whale-chan-cutout.png` & `assets/whale-chan-light-icon.png` →
+  `scripts/regen-icons.sh` 重生成，自带四周透明度强门禁，`src-tauri/icons/` 是产物**勿手改**。
+- 页内徽章统一经 `Emblem` 组件渲染：
+  - `framed={false}`（默认）：纯透明背景 3D 立绘，消除矩形边界，自带环境光晕，用于启动欢迎、Hero 页面与全屏等候；
+  - `framed={true}`：Apple HIG 风格浅色纯色/微渐变圆角方框（`public/icon.png`），用于小尺寸顶栏导航、配置中心与 About 弹窗。禁止散落内联硬编码图标。
 
 ## 4. 代码规范（项目特有约定，通用工程常识不赘述）
 
