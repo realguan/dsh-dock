@@ -83,59 +83,6 @@ fn is_batch_script(p: &Path) -> bool {
     )
 }
 
-#[cfg(test)]
-mod proc_tests {
-    use super::*;
-
-    #[test]
-    fn external_url_allowlist_blocks_non_http_and_unknown_hosts() {
-        // 白名单内（精确域 + 子域 + http/https）
-        assert!(is_allowed_external_url("https://commandcode.ai/console"));
-        assert!(is_allowed_external_url("https://api.commandcode.ai/v1"));
-        assert!(is_allowed_external_url("http://docs.deepseek.com/intro"));
-        assert!(is_allowed_external_url("https://github.com/x/y"));
-        // 非 http(s) 一律拒绝
-        assert!(!is_allowed_external_url("file:///etc/passwd"));
-        assert!(!is_allowed_external_url("data:text/html,x"));
-        assert!(!is_allowed_external_url("javascript:alert(1)"));
-        // 未知域拒绝（含伪装后缀）
-        assert!(!is_allowed_external_url("https://evil-commandcode.ai"));
-        assert!(!is_allowed_external_url("https://deepseek.com.evil.io"));
-        assert!(!is_allowed_external_url("https://example.com"));
-        // 畸形 URL
-        assert!(!is_allowed_external_url("not a url"));
-    }
-
-    #[test]
-    fn batch_scripts_are_detected_case_insensitively() {
-        assert!(is_batch_script(Path::new(
-            r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd"
-        )));
-        assert!(is_batch_script(Path::new(r"D:\tools\setup.bat")));
-        assert!(is_batch_script(Path::new("pnpm.CMD")));
-        assert!(!is_batch_script(Path::new(
-            r"C:\Program Files\nodejs\node.exe"
-        )));
-        assert!(!is_batch_script(Path::new("/usr/local/bin/node")));
-        assert!(!is_batch_script(Path::new("npm-cli.js")));
-        assert!(!is_batch_script(Path::new("no_extension")));
-    }
-
-    #[test]
-    fn child_cmd_wraps_batch_on_windows_only() {
-        let win = cfg!(windows);
-        let cmd = child_cmd(Path::new(r"C:\x\pnpm.cmd"));
-        let exe = cmd.get_program().to_string_lossy().to_lowercase();
-        assert_eq!(win, exe.ends_with("cmd.exe"), "批处理应被 cmd.exe 包装");
-        let cmd2 = child_cmd(Path::new(r"C:\Program Files\nodejs\node.exe"));
-        let exe2 = cmd2.get_program().to_string_lossy();
-        assert!(
-            exe2.ends_with("node.exe"),
-            "exe 应直接 spawn，不走 cmd：{exe2}"
-        );
-    }
-}
-
 /// 外链白名单：只放行 http/https 且主机在白名单内的 URL（壳的 IPC 不应成为
 /// 任意 URL 的跳板）。dsh Web UI 的外链（文档/官网/控制台）都应落在这里；
 /// 未收录的域会被拒绝——需要新域时在此登记。
@@ -583,3 +530,56 @@ mod tests {
 // 工具条，丑）。因此窗口菜单构建/设置一律 `#[cfg(target_os = "macos")]` 门控；
 // 非 macOS 的更新/关于入口 = 系统托盘（2026-08-24 裁定）。前端顶栏「关于」
 // 按钮与原生常驻入口重复，连同 open_about IPC 一并删除（2026-08-27 裁定）。
+
+#[cfg(test)]
+mod proc_tests {
+    use super::*;
+
+    #[test]
+    fn external_url_allowlist_blocks_non_http_and_unknown_hosts() {
+        // 白名单内（精确域 + 子域 + http/https）
+        assert!(is_allowed_external_url("https://commandcode.ai/console"));
+        assert!(is_allowed_external_url("https://api.commandcode.ai/v1"));
+        assert!(is_allowed_external_url("http://docs.deepseek.com/intro"));
+        assert!(is_allowed_external_url("https://github.com/x/y"));
+        // 非 http(s) 一律拒绝
+        assert!(!is_allowed_external_url("file:///etc/passwd"));
+        assert!(!is_allowed_external_url("data:text/html,x"));
+        assert!(!is_allowed_external_url("javascript:alert(1)"));
+        // 未知域拒绝（含伪装后缀）
+        assert!(!is_allowed_external_url("https://evil-commandcode.ai"));
+        assert!(!is_allowed_external_url("https://deepseek.com.evil.io"));
+        assert!(!is_allowed_external_url("https://example.com"));
+        // 畸形 URL
+        assert!(!is_allowed_external_url("not a url"));
+    }
+
+    #[test]
+    fn batch_scripts_are_detected_case_insensitively() {
+        assert!(is_batch_script(Path::new(
+            r"C:\Users\me\AppData\Roaming\npm\pnpm.cmd"
+        )));
+        assert!(is_batch_script(Path::new(r"D:\tools\setup.bat")));
+        assert!(is_batch_script(Path::new("pnpm.CMD")));
+        assert!(!is_batch_script(Path::new(
+            r"C:\Program Files\nodejs\node.exe"
+        )));
+        assert!(!is_batch_script(Path::new("/usr/local/bin/node")));
+        assert!(!is_batch_script(Path::new("npm-cli.js")));
+        assert!(!is_batch_script(Path::new("no_extension")));
+    }
+
+    #[test]
+    fn child_cmd_wraps_batch_on_windows_only() {
+        let win = cfg!(windows);
+        let cmd = child_cmd(Path::new(r"C:\x\pnpm.cmd"));
+        let exe = cmd.get_program().to_string_lossy().to_lowercase();
+        assert_eq!(win, exe.ends_with("cmd.exe"), "批处理应被 cmd.exe 包装");
+        let cmd2 = child_cmd(Path::new(r"C:\Program Files\nodejs\node.exe"));
+        let exe2 = cmd2.get_program().to_string_lossy();
+        assert!(
+            exe2.ends_with("node.exe"),
+            "exe 应直接 spawn，不走 cmd：{exe2}"
+        );
+    }
+}

@@ -1381,8 +1381,6 @@ mod tests {
             write_session_fixture(&temp, "sess-surface", "session.jsonl", corrupt_data);
         let sess_dir = target_file.parent().unwrap().to_path_buf();
         install_engine_node_shim(&temp);
-        #[cfg(not(unix))]
-        std::fs::write(engine_bin.join("node.cmd"), b"@node %*\r\n").unwrap();
 
         // 健康扫描必须发现该损坏（旧版判定 healthy 的盲区）。
         let list = scan_sessions(&temp, &temp, false).unwrap();

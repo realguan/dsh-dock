@@ -793,5 +793,9 @@ extern "C" fn signal_exit_handler(_: i32) {
     SIGNAL_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// 终止信号置位标志：写入方（`signal_exit_handler`）与读取方（lib.rs 信号监护线程）
+/// 都在 `#[cfg(unix)]` 内——Windows 无信号监护，不加门即构成 dead_code 并撞
+/// `-D warnings` 闸门（2026-09-10 修）。
+#[cfg(unix)]
 pub(crate) static SIGNAL_EXIT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
