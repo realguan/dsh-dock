@@ -141,8 +141,22 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
     out
 }
 
+/// 判断依赖 spec 是否为 DSH 官方桌面客户端运行时内置的本地包。
+/// 官方客户端将底座包存放于 profile 目录下的 `desktop-packages/*.tgz`，
+/// 在 dependencies 中以 `file:./desktop-packages/...` 形式引用。这些是
+/// 内置底座组件，不属于用户安装的第三方外挂插件。
+pub fn is_desktop_internal_spec(spec: Option<&str>) -> bool {
+    let Some(s) = spec else { return false };
+    s.starts_with("file:./desktop-packages/")
+        || s.starts_with("file:desktop-packages/")
+        || s.starts_with("./desktop-packages/")
+        || s.contains("/desktop-packages/")
+        || s.contains("desktop-packages/")
+}
+
 /// 从 package.json 文本提取 `(dsh.profile.bundles, dependencies 包名)`。
 /// 缺失 / 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
+/// 官方桌面运行时的 desktop-packages 视为内置底座，不计入第三方 dependencies。
 pub(crate) fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
     let Ok(text) = fs::read_to_string(path) else {
         return (Vec::new(), Vec::new());
@@ -155,8 +169,14 @@ pub(crate) fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
         .pointer("/dependencies")
         .and_then(|v| v.as_object())
         .map(|obj| {
-            obj.keys()
-                .cloned()
+            obj.iter()
+                .filter_map(|(k, v)| {
+                    if is_desktop_internal_spec(v.as_str()) {
+                        None
+                    } else {
+                        Some(k.clone())
+                    }
+                })
                 .collect::<BTreeSet<String>>()
                 .into_iter()
                 .collect()
@@ -213,7 +233,14 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
         .and_then(|v| v.as_object())
         .map(|obj| {
             obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter_map(|(k, v)| {
+                    let spec = v.as_str()?;
+                    if is_desktop_internal_spec(Some(spec)) {
+                        None
+                    } else {
+                        Some((k.clone(), spec.to_string()))
+                    }
+                })
                 .collect()
         })
         .unwrap_or_default();

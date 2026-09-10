@@ -80,22 +80,34 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
         });
     }
     // 第三方依赖：manifest 声明序（BTreeMap 字典序）+ 安装实况。
+    // 官方桌面运行时内嵌的 desktop-packages 视为内置 Bundle，不作为外挂插件。
     if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
         for (name, declared) in deps {
-            let (version, description) = read_installed(
-                &home
-                    .join("profiles")
-                    .join(profile)
-                    .join("node_modules")
-                    .join(name),
-            );
-            out.push(PluginEntry {
-                name: name.clone(),
-                kind: PluginKind::Dependency,
-                installed_version: version,
-                description,
-                spec: declared.as_str().map(str::to_string),
-            });
+            let spec_str = declared.as_str();
+            if crate::profiles::is_desktop_internal_spec(spec_str) {
+                out.push(PluginEntry {
+                    name: name.clone(),
+                    kind: PluginKind::Bundle,
+                    installed_version: None,
+                    description: None,
+                    spec: spec_str.map(str::to_string),
+                });
+            } else {
+                let (version, description) = read_installed(
+                    &home
+                        .join("profiles")
+                        .join(profile)
+                        .join("node_modules")
+                        .join(name),
+                );
+                out.push(PluginEntry {
+                    name: name.clone(),
+                    kind: PluginKind::Dependency,
+                    installed_version: version,
+                    description,
+                    spec: spec_str.map(str::to_string),
+                });
+            }
         }
     }
     Ok(out)
@@ -258,6 +270,41 @@ mod tests {
         assert_eq!(list[3].name, "zipped-pkg");
         assert_eq!(list[3].installed_version, None);
         assert_eq!(list[3].description, None);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn classifies_desktop_internal_packages_as_bundle() {
+        let home = tmp();
+        const DESKTOP_PKG: &str = r#"{
+  "name": "@deepseek-ai/dsh-desktop-runtime",
+  "dependencies": {
+    "@deepseek-ai/cordis": "file:./desktop-packages/deepseek-ai-cordis-4.0.2.tgz",
+    "user-plugin": "^1.0.0"
+  },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base"] } }
+}"#;
+        write(&home.join("profiles/desktop/package.json"), DESKTOP_PKG);
+        write(
+            &home.join("profiles/desktop/node_modules/user-plugin/package.json"),
+            r#"{"name":"user-plugin","version":"1.0.0","description":"用户外挂插件"}"#,
+        );
+        let list = list_profile_plugins(&home, "desktop").unwrap();
+        // 1 bundle from dsh + 1 bundle from desktop-packages + 1 external dependency
+        assert_eq!(list.len(), 3);
+        let internal_cordis = list
+            .iter()
+            .find(|p| p.name == "@deepseek-ai/cordis")
+            .unwrap();
+        assert_eq!(internal_cordis.kind, PluginKind::Bundle);
+        assert_eq!(
+            internal_cordis.spec.as_deref(),
+            Some("file:./desktop-packages/deepseek-ai-cordis-4.0.2.tgz")
+        );
+
+        let ext = list.iter().find(|p| p.name == "user-plugin").unwrap();
+        assert_eq!(ext.kind, PluginKind::Dependency);
+        assert_eq!(ext.installed_version.as_deref(), Some("1.0.0"));
         std::fs::remove_dir_all(&home).ok();
     }
 
