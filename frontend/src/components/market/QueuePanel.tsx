@@ -22,8 +22,8 @@ type StatusKey = "queueStatusQueued" | "queueStatusInstalling" | "queueStatusDon
 const STATUS_CHIP: Record<QueueItem["status"], { key: StatusKey; cls: string }> = {
   queued: { key: "queueStatusQueued", cls: "border-line bg-line-soft/60 text-faint" },
   installing: { key: "queueStatusInstalling", cls: "border-brand/30 bg-brand/10 text-brand-deep" },
-  done: { key: "queueStatusDone", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600" },
-  failed: { key: "queueStatusFailed", cls: "border-rose-500/30 bg-rose-500/10 text-rose-600" },
+  done: { key: "queueStatusDone", cls: "border-ok/30 bg-ok-soft text-ok" },
+  failed: { key: "queueStatusFailed", cls: "border-danger/30 bg-danger-soft text-danger" },
 }
 
 export function QueuePanel() {
@@ -141,7 +141,7 @@ export function QueuePanel() {
                   </div>
 
                   {item.status === "failed" && item.detail && (
-                    <p className="text-rose-600 mt-1.5 line-clamp-2 text-label" title={item.detail}>
+                    <p className="text-danger mt-1.5 line-clamp-2 text-label" title={item.detail}>
                       {item.detail}
                     </p>
                   )}

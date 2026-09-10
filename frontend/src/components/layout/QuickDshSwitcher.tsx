@@ -102,12 +102,12 @@ export function QuickDshSwitcher() {
       <span className="relative flex size-2 shrink-0 items-center justify-center">
         <span
           className={`absolute inline-flex size-full animate-ping rounded-full opacity-60 ${
-            handoffBusy ? "bg-amber-400" : "bg-emerald-400"
+            handoffBusy ? "bg-info" : "bg-ok"
           }`}
         />
         <span
           className={`relative inline-flex size-1.5 rounded-full ${
-            handoffBusy ? "bg-amber-500" : "bg-emerald-500"
+            handoffBusy ? "bg-info" : "bg-ok"
           }`}
         />
       </span>

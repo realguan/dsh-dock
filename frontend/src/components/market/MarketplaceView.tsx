@@ -256,25 +256,25 @@ export function MarketplaceView({
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
                 <SelectItem value="stars">
                   <div className="flex items-center gap-2">
-                    <Star className="size-3.5 text-amber-700" />
+                    <Star className="size-3.5 text-brand-deep" />
                     <span>{t.market.sortStars}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="downloads">
                   <div className="flex items-center gap-2">
-                    <Download className="size-3.5 text-sky-700" />
+                    <Download className="size-3.5 text-info" />
                     <span>{t.market.sortDownloads}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="newest">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="size-3.5 text-indigo-700" />
+                    <Sparkles className="size-3.5 text-alt" />
                     <span>{t.market.sortNewest}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="name">
                   <div className="flex items-center gap-2">
-                    <ArrowDownAZ className="size-3.5 text-violet-700" />
+                    <ArrowDownAZ className="size-3.5 text-alt" />
                     <span>{t.market.sortName}</span>
                   </div>
                 </SelectItem>
@@ -383,7 +383,7 @@ export function MarketplaceView({
 
       {/* 错误提示 */}
       {error && (
-        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center text-xs text-rose-600 space-y-2">
+        <div className="rounded-2xl border border-danger/30 bg-danger-soft p-6 text-center text-xs text-danger space-y-2">
           <AlertCircle className="size-6 mx-auto opacity-80" />
           <p className="font-medium">{t.market.loadFailed}</p>
           <p className="font-mono text-label opacity-80 break-all">{error}</p>

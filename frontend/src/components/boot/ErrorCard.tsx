@@ -180,7 +180,7 @@ export function ErrorCard({
               </div>
               <ChevronDown className="size-3.5 text-faint transition-transform group-open:rotate-180" />
             </summary>
-            <div className="relative border-t border-line bg-badge-b p-3">
+            <div className="relative border-t border-line bg-term p-3">
               <button
                 type="button"
                 onClick={handleCopyLog}
@@ -189,7 +189,7 @@ export function ErrorCard({
               >
                 {copied ? (
                   <>
-                    <Check className="size-3 text-ok" />
+                    <Check className="size-3 text-term-ok" />
                     <span>已复制</span>
                   </>
                 ) : (
@@ -199,7 +199,7 @@ export function ErrorCard({
                   </>
                 )}
               </button>
-              <pre className="max-h-60 overflow-x-auto font-mono text-label leading-relaxed text-emerald-400/90 whitespace-pre-wrap">
+              <pre className="max-h-60 overflow-x-auto font-mono text-label leading-relaxed text-term-ok whitespace-pre-wrap">
                 {payload.log}
               </pre>
             </div>

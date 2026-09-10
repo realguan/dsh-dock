@@ -72,13 +72,13 @@ export function ProfileRow({
         isSelected
           ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
           : "border-line bg-panel hover:border-line hover:bg-panel hover:shadow-xs"
-      } ${materialized ? "" : "border-dashed"} ${isSwitching ? "ring-1 ring-amber-500/40 bg-amber-500/5" : ""}`}
+      } ${materialized ? "" : "border-dashed"} ${isSwitching ? "ring-1 ring-info/40 bg-info/5" : ""}`}
     >
       {/* 活跃/重载指示条 */}
       {isSwitching ? (
-        <span className="bg-amber-500 absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-amber-500/50 animate-pulse" />
+        <span className="bg-info absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-info/50 animate-pulse" />
       ) : isRunning ? (
-        <span className="bg-ok absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-emerald-500/50" />
+        <span className="bg-ok absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-ok/50" />
       ) : isSelected ? (
         <span className="bg-brand absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" />
       ) : null}
@@ -104,8 +104,8 @@ export function ProfileRow({
 
             {/* 重载过渡中：琥珀色脉动 */}
             {isSwitching ? (
-              <span className="bg-amber-500/10 text-amber-700 border border-amber-500/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none animate-pulse">
-                <LoaderCircle className="size-3 animate-spin text-amber-700" aria-hidden />
+              <span className="bg-info-soft text-info border border-info/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none animate-pulse">
+                <LoaderCircle className="size-3 animate-spin text-info" aria-hidden />
                 <span>{isRunning ? t.profiles.reloadingWorkbench : t.profiles.launchingProfile}</span>
               </span>
             ) : isRunning ? (
@@ -118,7 +118,7 @@ export function ProfileRow({
 
             {/* 默认启动 */}
             {isDefault && (
-              <span className="bg-amber-500/10 text-amber-700 border border-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
+              <span className="bg-brand/10 text-brand-deep border border-brand/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <Star className="size-2.5 fill-current" />
                 {t.profiles.defaultBadge}
               </span>
@@ -148,9 +148,9 @@ export function ProfileRow({
             <button
               type="button"
               disabled
-              className="border-line/80 text-amber-700 bg-amber-500/10 inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium cursor-wait shadow-2xs"
+              className="border-line/80 text-info bg-info-soft inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium cursor-wait shadow-2xs"
             >
-              <LoaderCircle className="size-3 animate-spin text-amber-700" aria-hidden />
+              <LoaderCircle className="size-3 animate-spin text-info" aria-hidden />
               <span>{t.profiles.launchWorking}</span>
             </button>
           ) : isRunning ? (
@@ -216,7 +216,7 @@ export function ProfileRow({
                   >
                     <Star
                       className={`size-3.5 ${
-                        isDefault ? "text-amber-700 fill-current" : "text-dim"
+                        isDefault ? "text-brand-deep fill-current" : "text-dim"
                       }`}
                     />
                     <span>{isDefault ? t.profiles.defaultIs : t.profiles.setDefault}</span>

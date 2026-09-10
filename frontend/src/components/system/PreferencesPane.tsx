@@ -272,7 +272,7 @@ export function PreferencesPane({
         {/* 熔断机制图解卡片 */}
         <div className="mt-4 rounded-xl border border-line/80 bg-bg p-3.5 text-xs text-dim">
           <div className="flex items-center gap-2 font-medium text-ink">
-            <ShieldAlert className="size-3.5 text-amber-700" />
+            <ShieldAlert className="size-3.5 text-warn" />
             <span>智能熔断保护协议（Circuit Breaker）</span>
           </div>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-label">
@@ -282,7 +282,7 @@ export function PreferencesPane({
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">熔断阈值：</span>
-              <span className="text-amber-700 font-semibold ml-1">连续 3 次崩溃</span>
+              <span className="text-warn font-semibold ml-1">连续 3 次崩溃</span>
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">熔断后动作：</span>

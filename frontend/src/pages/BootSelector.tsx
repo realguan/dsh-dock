@@ -257,7 +257,7 @@ export function BootSelector() {
                       <div
                         className={`flex size-10 items-center justify-center rounded-xl border transition-colors ${
                           p.isTemplate
-                            ? "border-line/70 bg-purple-500/10 text-purple-600 group-hover:bg-purple-600 group-hover:text-white"
+                            ? "border-line/70 bg-alt-soft text-alt group-hover:bg-alt group-hover:text-white"
                             : p.isDefault
                               ? "border-brand/30 bg-wash text-brand-deep group-hover:bg-brand group-hover:text-white"
                               : "border-line/70 bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand-deep"

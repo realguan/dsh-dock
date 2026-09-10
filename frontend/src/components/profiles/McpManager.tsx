@@ -273,8 +273,8 @@ export function McpManager({
 
       {/* 已配置的 MCP 服务器列表 */}
       {loadError ? (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/5 py-10 text-center">
-          <Server className="size-7 text-rose-700" />
+        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-danger/30 bg-danger/5 py-10 text-center">
+          <Server className="size-7 text-danger" />
           <p className="text-xs font-medium text-ink">{t.profiles.mcpLoadFailed}</p>
           <p className="max-w-md break-all text-label text-faint">{loadError}</p>
           <Button size="sm" variant="outline" onClick={() => void loadData()} className="mt-1 gap-1 text-xs">
@@ -317,7 +317,7 @@ export function McpManager({
                           已禁用
                         </span>
                       ) : (
-                        <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-700">
+                        <span className="rounded-md bg-ok-soft px-1.5 py-0.5 text-meta font-medium text-ok">
                           Active
                         </span>
                       )}
@@ -329,7 +329,7 @@ export function McpManager({
                         title="复制工具前缀"
                       >
                         {copiedName === s.name ? (
-                          <Check className="size-2.5 text-emerald-700" />
+                          <Check className="size-2.5 text-ok" />
                         ) : (
                           <Copy className="size-2.5" />
                         )}
@@ -353,10 +353,10 @@ export function McpManager({
                         aria-label={`${t.profiles.mcpDeleteBtn}：${s.name}`}
                         onClick={() => setPendingDelete(s.name)}
                         disabled={isDeleting}
-                        className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-700"
+                        className="size-7 p-0 hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
                       >
                         {isDeleting ? (
-                          <LoaderCircle className="size-3 animate-spin text-rose-700" />
+                          <LoaderCircle className="size-3 animate-spin text-danger" />
                         ) : (
                           <Trash2 className="size-3 text-faint" />
                         )}
@@ -386,14 +386,14 @@ export function McpManager({
 
                   {/* 运行态工具联动展示 */}
                   {activeTools.length > 0 ? (
-                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2 text-xs">
-                      <div className="flex items-center gap-1.5 text-emerald-700 font-semibold text-label">
+                    <div className="rounded-lg border border-ok/20 bg-ok/5 p-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-ok font-semibold text-label">
                         <Wrench className="size-3" />
                         <span>{t.profiles.mcpActiveTools(activeTools.length)}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {activeTools.map((tool) => (
-                          <span key={tool} className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta text-emerald-700">
+                          <span key={tool} className="rounded bg-ok-soft px-1.5 py-0.5 font-mono text-meta text-ok">
                             {tool}
                           </span>
                         ))}
@@ -474,7 +474,7 @@ export function McpManager({
           <div className="space-y-3.5 py-2 text-xs">
             <div>
               <label htmlFor="mcp-form-name" className="text-faint font-semibold text-label">
-                {t.profiles.mcpServerName} <span className="text-rose-700">*</span>
+                {t.profiles.mcpServerName} <span className="text-danger">*</span>
               </label>
               <input
                 id="mcp-form-name"
@@ -561,7 +561,7 @@ export function McpManager({
                           const next = formEnv.filter((_, i) => i !== idx)
                           setFormEnv(next)
                         }}
-                        className="text-faint hover:text-rose-700 px-1"
+                        className="text-faint hover:text-danger px-1"
                       >
                         ×
                       </button>

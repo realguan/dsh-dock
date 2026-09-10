@@ -41,27 +41,22 @@ export function fmtPercent(current: number, total: number | null): number | null
   return Math.min(100, Math.max(0, Math.round((current / total) * 100)))
 }
 
-const PROFILE_COLOR_PALETTES = [
-  "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
-  "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
-  "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
-]
-
-/** 根据 Profile 名称确定性派发彩色标签样式类（web 默认品牌蓝，其余名字哈希映射柔和色调）。 */
-export function getProfileColorClass(profileName: string): string {
-  if (profileName === "web") {
-    return "border-brand/30 bg-brand/10 text-brand font-medium"
-  }
-  let hash = 0
-  for (let i = 0; i < profileName.length; i++) {
-    hash = profileName.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const idx = Math.abs(hash) % PROFILE_COLOR_PALETTES.length
-  return PROFILE_COLOR_PALETTES[idx]
+/**
+ * Profile 身份芯片样式（2026-09-10 批次 E 重写）。
+ *
+ * 旧实现按 profile 名哈希派发 **7 色彩虹**（sky/violet/emerald/amber/rose/teal/indigo），
+ * 外加 7 处 `dark:` 变体（`.dark` 从未启用 = 死代码）。三处问题：
+ *   ① 颜色不承载信息——芯片里就有 profile **名字**，颜色是冗余装饰；
+ *   ② 7 个色相在等明度约束下互相挤压（实测最小 ΔOKLab < 0.10，低于可辨阈值），
+ *      且在色域夹紧后明度参差——正是「散」的来源；
+ *   ③ 借用状态色域（emerald=成功、rose=危险）表达纯身份，语义串台。
+ * 改为单一分类档 token：`alt` 是语义中性的「分类/身份」色（见 index.css），
+ * 与状态四族互不冒充。名字是信息，颜色只负责「这是个标签」。
+ *
+ * 参数保留是为了不改三处调用点签名；身份色不再与名字相关。
+ */
+export function getProfileColorClass(_profileName: string): string {
+  return "border-alt/30 bg-alt-soft text-alt font-medium"
 }
 
 /**

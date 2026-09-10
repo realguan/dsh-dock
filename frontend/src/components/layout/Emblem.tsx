@@ -49,7 +49,7 @@ export function Emblem({
         alt={alt}
         width={size}
         height={size}
-        className="size-full object-contain pointer-events-none drop-shadow-[0_4px_12px_rgba(14,165,233,0.18)]"
+        className="size-full object-contain pointer-events-none drop-shadow-glow"
         draggable={false}
       />
     </div>

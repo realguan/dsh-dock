@@ -79,7 +79,7 @@ export function BootMode() {
               aria-pressed={selected}
               className={`group relative flex flex-col rounded-2xl border p-5 text-left transition-all ${
                 selected
-                  ? "border-brand bg-panel shadow-[0_0_0_3px_rgba(65,118,230,0.15)] ring-1 ring-brand/50"
+                  ? "border-brand bg-panel ring-1 ring-brand/50 outline-3 outline-brand/15"
                   : "border-line bg-panel/90 hover:border-brand/40 hover:bg-wash/20 hover:shadow-sm"
               }`}
             >

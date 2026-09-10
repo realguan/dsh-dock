@@ -17,13 +17,13 @@ export function statusMeta(
   switch (status) {
     case "healthy":
       return {
-        dot: "bg-emerald-500",
+        dot: "bg-ok",
         badge: t.sessions.statusHealthy,
         desc: t.sessions.statusHealthyDesc,
       }
     case "needs_repair":
       return {
-        dot: "bg-amber-500 animate-pulse",
+        dot: "bg-warn animate-pulse",
         badge: t.sessions.statusNeedsRepair,
         desc: t.sessions.statusNeedsRepairDesc,
       }

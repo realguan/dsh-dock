@@ -237,7 +237,7 @@ export function PluginOverview({
       </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-700">
+        <div className="rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger">
           加载全域插件失败：{error}
         </div>
       )}
@@ -436,7 +436,7 @@ export function PluginOverview({
               {/* 目标 Profile 选择框（修复宽度截断） */}
               <div className="space-y-1.5">
                 <span className="text-dim font-semibold text-label">
-                  选择目标 Profile <span className="text-rose-700">*</span>
+                  选择目标 Profile <span className="text-danger">*</span>
                 </span>
                 <Select
                   value={selectedDest ?? undefined}

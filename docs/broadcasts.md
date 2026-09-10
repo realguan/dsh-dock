@@ -32,6 +32,59 @@
 
 ## 三、记录
 
+### 2026-09-10 refactor(uiux)：设计 token 收口——语义四族、真三级灰阶、elevation 与圆角梯度（评审批次 E）—— guan（AI 起草）
+
+- **起因（维护者）**：「主题 token 设计的不好看」。实测诊断后确认根因**不是配色不好，
+  而是 token 体系名存实亡**：`index.css` 定义了语义 token，但全仓 **200 处**
+  直接使用 Tailwind 原生调色板绕过它——
+  `ok`(28 处) 与 `emerald`(46 处) 并存 = 同一件「成功/运行中」两个绿；
+  `warn`(41) 与 `amber`(59) 并存 = 同一个「警告」两个橙；
+  `rose`(45) 全部无 token 对应，且被当成「NPM 官方包」的分类色（红色在暗示错误）；
+  `purple`(9)+`violet`(6)+`indigo`(3) 三者混编同一类「分类」语义；
+  `slate`(20) 六个档位散用于深色终端面。全仓共 36 个原生 shade。
+- 变更（拆两个提交）：
+  1. **token 层**（`index.css`）：① 中性层重建——`dim` #626a7a→**#3c4250**、
+     `faint` #6b7280→**#626978**，与 `ink` 构成相邻 ΔOKLab 0.148/0.141 的**均匀三级阶梯**
+     （旧 dim↔faint 仅 0.028 = 号称两级实为一级）；`bg` #f7f8fb→**#f1f4f9**
+     （vs panel 1.062→1.102，卡片浮得起来）。**更正批次 C 的结论**：「浅底上三级灰阶不存在」
+     只对「提亮三级」成立，正解是把二级压深。② 状态族新建 `ok`/`info`/`warn`/`danger`
+     + 分类档 `alt`（各带 `-soft`），四族在 OKLCH **等明度 L≈0.49**、两两 ΔOKLab ≥0.12、
+     且在 bg/panel/line-soft/自身 soft **四种底色**上全部 ≥4.5:1。③ 深色终端面新建
+     `term` / `term-panel` / `term-line` / `term-ink` / `term-dim` / `term-faint`
+     + 日志级别 `term-ok/-info/-warn/-danger`。④ 圆角 4 档→**按元素角色**两档
+     （控制件 10px / 面 14px）。⑤ elevation 覆写 Tailwind 原生档位名（`--shadow-2xs…2xl`
+     共 8 档），投影带冷色偏（rgb 23,37,84）双层——**131 处调用点零改动即获得新语义**。
+     ⑥ shadcn 语义层 `:root` 改为 `var(--color-*)` 引用，消除第三份 hex 真相源。
+     ⑦ 退役死 token `badge-a`（零引用）/`badge-b`（与 term 重复）。
+  2. **调用点迁移**（20 文件）：原生档位→语义 token。**amber 逐处判语义**（唯一需人判的族）：
+     `isDefault`/星标选中→`brand`（选中态）、`isSwitching`/启动中/交接中→`info`（进行中是
+     信息不是警告）、`needs_repair`/熔断/覆盖安装→`warn`（真警告）、评分星标→`brand-deep`。
+- **顺带修两处语义错位（真 bug）**：
+  ① 「NPM 官方包」徽标在 `MarketPluginCard` 用危险红、在 `MarketInstallDialog` 用成功绿——
+     同一概念两个色；改为中性（由图标表意），安装对话框内 npm/github 两徽标也统一中性。
+  ② 「运行中」在 profile 用 `ok`、在会话维护用 `sky`——同一状态两个色；统一为 `info`。
+- **顺带修一处机械映射引入的回归**：`ErrorCard` 的深色诊断日志面板里，绿色文字被按
+  「浅底文字」映射成 `text-ok`（深绿）落在近黑底上不可读 → 改 `text-term-ok`。
+- 机器闸门（**新增 `paletteTokens.test.ts`**，4 条）：禁止原生调色板档位回流（含对照表）、
+  shadcn `:root` 不得手抄 hex、幕布脚本色值必须与 `index.css` 逐值同步、闸门自检。
+  `contrast.test.ts` 由 6 条扩为 **13 条**：三底色（原漏 line-soft）、深色面专项、
+  族色压自家 soft 底、`*-soft` RGB 必须与基色同源（防手抄失联）、族间 ΔOKLab、
+  品牌色与族色不互冒、灰阶阶梯、底色三档可辨。
+- 同步：`ui.rs` 原生窗口 `background_color` 由 `(249,250,251)` 改 `(241,244,249)`——
+  **原值与本仓库 CSS 从来就不一致**（旧 `--color-bg` 是 #f7f8fb），「冷启动无闪色」的注释
+  与事实不符，本批一并校正。
+- 反向取舍记录：曾考虑新增 `star`（金色）token 表示评分，实测金色要可见就必须够深，
+  够深则与 `warn` 分离度仅 0.101（低于可辨阈值）→ **不加该 token**，星标改用 `brand-deep`。
+  `format.ts::getProfileColorClass` 的 7 色彩虹同样无解（等明度约束下最小 ΔOKLab <0.10），
+  改为单一 `alt` 档——颜色本不承载信息（芯片里就有 profile 名字），颜色只负责「这是个标签」。
+- 影响：**需人工目检**（Tauri 真窗口未实机验证）——① 卡片投影观感（elevation 全量换值）；
+  ② 圆角收敛后大卡片/对话框的观感；③ 深色日志面板在新 `term` 底色下的整体感。
+  维护者已确认「顺便微调状态色相」（四族等明度）与「全量收口」两项范围。
+- 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning/0 error · `pnpm test` **201 passed**
+  （190 → +11，含新增 paletteTokens 4 条与 contrast 扩至 13 条）· `cargo fmt --check` 通过 ·
+  `clippy --all-targets -D warnings` 通过 · 浏览器逐页复核（Profile 列表 / 会话维护 /
+  系统控制台 / 运行日志）无回归。
+
 ### 2026-09-10 宪法级（AGENTS §9 索引）· ADR-0014 重启/切换交接带 + 启动代际闸门 + Windows 进程树收口 —— guan（AI 协作）
 
 - 变更（ADR-0014，`docs/adr/0014-restart-handoff-continuity.md`）：

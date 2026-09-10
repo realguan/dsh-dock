@@ -9,12 +9,14 @@ import { statusMeta } from "@/lib/sessionStatus"
 
 describe("statusMeta", () => {
   it("healthy / needs_repair 用各自描述", () => {
+    // 2026-09-10 批次 E：色点改为语义 token（bg-ok / bg-warn）。
     expect(statusMeta("healthy", t, false)).toEqual({
-      dot: "bg-emerald-500",
+      dot: "bg-ok",
       badge: t.sessions.statusHealthy,
       desc: t.sessions.statusHealthyDesc,
     })
     expect(statusMeta("needs_repair", t, false).badge).toBe(t.sessions.statusNeedsRepair)
+    expect(statusMeta("needs_repair", t, false).dot).toContain("bg-warn")
   })
 
   it("unknown：无原因时提示可能是活跃会话/引擎未就绪", () => {

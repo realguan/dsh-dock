@@ -141,7 +141,7 @@ export function CredentialsPane({
 
       {/* 安全保障提示 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-line bg-panel p-3 text-xs text-dim">
-        <ShieldCheck className="size-4 text-emerald-700 shrink-0 mt-0.5" />
+        <ShieldCheck className="size-4 text-ok shrink-0 mt-0.5" />
         <div className="space-y-0.5">
           <span className="font-semibold text-ink">0600 权限保障与前端脱敏</span>
           <p className="text-label text-faint leading-relaxed">
@@ -173,7 +173,7 @@ export function CredentialsPane({
             value={rawContent}
             onChange={(e) => setRawContent(e.target.value)}
             rows={14}
-            className="w-full resize-y rounded-xl border border-line bg-slate-950 p-3.5 font-mono text-xs leading-relaxed text-slate-200 focus:border-brand focus:outline-none"
+            className="w-full resize-y rounded-xl border border-line bg-term p-3.5 font-mono text-xs leading-relaxed text-term-ink focus:border-brand focus:outline-none"
             placeholder={t.console.credentialsEmpty}
           />
         </div>
@@ -198,7 +198,7 @@ export function CredentialsPane({
                     )}
                   </div>
                   {item.configured ? (
-                    <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-700 shrink-0 whitespace-nowrap shadow-2xs">
+                    <span className="rounded-md bg-ok-soft px-1.5 py-0.5 text-meta font-medium text-ok shrink-0 whitespace-nowrap shadow-2xs">
                       {t.console.configuredTag}
                     </span>
                   ) : (
@@ -225,7 +225,7 @@ export function CredentialsPane({
                     size="sm"
                     variant="ghost"
                     onClick={() => setPendingKeyClear(item)}
-                    className="h-7 px-2 text-xs text-faint hover:text-rose-700"
+                    className="h-7 px-2 text-xs text-faint hover:text-danger"
                   >
                     <Trash2 className="size-3 mr-1" />
                     <span>{t.console.deleteKey}</span>

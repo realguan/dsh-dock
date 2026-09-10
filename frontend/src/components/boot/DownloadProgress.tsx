@@ -90,7 +90,7 @@ export function DownloadProgress() {
             <div className="pulse-bar-fill rounded-full" />
           ) : (
             <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-brand-deep via-brand to-sky-400 shadow-[0_0_8px_rgba(65,118,230,0.35)] transition-all duration-300 ease-out"
+              className="h-full rounded-full bg-gradient-to-r from-brand-deep via-brand to-info shadow-glow-sm transition-all duration-300 ease-out"
               style={{ width: `${pct}%` }}
             />
           )}

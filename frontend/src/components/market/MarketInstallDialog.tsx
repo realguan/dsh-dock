@@ -156,7 +156,7 @@ export function MarketInstallDialog({
             <label className="text-xs font-medium text-ink flex items-center justify-between">
               <span>{t.market.selectProfile}</span>
               {selectedProfile && isAlreadyInstalled && (
-                <span className="text-meta text-amber-500 font-mono flex items-center gap-1">
+                <span className="text-meta text-warn font-mono flex items-center gap-1">
                   <AlertCircle className="size-3" />
                   已在此 Profile 安装（将执行覆盖/重装）
                 </span>
@@ -177,7 +177,7 @@ export function MarketInstallDialog({
                           <span className="rounded bg-brand/10 px-1 py-0.2 text-micro text-brand-deep">Web</span>
                         )}
                         {hasIt && (
-                          <span className="rounded bg-emerald-500/10 px-1 py-0.2 text-micro text-emerald-600">
+                          <span className="rounded bg-ok-soft px-1 py-0.2 text-micro text-ok">
                             已安装
                           </span>
                         )}
@@ -197,12 +197,12 @@ export function MarketInstallDialog({
               </label>
               {/* 自动识别徽标 */}
               {sourceInfo.type === "npm" ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-emerald-600 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md border border-line bg-line-soft px-1.5 py-0.5 font-mono text-meta font-medium text-dim shadow-2xs">
                   <Package className="size-3" />
                   <span>{t.market.sourceNpm}</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 font-mono text-meta font-medium text-purple-600 shadow-2xs">
+                <span className="inline-flex items-center gap-1 rounded-md border border-line bg-line-soft px-1.5 py-0.5 font-mono text-meta font-medium text-dim shadow-2xs">
                   <Code2 className="size-3" />
                   <span>{t.market.sourceGithub}</span>
                 </span>
@@ -219,7 +219,7 @@ export function MarketInstallDialog({
 
           {/* 错误提示 */}
           {error && (
-            <div className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600">
+            <div className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-xs text-danger">
               <AlertCircle className="size-4 shrink-0 mt-0.5" />
               <div className="flex-1 break-all">{error}</div>
             </div>

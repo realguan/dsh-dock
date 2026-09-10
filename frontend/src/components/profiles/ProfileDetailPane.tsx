@@ -334,8 +334,8 @@ export function ProfileDetailPane({
                 {name}
               </h2>
               {isSwitching ? (
-                <span className="bg-amber-500/10 text-amber-700 border border-amber-500/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium animate-pulse">
-                  <LoaderCircle className="size-3 animate-spin text-amber-700" />
+                <span className="bg-info-soft text-info border border-info/30 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium animate-pulse">
+                  <LoaderCircle className="size-3 animate-spin text-info" />
                   <span>{isRunning ? t.profiles.reloadingWorkbench : t.profiles.launchingProfile}</span>
                 </span>
               ) : isRunning ? (
@@ -366,11 +366,11 @@ export function ProfileDetailPane({
               disabled={isDefault}
               className={`gap-1 text-xs ${
                 isDefault
-                  ? "bg-amber-500/10 text-amber-700 border border-amber-500/20 font-medium cursor-default opacity-100"
+                  ? "bg-brand/10 text-brand-deep border border-brand/20 font-medium cursor-default opacity-100"
                   : ""
               }`}
             >
-              <Star className={`size-3.5 ${isDefault ? "text-amber-700 fill-current" : ""}`} />
+              <Star className={`size-3.5 ${isDefault ? "text-brand-deep fill-current" : ""}`} />
               {isDefault ? t.profiles.defaultIs : t.profiles.setDefault}
             </Button>
           </div>
@@ -843,7 +843,7 @@ export function ProfileDetailPane({
             </div>
 
             {detail?.patch_yaml ? (
-              <div className="relative overflow-hidden rounded-xl border border-line bg-slate-950 p-4 font-mono text-xs text-slate-200">
+              <div className="relative overflow-hidden rounded-xl border border-line bg-term p-4 font-mono text-xs text-term-ink">
                 <pre className="max-h-[420px] overflow-auto leading-relaxed whitespace-pre font-mono selection:bg-brand/30">
                   {detail.patch_yaml}
                 </pre>

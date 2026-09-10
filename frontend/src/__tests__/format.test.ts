@@ -68,15 +68,20 @@ describe("fmtPercent", () => {
 })
 
 describe("getProfileColorClass", () => {
-  it("web profile 派发品牌色", () => {
-    expect(getProfileColorClass("web")).toContain("border-brand")
+  // 2026-09-10 批次 E：身份色不再与 profile 名相关（旧实现 = 7 色彩虹哈希 +
+  // web 特判品牌蓝）。原因见 format.ts 注释：名字才是信息，彩虹在等明度约束下
+  // 分不开，且借用了状态色域。现为单一分类档 token。
+  it("所有 profile 派发同一分类档 token（不再哈希彩虹）", () => {
+    const a = getProfileColorClass("web")
+    const b = getProfileColorClass("frontend-dev")
+    expect(a).toBe(b)
+    expect(a).toContain("text-alt")
+    expect(a).toContain("bg-alt-soft")
   })
 
-  it("非 web profile 确定性派发非空样式类", () => {
-    const cls1 = getProfileColorClass("test")
-    const cls2 = getProfileColorClass("test")
-    expect(cls1).toBe(cls2)
-    expect(cls1).toMatch(/border-.* bg-.* text-.*/)
+  it("身份色不借用状态色域（ok/info/warn/danger）", () => {
+    const cls = getProfileColorClass("anything")
+    expect(cls).not.toMatch(/text-(ok|info|warn|danger)\b/)
   })
 })
 

@@ -298,7 +298,7 @@ export function SessionManager({
         transition={{ duration: 0.18 }}
         className={`group relative flex flex-col gap-2.5 p-3.5 transition-colors sm:flex-row sm:items-center ${
           isNeedsRepair
-            ? "bg-amber-500/[0.06] hover:bg-amber-500/[0.10]"
+            ? "bg-warn/[0.06] hover:bg-warn/[0.10]"
             : isHealthy
               ? "hover:bg-line-soft/30"
               : "hover:bg-line-soft/30"
@@ -306,7 +306,7 @@ export function SessionManager({
       >
         {/* 非健康左侧脉冲条 */}
         {isNeedsRepair && (
-          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-amber-500/80 animate-pulse" />
+          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-warn/80 animate-pulse" />
         )}
 
         <div className="min-w-0 flex-1 space-y-1">
@@ -314,19 +314,19 @@ export function SessionManager({
           <div className="flex flex-wrap items-center gap-2">
             {isActive ? (
               <span
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-meta font-medium text-sky-700"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-info-soft px-1.5 py-0.5 text-meta font-medium text-info"
                 title={t.sessions.statusRunningDesc}
               >
-                <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
+                <span className="size-1.5 rounded-full bg-info animate-pulse" />
                 {t.sessions.statusRunning}
               </span>
             ) : (
               <span
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-meta font-medium ${
                   isNeedsRepair
-                    ? "bg-amber-500/15 text-amber-700"
+                    ? "bg-warn-soft text-warn"
                     : isHealthy
-                      ? "bg-emerald-500/10 text-emerald-700"
+                      ? "bg-ok-soft text-ok"
                       : "bg-line text-dim"
                 }`}
                 title={`${meta.desc}${sess.validator ? t.sessions.validatorHint(sess.validator) : ""}`}
@@ -339,7 +339,7 @@ export function SessionManager({
             {/* 已归档徽标：仅归档视图可见（默认视图已隐藏） */}
             {sess.archived && (
               <span
-                className="flex shrink-0 items-center gap-1 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-meta font-medium text-violet-600"
+                className="flex shrink-0 items-center gap-1 rounded-md bg-alt-soft px-1.5 py-0.5 text-meta font-medium text-alt"
                 title={t.sessions.archivedTagDesc}
               >
                 <Archive className="size-2.5" />
@@ -366,7 +366,7 @@ export function SessionManager({
             </span>
 
             {sess.hasBackup && (
-              <span className="flex shrink-0 items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-meta font-medium text-emerald-700">
+              <span className="flex shrink-0 items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 text-meta font-medium text-ok">
                 <FileArchive className="size-2.5" />
                 {t.sessions.backupTag}
               </span>
@@ -383,7 +383,7 @@ export function SessionManager({
             >
               {sess.id.slice(0, 18)}…
               {copiedId === sess.id ? (
-                <Check className="size-3 text-emerald-700" />
+                <Check className="size-3 text-ok" />
               ) : (
                 <Copy className="size-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
               )}
@@ -425,11 +425,11 @@ export function SessionManager({
                 title={endStateLabel(sess.endState, t)}
               >
                 {sess.endState === "stop" || sess.endState === "completed" ? (
-                  <CheckCircle2 className="size-3 text-emerald-700" />
+                  <CheckCircle2 className="size-3 text-ok" />
                 ) : sess.endState === "error" ? (
-                  <CircleX className="size-3 text-rose-700" />
+                  <CircleX className="size-3 text-danger" />
                 ) : sess.endState === "interrupted" || sess.endState === "aborted" ? (
-                  <CircleAlert className="size-3 text-amber-700" />
+                  <CircleAlert className="size-3 text-warn" />
                 ) : (
                   <HelpCircle className="size-3" />
                 )}
@@ -448,7 +448,7 @@ export function SessionManager({
           {sess.healthDetail && (
             <p
               className={`line-clamp-1 text-label ${
-                isNeedsRepair ? "text-amber-700" : "text-faint"
+                isNeedsRepair ? "text-warn" : "text-faint"
               }`}
             >
               {sess.healthDetail}
@@ -465,7 +465,7 @@ export function SessionManager({
               size="sm"
               onClick={() => handleRepairSingle(sess)}
               disabled={isBusy || batchRepairing || isDeleting}
-              className="h-7 gap-1 bg-amber-700 text-white hover:bg-amber-700/90 px-2.5 text-xs"
+              className="h-7 gap-1 bg-warn text-white hover:bg-warn/90 px-2.5 text-xs"
             >
               {isBusy ? (
                 <LoaderCircle className="size-3 animate-spin" />
@@ -484,7 +484,7 @@ export function SessionManager({
             className="size-7 p-0"
           >
             {copiedPath === sess.filePath ? (
-              <Check className="size-3 text-emerald-700" />
+              <Check className="size-3 text-ok" />
             ) : (
               <Copy className="size-3 text-faint" />
             )}
@@ -496,10 +496,10 @@ export function SessionManager({
             title={t.sessions.deleteBtn}
             onClick={() => setPendingDelete(sess)}
             disabled={isBusy || batchRepairing || isDeleting}
-            className="size-7 p-0 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-700"
+            className="size-7 p-0 hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
           >
             {isDeleting ? (
-              <LoaderCircle className="size-3 animate-spin text-rose-700" />
+              <LoaderCircle className="size-3 animate-spin text-danger" />
             ) : (
               <Trash2 className="size-3 text-faint" />
             )}
@@ -512,7 +512,7 @@ export function SessionManager({
   return (
     <div className="space-y-4">
       {error && (
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-700">
+        <div className="rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger">
           {error}
         </div>
       )}
@@ -550,7 +550,7 @@ export function SessionManager({
               title={stats.needsRepair === 0 ? t.sessions.repairAllDisabled : t.sessions.repairNeedHint}
               className={`gap-1.5 text-xs shadow-xs ${
                 stats.needsRepair > 0
-                  ? "bg-amber-700 text-white hover:bg-amber-700/90"
+                  ? "bg-warn text-white hover:bg-warn/90"
                   : "bg-brand/80 text-white opacity-55 hover:bg-brand/80 cursor-not-allowed"
               }`}
             >
@@ -575,29 +575,29 @@ export function SessionManager({
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.total}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="flex items-center gap-1 text-label text-emerald-700">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+            <span className="flex items-center gap-1 text-label text-ok">
+              <span className="size-1.5 rounded-full bg-ok" />
               健康就绪
             </span>
-            <div className="mt-1 font-mono text-base font-bold text-emerald-700">
+            <div className="mt-1 font-mono text-base font-bold text-ok">
               {stats.healthy}
             </div>
           </div>
-          <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] p-3">
-            <span className="flex items-center gap-1 text-label text-sky-700">
-              <span className="size-1.5 rounded-full bg-sky-500 animate-pulse" />
+          <div className="rounded-xl border border-info/20 bg-info/[0.04] p-3">
+            <span className="flex items-center gap-1 text-label text-info">
+              <span className="size-1.5 rounded-full bg-info animate-pulse" />
               运行中
             </span>
-            <div className="mt-1 font-mono text-base font-bold text-sky-700">
+            <div className="mt-1 font-mono text-base font-bold text-info">
               {stats.running}
             </div>
           </div>
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
-            <span className="flex items-center gap-1 text-label text-amber-700">
-              <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <div className="rounded-xl border border-warn/20 bg-warn/[0.04] p-3">
+            <span className="flex items-center gap-1 text-label text-warn">
+              <span className="size-1.5 rounded-full bg-warn animate-pulse" />
               待修复异常
             </span>
-            <div className="mt-1 font-mono text-base font-bold text-amber-700">
+            <div className="mt-1 font-mono text-base font-bold text-warn">
               {stats.needsRepair}
             </div>
           </div>
@@ -634,14 +634,14 @@ export function SessionManager({
             onClick={() => setStatusFilter("needs_repair")}
             className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
               statusFilter === "needs_repair"
-                ? "bg-panel text-amber-700 shadow-xs"
+                ? "bg-panel text-warn shadow-xs"
                 : "text-dim hover:text-ink"
             }`}
           >
             <AlertTriangle className="size-3.5" />
             <span>{t.sessions.filterNeedsRepair}</span>
             {stats.needsRepair > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-meta text-amber-700">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warn-soft px-1 font-mono text-meta text-warn">
                 {stats.needsRepair}
               </span>
             )}
@@ -651,14 +651,14 @@ export function SessionManager({
             onClick={() => setStatusFilter("archived")}
             className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
               statusFilter === "archived"
-                ? "bg-panel text-violet-600 shadow-xs"
+                ? "bg-panel text-alt shadow-xs"
                 : "text-dim hover:text-ink"
             }`}
           >
             <Archive className="size-3.5" />
             <span>{t.sessions.filterArchived}</span>
             {stats.archived > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-500/15 px-1 font-mono text-meta text-violet-600">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-alt-soft px-1 font-mono text-meta text-alt">
                 {stats.archived}
               </span>
             )}

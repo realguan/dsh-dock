@@ -63,8 +63,8 @@ export function MarketPluginCard({
                 <Sparkles className="size-4.5 text-brand-deep" />
               </div>
             ) : plugin.npm ? (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-rose-500/25 bg-rose-500/5 text-rose-600 shadow-2xs group-hover:border-rose-500/40 group-hover:bg-rose-500/10 transition-colors" title="NPM 官方包">
-                <NpmIcon className="h-3 w-5 text-rose-600" />
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title="NPM 官方包">
+                <NpmIcon className="h-3 w-5 text-ink/80" />
               </div>
             ) : plugin.url?.includes("github.com") ? (
               <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title="GitHub 仓库">
@@ -118,7 +118,7 @@ export function MarketPluginCard({
         {/* 指标栏 (Stars, Downloads, Added) */}
         <div className="mt-3 flex items-center gap-3 text-label text-faint font-mono">
           <div className="flex items-center gap-1 text-ink/70" title="GitHub Stars">
-            <Star className="size-3 text-amber-700 fill-amber-500/20" />
+            <Star className="size-3 text-brand-deep fill-brand/20" />
             <span>{plugin.stars?.toLocaleString() ?? 0}</span>
           </div>
 
@@ -179,10 +179,10 @@ export function MarketPluginCard({
               <button
                 type="button"
                 onClick={() => onOpenExternal(`https://www.npmjs.com/package/${plugin.npm}`)}
-                className="rounded-lg p-1.5 text-faint hover:text-rose-600 hover:bg-rose-500/10 transition-colors flex items-center gap-1 cursor-pointer"
+                className="rounded-lg p-1.5 text-faint hover:text-danger hover:bg-danger-soft transition-colors flex items-center gap-1 cursor-pointer"
                 title={t.market.viewNpm}
               >
-                <NpmIcon className="h-3 w-4.5 text-faint hover:text-rose-600" />
+                <NpmIcon className="h-3 w-4.5 text-faint hover:text-danger" />
               </button>
             )}
           </div>

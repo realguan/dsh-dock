@@ -86,7 +86,7 @@ export function DshSettingsPane({
             className="gap-1.5 text-xs"
           >
             {copied ? (
-              <Check className="size-3.5 text-emerald-700" />
+              <Check className="size-3.5 text-ok" />
             ) : (
               <Copy className="size-3.5 text-dim" />
             )}
@@ -134,7 +134,7 @@ export function DshSettingsPane({
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={16}
-          className="w-full resize-y rounded-xl border border-line bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200 focus:border-brand focus:outline-none"
+          className="w-full resize-y rounded-xl border border-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-brand focus:outline-none"
           placeholder="# DSH settings.yaml\n# model: deepseek-chat\n# defaultProvider: deepseek"
         />
       </div>
