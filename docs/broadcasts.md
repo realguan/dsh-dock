@@ -31,6 +31,35 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-10 发版 · v1.1.0 重启交接带与设计 token 收口 —— guan（AI 协作）
+
+- **范围**：`v1.0.0..v1.1.0` 共 10 笔提交，两条主线（ADR-0014 重启/切换交接带 +
+  设计 token 收口），另含排查中发现的子进程逃逸修复。版本定 minor：含用户可感知的
+  新能力（交接带）。
+- **tag**：`v1.1.0`（注解 tag，content sha `ca8dc81`，指向 `afbed7c`）已推 origin；
+  master 同步至 `afbed7c`。
+- **发布日志**：`docs/RELEASE_NOTES.md` `## [v1.1.0] - 2026-09-10`（AGENTS §8.8 强契约），
+  经 `scripts/extract-release-notes.py v1.1.0 --strict` 提取通过（1614 字符，
+  精确匹配、未误伤 v1.0.0）。
+- **CI 验收（已通过）**：
+  - `build` run [34470150340](https://github.com/realguan/dsh-dock/actions/runs/34470150340)
+    三平台 **全绿**（macos-latest / ubuntu-latest / windows-latest），
+    其中 `Verify tag version consistency` 与 `Extract Release Notes` 两道 tag 闸门通过；
+  - `spike-0003-verify` run [34470150386](https://github.com/realguan/dsh-dock/actions/runs/34470150386) 通过；
+  - master 的 build run [34470104166](https://github.com/realguan/dsh-dock/actions/runs/34470104166) 通过。
+- **Release 产物（14 个，GitHub Release v1.1.0 已发布）**：dmg 21.8 MB · app.tar.gz 20.3 MB ·
+  exe 39.0 MB · msi 39.7 MB · deb/rpm 22.8 MB · AppImage 94.4 MB（含各 `.sig` 与
+  `latest.json` 自更新清单，6 个平台条目齐全）。
+- **冻结期**：**自本条目起至三平台产物验收通过止**——master 只收 fix，不收 feat
+  （CONTRIBUTING §8 / `docs/contracts/README.md` §冻结期）。
+- **待人工验收**（发版前未在真机跑过，浏览器预览已逐屏核对）：
+  ① 重启/切换全程的 loading 连续性与计时不归零（macOS 真窗口）；② Windows 重启后
+  `tasklist | findstr node` 无遗留 dsh；③ 双击重启 / 重启与模式切换竞态只起一个 dsh；
+  ④ WSL 客体 `ps aux | grep dsh` 干净；⑤ 新 elevation/圆角观感与深色日志面板整体感。
+  清单见 ADR-0014 §5 与 `docs/executor.md`。
+- 凭据：本地闸门 Rust **244** 测试 + fmt/clippy 绿；前端 typecheck 0 err ·
+  oxlint 0 warning · **214** 测试绿；四处版本号一致（CI 闸门本地已预演）。
+
 
 ### 2026-09-10 fix(uiux)：批次 E 对抗式审查修复（bde32ae）—— 失败态误用警告色 + 闸门五处可绕过 —— guan（AI 起草）
 
