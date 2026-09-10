@@ -160,7 +160,7 @@ pub(crate) fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> P
 /// 当前生效运行模式（托盘菜单 ✓ 用；仅非 macOS——macOS 菜单无「打开方式」）。
 /// 优先会话内 active_mode；回落已存默认；再回落 local。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn current_active_mode(app: &tauri::AppHandle) -> settings::Mode {
+pub(crate) fn current_active_mode(app: &tauri::AppHandle) -> crate::settings::Mode {
     if let Some(state) = app.try_state::<Arc<ShellState>>() {
         if let Some(m) = *state.active_mode.lock().unwrap() {
             return m;
@@ -171,7 +171,7 @@ pub(crate) fn current_active_mode(app: &tauri::AppHandle) -> settings::Mode {
             return m;
         }
     }
-    settings::Mode::Local
+    crate::settings::Mode::Local
 }
 
 /// 组装应用菜单：macOS 菜单栏结构 = 根菜单内放「App 子菜单」+「编辑」子菜单。
@@ -280,7 +280,7 @@ pub(crate) fn build_tray_menu(
                 "mode_local",
                 format!(
                     "打开方式：本地{}",
-                    if mode == settings::Mode::Local {
+                    if mode == crate::settings::Mode::Local {
                         " ✓"
                     } else {
                         ""
@@ -298,7 +298,7 @@ pub(crate) fn build_tray_menu(
                 "mode_wsl",
                 format!(
                     "打开方式：WSL2{}",
-                    if mode == settings::Mode::Wsl {
+                    if mode == crate::settings::Mode::Wsl {
                         " ✓"
                     } else {
                         ""
