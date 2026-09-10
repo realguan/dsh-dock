@@ -422,3 +422,18 @@ pub(crate) fn open_about_window(app: &tauri::AppHandle) {
 ///    滚动区及输入框悬空（2026-08-31 修复）。
 pub const WEBVIEW_MEMORY_POLICY_SCRIPT: &str =
     include_str!("../../frontend/src/injected/memory-policy.js");
+
+/// 壳内置 SPA 根地址（用于主窗口在需要从远程工作台跳回启动屏/重载屏时导航）。
+pub(crate) fn shell_app_url(app: &tauri::AppHandle) -> tauri::Url {
+    if let Some(dev_url) = app.config().build.dev_url.as_ref() {
+        if let Ok(url) = tauri::Url::parse(dev_url.as_ref()) {
+            return url;
+        }
+    }
+    let s = if cfg!(windows) {
+        "http://tauri.localhost/"
+    } else {
+        "tauri://localhost/"
+    };
+    tauri::Url::parse(s).expect("valid shell url")
+}

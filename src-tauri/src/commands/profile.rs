@@ -185,7 +185,8 @@ pub fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<(), Stri
     std::thread::spawn(move || {
         // 先回壳 boot 屏再启动：事件总线模块加载期装配——晚挂监听吞首发
         // 遥测（AGENTS §4.3）；就绪后 run_executor_session 导航进新工作台。
-        let _ = state.window.eval("location.assign('/')");
+        let shell_url = crate::ui::shell_app_url(&handle);
+        let _ = state.window.navigate(shell_url);
         lib_boot_again(state, handle, data_dir);
     });
     Ok(())

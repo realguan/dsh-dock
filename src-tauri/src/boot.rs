@@ -331,7 +331,8 @@ pub(crate) fn guard_session(
 
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(600));
-                    let _ = state_clone.window.eval("location.assign('/')");
+                    let shell_url = ui::shell_app_url(&handle);
+                    let _ = state_clone.window.navigate(shell_url);
                     match executor_for_mode(mode, &handle, data_dir) {
                         Ok(executor) => launch_executor_after_probe(state_clone, handle, executor),
                         Err(e) => emit_boot_error(&handle, &format!("自动恢复启动失败: {e}"), ""),
@@ -549,16 +550,19 @@ pub(crate) fn switch_mode(
     shell_settings.default_mode = Some(mode);
     if let Err(e) = crate::settings::save(&data_dir, &shell_settings) {
         emit_boot_error(&app, &e, "");
-        let _ = state.window.eval("location.assign('/')");
+        let shell_url = ui::shell_app_url(&app);
+        let _ = state.window.navigate(shell_url);
         return;
     }
     *state.active_mode.lock().unwrap() = Some(mode);
     // 立即刷新菜单勾选（✓ 跟随当前模式）。
     ui::refresh_app_menu(&app, &state);
+    let app_handle = app.clone();
     std::thread::spawn(move || {
         // 菜单切换时页面可能已在工作台（remote，不渲染壳错误卡）：先回启动页，
         // 新会话就绪后 run_executor_session 会把主窗口导航过去。
-        let _ = state.window.eval("location.assign('/')");
+        let shell_url = ui::shell_app_url(&app_handle);
+        let _ = state.window.navigate(shell_url);
         match executor_for_mode(mode, &app, data_dir) {
             Ok(executor) => launch_executor_after_probe(state, app, executor),
             Err(e) => emit_boot_error(&app, &e, ""),
