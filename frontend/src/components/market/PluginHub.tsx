@@ -19,8 +19,8 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
   return (
     <>
       <div className="space-y-4">
-        {/* 插件中心内部子 Tab 切换器 */}
-        <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-3">
+        {/* 插件中心内部子 Tab 切换器（吸顶保证在长列表滚动时下载管理入口始终可见） */}
+        <div className="sticky top-14 z-15 -mx-2 -mt-2 flex items-center justify-between gap-3 rounded-2xl border-b border-line/60 bg-bg/95 px-2 py-2.5 backdrop-blur-md transition-all">
           <div
             role="tablist"
             className="flex items-center gap-1 rounded-xl border border-line bg-wash p-1 shadow-2xs"

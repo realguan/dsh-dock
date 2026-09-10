@@ -70,10 +70,18 @@ export function setQueueAnchor(el: HTMLElement | null): void {
   queueAnchor = el
 }
 
-/** 触发按钮中心的视口坐标；未登记或已卸载返回 null（调用方退化为不飞）。 */
+/** 触发按钮中心的视口坐标；未登记或已卸载返回 null（调用方退化为不飞）。
+ * 当页面深滚动导致锚点滑向负 y 时，钳制在视口可见顶端，避免飞出屏幕消失。
+ */
 export function queueAnchorCenter(): FlightPoint | null {
   const el = queueAnchor
   if (!el || !el.isConnected) return null
   const rect = el.getBoundingClientRect()
-  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  const rawX = rect.left + rect.width / 2
+  const rawY = rect.top + rect.height / 2
+  const safeX = typeof window !== "undefined"
+    ? Math.max(24, Math.min(window.innerWidth - 24, rawX))
+    : rawX
+  const safeY = Math.max(20, rawY)
+  return { x: safeX, y: safeY }
 }

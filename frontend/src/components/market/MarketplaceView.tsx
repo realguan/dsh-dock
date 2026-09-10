@@ -9,6 +9,7 @@ import {
   ChevronUp,
   Download,
   Package,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
@@ -25,8 +26,10 @@ import type {
   MarketSortOption,
 } from "@/types/market"
 import { filterMarketPlugins, installedProfilesFor, sortMarketPlugins } from "@/lib/market"
+import { getPaginationPages } from "@/lib/format"
 import { MarketPluginCard } from "@/components/market/MarketPluginCard"
 import { MarketInstallDialog } from "@/components/market/MarketInstallDialog"
+import { MarketCustomInstallDialog } from "@/components/market/MarketCustomInstallDialog"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -67,6 +70,7 @@ export function MarketplaceView({
 
   // 安装弹窗状态
   const [installTarget, setInstallTarget] = useState<MarketPlugin | null>(null)
+  const [customInstallOpen, setCustomInstallOpen] = useState(false)
 
   // 加载本地安装状态与 Profile
   const loadLocalData = useCallback(async () => {
@@ -219,7 +223,7 @@ export function MarketplaceView({
         <div className="flex flex-wrap items-center gap-2.5">
           {/* 搜索框 */}
           <div className="relative min-w-[260px] flex-1">
-            <Search className="text-faint absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+            <Search className="text-faint absolute inset-y-0 left-3 my-auto size-3.5" />
             <input
               type="text"
               value={searchQuery}
@@ -233,7 +237,7 @@ export function MarketplaceView({
                 type="button"
                 aria-label={t.market.clearSearch}
                 onClick={() => setSearchQuery("")}
-                className="absolute top-1/2 right-2.5 -translate-y-1/2 text-faint hover:text-ink"
+                className="absolute inset-y-0 right-2.5 my-auto h-fit text-faint hover:text-ink"
               >
                 <X className="size-3.5" />
               </button>
@@ -278,6 +282,17 @@ export function MarketplaceView({
             </Select>
           </div>
 
+          {/* 手动输入地址安装 */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCustomInstallOpen(true)}
+            className="h-8.5 gap-1.5 rounded-xl text-xs font-medium border-brand/40 text-brand-deep hover:bg-brand/10 hover:border-brand"
+          >
+            <Plus className="size-3.5" />
+            <span>{t.market.manualInstallBtn}</span>
+          </Button>
+
           {/* 刷新 Registry */}
           <Button
             size="sm"
@@ -301,7 +316,7 @@ export function MarketplaceView({
                 onClick={() => setSelectedCategory("all")}
                 className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                   selectedCategory === "all"
-                    ? "bg-brand-deep text-white border-brand-deep shadow-2xs font-semibold"
+                    ? "bg-brand text-white border-brand shadow-2xs font-semibold"
                     : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                 }`}
               >
@@ -325,7 +340,7 @@ export function MarketplaceView({
                   onClick={() => setSelectedCategory(cat.key)}
                   className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                     selectedCategory === cat.key
-                      ? "bg-brand-deep text-white border-brand-deep shadow-2xs font-semibold"
+                      ? "bg-brand text-white border-brand shadow-2xs font-semibold"
                       : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                   }`}
                 >
@@ -425,9 +440,8 @@ export function MarketplaceView({
                     categoryLabel={catLabel}
                     installedProfiles={installedProfs}
                     onInstall={(p) => setInstallTarget(p)}
-        onOpenExternal={handleOpenExternal}
-        onCopyNotice={(msg) => onNotice?.(msg, "ok")}
-      />
+                    onOpenExternal={handleOpenExternal}
+                  />
                 )
               })}
             </div>
@@ -493,10 +507,32 @@ export function MarketplaceView({
                     <ChevronLeft className="size-4" />
                   </Button>
 
-                  {/* 简易页码指示 */}
-                  <span className="px-2 font-mono text-xs text-ink">
-                    {currentPage} / {totalPages}
-                  </span>
+                  <div className="flex items-center gap-1 px-1">
+                    {getPaginationPages(currentPage, totalPages).map((item, idx) =>
+                      item === "..." ? (
+                        <span
+                          key={`ellipsis-${idx}`}
+                          className="flex size-8 items-center justify-center text-xs font-mono text-faint select-none"
+                          aria-hidden="true"
+                        >
+                          ...
+                        </span>
+                      ) : (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setCurrentPage(item)}
+                          className={`size-8 rounded-lg text-xs font-mono transition-colors ${
+                            currentPage === item
+                              ? "bg-brand text-white font-bold"
+                              : "text-dim hover:bg-line"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      ),
+                    )}
+                  </div>
 
                   <Button
                     size="sm"
@@ -528,6 +564,16 @@ export function MarketplaceView({
             : []
         }
         onClose={() => setInstallTarget(null)}
+        onNotice={onNotice}
+      />
+
+      {/* 手动输入地址安装对话框 */}
+      <MarketCustomInstallDialog
+        open={customInstallOpen}
+        profiles={profiles}
+        installedMap={installedMap}
+        onClose={() => setCustomInstallOpen(false)}
+        onNotice={onNotice}
       />
     </div>
   )

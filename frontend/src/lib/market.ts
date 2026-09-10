@@ -41,6 +41,17 @@ export function extractInstallSpec(installCmd: string): string {
 }
 
 /**
+ * 构造安装命令（动态绑定指定 Profile 与 Spec，自动清理上游命令中的硬编码 profile）
+ * 例如: buildInstallCmd("my-profile", "@deepseek-ai/dsh-pet") -> "dsh plugin --profile my-profile add @deepseek-ai/dsh-pet"
+ * 例如: buildInstallCmd("dev", "dsh plugin --profile web add @foo/bar") -> "dsh plugin --profile dev add @foo/bar"
+ */
+export function buildInstallCmd(profile: string, specOrInstallCmd: string): string {
+  const cleanSpec = extractInstallSpec(specOrInstallCmd) || specOrInstallCmd.trim()
+  const cleanProf = (profile || "web").trim()
+  return `dsh plugin --profile ${cleanProf} add ${cleanSpec}`
+}
+
+/**
  * 从可能包含 monorepo 或路径前缀的名称中提取最终展示名
  * 例如: "dsh-web#packages/dsh-task-board" -> "dsh-task-board"
  * 例如: "dsh-web-ui#dsh-task-board" -> "dsh-task-board"

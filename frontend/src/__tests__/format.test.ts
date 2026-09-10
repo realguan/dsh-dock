@@ -5,6 +5,7 @@ import {
   fmtEta,
   fmtPercent,
   fmtSpeed,
+  getPaginationPages,
   getProfileColorClass,
   localizeLogTimestamp,
 } from "@/lib/format"
@@ -117,5 +118,30 @@ describe("localizeLogTimestamp", () => {
     const localHm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
     expect(out).toContain(`T${localHm}:${pad(d.getSeconds())}.123`)
     expect(out).toContain(" INFO plain")
+  })
+})
+
+describe("getPaginationPages", () => {
+  it("<= 7 页时完整展示所有页码，无省略号", () => {
+    expect(getPaginationPages(1, 1)).toEqual([1])
+    expect(getPaginationPages(1, 5)).toEqual([1, 2, 3, 4, 5])
+    expect(getPaginationPages(4, 7)).toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it("靠近开头（currentPage <= 4）展示前 5 页和末页", () => {
+    expect(getPaginationPages(1, 29)).toEqual([1, 2, 3, 4, 5, "...", 29])
+    expect(getPaginationPages(3, 29)).toEqual([1, 2, 3, 4, 5, "...", 29])
+    expect(getPaginationPages(4, 29)).toEqual([1, 2, 3, 4, 5, "...", 29])
+  })
+
+  it("靠近末尾（currentPage >= totalPages - 3）展示首页和后 5 页", () => {
+    expect(getPaginationPages(26, 29)).toEqual([1, "...", 25, 26, 27, 28, 29])
+    expect(getPaginationPages(28, 29)).toEqual([1, "...", 25, 26, 27, 28, 29])
+    expect(getPaginationPages(29, 29)).toEqual([1, "...", 25, 26, 27, 28, 29])
+  })
+
+  it("居中时首尾各保留一个省略号，中间围绕当前页", () => {
+    expect(getPaginationPages(10, 29)).toEqual([1, "...", 9, 10, 11, "...", 29])
+    expect(getPaginationPages(15, 29)).toEqual([1, "...", 14, 15, 16, "...", 29])
   })
 })

@@ -85,3 +85,51 @@ export function localizeLogTimestamp(line: string): string {
   return `${start}${localTs}${end}`
 }
 
+/**
+ * 计算分页带缩略的页码列表。
+ * - 总页数 <= 7 时全部展示：1 2 3 4 5 6 7
+ * - 靠近开头时（currentPage <= 4）：1 2 3 4 5 ... N
+ * - 靠近结尾时（currentPage >= N - 3）：1 ... N-4 N-3 N-2 N-1 N
+ * - 居中时：1 ... P-1 P P+1 ... N
+ *
+ * @param currentPage 当前页（1-indexed）
+ * @param totalPages 总页数（>= 1）
+ * @returns 页码数字与省略号占位符构成的数组
+ */
+export function getPaginationPages(
+  currentPage: number,
+  totalPages: number,
+): (number | "...")[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1)
+  }
+
+  // 靠近开头：1 2 3 4 5 ... totalPages
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "...", totalPages]
+  }
+
+  // 靠近结尾：1 ... N-4 N-3 N-2 N-1 N
+  if (currentPage >= totalPages - 3) {
+    return [
+      1,
+      "...",
+      totalPages - 4,
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ]
+  }
+
+  // 居中：1 ... P-1 P P+1 ... N
+  return [
+    1,
+    "...",
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    "...",
+    totalPages,
+  ]
+}

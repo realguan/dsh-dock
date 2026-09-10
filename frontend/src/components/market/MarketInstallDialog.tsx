@@ -42,6 +42,7 @@ interface MarketInstallDialogProps {
   installedProfiles: string[]
   open: boolean
   onClose: () => void
+  onNotice?: (text: string, kind?: "ok" | "warn") => void
 }
 
 export function MarketInstallDialog({
@@ -50,6 +51,7 @@ export function MarketInstallDialog({
   installedProfiles,
   open,
   onClose,
+  onNotice,
 }: MarketInstallDialogProps) {
   const { t, activeLocale } = useI18n()
   const [selectedProfile, setSelectedProfile] = useState<string>("")
@@ -88,8 +90,7 @@ export function MarketInstallDialog({
   const isAlreadyInstalled = installedProfiles.includes(selectedProfile)
 
   // 入队（ADR-0011 队列形态）：预检 → 队列串行执行；目标 profile 入队瞬间
-  // 快照绑定。2026-09-09（§1.1）：顺手起飞一颗胶囊到「下载管理」——入队本身
-  // 是后台静默动作，没有这步反馈新用户不知道东西去哪了。
+  // 快照绑定。顺手起飞一颗胶囊到「下载管理」，并弹 Toast 告知用户任务已被接管。
   const handleEnqueue = (e: React.MouseEvent) => {
     if (!plugin || !selectedProfile || !sourceInfo.spec.trim()) return
     const spec = sourceInfo.spec.trim()
@@ -100,6 +101,7 @@ export function MarketInstallDialog({
     }
     enqueue({ pkg: plugin.name, spec, profile: selectedProfile, kind: "install" })
     useInstallFlightStore.getState().launch({ x: e.clientX, y: e.clientY }, displayName)
+    onNotice?.(t.market.installQueued(displayName, selectedProfile), "ok")
     onClose()
   }
 
