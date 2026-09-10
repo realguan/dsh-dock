@@ -59,10 +59,12 @@ const BANNED = new RegExp(
   "g",
 )
 
-/** 唯一豁免：toast 是浮在**内容之上**的深色胶囊，其配色是独立的可访问性方案
- *  （见 toast.tsx 注释），不属于页面 token 体系。豁免按文件而非按行——若将来
- *  toast 也 token 化，删掉此豁免即可，闸门会立刻要求其合规。 */
-const EXEMPT_PATHS = ["/components/ui/toast.tsx"]
+/** 豁免清单（按文件路径后缀匹配）。2026-09-10 批次 E 收尾时已清空——
+ *  `components/ui/toast.tsx` 曾在此豁免（理由：深色胶囊自带独立配色），
+ *  但复核发现它的三种 kind 恰是**语义**的（ok/warn/info）且本就是深色面，
+ *  正是 `term-*` 族的用途，故收编入 token 体系并删除豁免。
+ *  保留此机制供将来确有需要时登记——但请优先问「它是不是也该用 token」。 */
+const EXEMPT_PATHS: string[] = []
 
 function isExempt(path: string): boolean {
   return EXEMPT_PATHS.some((p) => path.endsWith(p))

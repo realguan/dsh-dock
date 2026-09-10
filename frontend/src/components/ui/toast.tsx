@@ -40,23 +40,26 @@ export function FloatingToast({
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
           >
             <div
+              // 2026-09-10 批次 E：本胶囊改为 term-* 深色面 token——它本来就是
+              // 「浮在内容之上的深色面板」，与日志/凭据面板同族；旧口径散用
+              // slate-900/amber-950/emerald-500/blue-400 五个原生档，其中 info 用
+              // blue（全仓唯一一处），与 token 体系脱节。三种 kind 即
+              // ok/warn/info 三语义，正好对应 term 族的三个级别色。
               className={`pointer-events-auto flex items-center gap-2.5 rounded-full px-4 py-2 text-xs font-medium shadow-lg backdrop-blur-md transition-all ${
                 toast.kind === "ok"
-                  ? "bg-slate-900/90 text-white shadow-emerald-500/10 ring-1 ring-emerald-500/30"
+                  ? "bg-term/90 text-white ring-1 ring-term-ok/40"
                   : toast.kind === "warn"
-                    ? "bg-amber-950/90 text-amber-100 shadow-amber-500/10 ring-1 ring-amber-500/40"
-                    : "bg-slate-900/90 text-slate-100 shadow-slate-900/20 ring-1 ring-white/20"
+                    ? "bg-term/90 text-term-warn ring-1 ring-term-warn/40"
+                    : "bg-term/90 text-term-ink ring-1 ring-white/20"
               }`}
             >
               {toast.kind === "ok" && (
-                <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
+                <CheckCircle2 className="size-4 text-term-ok shrink-0" />
               )}
               {toast.kind === "warn" && (
-                <AlertCircle className="size-4 text-amber-400 shrink-0" />
+                <AlertCircle className="size-4 text-term-warn shrink-0" />
               )}
-              {toast.kind === "info" && (
-                <Info className="size-4 text-blue-400 shrink-0" />
-              )}
+              {toast.kind === "info" && <Info className="size-4 text-term-info shrink-0" />}
               {/* title：消息被 truncate 到 420px，长错误需悬停可读全（2026-09-08） */}
               <span className="max-w-[420px] truncate" title={toast.message}>
                 {toast.message}
