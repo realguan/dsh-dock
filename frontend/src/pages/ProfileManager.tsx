@@ -48,8 +48,10 @@ export function ProfileManager() {
     return null
   })
   const [deleteTarget, setDeleteTarget] = useState<string | null>(() => {
+    // 深链 `?dialog=delete&target=<name>`：缺 target 时不弹窗（不臆造默认目标，
+    // 否则会对一个本机不存在的工作台弹出删除确认）。
     return new URLSearchParams(window.location.search).get("dialog") === "delete"
-      ? new URLSearchParams(window.location.search).get("target") || "data-analysis"
+      ? new URLSearchParams(window.location.search).get("target")
       : null
   })
   const [switchTarget, setSwitchTarget] = useState<string | null>(null)
