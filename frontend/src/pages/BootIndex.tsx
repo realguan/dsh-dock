@@ -21,7 +21,6 @@ import { UpdateBanner } from "@/components/update/UpdateBanner"
 import { Emblem } from "@/components/layout/Emblem"
 import { PulseBar } from "@/components/boot/PulseBar"
 import { ElapsedChip } from "@/components/boot/ElapsedChip"
-import { HandoffRail } from "@/components/boot/HandoffRail"
 
 /// StrictMode 双挂载下去重同一份握手参数（choose_mode 会 teardown+重启会话）。
 /// 名字不与 ADR-0014 的「交接意图（handoff）」混用：这里指的是 URL 参数握手。
@@ -164,10 +163,10 @@ export function BootIndex() {
   // 区分「首次安装准备向导」与「日常秒启 Splash」：
   // 只有在发生环境下载、出现错误或手动请求时才展示 5 步向导列表；
   // 普通秒级直启展示高保真极简启动屏，彻底消除每次打开装机自检的割裂感。
-  // 交接（重启/切换）例外：用户刚点下重启，此刻**必须**看到步骤与阶段，
-  // 否则又是一次"与刚才操作无关的空白等待"（ADR-0014 §1）。
-  const isSetupMode =
-    hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline || handoff !== null
+  // 2026-09-10 修订（ADR-0014 §7）：交接**不再**强制展开向导态——重启必须与
+  // 开机长得一模一样（复用，不是新页面）；连续性由文案 + 连续计时 + 幕布承担。
+  // 想看步骤的用户仍有「查看启动详情」这个既有出口。
+  const isSetupMode = hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline
 
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
@@ -210,13 +209,6 @@ export function BootIndex() {
       {/* 主工作区 */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 pt-16 pb-12">
         <section className="w-full max-w-xl">
-          {/* 交接导轨（ADR-0014）：与控制中心**同一条**视图模型（标题/四段/计时），
-              这就是"loading 贯穿两窗、跨越三次文档替换"的那根线。两种情形不叠：
-              错误态（错误卡已把话说清楚）、以及意图已过期却仍未落定（陈旧的意图
-              不该继续转圈——"永远在等待"比不显示更伤人）。 */}
-          {handoff && !shownError && (handoff.inflight || handoff.done || handoff.failed) && (
-            <HandoffRail view={handoff} className="mb-3" />
-          )}
           {isSetupMode ? (
             <>
               <BootTimeline
@@ -224,11 +216,9 @@ export function BootIndex() {
                 subtitle={subtitle}
                 danger={!!shownError}
                 banner={inDownload ? <DownloadProgress /> : undefined}
-                // 计时只在导轨缺席时补位（错误态：导轨让位错误卡，但"这次花了多久"
-                // 仍是排障要读的数）——两处同时显示同一个秒表只会显得啰嗦。
-                meta={
-                  handoff && shownError ? <ElapsedChip startedAt={handoff.startedAt} /> : undefined
-                }
+                // 连续计时（ADR-0014）：交接期间本页唯一的"时间锚"——起点来自
+                // Rust 的 startedAt，跨文档不归零，用户读得出"这次已经等了多久"。
+                meta={handoff ? <ElapsedChip startedAt={handoff.startedAt} /> : undefined}
               />
               {!shownError && hasEverDownloaded && (
                 <div className="mt-3 text-center">
@@ -248,15 +238,24 @@ export function BootIndex() {
                 <div className="absolute -inset-4 animate-pulse rounded-2xl bg-brand/20 blur-xl motion-reduce:animate-none" />
                 <Emblem size={64} />
               </div>
+              {/* 交接复用同一屏：只换文案（重启谁）与副题（到哪一步了），
+                  构图/字号/徽标与日常秒启逐像素一致——重启不该长得像另一个页面。 */}
               <h1 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
-                {t.boot.launchingTitle}
+                {handoffText ? handoffText.title : t.boot.launchingTitle}
               </h1>
               <p className="mt-2 max-w-md text-xs text-dim sm:text-sm">
-                {steps[idx]?.detail || t.boot.launchingSub}
+                {handoffText && !handoff?.failed
+                  ? handoffText.subtitle
+                  : steps[idx]?.detail || t.boot.launchingSub}
               </p>
               <div className="mt-6">
                 <PulseBar width={220} />
               </div>
+              {handoff && (
+                <div className="mt-3">
+                  <ElapsedChip startedAt={handoff.startedAt} />
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setForceShowTimeline(true)}

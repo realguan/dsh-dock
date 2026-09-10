@@ -41,7 +41,12 @@
   4. **子进程逃逸修复（审计发现）**：① 会话槽 `Option<Box<dyn Executor>>` 直接赋值会把旧 dsh 丢在地上——落新会话前 `reap_previous_session` 先收口；② `probe_epoch` 晚读导致两次快速切换双双放行 → 改为**启动代际令牌**（`begin_boot` / `boot_superseded`），spawn 前/后逐个分叉点校验；③ `RunEvent::Exit` 先置 `shutting_down` 再收会话，退出竞态不再留孤儿；④ Windows `stop_dsh` 由 `child.kill()`（只杀 `cmd.exe` 壳层，pnpm shim 的 node 继续跑）改为 `taskkill /PID /T /F` 整树收口。
   5. 契约闸门：`ipc-shapes.json` 增 `HandoffSnapshot`（Rust `handoff_json_shape` ↔ TS `ipcShapes.test`）。
 - 影响：AGENTS §9 索引新增 0014 行（宪法级改动，已落档）；`switch_profile` 返回值由 `()` 变交接意图快照（前端同步）；`get_boot_status` payload 增 `intent` 字段（向后兼容）。行为可见变化：重启/切换全程有连续 loading 贯穿，失败在控制中心可见。
-- 凭据：`cargo test` 241 绿（新增 5：交接阶段/意图起始/代际闸门/快照形状/Windows 收树参数）；`cargo fmt --check` + `clippy -D warnings` 绿；前端 `typecheck`/`lint`/`test` 绿（190，新增 handoff 模型 13 例）；实机验证清单（macOS/Windows/WSL）待排期，见 ADR-0014 §5。
+- 修订（同日，维护者当场否决首版冗余）：首版把「四段导轨」也画进主窗口启动屏并强制展开
+  5 步向导态 → **重启长得像另一个页面**（与开机不一致）。改为**复用**启动屏本身：主窗口只换
+  标题（「正在重启「X」」）/副题（当前阶段）+ 加连续计时，构图与开机逐像素一致；导轨只留
+  在控制中心（那里本来没有启动 UI）。连带把 `HandoffView.inflight` 接回导轨（过期未落定
+  的意图转静态灰点，不再假装在转），`isSetupMode` 恢复既有规则。见 ADR-0014 §7。
+- 凭据：`cargo test` 241 绿（新增 5：交接阶段/意图起始/代际闸门/快照形状/Windows 收树参数）；`cargo fmt --check` + `clippy -D warnings` 绿；前端 `typecheck`/`lint`/`test` 绿（190，新增 handoff 模型 13 例）；观感经浏览器预览截图核对（开机屏 vs 重启屏构图一致、控制中心导轨、幕布明暗两态）；实机验证清单（macOS/Windows/WSL）待排期，见 ADR-0014 §5。
 
 ### 2026-09-09 快车道直推 · 迁移器拒绝会话归类修正——不再误标「需自愈」（实测 8650d6f2） —— guan（AI 协作）
 

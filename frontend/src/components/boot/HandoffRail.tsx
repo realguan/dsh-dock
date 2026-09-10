@@ -72,17 +72,21 @@ export function HandoffRail({
       className={`rounded-xl border px-3.5 py-2.5 backdrop-blur-sm transition-colors duration-300 ${tone} ${className ?? ""}`}
     >
       <div className="flex items-center gap-2.5">
-        {/* 状态点：在途呼吸 / 就绪打勾 / 失败警示——一眼看出这条导轨的命运 */}
+        {/* 状态点：在途呼吸 / 陈旧停跳 / 就绪打勾 / 失败警示——一眼看出命运。
+            「陈旧」= 壳判定这次交接已过期却没落定（极端异常），此时继续呼吸就是
+            骗人：改成不动的小点，配合下面的停止转圈。 */}
         <span className="relative flex size-4 shrink-0 items-center justify-center">
           {view.failed ? (
             <AlertTriangle className="text-warn size-3.5" aria-hidden />
           ) : view.done ? (
             <Check className="text-ok size-3.5" aria-hidden />
-          ) : (
+          ) : view.inflight ? (
             <>
               <span className="bg-brand/25 absolute inline-flex size-3.5 animate-ping rounded-full motion-reduce:animate-none" />
               <span className="bg-brand relative inline-flex size-2 rounded-full" />
             </>
+          ) : (
+            <span className="bg-faint relative inline-flex size-2 rounded-full" />
           )}
         </span>
 
@@ -146,8 +150,10 @@ export function HandoffRail({
                   className={`h-0.5 flex-1 rounded-full ${i === 0 ? "bg-transparent" : done || current ? "bg-brand/60" : "bg-line"}`}
                 />
                 <span className="relative flex size-3 shrink-0 items-center justify-center">
-                  {current ? (
+                  {current && view.inflight ? (
                     <LoaderCircle className="text-brand-deep size-3 animate-spin" aria-hidden />
+                  ) : current ? (
+                    <span className="bg-faint size-1.5 rounded-full" aria-hidden />
                   ) : (
                     <span
                       className={`size-1.5 rounded-full ${done ? "bg-brand" : view.failed && i === view.stageIndex ? "bg-warn" : "bg-line"}`}
