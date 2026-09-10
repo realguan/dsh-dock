@@ -2268,3 +2268,30 @@
   `dialog=delete` 默认目标硬编码 `data-analysis`（截图痕迹，生产代码读 URL 参数）；
   `frontend/public/{app-icon.png,icon-wave.png}` 与根目录 `release_notes.md` 未入库
   （前两者 0 引用，后者为游离草稿，与 `docs/RELEASE_NOTES.md` 内容不一致）。
+
+### 2026-09-10 清理 · v1.0.0 发版后专项清偿（死代码 / 硬编码 / 死资产） —— guan（AI 协作）
+
+- 变更（4 笔，按序）：
+  - `84f7372 refactor(market)`：清理「按 Profile 复制安装命令」子功能残留——
+    `lib/market.ts::buildInstallCmd()` 及 3 条单测（唯一调用者是测试自身）、
+    i18n 四键 `targetProfileLabel`/`selectProfileForCmd`/`copyCmdForProfile`/
+    `noProfilesAvailable`、market 段孤儿文案 `copyCmd`/`copied`（启动段同名
+    `copied` 仍在用，未动）。保留 `extractInstallSpec()`（仍被 `installedProfilesFor`
+    与 `detectInstallSource` 内部使用）。测试 179 → 176。
+  - `2c7e749 fix(profiles)`：删除对话框深链不再臆造默认目标——移除硬编码
+    `data-analysis`（截图脚本期便利写法混进生产代码，会对本机不存在的工作台弹删除
+    确认）；缺 `target` 即不弹窗，消费端本就以 `open={name !== null}` 控制。
+  - `fd6d808 chore(brand)`：删除死资产 `frontend/public/mark.svg`；ADR-0008 §2
+    与 `docs/frontend-migration.md` 顶部按既有范式加带日期的品牌换代补注（不改写
+    历史正文，声明现行规则唯一事实源 = AGENTS §3）。重建后 `dist/` 不再产出该文件。
+  - 未跟踪孤儿资产直接清除（从未入库、无需提交）：`frontend/public/app-icon.png`
+    （与 `icon.png` md5 相同 `6b48ce30…`）、`frontend/public/icon-wave.png`（0 引用）。
+- 至此清偿上文「v1.0.0 发版收尾」条目所列全部待办；该条目的待办清单已失效，
+  以本条为准。
+- 凭据：前端 typecheck / oxlint 0 warning / 176 测试绿 / 生产构建 830.37 kB 且
+  devMock 特征串 0 命中；Rust `cargo test` 236 绿 + `fmt --check` 与 clippy
+  （macOS 与 `x86_64-pc-windows-gnu` 双 target）干净。
+- 另发现（未处理，留待裁定）：市场 UI 文案硬编码「2700+」（zh-CN/en-US 共 6 处：
+  subtitle / searchPlaceholder / loadingRegistry，另 MarketplaceView.tsx 头注释），
+  而社区 Registry 实际 `count` 为 3408、README 亦写 3,400+。属**用户可见文案失真**
+  而非本次清理范围，故未夹带。
