@@ -108,7 +108,7 @@ export function DshSettingsPane({
             size="sm"
             onClick={() => setConfirmSave(true)}
             disabled={saving || loading}
-            className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90 text-xs"
+            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs"
           >
             {saving ? (
               <LoaderCircle className="size-3.5 animate-spin" />

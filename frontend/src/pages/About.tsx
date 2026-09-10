@@ -77,7 +77,7 @@ export function About() {
       {/* 顶栏 Hero 区域 */}
       <header className="mb-5 flex items-center gap-3.5">
         <div className="relative">
-          <Emblem size={52} />
+          <Emblem size={52} framed={true} />
           {clientNewer && (
             <span className="bg-warn animate-blink absolute -top-1 -right-1 size-2.5 rounded-full ring-2 ring-panel" />
           )}

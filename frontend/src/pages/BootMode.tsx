@@ -86,7 +86,7 @@ export function BootMode() {
               <div className="flex items-center justify-between">
                 <span
                   className={`inline-flex size-10 items-center justify-center rounded-xl transition-colors ${
-                    selected ? "bg-brand-deep text-white shadow-xs" : "bg-line-soft text-dim group-hover:text-brand-deep"
+                    selected ? "bg-brand text-white shadow-xs" : "bg-line-soft text-dim group-hover:text-brand-deep"
                   }`}
                 >
                   <Icon className="size-5" />

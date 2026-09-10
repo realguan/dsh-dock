@@ -192,7 +192,7 @@ export function LogViewerPane({
       {/* 搜索与元信息栏 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="relative min-w-[200px] flex-1 max-w-sm">
-          <Search className="text-faint absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+          <Search className="text-faint absolute inset-y-0 left-2.5 my-auto size-3.5" />
           <input
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}

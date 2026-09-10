@@ -121,7 +121,7 @@ export function DshVersionListDialog({
               className={cn(
                 "rounded-full px-2.5 py-1 text-meta font-medium transition-colors",
                 filter === f
-                  ? "bg-brand-deep text-white"
+                  ? "bg-brand text-white"
                   : "bg-line-soft text-dim hover:text-ink",
               )}
             >

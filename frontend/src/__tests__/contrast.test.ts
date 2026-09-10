@@ -78,6 +78,16 @@ describe("设计 token 对比度闸门", () => {
     expect(ratio).toBeLessThan(AA)
   })
 
+  it("已知边际：白字在 brand 填充档上 ≥ 4.2（2026-09-10 维护者裁定记录在案）", () => {
+    // 批次 C 曾把填充色也一并加深到 brand-deep(#3163cf)，观感偏暗被维护者退回：
+    // 填充/图形象回到 brand(#4176e6)，文字档保持 brand-deep。白字压 brand = 4.23，
+    // 低于 AA 4.5（控件填充属 UI 组件，AA 要求 ≥3:1），故按 faint 同口径记录在案：
+    // 只允许用于「填充 + 白字」的控件，不得下沉为文字色（文字由 brand-deep 兜底）。
+    const ratio = contrast("#ffffff", T.brand)
+    expect(ratio).toBeGreaterThanOrEqual(4.2)
+    expect(ratio).toBeLessThan(AA)
+  })
+
   it("品牌蓝只作图形象：源码不得再把 text-brand 当文字色（一律 text-brand-deep）", () => {
     const offenders = Object.entries(RAW_TSX)
       .filter(([path]) => !path.endsWith("/contrast.test.ts"))

@@ -21,11 +21,14 @@ export function FloatingToast({
     // 常驻 live region（2026-09-08 裁定）：读屏只在「区域已存在、内容变化」时可靠
     // 播报；把 role=status 挂在随 toast 挂载/卸载的节点上，部分读屏会整条漏播。
     // 因此容器恒在 DOM，动画只作用于内层 motion.div。
+    // 2026-09-10 裁定：容器居中改 inset-x-0 + mx-auto + w-fit（布局层整数居中），
+    // 弃用 left-1/2 + -translate-x-1/2——奇数视口宽下半像素合成重采样会让
+    // toast 胶囊文字发虚（同 DialogContent 居中修复，见 ui/dialog.tsx）。
     <div
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 px-4"
+      className="pointer-events-none fixed inset-x-0 bottom-5 z-50 mx-auto w-fit px-4"
     >
       <AnimatePresence>
         {toast && (

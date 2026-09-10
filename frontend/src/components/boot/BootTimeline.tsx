@@ -45,7 +45,7 @@ export function BootTimeline({
       <div className="flex items-center gap-3 border-b border-line/70 px-5 py-4">
         <div className="relative shrink-0">
           <div className="absolute -inset-1.5 rounded-xl bg-brand/15 blur-md" aria-hidden />
-          <Emblem size={28} />
+          <Emblem size={28} framed={true} />
         </div>
         <div className="min-w-0 flex-1">
           <h1

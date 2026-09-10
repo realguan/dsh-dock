@@ -159,7 +159,7 @@ export function CredentialsPane({
               size="sm"
               onClick={() => setConfirmRaw(true)}
               disabled={savingRaw}
-              className="gap-1.5 bg-brand-deep text-white hover:bg-brand-deep/90"
+              className="gap-1.5 bg-brand text-white hover:bg-brand/90"
             >
               {savingRaw ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -293,7 +293,7 @@ export function CredentialsPane({
             <Button
               onClick={handleSaveKey}
               disabled={savingKey || !inputKey.trim()}
-              className="bg-brand-deep text-white hover:bg-brand-deep/90"
+              className="bg-brand text-white hover:bg-brand/90"
             >
               {savingKey && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>保存 API Key</span>

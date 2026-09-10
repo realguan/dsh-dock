@@ -34,4 +34,16 @@ describe("字号 token 闸门", () => {
     expect("sm:text-[0.8rem]".match(ARBITRARY_FONT_SIZE)).toHaveLength(1)
     expect("text-meta".match(ARBITRARY_FONT_SIZE)).toBeNull()
   })
+
+  // 2026-09-10 回归闸门：外接 1x 屏整页文字发虚的修复锚点。
+  // 根因与裁定见 index.css body 段注释（synthetic bold 低 DPI 发虚；
+  // tauri-apps/discussions#6668）。此行曾被误删即复现，故闸门锁定。
+  it("index.css 保留 font-synthesis: none（外接屏文字发虚修复，勿删）", () => {
+    const indexCss = Object.entries(RAW_SOURCES).find(([path]) =>
+      path.endsWith("/index.css"),
+    )
+    expect(indexCss, "未找到 index.css 源码").toBeDefined()
+    const [, src] = indexCss!
+    expect(src).toContain("font-synthesis: none")
+  })
 })

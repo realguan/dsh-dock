@@ -185,7 +185,7 @@ export function BootSelector() {
       {/* 顶栏微导航 */}
       <header className="relative z-10 flex items-center justify-between border-b border-line/60 px-6 py-3.5 backdrop-blur-md sm:px-8">
         <div className="flex items-center gap-3">
-          <Emblem size={24} />
+          <Emblem size={24} framed={true} />
           <span className="font-mono text-sm font-semibold tracking-tight text-ink">DSH Dock</span>
           <span className="inline-flex items-center gap-1 rounded-full border border-ok/25 bg-ok/10 px-2 py-0.5 text-meta font-medium text-ok">
             <ShieldCheck className="size-3" />
@@ -259,7 +259,7 @@ export function BootSelector() {
                           p.isTemplate
                             ? "border-line/70 bg-purple-500/10 text-purple-600 group-hover:bg-purple-600 group-hover:text-white"
                             : p.isDefault
-                              ? "border-brand/30 bg-wash text-brand-deep group-hover:bg-brand-deep group-hover:text-white"
+                              ? "border-brand/30 bg-wash text-brand-deep group-hover:bg-brand group-hover:text-white"
                               : "border-line/70 bg-line-soft text-dim group-hover:bg-brand/10 group-hover:text-brand-deep"
                         }`}
                       >
