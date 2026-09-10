@@ -80,10 +80,25 @@
 - 影响：**需人工目检**（Tauri 真窗口未实机验证）——① 卡片投影观感（elevation 全量换值）；
   ② 圆角收敛后大卡片/对话框的观感；③ 深色日志面板在新 `term` 底色下的整体感。
   维护者已确认「顺便微调状态色相」（四族等明度）与「全量收口」两项范围。
+- **补强（同日，d53d382）**：对批次 E 做**绕过验证**（写探针文件实测闸门能否被规避）
+  时发现三个盲区，其中一个是真 bug——
+  ① **冷启动底色有第三处真相源**：`frontend/index.html` 的首帧 `<style>` 也硬编码了
+  `#f7f8fb`，批次 E 改了 index.css 与 ui.rs 却漏了它，而它恰是「冷启动闪色」的
+  直接来源（CSS 模块加载前的底色）。现三处逐值对齐，并由前端（index.html ≡
+  `--color-bg`）与 Rust（从同一份 index.css 解析 `--color-bg` 比对
+  `WINDOW_BACKGROUND` 常量）**双向锁定**，另含解析器自检。均经「故意改坏→报红→
+  还原」实证。
+  ② 内联 `style={{ color: "#047857" }}` 是类名闸门的盲区（探针实测），补闸门
+  （现状零使用，属预防性收口）。
+  ③ 闸门自检补 `hover:` / `md:` / `data-[state=open]:` 前缀与任意值形态的断言
+  （原正则已能拦下，但缺断言则日后改正则无人知晓）。
+  另把 `ui.rs` 的窗口底色提为具名常量 `WINDOW_BACKGROUND`（原内联字面量无锚点可搜）。
+  凭据更新：`cargo test` **244 绿**（241 → +3）· 前端 `pnpm test` **209 绿**（207 → +2）。
 - 凭据：`pnpm typecheck` 0 err · `oxlint` 0 warning/0 error · `pnpm test` **201 passed**
   （190 → +11，含新增 paletteTokens 4 条与 contrast 扩至 13 条）· `cargo fmt --check` 通过 ·
   `clippy --all-targets -D warnings` 通过 · 浏览器逐页复核（Profile 列表 / 会话维护 /
-  系统控制台 / 运行日志）无回归。
+  系统控制台 / 运行日志）无回归 · `pnpm build` 后确认新工具类均已生成且 6 个旧色值
+  从产物消失。
 
 ### 2026-09-10 宪法级（AGENTS §9 索引）· ADR-0014 重启/切换交接带 + 启动代际闸门 + Windows 进程树收口 —— guan（AI 协作）
 
