@@ -61,11 +61,54 @@ fn user_home_dir() -> Option<PathBuf> {
 }
 
 /// 终端在 system 档 boot 用户世界：$DSH_HOME 或 ~/.dsh。
+///
+/// **2026-09-10 裁定（ADR-0015 §1.2 放大器 / §5 行动项）**：`dev` 构建改用
+/// **独立 home** `~/.dsh-dock-dev`，与正式包（`~/.dsh`）物理隔离。
+///
+/// 事故复盘：11 个从 `cargo tauri dev` 逃逸的孤儿 dsh 全部写着 `~/.dsh` 的
+/// 会话，把**正式包**（1.1.0）的会话永久锁死——用户只装了正式包，却因为开发
+/// 构建的泄漏而无法使用。共用一个 home 意味着"开发期的任何进程泄漏都会污染
+/// 用户数据"，这与 AGENTS §6 的 1:1 生命周期纪律相悖。
+///
+/// 隔离后：dev 的泄漏只污染 dev 自己的 home，**爆炸半径收在开发环境内**。
+/// 用户显式设置的 `DSH_HOME` 仍然最高优先（用户主权）。
 pub fn user_dsh_home() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .map(PathBuf::from)
-        .or_else(|| user_home_dir().map(|home| home.join(".dsh")))
-        .unwrap_or_else(|| PathBuf::from(".dsh"))
+        .or_else(|| user_home_dir().map(|home| home.join(dev_home_dir_name())))
+        .unwrap_or_else(|| PathBuf::from(dev_home_dir_name()))
+}
+
+/// 生产数据目录（`app_data_dir` 的等价物）——仅供"需真机引擎"的集成测试定位
+/// 引擎与登记表。刻意不引 Tauri 运行时：测试里没有 AppHandle。
+#[cfg(test)]
+pub fn launch_data_dir_for_test() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        user_home_dir().map(|h| h.join("Library/Application Support"))
+    };
+    let id = if cfg!(debug_assertions) {
+        "io.github.realguan.dsh-dock.dev"
+    } else {
+        "io.github.realguan.dsh-dock"
+    };
+    base.map(|b| b.join(id))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// dsh home 目录名：release = `.dsh`（正式用户世界）；dev = `.dsh-dock-dev`。
+///
+/// 用 `cfg!(debug_assertions)` 而非 `cfg!(dev)`：前者对 `cargo build`（debug）
+/// 也为真，与 `cargo tauri dev` 同口径——**任何**非 release 构建都不该碰用户
+/// 的正式 home。集成测试（`cargo test`）同理受益：测试跑在 debug 下，
+/// 不会写到真实用户的 `~/.dsh`。
+pub const fn dev_home_dir_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        ".dsh-dock-dev"
+    } else {
+        ".dsh"
+    }
 }
 
 // ---------- 版本比较（含 rc 语义的排序） ----------
@@ -169,11 +212,14 @@ pub fn read_log_auto(path: &std::path::Path) -> String {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn run_with_timeout_raw(cmd: &mut Command, timeout: std::time::Duration) -> Option<Vec<u8>> {
     crate::quiet_cmd(cmd);
-    let mut child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = crate::lifecycle::spawn(
+        cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("timeout-probe", None),
+    )
+    .ok()?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait().ok().flatten() {
@@ -508,7 +554,11 @@ fn probe_no_open_cmd(mut cmd: std::process::Command, timeout: std::time::Duratio
     use std::io::{BufRead, BufReader};
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = match cmd.spawn() {
+    let mut child = match crate::lifecycle::spawn(
+        &mut cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("no-open-probe", None),
+    ) {
         Ok(c) => c,
         Err(_) => return false,
     };

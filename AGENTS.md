@@ -124,7 +124,10 @@
   成员；原 allowBuilds 逐包裁决链已退役）；`.credentials.yaml`
   保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
   农场不得直写（陷阱清单见 roadmap §1）。
-- 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃都收干净子进程，不留孤儿。
+- 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃 / **硬杀（`SIGKILL`、强制退出）**都收干净
+  子进程，不留孤儿（2026-09-10 扩展，ADR-0015：原口径只覆盖"父进程临死前能跑代码"的
+  路径，硬杀会逃逸成持着会话写锁的孤儿——**新增 spawn 一律经 `lifecycle::spawn`/`run`**，
+  有机器闸门拦裸 `Command::spawn()`）。
 - **pnpm 为环境检查硬依赖**（2026-08-28，ADR-0009 口径 2；2026-09-03 修订补齐方式，
   ADR-0010）：pnpm 随壳内置恒在；node/pnpm/dsh 缺失一律走引擎引导补齐，WSL 客体
   同口径（ADR-0004 §7 + ADR-0010；原 `npm i -g pnpm` / tarball 机制随探测层退役）。
@@ -212,6 +215,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0012](docs/adr/0012-typed-boot-failure.md) | 启动失败错误类型化：boot 路径引入 `BootFailure` 枚举，子串分类降级为 `from_legacy_detail` 兜底；其余模块 `Result<_, String>` 不动 |
 | [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
 | [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
+| [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
 
 ## 10. 试验协议
 

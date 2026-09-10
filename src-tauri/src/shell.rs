@@ -96,9 +96,14 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         .stdout(Stdio::from(log.try_clone().context("克隆日志句柄")?))
         .stderr(Stdio::from(log));
 
-    let child = cmd
-        .spawn()
-        .with_context(|| format!("spawn {}", node_bin.display()))?;
+    // 守卫式 spawn（ADR-0015）：登记表 + 生命线 watcher——壳被硬杀时由 watcher
+    // 收口本进程，杜绝"孤儿 dsh 持着会话写锁"（本次事故根因）。
+    let child = crate::lifecycle::spawn(
+        &mut cmd,
+        crate::lifecycle::Role::DshServer,
+        crate::lifecycle::GuardCtx::of("dsh", Some(&launch.profile)),
+    )
+    .with_context(|| format!("spawn {}", node_bin.display()))?;
     tracing::info!(
         "dsh 已启动：pid={} profile={} tier={:?}",
         child.id(),
@@ -236,7 +241,13 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
     {
         let pid = child.id();
         let args = windows_kill_args(pid);
-        let killed = match crate::child_cmd(Path::new("taskkill")).args(&args).output() {
+        let mut tk = crate::child_cmd(Path::new("taskkill"));
+        tk.args(&args);
+        let killed = match crate::lifecycle::run(
+            &mut tk,
+            crate::lifecycle::Role::Probe,
+            crate::lifecycle::GuardCtx::of("taskkill", None),
+        ) {
             Ok(out) => {
                 if !out.status.success() {
                     tracing::warn!(
@@ -626,5 +637,89 @@ mod tests {
             let _ = d.child.wait();
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **真机端到端（需已装引擎，故 `#[ignore]`）**：走**生产同一条** `spawn_dsh`
+    /// 路径起一个真的 dsh，断言 ①登记文件就位 ②dsh 真的就绪 ③壳被硬杀后守卫收口它。
+    ///
+    /// 为什么值得留一条 ignore 测试：`lifecycle` 的单测用的是 `sleep` 替身，
+    /// 而这里验的是"真的 dsh 进程 + 真的 LaunchSpec + 真的 spawn_dsh"这条装配链
+    /// ——正是本次事故（会话写锁被孤儿 dsh 占死）的现场组件。
+    ///
+    /// 跑法：`cargo test --lib engine_session_is_guarded_and_reaped -- --ignored --nocapture`
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "需要本机已装引擎（engines/bin），CI 与无引擎环境跳过"]
+    fn engine_session_is_guarded_and_reaped() {
+        use crate::lifecycle::{self, Role};
+
+        let data_dir = crate::resolve::launch_data_dir_for_test();
+        let engine = match crate::engines::engine_dsh_bin(&data_dir) {
+            Some(b) => b,
+            None => {
+                eprintln!("跳过：本机引擎未就绪（{}）", data_dir.display());
+                return;
+            }
+        };
+        let node = crate::engines::engine_node_bin(&data_dir).expect("引擎 node");
+        lifecycle::init(&data_dir);
+        let _ = std::fs::remove_dir_all(lifecycle::procs_dir(&data_dir));
+
+        let launch = LaunchSpec {
+            node_bin: node,
+            dsh_entry: crate::resolve::DshEntry::Launcher { bin: engine },
+            dsh_home: crate::resolve::user_dsh_home(),
+            profile: "web".to_string(),
+            tier: crate::manifest::TierKind::Engine,
+            no_open: true,
+            first_bootstrap: false,
+        };
+        let mut proc = spawn_dsh(&launch, &data_dir).expect("spawn_dsh");
+        let pid = proc.child.id();
+
+        // ① 登记文件必须就位（清扫据此知道这是壳生的进程）。
+        let regs: Vec<_> = std::fs::read_dir(lifecycle::procs_dir(&data_dir))
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        assert_eq!(regs.len(), 1, "spawn_dsh 后应恰有 1 个登记文件：{regs:?}");
+        let body = std::fs::read_to_string(&regs[0]).unwrap();
+        let body_pid = lifecycle::parse_registration_pid(&body).expect("登记内容应含 pid");
+        assert_eq!(body_pid, pid, "登记 pid 必须是被 spawn 的那个");
+        assert!(body.contains("dsh-server"), "角色应为 dsh-server：{body}");
+
+        // ② 真 dsh 必须能就绪（导航 URL 从日志解析出来）。
+        let outcome = wait_for_ready(
+            &proc.log_path,
+            &mut || {
+                proc.child
+                    .try_wait()
+                    .ok()
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            },
+            &mut || None,
+            Duration::from_secs(20),
+            Duration::from_secs(60),
+        );
+        let ready = matches!(outcome, ReadyOutcome::Ready(_));
+        if !ready {
+            use std::os::unix::process::ExitStatusExt as _;
+            let log = std::fs::read_to_string(&proc.log_path).unwrap_or_default();
+            let st = proc.child.try_wait().ok().flatten();
+            panic!(
+                "真 dsh 未就绪：{outcome:?}（status={st:?} signal={:?}）\n--- dsh 日志（{}）---\n{log}",
+                st.and_then(|s| s.signal()),
+                proc.log_path.display()
+            );
+        }
+
+        // ③ 收口（等价于壳退出路径）——进程必须消失。
+        stop_dsh(&mut proc.child, Duration::from_secs(3));
+        assert!(
+            proc.child.try_wait().ok().flatten().is_some(),
+            "stop_dsh 后进程应已回收"
+        );
+        let _ = std::fs::remove_dir_all(lifecycle::procs_dir(&data_dir));
+        let _ = Role::DshServer;
     }
 }

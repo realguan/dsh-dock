@@ -217,7 +217,13 @@ fn probe_version(bin: &Path, env: &[(String, String)]) -> Option<String> {
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let out = cmd.output().ok()?;
+    // 探测类（短命）：走守卫 seam 保持"无例外"，但 Role::Probe 不配生命线。
+    let out = crate::lifecycle::run(
+        &mut cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("pnpm --version", None),
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -273,7 +279,12 @@ pub fn stage_pnpm_from_bundle(bundle: &Path, data_dir: &Path) -> Result<PathBuf>
     std::fs::create_dir_all(&tmp).with_context(|| format!("创建暂存目录 {}", tmp.display()))?;
     let mut tar = crate::child_cmd(Path::new("tar"));
     tar.arg("-xzf").arg(bundle).arg("-C").arg(&tmp).arg(member);
-    let out = tar.output().context("执行系统 tar 解包 pnpm 失败")?;
+    let out = crate::lifecycle::run(
+        &mut tar,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("tar", None),
+    )
+    .context("执行系统 tar 解包 pnpm 失败")?;
     if !out.status.success() {
         bail!(
             "tar 解包 pnpm 失败：{}",
@@ -302,7 +313,12 @@ fn run_engine_pnpm(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    let out = cmd.output().context("spawn 引擎 pnpm 失败")?;
+    let out = crate::lifecycle::run(
+        &mut cmd,
+        crate::lifecycle::Role::Pnpm,
+        crate::lifecycle::GuardCtx::of("pnpm", None),
+    )
+    .context("spawn 引擎 pnpm 失败")?;
     if !out.status.success() {
         bail!(
             "pnpm {} 失败：{}",
@@ -334,7 +350,14 @@ fn run_engine_pnpm_streaming(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().context("spawn 引擎 pnpm 失败")?;
+    // 守卫式 spawn（ADR-0015）：`runtime set node` / `add -g` 是**分钟级**动作，
+    // 壳在中途被硬杀会留下占着 pnpm store 的孤儿，令下次引导失败。
+    let mut child = crate::lifecycle::spawn(
+        &mut cmd,
+        crate::lifecycle::Role::Pnpm,
+        crate::lifecycle::GuardCtx::of("pnpm", None),
+    )
+    .context("spawn 引擎 pnpm 失败")?;
     // stderr 并发排水：管道塞满（64KB）会让子进程写阻塞、stdout 永不 EOF，
     // 与「先排干 stdout 再 wait」互锁成死等（无超时）。行进 debug 日志，
     // 失败时取尾部并入错误详情。

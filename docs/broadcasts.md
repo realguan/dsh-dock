@@ -31,6 +31,45 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-10 宪法级（AGENTS §6/§9）· ADR-0015 子进程生命周期归属——硬杀收口 + 孤儿清扫 —— guan（AI 协作）
+
+- **变更**：新增 `docs/adr/0015-child-process-lifecycle-ownership.md`（已接受）+ 配套
+  `docs/contracts/child-lifecycle.md` + `src-tauri/src/lifecycle.rs`（新模块）；
+  `child_cmd` 之外新增**唯一 spawn seam**（`lifecycle::spawn`/`run`），全部 19 处生产
+  spawn 面收敛到它；`boot.rs` probe 前挂启动期清扫；`resolve.rs::user_dsh_home` 加
+  **dev/prod 隔离**（`cargo build`/`test` → `~/.dsh-dock-dev`，release → `~/.dsh`）；
+  `nix` 增 `fs` feature（既有依赖加 feature，未新增 crate）；Windows 走裸
+  `extern "system"` Job Object（`KILL_ON_JOB_CLOSE`，未引 `windows-sys`）。
+- **触发**：用户报「会话点不开，弹 `SessionAlreadyOwnedError … (gateway/internal)`，
+  删会话 + 重启才恢复，且最近经常出现」。根因 = 11 个 `PPID=1` 的逃逸 dsh 持着
+  `session.lock` 内核写锁（锁属 dsh 协议、刻意无过期；孤儿属壳侧违约）。诊断见
+  `docs/known-issues/问题记录-2026-09-10-会话写锁被孤儿dsh占死.md`，dsh 侧行为入册
+  复现点 14（锁语义）+ 15（守卫依赖的 OS 行为）。
+- **影响**（需他人知悉）：
+  1. **AGENTS §6 不变量扩展**（宪法级）：1:1 生命周期从"退出/崩溃"扩到"**含硬杀**"；
+     §9 索引新增 0015 行；
+  2. **新增 spawn 必须经 `lifecycle::spawn`/`run`**，裸 `Command::spawn()`/`.output()`
+     被机器闸门（`production_spawns_go_through_lifecycle_seam`）拦下；豁免需在该行写
+     `// spawn-gate: exempt(<理由>)`；
+  3. **dev 与 release 的 `DSH_HOME` 从此不同**——开发期数据落在 `~/.dsh-dock-dev`，
+     不再污染用户的正式会话（这正是本次事故的放大器）；
+  4. `run()` 语义 = `Command::output()` 的守卫版（自己设 piped stdio + 退出后自清登记）。
+- **凭据**：`cargo test --lib` 262 绿（lifecycle 模块新增 18 例：清扫正/负例、复现锚 + 对照组、
+  fd/flock 语义、脚本契约、spawn 闸门、RAII 存活性）；`cargo fmt --check` + `clippy -D warnings`
+  绿；`cargo check --target x86_64-pc-windows-gnu` 绿（该目标 `cargo build` 的
+  `export ordinal too large` 为 mingw cdylib **既有**限制，已在基线复核确认非本次引入）；
+  前端 `typecheck`/`lint`/`test`（214）绿；真机引擎端到端（`--ignored` 用例：真 dsh
+  经守卫 spawn → 就绪 → 收口）绿；18 例 lifecycle 全绿 3.0s；**端到端硬杀验证**：
+  壳被 `SIGKILL` 后守卫子进程 ~0s 内被 watcher 收口。
+- **实施期推翻的两条设计细节**（已写入 ADR-0015 §7.1 / 契约 §2.2，防后人重蹈）：
+  ① 显式 `flock(LOCK_UN)` 会**连同子进程的持有一起撤销**（锁属打开文件描述）→
+  守卫改为只 close 绝不 unlock；② `pre_exec` + 固定 fd 号的 lifeline 通道在实机上让
+  `read` 立即失败、watcher **误杀正常运行的真 dsh**（症状：一启动就吃 SIGTERM）→
+  改用 `Stdio` 通道，并把失败方向改为"读不到就放弃收口、绝不误杀"；对应验收测试已加
+  **观察窗**，否则"误杀"会冒充"收口"而假绿。
+- **未做（登记待议）**：P0′ 会话维护显示持锁者 + 一键结束占用；安全模式（插件致崩后
+  引导禁用）；`scripts/repair-session.mjs` 不参与锁协议的边界观察。
+
 ### 2026-09-10 发版 · v1.1.0 重启交接带与设计 token 收口 —— guan（AI 协作）
 
 - **范围**：`v1.0.0..v1.1.0` 共 10 笔提交，两条主线（ADR-0014 重启/切换交接带 +

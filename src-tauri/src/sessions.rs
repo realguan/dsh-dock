@@ -447,9 +447,12 @@ fn scan_health_via_script(
     // 「运行中」复合判据前半（2026-09-07）：显式 1/0，避免「未设 = 不明」歧义。
     cmd.env("DSH_ENGINE_ALIVE", if engine_alive { "1" } else { "0" });
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("执行扫描脚本失败（无法拉起 Node）：{e}"))?;
+    let output = crate::lifecycle::run(
+        &mut cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("session-scan.mjs", None),
+    )
+    .map_err(|e| format!("执行扫描脚本失败（无法拉起 Node）：{e}"))?;
     let _ = fs::remove_file(&script_path);
 
     if !output.status.success() {
@@ -506,9 +509,12 @@ pub fn run_repair(
         cmd.arg("--all");
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("执行修复脚本失败（无法拉起 Node）：{e}"))?;
+    let output = crate::lifecycle::run(
+        &mut cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("repair-session.mjs", None),
+    )
+    .map_err(|e| format!("执行修复脚本失败（无法拉起 Node）：{e}"))?;
 
     let _ = fs::remove_file(&script_path);
 

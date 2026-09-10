@@ -911,9 +911,14 @@ impl Executor for WslExecutor {
                 log.try_clone().map_err(|e| e.to_string())?,
             ))
             .stderr(std::process::Stdio::from(log));
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("spawn wsl.exe 失败：{e}"))?;
+        // 守卫式 spawn（ADR-0015）：wsl.exe 即会话存活代理，硬杀会留下
+        // 客体里继续持锁的 dsh。
+        let child = crate::lifecycle::spawn(
+            &mut cmd,
+            crate::lifecycle::Role::DshWsl,
+            crate::lifecycle::GuardCtx::of("wsl.exe", Some(&self.profile)),
+        )
+        .map_err(|e| format!("spawn wsl.exe 失败：{e}"))?;
         self.child = Some(child);
         // 与本机档同口径：spawn 成功即收口（等待就绪归 step3）。
         sink(2, "done", &format!("WSL（{target}）内 DSH 已启动"));
@@ -1119,7 +1124,12 @@ fn deliver_via_stdin(distro: &str, bundle: &Path, expect: u64) -> Result<(), Str
     .stdin(std::process::Stdio::piped())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null());
-    let mut child = cmd.spawn().map_err(|e| format!("wsl.exe 启动失败：{e}"))?;
+    let mut child = crate::lifecycle::spawn(
+        &mut cmd,
+        crate::lifecycle::Role::Probe,
+        crate::lifecycle::GuardCtx::of("wsl.exe base64 投递", None),
+    )
+    .map_err(|e| format!("wsl.exe 启动失败：{e}"))?;
     {
         let mut sin = child.stdin.take().ok_or("wsl.exe stdin 不可用")?;
         sin.write_all(base64_encode(&bytes).as_bytes())

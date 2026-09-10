@@ -23,6 +23,7 @@ mod engines;
 mod executor;
 mod fs_backup;
 pub mod ipc;
+mod lifecycle;
 mod manifest;
 mod mcp;
 mod plugins;
@@ -167,6 +168,11 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
+            // 子进程生命周期子系统（ADR-0015）：**必须在任何 spawn 之前**装配
+            // ——它建好生命线管道（壳横死时由内核置 EOF 触发 watcher 收口）并
+            // 准备登记表。装配失败只降级不阻断（守卫是兜底，不是前置条件）。
+            lifecycle::init(&data_dir);
+
             // 主窗口在 setup 内创建（原 tauri.conf.json 静态定义移除）：只有
             // 代码创建才能挂 on_navigation / on_new_window 处理器——dsh Web UI
             // 里的外链与新窗口请求在 WebView 里默认点不动（2026-08-25 实测），
@@ -260,6 +266,20 @@ pub fn run() {
                 // 首启代际令牌（ADR-0014）：与后续切换/重试同一条闸门——
                 // 用户在首启尚未完成时就点重启，首启线程随之作废，不会双 spawn。
                 let token = boot_state.begin_boot();
+                // 启动期孤儿清扫（ADR-0015 §2）：上一代壳被硬杀（SIGKILL/强制退出/
+                // 崩溃）时可能留下仍持有会话写锁的 dsh——那是「会话打不开、只能删
+                // 会话」的事故根因。此处**在 probe 之前**收口它们：早于任何新一代
+                // 探测，避免与本次启动竞争同一份 profile 目录。
+                // 幂等、只作用于本数据目录的登记表、绝不触碰非登记进程。
+                let sweep = crate::lifecycle::sweep_orphans(&boot_data);
+                if !sweep.is_empty() {
+                    tracing::warn!(
+                        "启动期孤儿清扫：收口 {:?} / 陈旧 {} / 失败 {:?}",
+                        sweep.reaped,
+                        sweep.stale,
+                        sweep.failed
+                    );
+                }
                 let settings = crate::settings::load(&boot_data);
                 let mode = settings.default_mode.unwrap_or(settings::Mode::Local);
                 // 非 Windows：WSL 不存在（执行器编译为报错）——settings 里残留的

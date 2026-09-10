@@ -487,9 +487,15 @@ pub fn run_dsh_forward(
             log.try_clone().map_err(|e| e.to_string())?,
         ))
         .stderr(std::process::Stdio::from(log));
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn dsh 失败（{}）：{e}", program.display()))?;
+    // 守卫式 spawn（ADR-0015）：插件装卸 / 创建 profile 走这条 CLI 转发链
+    //（用户排障主路径），最长 10 分钟——壳此时被硬杀会留下占住 profile 目录
+    // 与 pnpm store 的孤儿。
+    let mut child = crate::lifecycle::spawn(
+        &mut cmd,
+        crate::lifecycle::Role::DshCli,
+        crate::lifecycle::GuardCtx::of(&program.display().to_string(), None),
+    )
+    .map_err(|e| format!("spawn dsh 失败（{}）：{e}", program.display()))?;
     let deadline = std::time::Instant::now() + CREATE_FORWARD_TIMEOUT;
     loop {
         match child.try_wait() {

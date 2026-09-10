@@ -26,6 +26,8 @@
 | 11 | 插件运行时清单（4.4 前置，Spike B） | 壳侧回环调用（实施时落位；仅会话在跑时 `POST http://127.0.0.1:<port>/api/pluginInventory/list`，信封 `{type:"client-request",rpcId,method,payload:{args:{}}}`，见 `docs/spikes/0002-plugin-inventory.md`） | unary 调用兼走普通 HTTP POST（`dsh-client-connection` callUnary @ 6203-6211：`postJson("/api/${method}")`）；`payload` 恰一 plain-object `args` 字段；响应 `{entries:[{entryId,moduleName,enabled,fiberPhase}]}`（`dsh-host-plugin-inventory/typert.host.js` schema；FiberState→phase 映射 index.js @ 33-46，disposed→null）；回环无鉴权门（伪造 Host 仍 200，2026-08-29 实测）；patch/配置行 id ≠ entryId（无组前缀 vs `include:*` 树路径），patch 写入 id 以 `--dump-config` 行 id 为准 | 2026-08-29 |
 | 12 | pnpm 12 构建脚本审批门（4.4② 插件操作失败的主新因） | ~~`build_approvals.rs`（`parse_ignored_builds` 解析被点名包 + `set_profile_build_approvals` 受控改写 allowBuilds，写入例外 #5 / ADR-0009 第六次修订）~~ **2026-09-09 退役（ADR-0013）**：改默认批准——`build_policy.rs` 幂等写 profile 顶层键 `dangerouslyAllowAllBuilds: true`（pnpm 12.3.1 实测两种门槛形态均被压过，含 `allowBuilds` 显式 false）；解析/裁决链删除 | pnpm ≥12（本机 12.3.1 实测 2026-09-07）：`pnpm add` 装完全部包后，依赖树存在未获批安装脚本的包 → 追加 `allowBuilds: {包名: "set this to true or false"}` 模板进项目 `pnpm-workspace.yaml`（占位串在 pnpm 二进制内，非 dsh 生成）+ `ERR_PNPM_IGNORED_BUILDS` **退出 1**；`allowBuilds.<pkg>: false` = 显式忽略→退出 0；`true` = 真跑脚本（本机无 node-gyp 时 cpu-features 类包 127 失败——true 并非总可行）。dsh `runPlugin`（`@deepseek-ai/dsh` 0.1.2-rc.1 `lib/plugin-F7ZVfRyo.js`）= 裸 `spawnSync("pnpm", args, cwd=profile目录)` 透传退出码，非 0 跳过 reconcile → 半安装态（包已落盘/manifest 已写/bundles 未更）；其错误提示明示人工出路 = 编辑 pnpm-workspace.yaml allowBuilds 后重跑。dsh 全局安装目录的 allowBuilds 由 dsh 侧自填 true（核心原生依赖自带 prebuilds），**插件依赖树的包 dsh 不预批**——每次装/更新插件都可能撞门。**升级复核项**：pnpm 升级后占位模板/错误码措辞变化、dsh 升级后 runPlugin 是否自带审批处理；**2026-09-09 新增**：`dangerouslyAllowAllBuilds` 键名/语义是否仍在（ADR-0013 复审条件） | 2026-09-07 |
 | 13 | 补丁包开关：段落归属 + 浅覆盖禁用 + 组禁用继承（4.4③ 补丁包，ADR-0009 第七次修订） | `plugins.rs`（`parse_dump_rows_with_section` 段落归属 + `build_row_states` 合成条目；`set_plugin_disabled` 写面不变） | dsh 0.1.2-rc.1 实测 + 源码锚定：① `dsh --profile <名> --dump-config` 为每个 bundle 输出顶格段落注释 `# == <bundle 包名>`（机器生成，实测 web 档：`# == @openviking/dsh-memory-plugin` 段内 = 它 insert 的行 `openviking-memory` 组；`# == dsh-better-sidebar` 段内 = 自身行）——段内行 = 该 bundle 声明/插入的行，补丁包（`dsh.bundle.patch` 纯 insert、自身不成行）由此可映射「包 → 贡献行」；**段头变体**：段落有 profile patch 命中时追加 `, patched by <路径>` 后缀（`# == @tt-a1i/archify-dsh, patched by /…/cordis.patch.yml`，2026-09-08 注入实机验证）——解析归属名须取逗号前；② include 插件 patch = 浅覆盖：`applyEntryPatches`（`cordis-plugin-include@1.0.7` lib/index.js）`{id, insert, name, ...overrides}` 对匹配行逐键写 overrides、`disabled` 属 overrides——profile patch 写 `- id: <贡献行>\n  disabled: true` 只置禁用位，原行 name/config 不丢（`name` 键只在 patch 也带 name 时才校验，写入不带即无匹配门）；③ loader 禁用继承：`cordis-plugin-loader@1.0.3` lib/index.js `Group.disabled`（@ 359-368）= 自身或**任意父级**条目禁用即禁用，`disabledOf` 支持 `!!js`（@ 377-379）——对组贡献行（`openviking-memory`）写一条 disabled 即组内全部子行禁用。**升级复核项**：dump 段落注释格式可能变（行表配对解析同通道脆弱点）、applyEntryPatches 签名/浅覆盖语义、loader 父级继承实现 | 2026-09-08 |
+| 14 | 会话写所有权 = 跨进程内核租约（无过期） | 壳侧暂无消费点（P0 孤儿回收 / P0′ 持锁者诊断的设计依据；当前只为排查口径） | dsh 0.1.5-rc.1 实测 + 源码锚定（2026-09-10）：每个会话目录 `session.lock` 一把**内核**写锁——POSIX 非阻塞 `flock(2)`（锁的是 inode；加锁后校验 inode 未漂移，unlink+重建即失守），Windows 用具名内核信号量（**无锁文件**）；**刻意无过期**——「活着的持锁者一直持有，直到其进程退出；绝不设过期去剥夺一个卡住的写者」。争用 → `SessionAlreadyOwnedError`（`… is already owned by an active write handle`）；写打开时取锁，进程死亡由内核释放。实测：21 个 `session.lock` 逐个 `flock(LOCK_EX\|LOCK_NB)`，报 LOCKED 者与 `lsof` 持有者完全一致；对持有者发 SIGTERM 后锁即刻可获取（无残留）。**读者不碰锁**（读/搜索/删目录不受影响）。错误呈现层与锁无关：gateway 把任意 resume 异常包成 `RemoteError('gateway/internal', 'resume failed for session …')`（`dsh-api-session-controller/lib/index.js:238`）——**`gateway/internal` 是包装层，不是持有者**。**升级复核项**：`LEASE_FILENAME`、无过期语义是否仍在；错误类名与 gateway 包装文案是否变化 | 2026-09-10 |
+| 15 | 壳侧子进程守卫所依赖的 OS 行为（fd 继承 / flock 语义 / 硬杀连坐） | `lifecycle.rs`（登记锁 fd 继承 + 生命线 watcher + 启动期清扫；ADR-0015 §7/§7.1 实测依据） | 2026-09-10 实机实测（macOS，node = 引擎 v24.18.0）：① **node 全程保留**继承来的 fd（父 `flock` 后经 `pass_fds` 传入，`lsof` 见 `3u REG … .lock`）——登记锁判据成立；② 该 fd **不流入孙进程**（node 内 `spawnSync('sleep')`，孙进程 `lsof` 无该 fd）——登记锁与「壳的直接子进程」严格 1:1，不因孙进程存活而误判；③ 父被 `SIGKILL` 后子进程仍持锁（`flock(LOCK_EX\|LOCK_NB)` 报 LOCKED）——孤儿可被探测；④ 子进程死亡后锁由**内核**自动释放（复测 UNLOCKED）。**flock 关键语义**：锁属**打开文件描述**，`fork`/`dup` 共享同一描述 → 显式 `LOCK_UN` 会**连同子进程的持有一起撤销**（实测：父 `LOCK_UN` 后探测立即 UNLOCKED），而仅 `close()` 父 fd 则子进程仍持有（探测 LOCKED）。故守卫**只 close 绝不 unlock**（`Registration::drop` 注释 + `sweep_reaps_live_orphan_*` 锚定）。**升级复核项**：node 未来版本是否仍保留继承 fd（若不保留，清扫判据退化为 pid + 启动时间双校验，见契约 §2.1） | 2026-09-10 |
 
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
@@ -98,3 +100,26 @@
   压过两种门槛形态（npm 依赖 + git `prepare`，且 `allowBuilds` 显式 false 也被压过、
   `prepare` 确实执行）。壳侧改为幂等写该顶层键，解析/裁决链删除；pnpm 两种门槛
   形态的事实描述仍保留在第 12 行（升级复核项追加键名存续性）。
+- 2026-09-10 复现点 14 入册（会话写租约语义与争用）：触发 = 用户报「会话点不开，
+  弹 `SessionAlreadyOwnedError … (gateway/internal)`，删会话 + 重启才恢复，且最近
+  经常出现」。实机取证链条：报错文案定位到 gateway 包装层（
+  `dsh-api-session-controller/lib/index.js:238`，`gateway/internal` 非持有者）→
+  锁语义源码锚定（`dsh-session-persistence-jsonl/lib/types/lease.d.ts`：POSIX
+  `flock(session.lock)` / Windows 具名信号量，**刻意无过期**）→ 21 个
+  `session.lock` 逐个 `flock(LOCK_EX|LOCK_NB)` 探测，LOCKED 集合与 `lsof` 持有者
+  完全互证 → 持有者锁定为 `PPID=1` 的 `.dev` 逃逸 dsh（`pid 85156`，持的正是报错
+  会话）。根因 = 壳侧子进程逃逸的**历史存量**（会话槽覆盖，已由 ADR-0014 /
+  `0cd40c2` 2026-09-10 17:05 修复；11 个孤儿全部创建于该修复构建之前）+ **硬杀
+  绕过**（SIGKILL 不走 `RunEvent::Exit`，teardown 无从执行——残余风险待 ADR）+ 无
+  任何逃逸进程回收机制 + dev/prod 共用 `DSH_HOME` 放大到正式包。处置 = 11 个孤儿
+  SIGTERM 回收（全部正常退出），复测仅剩活着的正式包 dsh 持有的两把锁；未触碰
+  正式包进程。诊断全文见 `docs/known-issues/问题记录-2026-09-10-会话写锁被孤儿dsh占死.md`
+  （含 P0/P0′/P1/P2 修复建议，未实施）。**升级复核项**已入第 14 行。
+- 2026-09-10 复现点 15 入册（守卫所依赖的 OS 行为）：触发 = ADR-0015 方案 A 实施。
+  该 ADR 把「node 是否全程保留继承 fd」列为**实施前置**（不成立则清扫判据退化），
+  刀 0 实测通过并额外发现**fd 不流入孙进程**（使登记锁与直接子进程 1:1）。实施中
+  又踩到两条 flock/fd 语义坑并已固化进代码与闸门：① 显式 `LOCK_UN` 会撤销**整个
+  打开文件描述**的锁（含子进程的持有）→ 守卫改为只 close；② `pre_exec` + 固定 fd 号
+  的生命线通道在实机上让 `read` 立即失败，watcher **误杀**正常子进程（真 dsh 一启动
+  即吃 SIGTERM）→ 改用 `Stdio` 通道且失败方向改为"宁可不收口也不误杀"（详见
+  ADR-0015 §7.1）。
