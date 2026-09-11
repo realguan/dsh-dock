@@ -287,6 +287,26 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
   发版级缺陷；③ 引入自托管 runner。
 - **注意**：**不得**用「CI 全绿」充当该类的验证证据——见 v110 §1 与 v120 §10.4。
 
+#### 4.17 陷阱：跑生产 shell 脚本的测试，工具夹具须落 `$HOME/.dsh-dock/engines/bin`（2026-09-11 登记）
+
+- **现象**：`updates.rs::world_probe_tests::guest_script_output_parses_into_versions` 在
+  GitHub macOS runner 上读到 `node v24.20.0` 而非夹具的 `v24.18.0`（CI `34618124850` 红）。
+- **机制**：被测脚本经 `guest_prep!()` 开头 `. /etc/profile`；macOS 的 `/etc/profile` 执行
+  `path_helper`，把 `/etc/paths` 各项（**首项 `/usr/local/bin`**）**前置**到 PATH，并将
+  继承 PATH 推到末尾 ⇒ **只把夹具放进继承 PATH 必输**给 `/usr/local/bin` 里的真工具。
+  脚本在 source 完三个 rc **之后**才 `PATH="$DSH_ENGINES/bin:$PATH"` ⇒ 夹具放该目录**确定胜出**
+  （qa-verify 用最大敌意序实测：竞争者同时在继承 PATH/`.profile`/`.bashrc` 仍绿）。
+- **为什么难本机发现（双重巧合）**：① `/usr/local/bin/node` 本机不存在；② 本机真 node
+  （引擎 bin）**恰为 v24.18.0，与夹具期望同值** ⇒ 夹具失效时**版本断言也看不出来**。
+- **⚠️ 第二次同根因**：`executor.rs::run_guest` 已密封且注释写明同一机制（修于 `2e097b8`/`4cf0b2d`，
+  2026-08-26）。**复发说明"记得"不管用** ⇒ 纪律化：
+  **凡测试要跑生产 shell 脚本（`bash -c <生产脚本>`），其 node/pnpm/dsh 夹具一律落
+  `$HOME/.dsh-dock/engines/bin`，并加"路径必须在假 HOME 内"的自证断言**。
+- **判据**：夹具自证断言**在修前旧放法下即为红**（qa-verify 实测）⇒ 它钉的是**放法前提**，
+  比版本断言更早更敏感。
+- **同类残留**：全仓扫描未见同失效类（`guest.rs` 6 条断言不敏感；`sessions.rs` 13 条属
+  另一子类——有意用真 node，无 node 时优雅跳过）。**再评触发** = 新增任何"跑生产脚本"的测试。
+
 ---
 
 ## 5. 不做清单（明确后置或不做的方向）

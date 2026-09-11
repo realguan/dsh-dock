@@ -32,6 +32,39 @@
 
 ## 三、记录
 
+### 2026-09-11 推 CI 后补修：guest 脚本夹具密封化（第二次同根因）—— guan（AI 协作）
+
+- **触发**：推 `2e864a4` 后 CI run `34618124850` **`build (macos-latest)` 单测红**（其余 3 leg 含 Windows 全绿）：
+  `updates::world_probe_tests::guest_script_output_parses_into_versions` →
+  `panicked at src/updates.rs:1587: assertion `left == right` failed: 脚本的 v 前缀须被归一`
+  · `left: Some("24.20.0")` / `right: Some("24.18.0")`。
+- **根因（机制已复现）**：`guest_prep!()` 开头 `. /etc/profile`；macOS 的 `/etc/profile` 执行
+  `path_helper`，把 `/etc/paths` 各项（**首项 `/usr/local/bin`**）**前置**到 PATH。
+  GitHub macOS runner 的 node 恰在 `/usr/local/bin`（v24.20.0）⇒ 夹具只把 shim 放进 PATH 时
+  被 runner 的真 node 顶掉。
+- **本机为何绿 = 双重巧合**（非可靠）：① `/usr/local/bin/node` 不存在；② 本机真 node
+  （引擎 bin）**也是 v24.18.0，与夹具期望值同值** ⇒ 夹具即使失效，版本断言也**瞎**。
+- **修复**（`053e156`）：shim 落 `$HOME/.dsh-dock/engines/bin`——该目录由脚本在
+  source 完三个 rc **之后**才前置，故确定胜出；并加**夹具自证断言**（脚本读到的 node 路径
+  必须在假 HOME 内），比版本断言更早、更明确地报因。
+- **⚠️ 这是第二次同根因，不是新问题**：`executor.rs::run_guest` **早已密封**，且其注释
+  **独立写明同一根因**（macOS `/etc/profile` → path_helper → `/usr/local/bin/node`，
+  GitHub Actions macOS 实测），修于 `2e097b8` / `4cf0b2d`（2026-08-26）⇒ 本次在
+  `updates.rs` 复发。**纪律（新）**：跑生产 shell 脚本的测试，其**工具夹具一律落
+  `$HOME/.dsh-dock/engines/bin`**，不得只依赖继承的 PATH。已登记 roadmap §4.17。
+- **端到端判据（决定性）**：**本机绿不算证据**（M10/M11 同类）——以 CI 为准：
+  绿 run **`34619208743` 4/4 leg 全绿**，其中 `build (macos-latest)` 正是前一个 run 红掉的那条。
+- **独立验证**：qa-verify 用**真实生产脚本**做 4 态矩阵（旧放法复现 `v24.20.0`，与 CI 报错
+  **逐字一致**；新放法绿）+ **最大敌意序**（竞争者同时在继承 PATH / `.profile` / `.bashrc`）
+  仍绿 ⇒ **结构性免疫**；并实测「版本断言在同变异下 0 命中」（证实本机确实瞎）、
+  「该自证断言在修前旧放法下即为红」（本可本机提前抓出）。见
+  `docs/team/V120-CI补修-夹具密封化.md`。
+- **同类残留**：全仓矩阵扫描**未发现同失效类**（`guest.rs` 6 条经敌意 PATH 实测确认断言
+  不敏感；`sessions.rs` 13 条属另一子类——有意用真 node，无 node 时优雅跳过：33 绿）。
+- **边界**：本机无法把真 node 放进 `/usr/local/bin`（非 root + 不可写）⇒ 本机证据是
+  **机制模型**而非 CI 机制本身；CI runner 的 PATH 快照未取。
+- **凭据**：`053e156`（补修）· `2e864a4`（首推）· CI `34618124850`（红）/ `34619208743`（绿）。
+
 ### 2026-09-11 v1.2.0 实测问题处置（8 条）· 跨层契约元结论 —— guan（AI 协作）
 
 - **输入**：`docs/known-issues/v120-测试问题.md`（v1.2.0 Windows 实机，4 张截图）
