@@ -31,6 +31,29 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 补记 · Windows 目标 clippy 本地可跑（桩 C 工具链法）+ 首次 CI 红灯复盘 —— guan（AI 协作）
+
+- **红灯**：上一批（`a870d2d`）推 CI 后 `build (windows-latest)` 在 **Rust clippy gate** 红 ——
+  `src/guest.rs` 的 `write_home_files` 上限检查里 `content` 未参与诊断（只报路径），
+  Windows 目标 `-D warnings` 判「unused variable」；macOS/Ubuntu 全绿（该函数体在非 Windows 被
+  cfg 掉，宿主 clippy 看不到）。修复：`de74cd1`（改 `_` 绑定）。
+- **教训（AGENTS §1 的又一处实证）**：`#[cfg(windows)]` 函数体的 lint 只有「Windows 目标 clippy」
+  能看见；宿主 clippy 全绿**不蕴含** Windows 全绿——本批第一批的原语地基就是在 CI 上才补上这条。
+- **可复用做法（本机无 mingw，但把 windows 目标 clippy 跑起来了）**：
+  依赖里 `ring` 等 C 构建脚本要 `x86_64-w64-mingw32-gcc`，`tauri-winres` 还要 `windres`，
+  缺工具链时 cargo 在依赖阶段就失败。用**假工具链**顶掉 C 编译即可让 Rust 侧 lint 全量生效
+  （clippy 是 check-only，不链接，假 `.o`/`.a` 不影响判据）：
+  ```bash
+  # /tmp/<dir>/x86_64-w64-mingw32-{gcc,ar,windres} 皆为「解析 -o 后 touch 该文件再 exit 0」的脚本
+  PATH=/tmp/<dir>:$PATH \
+  CC_x86_64_pc_windows_gnu=/tmp/<dir>/x86_64-w64-mingw32-gcc \
+  AR_x86_64_pc_windows_gnu=/tmp/<dir>/x86_64-w64-mingw32-ar \
+  cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # → Finished（零告警）
+  ```
+  边界（如实）：只验 Rust 侧编译与 lint（含 `#[cfg(windows)]` 函数体与测试目标），
+  **二进制链接与运行仍只在 CI/真机**；桩件放 `/tmp`，不入库（AGENTS §8 不建无用 scripts/）。
+- **影响**：仅周知；后续涉 Windows 分叉的改动，推 CI 前应本地跑一次上述命令，可省一轮红灯往返。
+
 ### 2026-09-11 分支推送 · ADR-0016 P1 第二批（a–e 接线）：控制中心在 WSL 模式下管到真正的世界 —— guan（AI 协作）
 
 - **变更**（分支 `feat/wsl-guest-management-plane`）：新增 `src-tauri/src/mgmt.rs`（管理面世界择源 +
