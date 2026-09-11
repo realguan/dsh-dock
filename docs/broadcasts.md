@@ -31,6 +31,48 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+
+### 2026-09-11 合并 PR #13（WSL 客体管理面 ADR-0016）并统一 patch 写入内核 —— guan（AI 协作）
+
+- **背景与目标**：`feat/wsl-guest-management-plane`（PR #13，15 笔）与本地 `master`
+  未推送的 28 笔**同基点 `6956a9a`**，构成标准双向分歧。维护者裁定方案 A：
+  本地合并 + 解冲突 + 修 S1 + 验证，然后一次 push。
+- **变更清单**：
+  1. **合并**（`4d5c1d7`，`--no-ff`）：解 6 文件 15 块冲突。
+     `AGENTS.md` 取我方 §7 压缩（55 条命令零缺失）＋分支实质新增（WSL 客体管理面
+     网络登记、ADR-0016 索引）；§11 回收后**全文 250/250 · §6=39 · §7=39**；
+     `docs/broadcasts.md` 倒序档案**两侧条目并存**（本轮 3 + 分支 8）；`lib.rs`
+     两侧 `mod` 均保留；`commands/profile.rs` 取分支「世界择源」结构 ＋ 我方 C3 措辞。
+  2. **S1 修复（核心）**：分支客体 patch 写入走 `render_patch_entries`
+     （整数组重序列化 ⇒ **除头部连续注释块外注释全丢**）且**无备份**，与 AGENTS §6
+     已登记的「统一走 `plugins.rs::PatchFile`」冲突，裸合并会让登记失真。
+     修法 = **宿主与客体共用同一份保真语义**：`PatchFile::from_text` 提为
+     `pub(crate)`、抽出纯函数 `render()`、`write()` = render + 覆写前备份（fail-closed）
+     + 原子替换；**删除分支第二套内核**；四条客体 patch 写入路径
+     （`set_plugin_disabled_in_guest`、`copy_plugin_config` 客体分支、
+     `save_mcp_server_in_guest`、`delete_mcp_server_in_guest`）全部改为
+     「同一内核 + 客体侧 `guest::backup_file` + 原子写」；`mcp.rs` upsert/remove
+     提取为共用内核，未命中即**逐字节原样返回**。
+  3. **回归保护**（判据 = 回退真实现即红）：新增
+     `mcp::tests::guest_apply_paths_preserve_comments_and_key_order`（钉客体文本进出
+     路径保真）与 `plugins::op_tests::disabling_one_row_preserves_other_rows_inline_comments`
+     （钉未改动条目的行间注释）。**已注入自证**：换回旧内核 ⇒ sha256 变化、测试红在
+     `src/mcp.rs:650` 的**目标断言本体**（非副判据）、恢复后 sha256 逐字节回一致、
+     残留扫描 0。
+  4. **`AGENTS.md` §6**：该条措辞补「宿主/客体同一内核」。
+- **影响**：合并后测试 **332 → 364 passed**；WSL 客体管理面（ADR-0016 P1/P2/P3）
+  与本地本轮全部改动同时可用，且 `cordis.patch.yml` 的保真+备份语义在**宿主与客体
+  两侧一致**。分支 tip 已成为 HEAD 祖先 ⇒ push 后 PR #13 自动标记 merged。
+- **验证**：提交态四闸门 `fmt=0` / `cargo test 364 passed 0 failed 3 ignored` /
+  宿主 clippy `0` / win-gnu clippy `0`；前端 typecheck 干净、lint 0-0、**308 passed**；
+  **全新克隆独立复核**（不依赖本仓 `target/`）同为 364 全绿。
+  过程教训：我用 `&&` 串联闸门时 `fmt` 失败导致 **test 静默未执行**，已改为逐闸门
+  取独立 exit code（与 M7「提交态验证」同族）。
+- **未做（边界，不假装闭合）**：**尚未 push**；分支 CI 的绿是对 `origin/master` 的绿，
+  **不能推出合并后绿**；本机无原生 MSVC，合并新增的 `#[cfg(windows)]` 面宿主 clippy
+  覆盖不到；Linux clippy/打包本机不可执行；Windows 真机验证按指示搁置。
+- **完整记录**：`docs/team/PR13整合实施记录-2026-09-11.md`（含逐文件决策与零损失核对）。
+
 ### 2026-09-11 第二轮 · 网络面机器闸门 + i18n 六类缺陷 + §6 措辞校正（5 笔）—— guan（AI 协作）
 
 - **范围**：本轮由同一 AI 团队（5 角色 + lead）完成，共 9 个共享任务；提交 5 笔，**未推送**。

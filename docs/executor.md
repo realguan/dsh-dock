@@ -141,8 +141,14 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 
 ## 验证状态
 
-- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（285 tests，
-  2026-09-10；含 ADR-0015 子进程生命周期与 v1.1.0 Windows 修复两批）。
+- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（364 tests，
+  2026-09-11；含 ADR-0015 子进程生命周期、v1.1.0 Windows 修复、ADR-0016 客体管理面与
+  PR #13 合并三批）。
+- **新环境复现步骤（2026-09-11 实证，易踩）**：`git clone` 后直接 `cargo test` 会因
+  build.rs 的 `resources/pnpm/**/*` glob 匹配为空而中断——`src-tauri/resources/`
+  （`pnpm/`、`dsh-snapshot/`）按 AGENTS §2 **永不入库**、由打包期脚本拉取。
+  复现前须先备好该目录（或跑 `scripts/fetch-pnpm-bundle.sh`）；**这是预期行为，
+  不是代码缺陷**（本次全新克隆独立复核时实测遇到）。
 - **Windows 分叉的 lint 怎么在本地看见（2026-09-11 实证，无 mingw 也能跑）**：
   宿主 clippy 全绿**不蕴含** Windows 全绿——`#[cfg(windows)]` 函数体只有 windows 目标
   clippy 看得见（本批 `guest::write_home_files` 的未使用变量就是这样漏到 CI 才红，复盘见
