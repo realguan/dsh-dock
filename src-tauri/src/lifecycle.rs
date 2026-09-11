@@ -891,8 +891,6 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
 /// `/T` = 整棵进程树、`/F` = 强制（Windows 无 POSIX 信号；`/F` 即 `TerminateProcess`）。
 /// 少 `/T` 会退回「只杀 `cmd.exe` 壳层、pnpm shim 的 node 继续跑」的老漏洞（ADR-0014）。
 #[cfg_attr(not(windows), allow(dead_code))]
-// 说明：截断标记形如 \n#[cfg(test)]\nmod tests（本注释含该字节序列）
-pub fn zz_t1(t: &str) -> Option<String> { crate::shell::parse_detected_url(t) }
 
 pub(crate) fn reap_args(pid: u32) -> Vec<String> {
     vec![
