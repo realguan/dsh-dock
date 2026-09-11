@@ -105,7 +105,7 @@ cd frontend && pnpm run typecheck && pnpm run lint && pnpm run test
 
 | # | 差距 | 后果与对策 |
 | :--- | :--- | :--- |
-| R1 | 本机 Windows 校验是**交叉** `--target x86_64-pc-windows-gnu`（MinGW ABI），CI `windows-latest` 跑**原生 MSVC** | 交叉 gnu ≠ 原生 msvc。新增 Windows 专属代码（`cfg(windows)` 分支、被打包器编译的路径）**不可只凭本机交叉绿断定 CI 会绿**——v1.1.1 首次构建红即此成因链。对策：推 master 让 CI 三平台实跑一遍再定论 |
+| R1 | 本机 Windows 校验是**交叉** `--target x86_64-pc-windows-gnu`（MinGW ABI），CI `windows-latest` 跑**原生 MSVC** | 交叉 gnu ≠ 原生 msvc。新增 Windows 专属代码（`cfg(windows)` 分支、被打包器编译的路径）**不可只凭本机交叉绿断定 CI 会绿**——v1.1.1 首次构建红即此成因链。对策：推 master 让 CI 三平台实跑一遍再定论。**2026-09-11 补充（反向亦成立，已实证）**：**交叉目标能抓到宿主漏掉的真错误**——`#[cfg_attr(not(windows), allow(dead_code))]` 后一个空行，**宿主 clippy 绿、win-gnu clippy 红**（`empty line after outer attribute`）。机理：`cfg_attr` 的**假谓词分支**会把属性整体移除，代码在宿主上编译但**展开结果相反** ⇒ 这是 `cfg(windows)` 盲区的**隐形变体**。正确口径 = **宿主 / 交叉 / CI 原生三条链路互补，任一缺失都有盲区**；本地常规闸门**必须含 win-gnu clippy**（详见 `docs/team/msvc差异推演-2026-09-11.md`） |
 | R2 | Linux 目标 clippy 在本机**不可执行**（缺 `webkit2gtk-4.1` / `javascriptcoregtk-4.1` / `gtk+-3.0` / `libsoup-3.0` / `ayatana-appindicator3-0.1`，`glib-sys` build script 失败 exit 101） | 环境缺失，非代码红。Linux 侧 lint 结论只能由 CI 给出 |
 
 - 冷跑基线前留意磁盘：`target/` 已占 ~21 G（可用空间紧张时先 `cargo sweep`）。
