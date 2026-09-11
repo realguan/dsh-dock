@@ -31,6 +31,22 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 补记 · `gh` token 已补 `workflow` scope（上条遗留动作项闭环）—— guan
+
+- **原委**：上一条（依赖升级处置）登记了本机 `gh` token 缺 `workflow` scope、导致
+  `gh pr merge` 无法合并任何改动 `.github/workflows/` 的 PR，并留下动作项
+  `gh auth refresh -s workflow`。维护者已执行。
+- **核实**：`gh auth status` 现为
+  `'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'`；账号 realguan、
+  git 协议仍为 ssh（`gh auth refresh` 仅重签 OAuth token，不影响 SSH 推送）。
+- **核实边界（如实登记）**：本次只在 **scope 层**核实（即 GitHub 检查所依据的字符串，
+  也正是原报错点名的那个 scope），**未端到端实证一次真实合并**——当前无开启中的
+  workflow 类 PR，且不为此制造测试 PR。下一个 Dependabot workflow PR 合并时即为实证点。
+- **另核**：三个已关闭 PR 未被 Dependabot 重新提起，说明它读得懂行内 `# v6.1.0` 注释、
+  视该依赖为最新，故不会重复提案。
+- **影响**：仅周知。后续 workflow 类依赖 PR 可正常走 `gh pr merge`（正常标记为 merged，
+  不再需要"关闭 + 说明"的绕行）。
+
 ### 2026-09-11 依赖升级 · 三个 Dependabot PR 处置（合 2 · 改 1 后关闭）—— guan（AI 协作）
 
 - **背景**：GitHub 积压 3 个 Dependabot PR（#10 pnpm/action-setup、#11 actions/checkout、
