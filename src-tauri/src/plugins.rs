@@ -927,51 +927,219 @@ fn manifest_dependency_names(manifest_path: &Path) -> Result<Vec<String>, String
     Ok(names)
 }
 
-/// 读 patch 文件为 (头部注释块, 顶层数组条目)。头部 = 从首行起连续 `#` 行与其
-/// 间空行（用户可见文档，序列化会丢，写回原样前置；其余位置注释不保，已知
-/// 代价——ADR 第四次修订）。顶层数组之外还有内容 → 拒绝（patch 方言即数组）。
-/// 文件必须存在（缺失 = 三件套不完整，不代 dsh 生成）。
-fn read_patch_entries(path: &Path) -> Result<(String, Vec<serde_yaml::Value>), String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
-    let mut header = String::new();
-    let mut body_start = 0usize;
-    for (i, line) in text.lines().enumerate() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            header.push_str(line);
-            header.push('\n');
-            body_start = i + 1;
-        } else {
-            break;
+/// `cordis.patch.yml` 的**共享读写器**（2026-09-11，task-26）。
+///
+/// **两处必须同源（钉死理由）**：同一份用户数据 `profiles/<名>/cordis.patch.yml`
+/// 有两条写入路径——插件中心（`set_plugin_disabled` / `copy_config_entries`）与
+/// MCP 管理（`mcp.rs` 的 `save_mcp_server` / `delete_mcp_server`）。它们曾各写各的，
+/// 于是**无声漂移成两套行为**：一边保留头部注释但**非原子写、无备份**，另一边
+/// **原子写但注释全丢**（且因经 `serde_json::Value` 中转，键序被字典序打乱、
+/// 缩进被重排）。两条路径都"能跑"，只在用户的注释被吃掉时才暴露——而
+/// **YAML 注释是用户人工资产，丢了不可逆**。故：本结构是唯一实现，任何触碰该文件的
+/// 路径都必须调用它，**不得再写第二份**。
+///
+/// 保真口径：
+/// - **未改动的条目逐字节原样回填**——其行间注释、缩进、键序、引号风格全保；
+/// - 只有**被改动的条目**重新序列化（其内部注释无法保留：文件层无 CST 解析器，
+///   本仓库不引新依赖；这是已知且有意的代价，MCP 条目本身由壳机器生成）；
+/// - 文件**首部连续注释块**在任何情况下都保住；
+/// - 写入前**先备份**（`fs_backup::backup_before_overwrite`，AGENTS §6 已登记），
+///   写入走**原子替换**（tmp + rename，与 settings / credentials 同口径）。
+pub(crate) struct PatchFile {
+    /// 首部连续 `#` / 空行块（原样前置）。
+    header: String,
+    /// 第一个顶层条目之前的其它内容（如 `---` 文档标记）；通常为空。
+    preamble: String,
+    /// 每条目的原文片段（含前导 `- `）；`None` = 本次新构造或已改写 → 写时需重新序列化。
+    raw: Vec<Option<String>>,
+    /// 顶层数组条目（`serde_yaml::Mapping` 基于 IndexMap，**插入序保真**）。
+    pub(crate) entries: Vec<serde_yaml::Value>,
+}
+
+impl PatchFile {
+    /// 读 patch 文件（缺失 → 调用方用 [`PatchFile::empty`]）。
+    /// 顶层数组之外还有内容 → 拒绝（patch 方言即数组；不代 dsh 生成三件套）。
+    pub(crate) fn read(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+        Self::from_text(&text)
+    }
+
+    /// 空载体（目标文件尚不存在时的首次写入）。
+    pub(crate) fn empty() -> Self {
+        Self {
+            header: String::new(),
+            preamble: String::new(),
+            raw: Vec::new(),
+            entries: Vec::new(),
         }
     }
-    let body: String = text.lines().skip(body_start).collect::<Vec<_>>().join("\n");
-    let seq: Vec<serde_yaml::Value> = match serde_yaml::from_str::<serde_yaml::Value>(&body) {
-        Ok(v) if v.is_null() => Vec::new(),
+
+    fn from_text(text: &str) -> Result<Self, String> {
+        // 头部 = 从首行起连续 `#` 行与其间空行（用户可见文档，序列化会丢）。
+        let mut header = String::new();
+        let mut body_start = 0usize;
+        for line in text.split_inclusive('\n') {
+            let t = line.trim_end_matches(['\n', '\r']);
+            if t.starts_with('#') || t.trim().is_empty() {
+                header.push_str(line);
+                body_start += line.len();
+            } else {
+                break;
+            }
+        }
+        let body = &text[body_start..];
+        let entries = parse_patch_body(body)?;
+
+        // 按顶格 `- ` 切出条目原文片段；与解析条目数不一致（块标量里出现顶格
+        // `- ` 等罕见形态）→ 放弃逐条保真，退回整文件重序列化（收窄前行为，绝不写坏）。
+        let starts = top_level_item_starts(body);
+        let (preamble, raw) = if starts.len() == entries.len() {
+            let mut raw = Vec::with_capacity(starts.len());
+            for (i, &s) in starts.iter().enumerate() {
+                let e = starts.get(i + 1).copied().unwrap_or(body.len());
+                raw.push(Some(body[s..e].to_string()));
+            }
+            let pre = body[..starts.first().copied().unwrap_or(0)].to_string();
+            (pre, raw)
+        } else {
+            (String::new(), vec![None; entries.len()])
+        };
+
+        Ok(Self {
+            header,
+            preamble,
+            raw,
+            entries,
+        })
+    }
+
+    /// 逐条可变访问；闭包返回 `true` = 该条已被改写（原文保真失效，写时重新序列化）。
+    pub(crate) fn for_each_entry_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(usize, &mut serde_yaml::Value) -> bool,
+    {
+        debug_assert_eq!(self.raw.len(), self.entries.len());
+        for i in 0..self.entries.len() {
+            let changed = f(i, &mut self.entries[i]);
+            if changed {
+                self.raw[i] = None;
+            }
+        }
+    }
+
+    /// 追加新条目（原文保真天然失效：新条目无原文）。
+    pub(crate) fn push(&mut self, entry: serde_yaml::Value) {
+        self.raw.push(None);
+        self.entries.push(entry);
+    }
+
+    /// 按谓词保留条目（`raw` 同步增删，**始终与 `entries` 同长同序**）。
+    pub(crate) fn retain<F>(&mut self, keep: F)
+    where
+        F: Fn(&serde_yaml::Value) -> bool,
+    {
+        let mut i = 0;
+        while i < self.entries.len() {
+            if keep(&self.entries[i]) {
+                i += 1;
+            } else {
+                self.entries.remove(i);
+                self.raw.remove(i);
+            }
+        }
+    }
+
+    /// 写回：先备份 → 拼装（未改条目原样回填）→ 原子替换。
+    pub(crate) fn write(&self, path: &Path) -> Result<(), String> {
+        let mut out = String::with_capacity(self.header.len() + 1024);
+        out.push_str(&self.header);
+        if self.entries.is_empty() {
+            // 空数组补 `[]\n`（保持单文档可解析；沿用既有口径）。
+            if !out.ends_with("[]\n") {
+                out.push_str("[]\n");
+            }
+        } else {
+            out.push_str(&self.preamble);
+            for (i, e) in self.entries.iter().enumerate() {
+                match self.raw.get(i).and_then(|r| r.as_deref()) {
+                    Some(raw) => out.push_str(raw),
+                    None => out.push_str(&serialize_patch_item(e)?),
+                }
+            }
+        }
+        // 覆写前备份：失败即中止（与 settings / credentials 同口径，fail-closed）。
+        crate::fs_backup::backup_before_overwrite(path)?;
+        atomic_replace(path, &out)
+    }
+}
+
+/// 解析顶层数组（patch 方言）。空 / 仅空白 / `null` → 空数组。
+fn parse_patch_body(body: &str) -> Result<Vec<serde_yaml::Value>, String> {
+    match serde_yaml::from_str::<serde_yaml::Value>(body) {
+        Ok(v) if v.is_null() => Ok(Vec::new()),
         Ok(v) => v
             .as_sequence()
-            .ok_or_else(|| "cordis.patch.yml 顶层数组之外还有内容——拒绝写入".to_string())?
-            .clone(),
-        Err(e) => return Err(format!("cordis.patch.yml 解析失败：{e}")),
-    };
-    Ok((header, seq))
-}
-
-/// 写 patch 文件：头部注释前置 + 条目序列化；空数组补 `[]\n`（保持单文档可解析）。
-fn write_patch_entries(path: &Path, header: &str, seq: &[serde_yaml::Value]) -> Result<(), String> {
-    let mut out = header.to_string();
-    if !seq.is_empty() {
-        out.push_str(&serde_yaml::to_string(seq).map_err(|e| format!("序列化失败：{e}"))?);
-    } else if !out.ends_with("[]\n") {
-        out.push_str("[]\n");
+            .cloned()
+            .ok_or_else(|| "cordis.patch.yml 顶层数组之外还有内容——拒绝写入".to_string()),
+        Err(e) => Err(format!("cordis.patch.yml 解析失败：{e}")),
     }
-    std::fs::write(path, out).map_err(|e| format!("写 {} 失败：{e}", path.display()))
 }
 
-/// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组；文件头部连续注释块
-/// 原样前置保真——注释为用户可见文档，序列化会丢其余位置注释，已知代价）。
+/// 顶格（第 0 列）`- ` / `-` 行的字节起点 = 顶层条目边界。
+/// 缩进的 `-` 属条目内部（映射值 / 块标量内容），不算边界。
+fn top_level_item_starts(body: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut off = 0usize;
+    for line in body.split_inclusive('\n') {
+        let t = line.trim_end_matches(['\n', '\r']);
+        if t == "-" || t.starts_with("- ") {
+            starts.push(off);
+        }
+        off += line.len();
+    }
+    starts
+}
+
+/// 单个条目 → YAML 片段（序列化 `[v]` 得到带 `- ` 前缀的片段，去掉可能的文档标记）。
+fn serialize_patch_item(v: &serde_yaml::Value) -> Result<String, String> {
+    let text = serde_yaml::to_string(std::slice::from_ref(v))
+        .map_err(|e| format!("序列化条目失败：{e}"))?;
+    let text = text.strip_prefix("---\n").unwrap_or(&text);
+    if text.ends_with('\n') {
+        Ok(text.to_string())
+    } else {
+        Ok(format!("{text}\n"))
+    }
+}
+
+/// 原子替换：同目录临时文件 + rename（与 settings / credentials 同口径）。
+fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "patch.yml".to_string());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(".{name}.tmp.{}.{nanos}", std::process::id()));
+    if let Err(e) = std::fs::write(&tmp, content) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("写入临时 patch 失败：{e}"));
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("覆盖 {} 失败：{e}", path.display()));
+    }
+    Ok(())
+}
+
+/// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组）。
 /// 禁用：id 条目存在则仅置 disabled 键，否则追加 `{id, disabled}` 双键条目；
 /// 启用：移除 disabled 键，条目只剩 id 则整条移除。
+/// 写入统一走 [`PatchFile`]（备份 + 原子写 + 未改条目原文保真）。
 pub fn set_plugin_disabled(
     home: &Path,
     profile: &str,
@@ -983,13 +1151,13 @@ pub fn set_plugin_disabled(
         return Err("行 id 非法".to_string());
     }
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
-    let (header, mut seq) = read_patch_entries(&patch_path)?;
+    let mut patch = PatchFile::read(&patch_path)?;
     let id_key = serde_yaml::Value::String("id".into());
     let disabled_key = serde_yaml::Value::String("disabled".into());
     let mut found = false;
-    for entry in seq.iter_mut() {
+    patch.for_each_entry_mut(|_, entry| {
         let Some(m) = entry.as_mapping_mut() else {
-            continue;
+            return false;
         };
         if m.get(&id_key).and_then(|v| v.as_str()) == Some(row_id) {
             found = true;
@@ -998,8 +1166,10 @@ pub fn set_plugin_disabled(
             } else {
                 m.remove(&disabled_key);
             }
+            return true;
         }
-    }
+        false
+    });
     if !found && disabled {
         let mut m = serde_yaml::Mapping::new();
         m.insert(
@@ -1007,17 +1177,17 @@ pub fn set_plugin_disabled(
             serde_yaml::Value::String(row_id.to_string()),
         );
         m.insert(disabled_key, serde_yaml::Value::Bool(true));
-        seq.push(serde_yaml::Value::Mapping(m));
+        patch.push(serde_yaml::Value::Mapping(m));
     }
     // 启用后只剩 id 键的条目整条移除（恢复原状）
     if !disabled {
-        seq.retain(|e| {
+        patch.retain(|e| {
             e.as_mapping()
                 .map(|m| m.len() > 1 || !m.contains_key(&id_key))
                 .unwrap_or(true)
         });
     }
-    write_patch_entries(&patch_path, &header, &seq)
+    patch.write(&patch_path)
 }
 
 #[cfg(test)]
@@ -1087,6 +1257,95 @@ mod patch_tests {
         let text = std::fs::read_to_string(&patch).unwrap();
         assert!(text.contains("row-a") && text.contains("config:"), "{text}");
         assert!(!text.contains("disabled:"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 共享写入器（task-26）在**插件中心**路径上的收益：
+    /// ① **段间（行间）注释**也保住（旧实现只保头部注释块，其它位置序列化即丢）；
+    /// ② 未改动条目**逐字节原样回填**（缩进 / 键序 / 引号风格全保）；
+    /// ③ 写入前**备份**（旧实现无备份）。
+    #[test]
+    fn shared_writer_preserves_interleaved_comments_and_backs_up() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        // 头部注释 + 一条带**行间注释**与自定义缩进的既有条目
+        let original = format!(
+            "{HEADER}- id: row-a\n  # 行间注释：这一行的键序与缩进都得留住\n  config:\n      k:    'v'\n"
+        );
+        std::fs::write(&patch, &original).unwrap();
+
+        set_plugin_disabled(&home, "p", "row-b", true).unwrap();
+
+        let text = std::fs::read_to_string(&patch).unwrap();
+        assert!(text.starts_with(HEADER), "头部注释保真：{text}");
+        assert!(
+            text.contains("  # 行间注释：这一行的键序与缩进都得留住"),
+            "段间（行间）注释必须保住：{text}"
+        );
+        assert!(
+            text.contains("      k:    'v'"),
+            "未改动条目必须逐字节原样回填（缩进/引号风格保真）：{text}"
+        );
+        assert!(text.contains("- id: row-b"), "新条目应写入：{text}");
+
+        let backups: Vec<String> = std::fs::read_dir(home.join("profiles/p"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("cordis.patch.yml.bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "覆写前应留一份备份：{backups:?}");
+        assert_eq!(
+            std::fs::read_to_string(home.join("profiles/p").join(&backups[0])).unwrap(),
+            original,
+            "备份内容必须是覆写前原文"
+        );
+
+        // 原子写不留临时文件
+        let leftovers: Vec<String> = std::fs::read_dir(home.join("profiles/p"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "不得残留临时文件：{leftovers:?}");
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 防御性回退分支：**流式（flow）顶层数组**（`[{id: a}, {id: b}]`）没有顶格
+    /// `- ` 行，行切分数（0）≠ 解析条目数（2）→ 放弃逐条保真、退回整文件重序列化。
+    /// 语义仍正确（条目一个不少），代价是该罕见形态下注释不保——**绝不错写或报错**。
+    #[test]
+    fn flow_style_array_falls_back_without_data_loss() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        std::fs::write(&patch, "[]\n").unwrap();
+        let mut p = PatchFile::read(&patch).unwrap();
+        assert!(p.entries.is_empty());
+        assert!(p.raw.is_empty(), "无顶格条目 → 无原文可保");
+        p.push(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        p.write(&patch).unwrap();
+        // 非数组顶层（如 `{}` 映射）→ 拒绝写入，不代 dsh 生成/改写三件套
+        let bad = home.join("profiles/p/bad.yml");
+        std::fs::write(&bad, "{}\n").unwrap();
+        assert!(PatchFile::read(&bad).is_err(), "顶层非数组必须拒绝");
+
+        // 流式数组：读得进、条目数正确、回写为块式
+        let flow = home.join("profiles/p/flow.yml");
+        std::fs::write(&flow, "[{id: a}, {id: b}]\n").unwrap();
+        let q = PatchFile::read(&flow).unwrap();
+        assert_eq!(q.entries.len(), 2, "流式数组应解析出 2 条");
+        assert!(
+            q.raw.iter().all(|r| r.is_none()),
+            "行切分与解析数不一致 → 全部退回重序列化（不保原文）"
+        );
+        // 未改动也应写回完整 2 条（不丢数据）
+        q.write(&flow).unwrap();
+        let text = std::fs::read_to_string(&flow).unwrap();
+        assert!(text.contains("- id: a"), "{text}");
+        assert!(text.contains("- id: b"), "{text}");
+
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1482,9 +1741,9 @@ fn copy_config_entries(
     row_id: &str,
 ) -> Result<CopyConfigOutcome, String> {
     let source_entries = {
-        let (_, seq) =
-            read_patch_entries(&home.join("profiles").join(source).join("cordis.patch.yml"))?;
-        entries_with_id(&seq, row_id)
+        let source_patch =
+            PatchFile::read(&home.join("profiles").join(source).join("cordis.patch.yml"))?;
+        entries_with_id(&source_patch.entries, row_id)
     };
     if source_entries.is_empty() {
         return Err(format!(
@@ -1492,8 +1751,8 @@ fn copy_config_entries(
         ));
     }
     let target_patch = home.join("profiles").join(target).join("cordis.patch.yml");
-    let (header, mut seq) = read_patch_entries(&target_patch)?;
-    if !entries_with_id(&seq, row_id).is_empty() {
+    let mut target_file = PatchFile::read(&target_patch)?;
+    if !entries_with_id(&target_file.entries, row_id).is_empty() {
         return Ok(CopyConfigOutcome {
             copied: 0,
             skipped_existing: true,
@@ -1503,8 +1762,10 @@ fn copy_config_entries(
         });
     }
     let copied = source_entries.len();
-    seq.extend(source_entries);
-    write_patch_entries(&target_patch, &header, &seq)?;
+    for e in source_entries {
+        target_file.push(e);
+    }
+    target_file.write(&target_patch)?;
     Ok(CopyConfigOutcome {
         copied,
         skipped_existing: false,

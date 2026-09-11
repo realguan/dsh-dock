@@ -115,89 +115,115 @@ pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> R
     }
 
     let patch_path = profile_dir.join(PROFILE_PATCH_FILENAME);
-    let content = if patch_path.is_file() {
-        std::fs::read_to_string(&patch_path)
-            .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?
+    // 写入统一走 `plugins::PatchFile`（2026-09-11，task-26）：**未改动的条目逐字节
+    // 原样回填**（保住用户行间注释、键序、缩进），只有本函数改写的 MCP 条目重新
+    // 序列化；写入前备份 + 原子替换。不得在此另写一份文件写入逻辑——两套写入器
+    // 曾漂移成「一边丢注释、一边不备份」，注释丢失不可逆。
+    let mut patch = if patch_path.is_file() {
+        crate::plugins::PatchFile::read(&patch_path)?
     } else {
-        String::new()
+        crate::plugins::PatchFile::empty()
     };
 
-    let mut entries: Vec<serde_json::Value> = if content.trim().is_empty() {
-        Vec::new()
-    } else {
-        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?
-    };
-
-    // 查找已有的 MCP client entry
-    let mut found_index = None;
-    for (i, entry) in entries.iter().enumerate() {
-        if entry.get("package").and_then(|p| p.as_str()) == Some(MCP_CLIENT_PKG) {
-            found_index = Some(i);
-            break;
-        }
-    }
-
-    // 准备要插入/更新的 server JSON 对象
-    let mut server_obj = serde_json::Map::new();
-    server_obj.insert(
-        "command".to_string(),
-        serde_json::Value::String(server.command),
+    // 准备要插入/更新的 server YAML 映射（`serde_yaml::Mapping` 基于 IndexMap，
+    // **插入序保真**——旧实现经 `serde_json::Value`（BTreeMap）中转，键序被字典序打乱）。
+    let mut server_map = serde_yaml::Mapping::new();
+    server_map.insert(
+        serde_yaml::Value::String("command".into()),
+        serde_yaml::Value::String(server.command),
     );
-    server_obj.insert(
-        "args".to_string(),
-        serde_json::Value::Array(
+    server_map.insert(
+        serde_yaml::Value::String("args".into()),
+        serde_yaml::Value::Sequence(
             server
                 .args
                 .into_iter()
-                .map(serde_json::Value::String)
+                .map(serde_yaml::Value::String)
                 .collect(),
         ),
     );
     if !server.env.is_empty() {
-        let mut env_obj = serde_json::Map::new();
+        let mut env_map = serde_yaml::Mapping::new();
         for (k, v) in server.env {
-            env_obj.insert(k, serde_json::Value::String(v));
+            env_map.insert(serde_yaml::Value::String(k), serde_yaml::Value::String(v));
         }
-        server_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        server_map.insert(
+            serde_yaml::Value::String("env".into()),
+            serde_yaml::Value::Mapping(env_map),
+        );
     }
     if server.disabled {
-        server_obj.insert("disabled".to_string(), serde_json::Value::Bool(true));
+        server_map.insert(
+            serde_yaml::Value::String("disabled".into()),
+            serde_yaml::Value::Bool(true),
+        );
     }
+    let server_value = serde_yaml::Value::Mapping(server_map);
+    let server_name = server.name;
 
-    if let Some(idx) = found_index {
-        let entry = &mut entries[idx];
-        if !entry.get("config").is_some() {
-            entry["config"] = serde_json::json!({});
+    // 语义不变（Cordis Patch 对 `config` 键是整体替换）：整段重建 `config.mcpServers`。
+    let mut found = false;
+    patch.for_each_entry_mut(|_, entry| {
+        let Some(m) = entry.as_mapping_mut() else {
+            return false;
+        };
+        if m.get("package").and_then(|p| p.as_str()) != Some(MCP_CLIENT_PKG) {
+            return false;
         }
-        if !entry["config"].get("mcpServers").is_some() {
-            entry["config"]["mcpServers"] = serde_json::json!({});
+        found = true;
+        let cfg_key = serde_yaml::Value::String("config".into());
+        if !m.contains_key(&cfg_key) {
+            m.insert(
+                cfg_key.clone(),
+                serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+            );
         }
-        if let Some(servers) = entry["config"]["mcpServers"].as_object_mut() {
-            servers.insert(server.name, serde_json::Value::Object(server_obj));
+        let Some(cfg) = m.get_mut(&cfg_key).and_then(|c| c.as_mapping_mut()) else {
+            return false;
+        };
+        let servers_key = serde_yaml::Value::String("mcpServers".into());
+        if !cfg.contains_key(&servers_key) {
+            cfg.insert(
+                servers_key.clone(),
+                serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+            );
         }
-    } else {
+        let Some(servers) = cfg.get_mut(&servers_key).and_then(|s| s.as_mapping_mut()) else {
+            return false;
+        };
+        servers.insert(
+            serde_yaml::Value::String(server_name.clone()),
+            server_value.clone(),
+        );
+        true
+    });
+
+    if !found {
         // 新增一个 MCP 插件 entry
-        let mut servers_map = serde_json::Map::new();
-        servers_map.insert(server.name, serde_json::Value::Object(server_obj));
-        let new_entry = serde_json::json!({
-            "id": "mcp",
-            "package": MCP_CLIENT_PKG,
-            "config": {
-                "mcpServers": serde_json::Value::Object(servers_map)
-            }
-        });
-        entries.push(new_entry);
+        let mut servers_map = serde_yaml::Mapping::new();
+        servers_map.insert(serde_yaml::Value::String(server_name), server_value);
+        let mut cfg = serde_yaml::Mapping::new();
+        cfg.insert(
+            serde_yaml::Value::String("mcpServers".into()),
+            serde_yaml::Value::Mapping(servers_map),
+        );
+        let mut entry = serde_yaml::Mapping::new();
+        entry.insert(
+            serde_yaml::Value::String("id".into()),
+            serde_yaml::Value::String("mcp".into()),
+        );
+        entry.insert(
+            serde_yaml::Value::String("package".into()),
+            serde_yaml::Value::String(MCP_CLIENT_PKG.into()),
+        );
+        entry.insert(
+            serde_yaml::Value::String("config".into()),
+            serde_yaml::Value::Mapping(cfg),
+        );
+        patch.push(serde_yaml::Value::Mapping(entry));
     }
 
-    let serialized = serde_yaml::to_string(&entries)
-        .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
-
-    let tmp = profile_dir.join(format!(
-        "{PROFILE_PATCH_FILENAME}.tmp.{}",
-        std::process::id()
-    ));
-    std::fs::write(&tmp, serialized).map_err(|e| format!("写入临时 patch 失败：{e}"))?;
-    std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
+    patch.write(&patch_path)?;
 
     Ok(())
 }
@@ -211,35 +237,39 @@ pub fn delete_mcp_server(home: &Path, profile: &str, server_name: &str) -> Resul
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&patch_path)
-        .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?;
-    if content.trim().is_empty() {
+    let mut patch = crate::plugins::PatchFile::read(&patch_path)?;
+
+    // 与 save 同源写入器；只有真正删掉键才回写（无改动不产生备份 / mtime 抖动）。
+    let servers_key = serde_yaml::Value::String("mcpServers".into());
+    let cfg_key = serde_yaml::Value::String("config".into());
+    let name_key = serde_yaml::Value::String(server_name.to_string());
+    let mut removed = false;
+    patch.for_each_entry_mut(|_, entry| {
+        let Some(m) = entry.as_mapping_mut() else {
+            return false;
+        };
+        if m.get("package").and_then(|p| p.as_str()) != Some(MCP_CLIENT_PKG) {
+            return false;
+        }
+        let Some(servers) = m
+            .get_mut(&cfg_key)
+            .and_then(|c| c.as_mapping_mut())
+            .and_then(|c| c.get_mut(&servers_key))
+            .and_then(|s| s.as_mapping_mut())
+        else {
+            return false;
+        };
+        if servers.remove(&name_key).is_some() {
+            removed = true;
+            return true;
+        }
+        false
+    });
+
+    if !removed {
         return Ok(());
     }
-
-    let mut entries: Vec<serde_json::Value> =
-        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?;
-
-    for entry in entries.iter_mut() {
-        if entry.get("package").and_then(|p| p.as_str()) == Some(MCP_CLIENT_PKG) {
-            if let Some(config) = entry.get_mut("config") {
-                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut())
-                {
-                    servers.remove(server_name);
-                }
-            }
-        }
-    }
-
-    let serialized = serde_yaml::to_string(&entries)
-        .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
-
-    let tmp = profile_dir.join(format!(
-        "{PROFILE_PATCH_FILENAME}.tmp.{}",
-        std::process::id()
-    ));
-    std::fs::write(&tmp, serialized).map_err(|e| format!("写入临时 patch 失败：{e}"))?;
-    std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
+    patch.write(&patch_path)?;
 
     Ok(())
 }
@@ -354,6 +384,133 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].command, "uvx");
         assert!(list[0].disabled);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 带注释的 patch fixture：头部注释块 + **段间注释** + 一个非 MCP 条目 +
+    /// 一个 MCP 条目。注释是用户人工资产（YAML 注释无程序语义，丢了不可逆）。
+    const PATCH_WITH_COMMENTS: &str = "\
+# ======== 用户手写说明（不可丢）========
+# 第二行头部注释
+- id: custom-plugin
+  package: \"@custom/plugin-demo\"
+  config:
+    apiKey: \"secret-123\"
+# 段间注释：MCP 段从此开始（行间，非头部）
+- id: mcp
+  package: \"@deepseek-ai/dsh-mcp-client\"
+  config:
+    mcpServers:
+      fs:
+        command: npx
+        args:
+          - -y
+          - server-fs
+";
+
+    fn mcp_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let prof_dir = tmp.join("profiles").join("testprof");
+        std::fs::create_dir_all(&prof_dir).unwrap();
+        std::fs::write(prof_dir.join("cordis.patch.yml"), PATCH_WITH_COMMENTS).unwrap();
+        (tmp, prof_dir)
+    }
+
+    fn server(name: &str, command: &str) -> McpServerConfig {
+        McpServerConfig {
+            name: name.to_string(),
+            command: command.to_string(),
+            args: vec!["-y".to_string(), format!("server-{name}")],
+            env: BTreeMap::new(),
+            disabled: false,
+        }
+    }
+
+    /// **复现（2026-09-11，task-26）**：MCP 写入曾对 `cordis.patch.yml` 做整数组
+    /// 重序列化 ⇒ **注释全丢**（头部与段间都丢，YAML 注释是用户人工资产，不可逆）；
+    /// 且**无备份**。本用例坐实「注释必须保住」。
+    #[test]
+    fn mcp_write_preserves_user_comments() {
+        let (tmp, prof_dir) = mcp_fixture("dsh-mcp-comments");
+
+        save_mcp_server(&tmp, "testprof", server("github", "npx")).unwrap();
+
+        let after = std::fs::read_to_string(prof_dir.join("cordis.patch.yml")).unwrap();
+        assert!(
+            after.contains("# ======== 用户手写说明（不可丢）========"),
+            "头部注释块必须保住，实测内容：\n{after}"
+        );
+        assert!(
+            after.contains("# 第二行头部注释"),
+            "头部注释第二行必须保住，实测内容：\n{after}"
+        );
+        assert!(
+            after.contains("# 段间注释：MCP 段从此开始（行间，非头部）"),
+            "段间（行间）注释必须保住——只保头部不够，实测内容：\n{after}"
+        );
+        // 功能不得回归：MCP 增删改照旧生效
+        let list = list_mcp_servers(&tmp, "testprof").unwrap();
+        assert_eq!(list.len(), 2, "fs + github 都应在：{list:?}");
+        assert!(list.iter().any(|s| s.name == "fs"));
+        assert!(list.iter().any(|s| s.name == "github"));
+        // 非 MCP 条目原样保留
+        assert!(after.contains("@custom/plugin-demo"));
+        assert!(after.contains("secret-123"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 删除路径同源：`delete_mcp_server` 同样不得丢注释（同一修复必须覆盖两条路径）。
+    #[test]
+    fn mcp_delete_preserves_user_comments() {
+        let (tmp, prof_dir) = mcp_fixture("dsh-mcp-comments-del");
+
+        delete_mcp_server(&tmp, "testprof", "fs").unwrap();
+
+        let after = std::fs::read_to_string(prof_dir.join("cordis.patch.yml")).unwrap();
+        assert!(
+            after.contains("# ======== 用户手写说明（不可丢）========"),
+            "删除路径同样必须保住头部注释：\n{after}"
+        );
+        assert!(
+            after.contains("# 段间注释：MCP 段从此开始（行间，非头部）"),
+            "删除路径同样必须保住段间注释：\n{after}"
+        );
+        assert!(!list_mcp_servers(&tmp, "testprof")
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "fs"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// **无备份**：覆写用户数据前必须留一份 `.bak-<unix秒>`（复用
+    /// `fs_backup::backup_before_overwrite`，AGENTS §6 已登记），且备份内容 =
+    /// 覆写前原文。
+    #[test]
+    fn mcp_write_backs_up_before_overwrite() {
+        let (tmp, prof_dir) = mcp_fixture("dsh-mcp-backup");
+
+        save_mcp_server(&tmp, "testprof", server("github", "npx")).unwrap();
+
+        let backups: Vec<std::path::PathBuf> = std::fs::read_dir(&prof_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("cordis.patch.yml.bak-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "覆写前应留一份备份：{backups:?}");
+        assert_eq!(
+            std::fs::read_to_string(&backups[0]).unwrap(),
+            PATCH_WITH_COMMENTS,
+            "备份内容必须是覆写前原文（含注释）"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
