@@ -1,0 +1,20 @@
+# 统一换行：源码一律 LF（2026-09-11 裁定）
+#
+# 动机：本仓库长期**没有**这个文件，而 Git for Windows 的 `core.autocrlf` 默认会把
+# 源码 checkout 成 CRLF。后果在 v1.1.1 发版时实测暴露：
+#   - `include_str!` 读到的源码含 `\r\n`；
+#   - 以**源码文本**为判据的机器闸门（`lifecycle` 的 spawn 闸门）模式失配、测试
+#     模块截断失效 → 闸门在 Windows 上恒红（把测试里的裸 spawn 误报成生产违规）；
+#   - 更一般地：维护者本地 `cargo test` 与 CI 行为不一致，本地绿/CI 红的偏差
+#     会系统性地出现在"文本判据"这类闸门上。
+#
+# `text=auto` 让 git 自行判定二进制（PNG/ICNS/证书等不受影响），`eol=lf` 强制
+# 索引与工作区都是 LF——这样三平台 checkout 出的源码逐字节一致。
+* text=auto eol=lf
+
+# 显式声明二进制（防跨平台被当文本处理）：图标与签名/密钥类资产。
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.tgz binary
