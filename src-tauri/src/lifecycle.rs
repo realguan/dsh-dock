@@ -891,7 +891,6 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
 /// `/T` = 整棵进程树、`/F` = 强制（Windows 无 POSIX 信号；`/F` 即 `TerminateProcess`）。
 /// 少 `/T` 会退回「只杀 `cmd.exe` 壳层、pnpm shim 的 node 继续跑」的老漏洞（ADR-0014）。
 #[cfg_attr(not(windows), allow(dead_code))]
-
 pub(crate) fn reap_args(pid: u32) -> Vec<String> {
     vec![
         "/PID".to_string(),
@@ -2433,35 +2432,72 @@ mod tests {\n\
         false
     }
 
+    /// 生产段与测试段的分界标记。
+    const TEST_MOD_MARKER: &str = "\n#[cfg(test)]\nmod tests";
+
     /// 生产段的**代码视图**（行数组，行号 = 原始行号）。
     ///
     /// 三层处理，缺一层都会出问题：
     /// 1. **CRLF 归一**——v1.1.1 教训：`autocrlf` 检出的源码会让文本判据失配；
-    /// 2. **截断测试段**——测试里故意造这些标识符做对照（本用例自己就是）；
-    /// 3. **抹注释与字面量**——复用 task-30 的 `structural_bytes`（已处理行注释、
-    ///    可嵌套块注释、普通/原始/字节字符串、字符字面量与生命周期），比"只跳 `//`
-    ///    开头的行"更严谨；且保留换行 ⇒ 行号不变。
+    /// 2. **抹注释与字面量**——复用 task-30 的 `structural_bytes`（已处理行注释、
+    ///    可嵌套块注释、普通/原始/字节字符串、字符字面量与生命周期），保留换行 ⇒ 行号不变；
+    /// 3. **在代码视图上找截断点**，再按**同一索引**切回原文（见下）。
+    ///
+    /// ## 为什么截断必须发生在**掩码之后**（2026-09-11，task-39 / T1）
+    ///
+    /// 原实现在**原文**上 `find(TEST_MOD_MARKER)`。于是**块注释或字符串里只要有这个
+    /// 字节序列（含真换行）就会提前截断**，其后整段（含真实 `crate::shell::` 依赖）
+    /// **不再被扫描** ⇒ 闸门静默放行：
+    ///
+    /// ```text
+    /// /*
+    /// #[cfg(test)]
+    /// mod tests
+    /// */
+    /// pub fn f(t: &str) -> Option<String> { crate::shell::parse_detected_url(t) }  // ← 漏扫
+    /// ```
+    ///
+    /// 这不是纯理论：2026-09-11 曾有一行注入残留被误提交，其注释里恰好写了该标记
+    /// （当时用的是**字面** `\n` 才没触发；若写成块注释 + 真换行，残留就会静默通过
+    /// 并被推到远端）。
+    ///
+    /// **修法**：先掩码，在掩码视图里找标记。注释/字面量里的假标记已被抹成空格 ⇒
+    /// 找不到；只有**真实的** `#[cfg(test)] mod tests`（真代码）能命中。
+    ///
+    /// **索引可回映射的依据**：`structural_bytes` 返回 `Vec<bool>`，**长度恒等于原文
+    /// 字节数**（逐字节掩码，不是 token 流）；掩码视图也逐字节替换为空格并**保留换行**
+    /// ⇒ 三者索引一一对应。下方 `debug_assert_eq!` 把这条前提钉住（若将来有人把词法器
+    /// 改成变长输出，会立刻在此暴露）。
     ///
     /// 复用而非新写词法器：`structural_bytes` 已被 `spawn_gate_extent_finder_*` 系列
-    /// 用例覆盖，重复实现只会多一处可能出错的地方（本轮的 `br"…"` 教训）。
+    /// 用例覆盖，重复实现只会多一处可能出错的地方（task-34 的 `br"…"` 教训）。
     fn production_code_lines() -> Vec<String> {
         let src = include_str!("lifecycle.rs").replace("\r\n", "\n");
-        let prod = match src.find("\n#[cfg(test)]\nmod tests") {
-            Some(i) => &src[..i],
-            None => &src[..],
-        };
-        let mask = structural_bytes(prod);
-        let mut b = prod.as_bytes().to_vec();
+        // 先掩码（注释与字面量 → 空格，保留换行）。
+        let mask = structural_bytes(&src);
+        let mut bytes = src.as_bytes().to_vec();
         for (i, is_code) in mask.iter().enumerate() {
-            if !*is_code && b[i] != b'\n' && b[i] != b'\r' {
-                b[i] = b' ';
+            if !*is_code && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                bytes[i] = b' ';
             }
         }
-        String::from_utf8(b)
-            .expect("抹注释/字面量只把整字节替换成空格，不应破坏 UTF-8")
-            .lines()
-            .map(str::to_string)
-            .collect()
+        let masked =
+            String::from_utf8(bytes).expect("抹注释/字面量只把整字节替换成空格，不应破坏 UTF-8");
+        debug_assert_eq!(
+            masked.len(),
+            src.len(),
+            "掩码视图必须与原文等长，否则截断索引无法回映射"
+        );
+        // 在**掩码视图**里找截断点（假标记已被抹掉）。
+        let cut = match masked.find(TEST_MOD_MARKER) {
+            Some(i) => i,
+            None => panic!(
+                "未找到测试段标记 `#[cfg(test)] mod tests`（代码视图）——\
+                 找不到就无从界定生产段，静默扫全文件会把测试夹具当违规报出。\
+                 若确实重命名了测试模块，请同步更新 TEST_MOD_MARKER。"
+            ),
+        };
+        masked[..cut].lines().map(str::to_string).collect()
     }
 
     /// **依赖纪律闸门**：`lifecycle` 是叶模块，不得引用持有壳状态的兄弟模块。
@@ -2606,6 +2642,109 @@ let real = shell::X();\n";
             "真实代码里的 shell 必须命中：{:?}",
             code_lines[6]
         );
+    }
+
+    /// **T1 回归：截断标记伪装不得提前截断**（2026-09-11，task-39）。
+    ///
+    /// 判据 = 在**代码视图**上找截断点（见 `production_code_lines`）。本用例用同一套
+    /// 掩码逻辑验三件事：① 块注释里的假标记不截断；② 字符串字面量里的假标记不截断；
+    /// ③ 真标记仍正确截断。
+    ///
+    /// 为什么必须有用例：这是**闸门自身的可绕过面**——它一旦退化，闸门会"看起来在守、
+    /// 实际整段不扫"，而外观与正常绿灯**完全一样**（与 task-36/37 三次绕过同族）。
+    #[test]
+    fn truncation_marker_disguise_does_not_shorten_production_scan() {
+        // 用与 `production_code_lines` 相同的掩码手法，抽成局部闭包以便喂合成源码。
+        let cut_of = |src: &str| -> usize {
+            let mask = structural_bytes(src);
+            let mut bytes = src.as_bytes().to_vec();
+            for (i, is_code) in mask.iter().enumerate() {
+                if !*is_code && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    bytes[i] = b' ';
+                }
+            }
+            let masked = String::from_utf8(bytes).unwrap();
+            masked.find(TEST_MOD_MARKER).unwrap_or(src.len())
+        };
+        let real_marker = "\n#[cfg(test)]\nmod tests {\n}\n";
+
+        // ① 块注释伪装（qa-verify 的 T1 形态）：其后真实依赖必须仍在生产段内。
+        let block = format!(
+            "/*\n#[cfg(test)]\nmod tests\n*/\n\
+             pub fn f() {{ let _ = crate::shell::parse_detected_url(\"\"); }}{real_marker}"
+        );
+        let cut = cut_of(&block);
+        assert!(
+            block[..cut].contains("crate::shell::"),
+            "块注释里的假标记造成了提前截断——其后真实依赖被漏扫（T1 未修复）"
+        );
+
+        // ② 字符串字面量伪装（真换行的原始字符串）。
+        let rawstr = format!(
+            "let s = r#\"\n#[cfg(test)]\nmod tests\n\"#;\n\
+             pub fn g() {{ let _ = crate::shell::x(); }}{real_marker}"
+        );
+        let cut = cut_of(&rawstr);
+        assert!(
+            rawstr[..cut].contains("crate::shell::"),
+            "字符串字面量里的假标记造成了提前截断（T1 未修复）"
+        );
+
+        // ③ 正常文件：截断点必须落在真标记处，且生产段不含 `mod tests`。
+        let normal = format!("pub fn a() {{}}{real_marker}");
+        let cut = cut_of(&normal);
+        assert_eq!(
+            &normal[..cut],
+            "pub fn a() {}",
+            "正常文件的截断点应恰好落在真标记之前"
+        );
+    }
+
+    /// 真实文件自检：本文件（含真 `#[cfg(test)] mod tests`）必须能找到标记，
+    /// 且生产段确实不含 `mod tests`（防"找不到就扫全文件"的静默退化）。
+    #[test]
+    fn production_code_view_truncates_at_the_real_test_module() {
+        let lines = production_code_lines();
+        assert!(
+            lines.len() > 100,
+            "生产段不应为空或过短（实际 {} 行）——截断点可能算错",
+            lines.len()
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.trim_start().starts_with("mod tests")),
+            "生产段不应包含测试模块声明——截断失效会静默扫全文件"
+        );
+    }
+
+    /// **已声明代价（false-positive boundary，2026-09-11 / task-39 登记）**：
+    /// 判据禁的是「模块名**令牌**」而非「对该模块的**引用**」，故以下写法会**误报**：
+    ///
+    /// ```text
+    /// let ui = 3u8;        // 局部变量恰好叫 ui  → 红
+    /// let boot = 1u8;      // 同上               → 红
+    /// ```
+    ///
+    /// 当前生产段这三词**均为 0 次** ⇒ 无操作性影响；但这是**长期可用性成本**
+    /// （`ui` 尤其短，将来若用 `let ui = …` 存 UI 状态就会撞红）。
+    ///
+    /// **为什么不修**：改成"必须后随 `::` 或在 `use` 中"就重新退化为**形态匹配**——
+    /// 那正是本闸门三次被绕过的成因（task-36/37）。**误报是可见的、可改名的；
+    /// 漏防是静默的。** 宁可让人改个变量名，也不让真实依赖静默通过。
+    ///
+    /// 本用例把这条边界**钉成断言**，以免后人误以为是 bug 而"修"掉判据。
+    #[test]
+    fn invariant_rejects_module_name_tokens_even_when_used_as_locals() {
+        // 误报：模块名作局部变量/字段名
+        assert!(bare_word_hit("    let ui = 3u8;", "ui"));
+        assert!(bare_word_hit("    let boot = 1u8;", "boot"));
+        assert!(bare_word_hit("    let shell = 1;", "shell"));
+        // 不误报：词边界正确
+        assert!(!bare_word_hit("pub struct S { pub boot_ts: u64 }", "boot"));
+        assert!(!bare_word_hit("    let shellfish = 1;", "shell"));
+        assert!(!bare_word_hit("    let my_shell = 2;", "shell"));
+        assert!(!bare_word_hit("    let x = my_ui::foo();", "ui"));
     }
 
     /// 扫描器的既有语义不能因归一而丢：豁免标注（本行 / 紧邻上一行）与
