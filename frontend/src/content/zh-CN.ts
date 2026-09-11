@@ -345,6 +345,14 @@ export const t = {
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行停用` : ""}`,
     runtimeUnavailable: "该 profile 当前未运行，仅显示静态清单",
+    // 官方桌面运行时说明（2026-09-11）：原内联「内含 240+ 项本地预置底座服务」——
+    // 数字随 dsh 版本漂移且无壳侧事实源（本机 desktop-packages.json 为 239 项），
+    // 故改不依赖具体数量。句子含两个 `<code>` 标识符，字典只存纯文本片段：
+    // Prefix + <code>@deepseek-ai/dsh-desktop-runtime</code> + Mid +
+    // <code>desktop-packages/</code> + Suffix，翻译时保持首尾括号与空格。
+    desktopRuntimeDescPrefix: "该 Profile 归属于 DeepSeek 官方桌面客户端（",
+    desktopRuntimeDescMid: "），内含本地预置的底座服务与核心组件（存放在 ",
+    desktopRuntimeDescSuffix: " 本地包目录）。",
     // 创建
     createTitle: "新建 Profile",
     createNameLabel: "Profile 名字",
@@ -663,11 +671,15 @@ export const t = {
     emptyLogs: "暂无日志内容",
   },
   // 插件市场 (awesome-dsh-plugin 社区 Registry)
+  // 2026-09-11 裁定：市场文案不写死插件数量——曾硬编码「2700+」而 Registry 实际
+  // count 已增长，属用户可见失真。固定文案一律不内嵌数字（加载中态数量不可知，
+  // 尤其不得谎报）；需展示数量的走函数入参（totalPlugins / pageInfo / categoryCount），
+  // 由组件以 registry 真实数据求值。
   market: {
     clearSearch: "清空搜索",
     title: "社区插件市场",
-    subtitle: "基于 awesome-dsh-plugin 官方聚合的 2700+ 社区插件与扩展生态",
-    searchPlaceholder: "搜索 2700+ 插件名称、功能描述、NPM 包名或作者...",
+    subtitle: "基于 awesome-dsh-plugin 官方聚合的社区插件与扩展生态",
+    searchPlaceholder: "搜索插件名称、功能描述、NPM 包名或作者...",
     allCategories: "全部分类",
     categoryCount: (n: number) => `${n} 个分类`,
     totalPlugins: (n: number) => `${n} 款插件`,
@@ -694,7 +706,7 @@ export const t = {
     viewReadme: "GitHub",
     viewNpm: "NPM",
     openOfficialDoc: "主页",
-    loadingRegistry: "正在连接社区 Registry 加载 2700+ 插件目录…",
+    loadingRegistry: "正在连接社区 Registry 加载插件目录…",
     loadFailed: "加载插件市场目录失败",
     retry: "重试",
     noResults: "未找到符合条件的插件",

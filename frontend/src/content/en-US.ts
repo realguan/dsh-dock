@@ -330,6 +330,12 @@ export const enUS: AppCopy = {
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `Session active · ${s.active} active${s.failed ? ` · ${s.failed} failed` : ""}${s.loading ? ` · ${s.loading} loading` : ""}${s.disabled ? ` · ${s.disabled} disabled` : ""}`,
     runtimeUnavailable: "Profile is not currently running; showing static manifest",
+    // Official desktop runtime note (2026-09-11): see zh-CN.ts for the ruling —
+    // no hardcoded service count. Split into plain-text segments around the two
+    // `<code>` identifiers, keeping surrounding punctuation and spaces.
+    desktopRuntimeDescPrefix: "Belongs to the DeepSeek official desktop client (",
+    desktopRuntimeDescMid: "), bundling locally preinstalled base services and core components (stored in the ",
+    desktopRuntimeDescSuffix: " local package directory).",
     createTitle: "Create Profile",
     createNameLabel: "Profile Name",
     createNamePlaceholder: "e.g. my-workbench",
@@ -638,11 +644,14 @@ export const enUS: AppCopy = {
     emptyLogs: "No log entries available",
   },
   // Community Plugin Marketplace
+  // 2026-09-11: no hardcoded plugin counts in fixed copy (loading state cannot
+  // know the real count) — see zh-CN.ts for the ruling; count-bearing copy stays
+  // a function fed by the real registry data.
   market: {
     clearSearch: "Clear search",
     title: "Plugin Marketplace",
-    subtitle: "2700+ community plugins and extensions from awesome-dsh-plugin registry",
-    searchPlaceholder: "Search 2700+ plugins by name, description, npm package, or author...",
+    subtitle: "Community plugins and extensions from the awesome-dsh-plugin registry",
+    searchPlaceholder: "Search plugins by name, description, npm package, or author...",
     allCategories: "All Categories",
     categoryCount: (n: number) => `${n} Categories`,
     totalPlugins: (n: number) => `${n} Plugins`,
@@ -669,7 +678,7 @@ export const enUS: AppCopy = {
     viewReadme: "GitHub",
     viewNpm: "NPM",
     openOfficialDoc: "Home",
-    loadingRegistry: "Connecting to community registry & loading 2700+ plugins…",
+    loadingRegistry: "Connecting to the community registry & loading plugins…",
     loadFailed: "Failed to load marketplace registry",
     retry: "Retry",
     noResults: "No matching plugins found",

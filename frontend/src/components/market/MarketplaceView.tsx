@@ -1,4 +1,4 @@
-// components/market/MarketplaceView.tsx —— 插件市场全景工作台 (awesome-dsh-plugin Registry 2700+ 插件)
+// components/market/MarketplaceView.tsx —— 插件市场全景工作台 (awesome-dsh-plugin Registry 社区插件浏览与安装)
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,

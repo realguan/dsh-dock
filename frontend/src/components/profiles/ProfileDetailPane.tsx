@@ -749,7 +749,11 @@ export function ProfileDetailPane({
                   </span>
                 </div>
                 <p className="text-dim text-xs leading-relaxed">
-                  该 Profile 归属于 DeepSeek 官方桌面客户端（<code>@deepseek-ai/dsh-desktop-runtime</code>），内含 240+ 项本地预置底座服务与核心组件（存放在 <code>desktop-packages/</code> 本地包目录）。
+                  {t.profiles.desktopRuntimeDescPrefix}
+                  <code>@deepseek-ai/dsh-desktop-runtime</code>
+                  {t.profiles.desktopRuntimeDescMid}
+                  <code>desktop-packages/</code>
+                  {t.profiles.desktopRuntimeDescSuffix}
                 </p>
                 <p className="text-faint text-meta">
                   注：这些核心组件由客户端底座统一部署维护，属于内置底座体系，不计入第三方外挂插件。在此 Profile 安装的自定义扩展将独立展示在「外挂插件」列表中。
