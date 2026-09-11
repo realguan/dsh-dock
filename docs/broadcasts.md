@@ -64,6 +64,27 @@
 - **待 CI 确认（tag 触发）**：三平台签名构建与公证、`latest.json` 出现 **7 个**平台条目
   （含 `darwin-x86_64`）、两个 macOS `.app.tar.gz` 名字各带架构后缀不重名。
 
+- **发版结果（tag `v1.2.0`，run `34602173101` `conclusion = success`）**：
+  - **6 个 job 全绿**：build（4 leg：macos-latest / **macos-latest-x86_64** /
+    windows-latest / ubuntu-latest）+ release；`coverage` 按设计在 tag 时 skip。
+  - **`latest.json` = 7 个平台条目**（与预告一致）：`darwin-aarch64`、
+    **`darwin-x86_64`**、`linux-x86_64-appimage`、`linux-x86_64-deb`、
+    `linux-x86_64-rpm`、`windows-x86_64-msi`、`windows-x86_64-nsis`。
+  - **Release 资产 17 个**：arm64 dmg 21.7MB / **Intel dmg 24.5MB**、
+    两个 macOS `.app.tar.gz` **各带架构后缀**（`DSH.Dock_aarch64.app.tar.gz` 20.3MB /
+    `DSH.Dock_x86_64.app.tar.gz` 23MB）——**首次出现两个 macOS updater 目标**。
+  - **签名 + 公证（两个 macOS leg 均通过）**：
+    arm64 `Notarizing … Accepted`（id `2bda1b50…`）、
+    **Intel `Notarizing … Accepted`**（id `054b435a…`），
+    两 leg 均 `source=Notarized Developer ID`、`spctl: accepted`。
+    **Intel 签名是本批全新路径，此前从未走过 ⇒ 现已实测打通。**
+  - **`PNPM_TGZ` 参数化在真 CI 生效**：Intel leg 重签的是
+    `resources/pnpm/darwin-x64.tgz`（不再是硬编码 arm64），
+    日志可见 `elif [ -n "darwin-x64" ] → fetch @pnpm/exe.darwin-x64`。
+  - **Windows 单测 316 passed / 0 failed**（上次红的用例已消除）。
+  - 打标步骤在 tag 构建同样生效：日志先后出现 Tauri 默认名 `DSH Dock.app.tar.gz`
+    与打标后名，两 leg 不重名。
+
 ### 2026-09-11 macOS Intel (x86_64) 支持 · 发布矩阵加第四个 leg —— guan（AI 协作）
 
 - **背景与目标**：此前发布产物只覆盖 Apple Silicon（`README.md` 已声明「Intel Mac 需自行源码构建」）。
