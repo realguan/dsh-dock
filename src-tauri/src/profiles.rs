@@ -825,6 +825,76 @@ pub fn create_profile_blocking(
     ))
 }
 
+/// 客体档创建 profile（P2 生命周期下沉）：在 WSL 内执行 `dsh plugin --profile <名> install`
+/// 转发链。成功后补写 WebUI bundle 声明与 build policy。
+pub fn create_profile_in_guest(
+    distro: &str,
+    profile: &str,
+    data_dir: &Path,
+) -> Result<CreateProfileOutcome, String> {
+    creation_blocker_in_guest(distro, profile)?;
+    let args = create_command_args(profile);
+    let log_path = data_dir.join("profile-create.log");
+    let run = run_dsh_cli_in_guest(distro, &args, &log_path)?;
+    let pkg_rel = format!("profiles/{profile}/package.json");
+    let read_res = crate::guest::read_files(distro, &[pkg_rel]);
+    let materialized = match read_res {
+        Ok(files) => files
+            .into_iter()
+            .any(|(p, c)| p.ends_with("package.json") && c.is_some()),
+        Err(_) => false,
+    };
+    let webui_error = if run.code == Some(0) && materialized {
+        declare_webui_bundle_in_guest(distro, profile).err()
+    } else {
+        None
+    };
+    if materialized {
+        crate::build_policy::ensure_profile_build_policy_in_guest_best_effort(distro, profile);
+    }
+    Ok(classify_create_outcome(
+        profile,
+        &run,
+        materialized,
+        webui_error.as_deref(),
+    ))
+}
+
+/// 客体档创建前置校验（P2 生命周期下沉）。
+pub fn creation_blocker_in_guest(distro: &str, profile: &str) -> Result<(), String> {
+    validate_profile_name(profile)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if let Some(p) = existing.iter().find(|p| p.name == profile) {
+        if p.materialized && !p.bundles.is_empty() {
+            return Err(format!(
+                "profile「{profile}」已存在——创建请换名（删除属后续版本能力）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 非模板名创建成功后在客体追加 Web 工作台声明。
+fn declare_webui_bundle_in_guest(distro: &str, profile: &str) -> Result<bool, String> {
+    if PROFILE_TEMPLATES.iter().any(|(name, _)| *name == profile) {
+        return Ok(false);
+    }
+    let pkg_path = format!("profiles/{profile}/package.json");
+    let files = crate::guest::read_files(distro, &[pkg_path])?;
+    let text = files
+        .into_iter()
+        .find_map(|(p, c)| if p.ends_with("package.json") { c } else { None })
+        .ok_or_else(|| format!("读取客体 profile「{profile}」的 package.json 失败"))?;
+    let Some(edited) = append_bundle_declaration(&text, WEBUI_BUNDLE)? else {
+        return Ok(false);
+    };
+    crate::guest::write_home_files(
+        distro,
+        &[(format!("profiles/{profile}/package.json"), edited)],
+    )?;
+    Ok(true)
+}
+
 // ---------- 生命周期：复制 / 重命名 / 删除（4.3 第四刀，2026-08-28） ----------
 //
 // 引用面全部按 Spike B（docs/spikes/0002-profile-reference-surface.md）执行：
@@ -961,6 +1031,131 @@ pub fn delete_profile_dir(home: &Path, name: &str) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| format!("删除目录失败（{}）：{e}", dir.display()))
 }
 
+/// 客体档复制 profile（P2 生命周期下沉）：复制目录（排除 node_modules）→
+/// 改写 package.json 的 name → 检查 patch 相对路径警告。
+pub fn copy_profile_in_guest(
+    distro: &str,
+    source: &str,
+    new_name: &str,
+) -> Result<LifecycleOutcome, String> {
+    validate_profile_name(source)?;
+    validate_profile_name(new_name)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing.iter().any(|p| p.name == source && p.materialized) {
+        return Err(format!(
+            "源 profile「{source}」不存在或尚未物化——复制需要已初始化的 profile 目录"
+        ));
+    }
+    if existing.iter().any(|p| p.name == new_name) {
+        return Err(format!("目标名「{new_name}」已被占用——复制请换名"));
+    }
+    crate::guest::copy_profile_dir(distro, source, new_name)?;
+    rewrite_manifest_name_in_guest(distro, new_name)?;
+    let warnings = patch_relative_path_warnings_in_guest(distro, new_name);
+    Ok(LifecycleOutcome {
+        profile: new_name.to_string(),
+        warnings,
+    })
+}
+
+/// 客体档重命名 profile（P2 生命周期下沉）：目录 rename → 删 node_modules →
+/// 改写 package.json 的 name → 检查 patch 相对路径警告 → 同步 defaultProfile。
+pub fn rename_profile_in_guest(
+    distro: &str,
+    old_name: &str,
+    new_name: &str,
+    data_dir: &Path,
+) -> Result<LifecycleOutcome, String> {
+    validate_profile_name(old_name)?;
+    validate_profile_name(new_name)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing
+        .iter()
+        .any(|p| p.name == old_name && p.materialized)
+    {
+        return Err(format!("profile「{old_name}」不存在或尚未物化"));
+    }
+    if existing.iter().any(|p| p.name == new_name) {
+        return Err(format!("目标名「{new_name}」已被占用——重命名请换名"));
+    }
+    crate::guest::rename_profile_dir(distro, old_name, new_name)?;
+    rewrite_manifest_name_in_guest(distro, new_name)?;
+    let warnings = patch_relative_path_warnings_in_guest(distro, new_name);
+    let mut settings = crate::settings::load(data_dir);
+    if settings.default_profile.as_deref() == Some(old_name) {
+        settings.default_profile = Some(new_name.to_string());
+        crate::settings::save(data_dir, &settings)
+            .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
+    }
+    Ok(LifecycleOutcome {
+        profile: new_name.to_string(),
+        warnings,
+    })
+}
+
+/// 客体档删除 profile（P2 生命周期下沉）：整目录删除 → defaultProfile 清除。
+pub fn delete_profile_in_guest(
+    distro: &str,
+    profile: &str,
+    data_dir: &Path,
+) -> Result<DeleteOutcome, String> {
+    validate_profile_name(profile)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing.iter().any(|p| p.name == profile && p.materialized) {
+        return Err(format!(
+            "profile「{profile}」不存在或尚未物化——无目录可删除"
+        ));
+    }
+    crate::guest::delete_profile_dir(distro, profile)?;
+    let mut settings = crate::settings::load(data_dir);
+    let mut default_cleared = false;
+    if settings.default_profile.as_deref() == Some(profile) {
+        settings.default_profile = None;
+        crate::settings::save(data_dir, &settings)
+            .map_err(|e| format!("清除默认 profile 失败：{e}"))?;
+        default_cleared = true;
+    }
+    Ok(DeleteOutcome {
+        profile: profile.to_string(),
+        default_cleared,
+    })
+}
+
+fn rewrite_manifest_name_in_guest(distro: &str, profile: &str) -> Result<(), String> {
+    let pkg_path = format!("profiles/{profile}/package.json");
+    let files = crate::guest::read_files(distro, &[pkg_path])?;
+    let Some(text) = files
+        .into_iter()
+        .find_map(|(p, c)| if p.ends_with("package.json") { c } else { None })
+    else {
+        return Ok(());
+    };
+    if let Some(out) = rewrite_manifest_name_text(&text, profile)? {
+        crate::guest::write_home_files(
+            distro,
+            &[(format!("profiles/{profile}/package.json"), out)],
+        )?;
+    }
+    Ok(())
+}
+
+fn patch_relative_path_warnings_in_guest(distro: &str, profile: &str) -> Vec<String> {
+    let patch_path = format!("profiles/{profile}/{PROFILE_PATCH_FILENAME}");
+    let Ok(files) = crate::guest::read_files(distro, &[patch_path]) else {
+        return Vec::new();
+    };
+    let Some(text) = files.into_iter().find_map(|(p, c)| {
+        if p.ends_with(PROFILE_PATCH_FILENAME) {
+            c
+        } else {
+            None
+        }
+    }) else {
+        return Vec::new();
+    };
+    scan_patch_relative_path_warnings(&text)
+}
+
 /// 递归复制目录，跳过名为 `node_modules` 的子树（复制与重命名的共用件；
 /// 符号农场同名的顶层目录天然被排除）。
 fn copy_tree_excluding_node_modules(src: &Path, dst: &Path) -> Result<(), String> {
@@ -981,6 +1176,23 @@ fn copy_tree_excluding_node_modules(src: &Path, dst: &Path) -> Result<(), String
     Ok(())
 }
 
+/// 纯变换（宿主 / 客体共用）：package.json `name` 改写为 `dsh-profile-<新名>`
+pub(crate) fn rewrite_manifest_name_text(
+    text: &str,
+    new_name: &str,
+) -> Result<Option<String>, String> {
+    let mut pkg: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("package.json 非法 JSON：{e}"))?;
+    if let Some(obj) = pkg.as_object_mut() {
+        obj.insert(
+            "name".to_string(),
+            serde_json::Value::String(format!("dsh-profile-{new_name}")),
+        );
+    }
+    let out = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
+    Ok(Some(out + "\n"))
+}
+
 /// package.json `name` 一致化改写为 `dsh-profile-<新名>`（dsh initProfile @ 353
 /// 写入约定；Spike B §2.2：该前缀字段无外部消费处，改写为一致性保持）。
 /// 清单缺失（半初始化）跳过；格式对齐 dsh writeProfileManifest（2 空格缩进 +
@@ -990,26 +1202,14 @@ fn rewrite_manifest_name(dir: &Path, new_name: &str) -> Result<(), String> {
     let Ok(text) = fs::read_to_string(&path) else {
         return Ok(());
     };
-    let mut pkg: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("package.json 非法 JSON（{}）：{e}", path.display()))?;
-    if let Some(obj) = pkg.as_object_mut() {
-        obj.insert(
-            "name".to_string(),
-            serde_json::Value::String(format!("dsh-profile-{new_name}")),
-        );
+    if let Some(out) = rewrite_manifest_name_text(&text, new_name)? {
+        fs::write(&path, out).map_err(|e| format!("写 package.json 失败：{e}"))?;
     }
-    let out = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
-    fs::write(&path, out + "\n").map_err(|e| format!("写 package.json 失败：{e}"))
+    Ok(())
 }
 
-/// 扫描 cordis.patch.yml 的 `../` 相对路径引用（Spike B §2.2：patch 语义不含
-/// profile 名，但相对路径在目录改名后可能断链——替用户做人工检查的机器版，
-/// ADR-0009 行动项）。纯文本逐行扫描（本刀不引 YAML 依赖）：跳过空行与
-/// `#` 注释行。
-pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
-    let Ok(text) = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)) else {
-        return Vec::new();
-    };
+/// 纯文本逐行扫描（宿主 / 客体共用）：扫描 cordis.patch.yml 的 `../` 相对路径引用
+pub(crate) fn scan_patch_relative_path_warnings(text: &str) -> Vec<String> {
     let hits = text
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
@@ -1022,6 +1222,17 @@ pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
             "cordis.patch.yml 检测到 {hits} 处 ../ 相对路径引用——profile 目录变更后这些引用可能断链，请人工检查"
         )]
     }
+}
+
+/// 扫描 cordis.patch.yml 的 `../` 相对路径引用（Spike B §2.2：patch 语义不含
+/// profile 名，但相对路径在目录改名后可能断链——替用户做人工检查的机器版，
+/// ADR-0009 行动项）。纯文本逐行扫描（本刀不引 YAML 依赖）：跳过空行与
+/// `#` 注释行。
+pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)) else {
+        return Vec::new();
+    };
+    scan_patch_relative_path_warnings(&text)
 }
 
 #[cfg(test)]

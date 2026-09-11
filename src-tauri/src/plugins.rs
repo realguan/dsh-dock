@@ -1889,6 +1889,51 @@ pub fn copy_plugin_config_blocking(
     copy_config_entries(home, source, target, package, &row_id)
 }
 
+/// 纯逻辑：从来源 patch 原文提取 row_id 条目并追加到目标 patch 原文（宿主/客体共用）。
+/// 返回 (CopyConfigOutcome, Option<新目标原文>)。若已存在则新目标原文为 None。
+fn apply_copy_config_entries(
+    source_text: &str,
+    target_text: &str,
+    source: &str,
+    target: &str,
+    package: &str,
+    row_id: &str,
+) -> Result<(CopyConfigOutcome, Option<String>), String> {
+    let (_, source_seq) = parse_patch_entries(source_text)?;
+    let source_entries = entries_with_id(&source_seq, row_id);
+    if source_entries.is_empty() {
+        return Err(format!(
+            "来源 profile「{source}」的 cordis.patch.yml 没有「{package}」（行 id {row_id}）的配置条目"
+        ));
+    }
+    let (target_header, mut target_seq) = parse_patch_entries(target_text)?;
+    if !entries_with_id(&target_seq, row_id).is_empty() {
+        return Ok((
+            CopyConfigOutcome {
+                copied: 0,
+                skipped_existing: true,
+                detail: format!(
+                    "目标 profile「{target}」已有「{package}」的配置行——为不覆盖既有配置，本次未复制"
+                ),
+            },
+            None,
+        ));
+    }
+    let copied = source_entries.len();
+    target_seq.extend(source_entries);
+    let next = render_patch_entries(&target_header, &target_seq)?;
+    Ok((
+        CopyConfigOutcome {
+            copied,
+            skipped_existing: false,
+            detail: format!(
+                "已把「{package}」的 {copied} 条配置行从「{source}」原样复制到「{target}」——重启「{target}」后生效。"
+            ),
+        },
+        Some(next),
+    ))
+}
+
 /// 复制的文件层核心（行 id 已定位；与 spawn 边界分离便于单测）。
 fn copy_config_entries(
     home: &Path,
@@ -1897,37 +1942,90 @@ fn copy_config_entries(
     package: &str,
     row_id: &str,
 ) -> Result<CopyConfigOutcome, String> {
-    let source_entries = {
-        let (_, seq) =
-            read_patch_entries(&home.join("profiles").join(source).join("cordis.patch.yml"))?;
-        entries_with_id(&seq, row_id)
-    };
-    if source_entries.is_empty() {
-        return Err(format!(
-            "来源 profile「{source}」的 cordis.patch.yml 没有「{package}」（行 id {row_id}）的配置条目"
-        ));
+    let src_path = home.join("profiles").join(source).join("cordis.patch.yml");
+    let tgt_path = home.join("profiles").join(target).join("cordis.patch.yml");
+    let src_text = std::fs::read_to_string(&src_path)
+        .map_err(|e| format!("读取 {} 失败：{e}", src_path.display()))?;
+    let tgt_text = std::fs::read_to_string(&tgt_path)
+        .map_err(|e| format!("读取 {} 失败：{e}", tgt_path.display()))?;
+    let (outcome, updated) =
+        apply_copy_config_entries(&src_text, &tgt_text, source, target, package, row_id)?;
+    if let Some(next) = updated {
+        std::fs::write(&tgt_path, next)
+            .map_err(|e| format!("写 {} 失败：{e}", tgt_path.display()))?;
     }
-    let target_patch = home.join("profiles").join(target).join("cordis.patch.yml");
-    let (header, mut seq) = read_patch_entries(&target_patch)?;
-    if !entries_with_id(&seq, row_id).is_empty() {
-        return Ok(CopyConfigOutcome {
-            copied: 0,
-            skipped_existing: true,
-            detail: format!(
-                "目标 profile「{target}」已有「{package}」的配置行——为不覆盖既有配置，本次未复制"
-            ),
-        });
+    Ok(outcome)
+}
+
+/// 客体档插件配置复制（P2 下沉）：在 WSL 模式下读取来源与目标 patch 原文，
+/// 通过 pure 函数追加条目并原子写回目标客体 patch 文件。
+pub fn copy_plugin_config_in_guest(
+    distro: &str,
+    source: &str,
+    target: &str,
+    package: &str,
+    data_dir: &Path,
+) -> Result<CopyConfigOutcome, String> {
+    crate::profiles::validate_profile_name(source)?;
+    crate::profiles::validate_profile_name(target)?;
+    if source == target {
+        return Err("来源与目标是同一个 profile".to_string());
     }
-    let copied = source_entries.len();
-    seq.extend(source_entries);
-    write_patch_entries(&target_patch, &header, &seq)?;
-    Ok(CopyConfigOutcome {
-        copied,
-        skipped_existing: false,
-        detail: format!(
-            "已把「{package}」的 {copied} 条配置行从「{source}」原样复制到「{target}」——重启「{target}」后生效。"
-        ),
-    })
+    let src_pkg_rel = format!("profiles/{source}/package.json");
+    let tgt_pkg_rel = format!("profiles/{target}/package.json");
+    let src_patch_rel = format!("profiles/{source}/cordis.patch.yml");
+    let tgt_patch_rel = format!("profiles/{target}/cordis.patch.yml");
+    let files = crate::guest::read_files(
+        distro,
+        &[
+            src_pkg_rel.clone(),
+            tgt_pkg_rel.clone(),
+            src_patch_rel.clone(),
+            tgt_patch_rel.clone(),
+        ],
+    )?;
+    let mut map: std::collections::HashMap<String, Option<String>> = files.into_iter().collect();
+    if map.get(&src_pkg_rel).and_then(|o| o.as_ref()).is_none() {
+        return Err(format!("profile「{source}」尚未初始化"));
+    }
+    if map.get(&tgt_pkg_rel).and_then(|o| o.as_ref()).is_none() {
+        return Err(format!("profile「{target}」尚未初始化"));
+    }
+    let src_patch_text = map
+        .remove(&src_patch_rel)
+        .flatten()
+        .ok_or_else(|| "来源 profile 尚无 cordis.patch.yml——无可搬移的配置层".to_string())?;
+    let tgt_patch_text = map
+        .remove(&tgt_patch_rel)
+        .flatten()
+        .ok_or_else(|| "目标 profile 尚无 cordis.patch.yml——无可搬移的配置层".to_string())?;
+
+    let row_id = plugin_rows_blocking(
+        source,
+        data_dir,
+        &crate::mgmt::World::Wsl {
+            distro: distro.to_string(),
+        },
+    )?
+    .into_iter()
+    .find(|r| r.pkg_name == package)
+    .map(|r| r.id)
+    .ok_or_else(|| {
+        format!("来源 profile「{source}」的行表中没有插件「{package}」——无可搬移的配置行")
+    })?;
+
+    let (outcome, updated) = apply_copy_config_entries(
+        &src_patch_text,
+        &tgt_patch_text,
+        source,
+        target,
+        package,
+        &row_id,
+    )?;
+    if let Some(next) = updated {
+        crate::guest::write_home_files(distro, &[(tgt_patch_rel, next)])?;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

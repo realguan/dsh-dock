@@ -255,6 +255,86 @@ pub(crate) fn write_home_files_script(files: &[(String, String)]) -> String {
     out
 }
 
+/// 复制成功哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const COPY_OK: &str = "DSH_DOCK_COPY_OK";
+/// 复制源缺失哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const COPY_SRC_MISSING: &str = "DSH_DOCK_COPY_SRC_MISSING";
+/// 复制目标已存在哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const COPY_DST_EXISTS: &str = "DSH_DOCK_COPY_DST_EXISTS";
+
+/// 组装「客体复制 profile 目录（排除 node_modules）」脚本。
+#[cfg(any(windows, test))]
+pub(crate) fn copy_profile_script(source: &str, new_name: &str) -> String {
+    let src_rel = sh_quote(&format!("profiles/{source}"));
+    let dst_rel = sh_quote(&format!("profiles/{new_name}"));
+    let src_path = format!("\"{HOME_EXPR}\"/{src_rel}");
+    let dst_path = format!("\"{HOME_EXPR}\"/{dst_rel}");
+    let src_label = sh_quote(source);
+    let dst_label = sh_quote(new_name);
+    format!(
+        "{}src={src_path}; dst={dst_path}; \
+         if [ ! -d \"$src\" ]; then printf '{COPY_SRC_MISSING}:%s\\n' {src_label}; exit 0; fi; \
+         if [ -e \"$dst\" ]; then printf '{COPY_DST_EXISTS}:%s\\n' {dst_label}; exit 0; fi; \
+         mkdir -p \"$dst\" && (cd \"$src\" && if command -v tar >/dev/null 2>&1; then tar --exclude=\"./node_modules*\" -cf - . | (cd \"$dst\" && tar -xf -); else cp -a . \"$dst/\" && rm -rf \"$dst/node_modules\"; fi); \
+         if [ $? -eq 0 ] && [ -d \"$dst\" ]; then printf '{COPY_OK}\\n'; else printf 'DSH_DOCK_COPY_FAILED\\n'; fi",
+        guest_prep!()
+    )
+}
+
+/// 重命名成功哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const RENAME_OK: &str = "DSH_DOCK_RENAME_OK";
+/// 重命名源缺失哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const RENAME_SRC_MISSING: &str = "DSH_DOCK_RENAME_SRC_MISSING";
+/// 重命名目标已存在哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const RENAME_DST_EXISTS: &str = "DSH_DOCK_RENAME_DST_EXISTS";
+
+/// 组装「客体重命名 profile 目录并清理 node_modules」脚本。
+#[cfg(any(windows, test))]
+pub(crate) fn rename_profile_script(old_name: &str, new_name: &str) -> String {
+    let old_rel = sh_quote(&format!("profiles/{old_name}"));
+    let new_rel = sh_quote(&format!("profiles/{new_name}"));
+    let old_path = format!("\"{HOME_EXPR}\"/{old_rel}");
+    let new_path = format!("\"{HOME_EXPR}\"/{new_rel}");
+    let old_label = sh_quote(old_name);
+    let new_label = sh_quote(new_name);
+    format!(
+        "{}old_dir={old_path}; new_dir={new_path}; \
+         if [ ! -d \"$old_dir\" ]; then printf '{RENAME_SRC_MISSING}:%s\\n' {old_label}; exit 0; fi; \
+         if [ -e \"$new_dir\" ]; then printf '{RENAME_DST_EXISTS}:%s\\n' {new_label}; exit 0; fi; \
+         mv \"$old_dir\" \"$new_dir\" && rm -rf \"$new_dir/node_modules\"; \
+         if [ $? -eq 0 ] && [ -d \"$new_dir\" ]; then printf '{RENAME_OK}\\n'; else printf 'DSH_DOCK_RENAME_FAILED\\n'; fi",
+        guest_prep!()
+    )
+}
+
+/// 删除成功哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const DELETE_OK: &str = "DSH_DOCK_DELETE_OK";
+/// 删除目录缺失哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const DELETE_DIR_MISSING: &str = "DSH_DOCK_DELETE_DIR_MISSING";
+
+/// 组装「客体删除 profile 目录」脚本。
+#[cfg(any(windows, test))]
+pub(crate) fn delete_profile_script(profile: &str) -> String {
+    let rel = sh_quote(&format!("profiles/{profile}"));
+    let path = format!("\"{HOME_EXPR}\"/{rel}");
+    let label = sh_quote(profile);
+    format!(
+        "{}dir={path}; \
+         if [ ! -d \"$dir\" ]; then printf '{DELETE_DIR_MISSING}:%s\\n' {label}; exit 0; fi; \
+         rm -rf \"$dir\"; \
+         if [ ! -e \"$dir\" ]; then printf '{DELETE_OK}\\n'; else printf 'DSH_DOCK_DELETE_FAILED\\n'; fi",
+        guest_prep!()
+    )
+}
+
 /// 解析 `read_files_script` 的输出帧 → `[(客体路径, Some(原文) | None)]`。
 ///
 /// 容错：非帧行（rc 噪音、motd、bash 警告）一律忽略；帧内 base64 解不开的行
@@ -413,6 +493,109 @@ pub(crate) fn write_home_files(distro: &str, files: &[(String, String)]) -> Resu
 /// 非 Windows 孪生（同 [`read_files`] 口径）。
 #[cfg(not(windows))]
 pub(crate) fn write_home_files(_distro: &str, _files: &[(String, String)]) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 复制客体 profile 目录（排除 node_modules）。
+#[cfg(windows)]
+pub(crate) fn copy_profile_dir(distro: &str, source: &str, new_name: &str) -> Result<(), String> {
+    let script = copy_profile_script(source, new_name);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(60),
+    )
+    .ok_or_else(|| {
+        format!("复制 {distro} 内 profile 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    if out.contains(COPY_OK) {
+        return Ok(());
+    }
+    if out.contains(COPY_SRC_MISSING) {
+        return Err(format!(
+            "源 profile「{source}」不存在或尚未物化——复制需要已初始化的 profile 目录"
+        ));
+    }
+    if out.contains(COPY_DST_EXISTS) {
+        return Err(format!("目标名「{new_name}」已被占用——复制请换名"));
+    }
+    Err(format!("复制 {distro} 内 profile 失败：{}", out.trim()))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn copy_profile_dir(
+    _distro: &str,
+    _source: &str,
+    _new_name: &str,
+) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 重命名客体 profile 目录并清理 node_modules。
+#[cfg(windows)]
+pub(crate) fn rename_profile_dir(
+    distro: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    let script = rename_profile_script(old_name, new_name);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("重命名 {distro} 内 profile 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    if out.contains(RENAME_OK) {
+        return Ok(());
+    }
+    if out.contains(RENAME_SRC_MISSING) {
+        return Err(format!("profile「{old_name}」不存在或尚未物化"));
+    }
+    if out.contains(RENAME_DST_EXISTS) {
+        return Err(format!("目标名「{new_name}」已被占用——重命名请换名"));
+    }
+    Err(format!("重命名 {distro} 内 profile 失败：{}", out.trim()))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn rename_profile_dir(
+    _distro: &str,
+    _old_name: &str,
+    _new_name: &str,
+) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 删除客体 profile 目录。
+#[cfg(windows)]
+pub(crate) fn delete_profile_dir(distro: &str, profile: &str) -> Result<(), String> {
+    let script = delete_profile_script(profile);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("删除 {distro} 内 profile 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    if out.contains(DELETE_OK) {
+        return Ok(());
+    }
+    if out.contains(DELETE_DIR_MISSING) {
+        return Err(format!(
+            "profile「{profile}」不存在或尚未物化——无目录可删除"
+        ));
+    }
+    Err(format!("删除 {distro} 内 profile 失败：{}", out.trim()))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn delete_profile_dir(_distro: &str, _profile: &str) -> Result<(), String> {
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
@@ -690,5 +873,92 @@ rc 噪音一行
         // 往返（含非 ASCII 与换行）
         let raw = "键: 值\n".as_bytes();
         assert_eq!(base64_decode(&base64_encode(raw)).unwrap(), raw);
+    }
+
+    #[test]
+    fn profile_lifecycle_scripts_run_correctly_in_bash() {
+        let home = std::env::temp_dir().join(format!(
+            "dsh-dock-guest-p-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dsh_home = home.join(".dsh");
+        let p1_dir = dsh_home.join("profiles/p1");
+        std::fs::create_dir_all(p1_dir.join("node_modules/sub")).unwrap();
+        std::fs::write(p1_dir.join("package.json"), "{\"name\":\"dsh-profile-p1\"}").unwrap();
+        std::fs::write(p1_dir.join("node_modules/sub/a.js"), "console.log(1)").unwrap();
+
+        // 1. Copy script test
+        let copy_script = copy_profile_script("p1", "p2");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&copy_script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(COPY_OK), "{stdout}");
+        assert!(dsh_home.join("profiles/p2/package.json").is_file());
+        assert!(
+            !dsh_home.join("profiles/p2/node_modules").exists(),
+            "node_modules 必须被排除"
+        );
+
+        // Copy when target exists -> DST_EXISTS
+        let copy_again = copy_profile_script("p1", "p2");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&copy_again)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(COPY_DST_EXISTS), "{stdout}");
+
+        // 2. Rename script test
+        let rename_script = rename_profile_script("p2", "p3");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&rename_script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(RENAME_OK), "{stdout}");
+        assert!(dsh_home.join("profiles/p3/package.json").is_file());
+        assert!(!dsh_home.join("profiles/p2").exists());
+
+        // 3. Delete script test
+        let delete_script = delete_profile_script("p3");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&delete_script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(DELETE_OK), "{stdout}");
+        assert!(!dsh_home.join("profiles/p3").exists());
+
+        // Delete when missing -> DIR_MISSING
+        let delete_again = delete_profile_script("p3");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&delete_again)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(DELETE_DIR_MISSING), "{stdout}");
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
