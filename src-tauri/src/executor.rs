@@ -765,7 +765,10 @@ impl WslExecutor {
                     sink(
                         1,
                         "running",
-                        &format!("{target} 内下载 node v{version}（可能需要几分钟）…"),
+                        &format!(
+                            "{target} 内下载 node v{}（可能需要几分钟）…",
+                            crate::updates::display_version(&version)
+                        ),
                     );
                     let script = guest_bootstrap_node_script(&version);
                     let out = run_wsl_capture(
@@ -783,7 +786,14 @@ impl WslExecutor {
                 GuestProbeState::DshMissing => {
                     let version = crate::updates::latest_stable_dsh_version()
                         .map_err(|e| format!("无法确定 dsh 引导目标版本：{e}"))?;
-                    sink(1, "running", &format!("{target} 内安装 dsh v{version}…"));
+                    sink(
+                        1,
+                        "running",
+                        &format!(
+                            "{target} 内安装 dsh v{}…",
+                            crate::updates::display_version(&version)
+                        ),
+                    );
                     let registries = crate::updates::registry_chain();
                     let allow = crate::updates::pnpm_allow_build_flags()
                         .iter()

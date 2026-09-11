@@ -285,7 +285,7 @@ export function setupDevMock() {
         return {
           dsh: { current: "0.1.1", latest: "0.1.1", newer: false, error: null, preview_latest: null },
           client: { current: "1.0.0", latest: "1.0.0", newer: false, error: null, preview_latest: null },
-          node: { version: "20.18.0", origin: "managed" },
+          node: { version: "20.18.0", origin: "engine", plannedVersion: null },
         }
       case "list_dsh_versions":
         return { current: "0.1.1", versions: [] }

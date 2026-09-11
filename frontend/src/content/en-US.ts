@@ -195,6 +195,10 @@ export const enUS: AppCopy = {
     nodeFromSystem: "From your system",
     nodeManaged: "Managed by App · Automatically prepared",
     nodeUnknown: "Unknown",
+    // Not-installed state (2026-09-10): report "not installed" truthfully and put
+    // the *planned* version in parentheses — never render a plan as installed.
+    nodeNotInstalled: "Not installed",
+    nodeNotInstalledPlanned: (v: string) => `Not installed (planned ${v})`,
     dshUpgradeNote: "Upgrading DSH only updates global pnpm/npm packages and does not touch your data or configurations.",
     upgrading: "Upgrading…",
     upgradeFailed: "Upgrade Failed",

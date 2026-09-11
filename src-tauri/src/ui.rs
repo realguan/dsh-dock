@@ -19,7 +19,7 @@ use crate::is_allowed_external_url;
 /// （HTML/CSS 是 #f7f8fb，本文件是 #f9fafb），注释宣称同调而事实不符。
 /// 现由 `background_color_matches_theme_token` 测试逐值锁定——改 index.css 的
 /// `--color-bg` 而漏改此处即测试红。
-const WINDOW_BACKGROUND: tauri::utils::config::Color =
+pub(crate) const WINDOW_BACKGROUND: tauri::utils::config::Color =
     tauri::utils::config::Color(241, 244, 249, 255);
 
 /// 创建主窗口（含外链拦截）。原静态配置（tauri.conf.json windows）等价迁移：
@@ -389,16 +389,13 @@ pub(crate) fn setup_update_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// 关于面板：独立小窗（壳版本 + 宿主 dsh 版本 + 检查/升级），
 /// React 首页面按窗口 label 渲染 frontend/src/pages/About.tsx。
 ///
-/// 2026-08-26 修复（issue #2）：窗口创建必须在主线程执行。Tauri 的
-/// `#[tauri::command]` handler 跑在 IPC 线程（async runtime），Windows/WebView2
-/// 上在非主线程 `WebviewWindowBuilder::build()` 会导致 WebView2 环境初始化失败、
-/// 窗口白板（顶栏「关于」空白；托盘路径在主事件循环故正常）。统一经
-/// `run_on_main_thread` 序列化到主线程——从主线程调用时只是排队到下一帧，无害。
+/// 窗口创建必须在主线程执行（WebView2 在非主线程建窗口会白板），且**必须经
+/// [`post_to_event_loop`] 从事件循环投递**——不可就地执行，理由见该函数文档
+/// （v1.1.0 Windows 实测 1.3：就地执行会在 WebView2 回调里跑嵌套消息泵而挂死）。
 pub(crate) fn open_about_window(app: &tauri::AppHandle) {
-    // run_on_main_thread 的闭包要求 Send + 'static，需持有一个 owned AppHandle；
-    // 方法调用本身只借 app（参数引用），闭包 move 走 clone——二者不冲突。
+    // 闭包要求 Send + 'static，需持有 owned AppHandle；方法调用本身只借 app。
     let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
+    post_to_event_loop(app, move || {
         if let Some(win) = handle.get_webview_window("about") {
             let _ = win.show();
             let _ = win.set_focus();
@@ -423,14 +420,13 @@ pub(crate) fn open_about_window(app: &tauri::AppHandle) {
         .min_inner_size(440.0, 480.0)
         .resizable(true)
         .center()
+        .background_color(WINDOW_BACKGROUND)
         .initialization_script(&platform_script);
         match builder.build() {
             Ok(_) => tracing::info!("关于窗口已创建"),
             Err(e) => tracing::error!("创建关于窗口失败：{e}"),
         }
-    }) {
-        tracing::error!("调度关于窗口创建到主线程失败：{e}");
-    }
+    });
 }
 
 /// WebView 渲染内存与样式兜底策略（ADR-0002，2026-08-25 提出，2026-08-26 CSS 注入，2026-08-31 列表裁切与直接子代嵌套修复）：
@@ -445,19 +441,91 @@ pub(crate) fn open_about_window(app: &tauri::AppHandle) {
 pub const WEBVIEW_MEMORY_POLICY_SCRIPT: &str =
     include_str!("../../frontend/src/injected/memory-policy.js");
 
-/// 壳内置 SPA 根地址（用于主窗口在需要从远程工作台跳回启动屏/重载屏时导航）。
+/// 壳页面（启动屏 / 选择器 / 控制中心）的根地址。
+///
+/// **2026-09-10 修复（v1.1.0 Windows 实测 1.6）**：原实现在 **release 包里也返回
+/// dev 服务器地址**——`devUrl` 会被 tauri-utils 的 `BuildConfig::ToTokens` **原样
+/// 编译进二进制**（只把 `before_*_command` 置 None），所以 `dev_url.is_some()`
+/// 在正式包里同样为真。后果：切 profile / 切模式 / 崩溃自恢复这三条"回壳启动屏"
+/// 的路径，全把主窗口导航到**已死的 Vite 端口**（`http://localhost:1420`），
+/// 用户在整个启动/重启期间看到的是 `ERR_CONNECTION_REFUSED` 页，直到 dsh 就绪
+/// 才被导航回工作台——即"重启时短暂出现 localhost 拒绝连接"。
+///
+/// 判据改用 `cfg!(dev)`：它由 tauri-build 依据 `DEP_TAURI_DEV`
+/// （= `!custom-protocol`）注入，与 Tauri **自己**解析 `WebviewUrl::App` 时用的
+/// `#[cfg(dev)]`（`tauri/src/manager/mod.rs::get_app_url`）**同一口径**。
+/// 换句话说：原来只有我们这一处与 Tauri 的判断不一致，现在一致了。
 pub(crate) fn shell_app_url(app: &tauri::AppHandle) -> tauri::Url {
-    if let Some(dev_url) = app.config().build.dev_url.as_ref() {
-        if let Ok(url) = tauri::Url::parse(dev_url.as_ref()) {
-            return url;
+    shell_app_url_for(
+        cfg!(dev),
+        app.config().build.dev_url.as_ref().map(|u| u.as_str()),
+    )
+}
+
+/// `shell_app_url` 的纯函数内核（供测试）：dev 门 + dev URL 解析 + 平台回退。
+///
+/// `dev=false`（正式包）时**必须忽略** `dev_url`——这正是上面那条事故的修复点。
+fn shell_app_url_for(dev: bool, dev_url: Option<&str>) -> tauri::Url {
+    if dev {
+        if let Some(raw) = dev_url {
+            if let Ok(url) = tauri::Url::parse(raw) {
+                return url;
+            }
         }
     }
-    let s = if cfg!(windows) {
+    tauri::Url::parse(shell_url_str()).expect("valid shell url")
+}
+
+/// 平台相关的壳页面地址字面量（Windows 无自定义 scheme，走虚拟 host 映射）。
+fn shell_url_str() -> &'static str {
+    if cfg!(windows) {
         "http://tauri.localhost/"
     } else {
         "tauri://localhost/"
-    };
-    tauri::Url::parse(s).expect("valid shell url")
+    }
+}
+
+/// 把「必须由主线程执行」的动作**从事件循环投递**过去——**永不就地执行**。
+///
+/// ## 为什么不能直接 `app.run_on_main_thread(f)`
+///
+/// `tauri-runtime-wry` 的 `send_user_message`（`src/lib.rs:235-255`）在当前线程
+/// **就是**主线程时会**立即就地执行**闭包（**不是**"排队到下一帧"——本文件原先
+/// 关于"从主线程调用只是排队，无害"的注释正是这么误写的）。于是
+/// `WebviewWindowBuilder::build()` 可能跑在 WebView2 的**事件回调里**，而 wry 建
+/// 控制器时用的是 `webview2_com::wait_with_pump`（`webview2-com/src/lib.rs:60`，
+/// **嵌套消息泵**）。WebView2 不支持在自己的回调内重入并跑嵌套泵 → 挂死：窗口
+/// 出得来但**没有内容**、关闭请求无人处理、任务管理器标「无响应」。
+///
+/// ## 症状与此修复的对应（v1.1.0 Windows 实测 1.3）
+///
+/// 从工作台悬浮胶囊点「控制中心」→ 白窗 + 卡死 + 关不掉；**从托盘点同一入口
+/// 正常**。差别正是调用上下文：
+/// - 托盘 / 菜单 → `on_menu_event`（tao 事件循环）→ 就地执行也安全；
+/// - 悬浮胶囊 → 注入在 **dsh 工作台页**（remote origin）里的 `invoke`。remote
+///   页面走 `window.ipc.postMessage` 回退通道（跨源 fetch 到 `ipc.localhost`
+///   不可用），该通道的事件处理在 **UI 线程**触发 → 就地执行 → 挂死。
+///
+/// 因此这里**先跳到一条独立线程**，保证 `run_on_main_thread` 一定走「投递」分支：
+/// 窗口创建永远发生在事件循环里，与托盘路径**同上下文**，两条入口行为一致。
+///
+/// 代价 = 窗口晚一个事件循环轮次出现（用户不可感）；收益 = 不再依赖"调用方恰好
+/// 不在主线程"这一脆弱前提。
+pub(crate) fn post_to_event_loop<F>(app: &tauri::AppHandle, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let handle = app.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("dsh-dock-ui-post".to_string())
+        .spawn(move || {
+            if let Err(e) = handle.run_on_main_thread(f) {
+                tracing::error!("调度动作到主线程失败：{e}");
+            }
+        })
+    {
+        tracing::error!("启动主线程调度线程失败：{e}");
+    }
 }
 
 #[cfg(test)]
@@ -525,5 +593,81 @@ mod window_background_tests {
         let result =
             std::panic::catch_unwind(|| parse_theme_bg("@theme {\n  --color-ink: #191d27;\n}"));
         assert!(result.is_err(), "缺少 --color-bg 时解析器应报错");
+    }
+
+    /// **v1.1.0 Windows 实测 1.6 的回归闸门**：正式包（`dev=false`）**绝不允许**
+    /// 返回 dev 服务器地址——那会把主窗口导航到已死的 Vite 端口
+    /// （症状：重启/切换期间 `localhost 拒绝连接`）。
+    ///
+    /// 反例就是线上：`devUrl` 被编译进 release 二进制，`is_some()` 恒真。
+    #[test]
+    fn release_never_returns_dev_url() {
+        let url = super::shell_app_url_for(false, Some("http://localhost:1420"));
+        assert_eq!(
+            url.as_str(),
+            super::shell_url_str(),
+            "正式包必须走壳页面地址，而不是 dev 服务器"
+        );
+        assert!(
+            !url.as_str().contains("1420"),
+            "正式包泄漏了 dev 端口：{url}"
+        );
+    }
+
+    /// dev 构建且 devUrl 可用 → 用 dev 服务器（前后端分离开发）。
+    #[test]
+    fn dev_uses_dev_url_when_available() {
+        let url = super::shell_app_url_for(true, Some("http://localhost:1420/"));
+        assert!(url.as_str().starts_with("http://localhost:1420"));
+    }
+
+    /// dev 构建但 devUrl 缺失/畸形 → 回退壳页面（不 panic、不返回空 URL）。
+    #[test]
+    fn dev_falls_back_to_shell_url_without_usable_dev_url() {
+        for bad in [None, Some("not a url"), Some("")] {
+            let url = super::shell_app_url_for(true, bad);
+            assert_eq!(
+                url.as_str(),
+                super::shell_url_str(),
+                "devUrl={bad:?} 时应回退壳页面地址"
+            );
+        }
+    }
+
+    /// 平台分叉：Windows 走虚拟 host（WebView2 不支持自定义 scheme），
+    /// 其余平台走 `tauri://`。两处必须与 `is_dev()` 的判断方式保持同源。
+    #[test]
+    fn shell_url_matches_platform_scheme() {
+        let s = super::shell_url_str();
+        if cfg!(windows) {
+            assert_eq!(s, "http://tauri.localhost/");
+        } else {
+            assert_eq!(s, "tauri://localhost/");
+        }
+    }
+
+    /// **第四处真相源闸门**（2026-09-10，v1.1.0 实测附带项）：除 `ui.rs` 常量、
+    /// `index.css` 的 `--color-bg`、`index.html` 首帧底色之外，**控制中心窗口**
+    /// （`commands/window.rs`）也设了自己的 `background_color`——它此前是硬编码的
+    /// 旧底色 `(249,250,251)`，而批次 E 已把主题改成 `#f1f4f9`：开窗会闪一下旧色。
+    ///
+    /// 这条闸门要求该窗口**引用常量**而非自己写一份数值，从根上消灭第四处副本。
+    #[test]
+    fn profiles_window_reuses_the_single_background_constant() {
+        let src = include_str!("commands/window.rs");
+        assert!(
+            src.contains("crate::ui::WINDOW_BACKGROUND"),
+            "控制中心窗口必须引用 WINDOW_BACKGROUND 常量，不得自己硬编码底色"
+        );
+        // 反例守卫：不得再出现「裸 Color(r, g, b, a)」字面量
+        let has_literal = src.lines().any(|l| {
+            l.contains("Color(")
+                && l.chars().any(|c| c.is_ascii_digit())
+                && !l.trim_start().starts_with("//")
+        });
+        assert!(
+            !has_literal,
+            "检测到硬编码 Color(...) 字面量——请改用 crate::ui::WINDOW_BACKGROUND"
+        );
     }
 }

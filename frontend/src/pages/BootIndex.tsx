@@ -13,6 +13,7 @@ import type { BootErrorEvent } from "@/types/events"
 import { normalizeError, normalizeStep } from "@/lib/events"
 import { useBootStore } from "@/stores/bootStore"
 import { deriveHandoff } from "@/lib/handoff"
+import { shouldOfferTimelineCollapse, shouldShowTimeline } from "@/lib/bootTimeline"
 import { handoffHeadline } from "@/components/boot/HandoffRail"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
@@ -166,7 +167,16 @@ export function BootIndex() {
   // 2026-09-10 修订（ADR-0014 §7）：交接**不再**强制展开向导态——重启必须与
   // 开机长得一模一样（复用，不是新页面）；连续性由文案 + 连续计时 + 幕布承担。
   // 想看步骤的用户仍有「查看启动详情」这个既有出口。
-  const isSetupMode = hasEverDownloaded || inDownload || shownError !== null || forceShowTimeline
+  // 判据抽到 lib/bootTimeline.ts（纯函数 + 测试）：这两处曾用不同信号，
+  // 导致「点开详情后回不去」（2026-09-10 修复，见该文件注释）。
+  const timelineVisibility = {
+    hasError: shownError !== null,
+    hasEverDownloaded,
+    inDownload,
+    forceShowTimeline,
+  }
+  const isSetupMode = shouldShowTimeline(timelineVisibility)
+  const canCollapseTimeline = shouldOfferTimelineCollapse(timelineVisibility)
 
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
@@ -220,7 +230,7 @@ export function BootIndex() {
                 // Rust 的 startedAt，跨文档不归零，用户读得出"这次已经等了多久"。
                 meta={handoff ? <ElapsedChip startedAt={handoff.startedAt} /> : undefined}
               />
-              {!shownError && hasEverDownloaded && (
+              {canCollapseTimeline && (
                 <div className="mt-3 text-center">
                   <button
                     type="button"

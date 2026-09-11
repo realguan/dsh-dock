@@ -81,7 +81,7 @@ pub fn user_dsh_home() -> PathBuf {
 
 /// 生产数据目录（`app_data_dir` 的等价物）——仅供"需真机引擎"的集成测试定位
 /// 引擎与登记表。刻意不引 Tauri 运行时：测试里没有 AppHandle。
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub fn launch_data_dir_for_test() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
@@ -339,7 +339,12 @@ pub fn resolve_launch(
                 path_env,
                 progress,
             )
-            .map_err(|e| anyhow::anyhow!("引擎引导失败：{e}"))?;
+            // `{e:#}` 展开**完整错误链**（2026-09-10，v1.1.0 Windows 实测 2.0）：
+            // 用户报「引擎引导失败：落位 …\engines\bin\pnpm.exe」——只有最外层
+            // 上下文，底层 `os error`（5 拒绝访问 / 32 被占用 / NotFound）既不进
+            // 日志也不进错误卡，用户毫无线索。anyhow 的 `{e}` 只打印最外层，`{e:#}`
+            // 才把 `Caused by:` 链一并带上。
+            .map_err(|e| anyhow::anyhow!("引擎引导失败：{e:#}"))?;
             tracing::info!(
                 "引擎引导完成：pnpm={:?} node={:?} dsh={:?}（node 切换={}，dsh 补装={}）",
                 outcome.status.pnpm,

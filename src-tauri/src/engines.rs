@@ -71,6 +71,11 @@ pub fn resolve_toolchain(data_dir: &Path) -> Result<DshToolchain, String> {
 
 /// 引擎 bin 内按名找工具：Windows cmd-shim 形态（.exe / .cmd）与 Unix（裸名）
 /// 差异在此吸收。
+///
+/// 额外认**版本化回退名**（`<name>-<16位hex>[.exe]`）：`stage_pnpm_from_bundle`
+/// 在"目标文件被残留进程占用、不可覆盖"时会退回到版本化落位（见 `land_binary`），
+/// 此时标准名不可写，引擎必须仍能发现并使用这个回退产物——否则"回退"等于没落位。
+/// 前缀匹配刻意收紧为「名字 + `-` + 纯 16 位 hex」，不吞掉别的工具。
 fn find_engine_tool(data_dir: &Path, name: &str) -> Option<PathBuf> {
     let dir = engine_bin_dir(data_dir);
     let exts: &[&str] = if cfg!(windows) {
@@ -78,9 +83,43 @@ fn find_engine_tool(data_dir: &Path, name: &str) -> Option<PathBuf> {
     } else {
         &[""]
     };
-    exts.iter()
+    if let Some(found) = exts
+        .iter()
         .map(|ext| dir.join(format!("{name}{ext}")))
         .find(|p| p.is_file())
+    {
+        return Some(found);
+    }
+    find_versioned_fallback(&dir, name)
+}
+
+/// 在引擎 bin 里找 `<name>-<16位hex>[.exe]` 形态的版本化回退产物。
+fn find_versioned_fallback(dir: &Path, name: &str) -> Option<PathBuf> {
+    let prefix = format!("{name}-");
+    let mut best: Option<PathBuf> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        let Some(tag) = file_name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let tag = tag.strip_suffix(".exe").unwrap_or(tag);
+        if tag.len() != 16 || !tag.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let path = entry.path();
+        // 多个回退产物时取字典序最大者（确定性；不依赖目录遍历顺序）
+        if path.is_file() && best.as_ref().is_none_or(|b| path > *b) {
+            best = Some(path);
+        }
+    }
+    if let Some(p) = best.as_ref() {
+        tracing::warn!(
+            "引擎 {name} 使用版本化回退产物（标准名不可写）：{}",
+            p.display()
+        );
+    }
+    best
 }
 
 /// pnpm 子进程 env：PNPM_HOME 指向引擎目录 + 引擎 bin 前置 PATH
@@ -265,6 +304,24 @@ pub fn is_engine_ready(data_dir: &Path, path_env: &str) -> bool {
 /// 把打包期随壳内置的 pnpm 压缩包（@pnpm/exe.<platform> tgz，边界 A 裁定：
 /// 安装包内压缩存储）解包落位 `engines/bin/pnpm`，幂等覆盖（pin 随壳）。
 /// 解包用系统 tar（Windows 10+ 自带 bsdtar，零新增依赖）。
+///
+/// ## 2026-09-10 加固（v1.1.0 Windows 实测 2.0「落位 …pnpm.exe」首启即砖）
+///
+/// 旧实现有三处会**永久卡死启动**且**无法自愈**：
+/// 1. **固定暂存目录 `stage-tmp`**：两次引导轮次重叠（首启 + 切换/重试/崩溃自动
+///    拉起）时，B 轮的 `remove_dir_all` 会删掉 A 轮刚解出的文件 → A 的落位阶段
+///    报"源文件不存在"；
+/// 2. **Windows 上 `rename` 不能覆盖既有文件**，而 `copy` 到目标时若目标正被
+///    **上一轮被强杀留下的 `pnpm.exe` 进程**占用，Windows 拒绝写（access denied）
+///    ——此后**每次启动都失败**（用户实测正是"卡在 100% 很久后强制退出"的场景）；
+/// 3. **错误只带上下文**：`with_context` 让 anyhow 的 `Display` 只打印最外层
+///    （"落位 <路径>"），底层 `os error`（5/32/NotFound）既不进日志也不进错误卡
+///    ——用户只看到一个路径，毫无线索。
+///
+/// 现改为：**唯一暂存目录**（pid + 序号）→ **先删后放**（消除"目标已存在"）→
+/// **短重试**（给 AV 扫描/句柄释放留窗口）→ 仍失败则回退**版本化文件名**
+/// （`bin/pnpm-<内容哈希>.exe`，落位语义从"覆盖同名"变成"换一个新名"，从根上
+/// 绕开"文件被占用不可覆盖"）→ 失败时**展开完整错误链**。
 pub fn stage_pnpm_from_bundle(bundle: &Path, data_dir: &Path) -> Result<PathBuf> {
     let dest = engine_pnpm_bin(data_dir);
     std::fs::create_dir_all(engine_bin_dir(data_dir))
@@ -274,7 +331,12 @@ pub fn stage_pnpm_from_bundle(bundle: &Path, data_dir: &Path) -> Result<PathBuf>
     } else {
         "package/pnpm"
     };
-    let tmp = pnpm_home(data_dir).join("stage-tmp");
+    // 唯一暂存目录：并发轮次互不踩（旧实现用固定名，B 轮会删掉 A 轮的解包产物）。
+    let tmp = pnpm_home(data_dir).join(format!(
+        "stage-tmp-{}-{}",
+        std::process::id(),
+        STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).with_context(|| format!("创建暂存目录 {}", tmp.display()))?;
     let mut tar = crate::child_cmd(Path::new("tar"));
@@ -286,18 +348,102 @@ pub fn stage_pnpm_from_bundle(bundle: &Path, data_dir: &Path) -> Result<PathBuf>
     )
     .context("执行系统 tar 解包 pnpm 失败")?;
     if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
         bail!(
-            "tar 解包 pnpm 失败：{}",
+            "tar 解包 pnpm 失败（{}）：{}",
+            bundle.display(),
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
     let extracted = tmp.join(member);
-    std::fs::rename(&extracted, &dest)
-        .or_else(|_| std::fs::copy(&extracted, &dest).map(|_| ()))
-        .with_context(|| format!("落位 {}", dest.display()))?;
+    let landed = land_binary(&extracted, &dest).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        anyhow!("{e:#}") // 展开完整错误链（旧实现只打印最外层上下文）
+    })?;
     let _ = std::fs::remove_dir_all(&tmp);
-    Ok(dest)
+    Ok(landed)
 }
+
+/// 暂存目录序号（同进程内并发轮次唯一）。
+static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 把解出的二进制落到目标位置：先删后放 + 短重试 + 版本化回退。
+///
+/// 返回**实际落位**的路径（可能不是 `dest`——回退分支会换一个不冲突的文件名）。
+fn land_binary(extracted: &Path, dest: &Path) -> Result<PathBuf> {
+    // ① 先删目标：Windows 的 `rename` 不覆盖既有文件，留着它只会让 rename 必败。
+    let _ = std::fs::remove_file(dest);
+    // ② 短重试：给 AV 扫描 / 上一个持句柄的进程释放留窗口（Windows 实测常见 1–2s）。
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..LAND_RETRIES {
+        match std::fs::rename(extracted, dest) {
+            Ok(()) => return Ok(dest.to_path_buf()),
+            Err(rename_err) => {
+                // rename 跨设备/被占用时退化为 copy
+                match std::fs::copy(extracted, dest) {
+                    Ok(_) => return Ok(dest.to_path_buf()),
+                    Err(copy_err) => {
+                        if attempt + 1 == LAND_RETRIES {
+                            last_err = Some(copy_err);
+                        } else {
+                            tracing::warn!(
+                                "落位 pnpm 第 {} 次失败（rename: {rename_err}；copy: {copy_err}），重试…",
+                                attempt + 1
+                            );
+                            std::thread::sleep(LAND_RETRY_DELAY);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // ③ 回退：目标文件被**他人长期占用**（典型场景 = 上一轮被强杀留下的
+    //    pnpm.exe 仍在跑，Windows 拒绝写它）。换一个**不冲突的版本化文件名**，
+    //    引擎 bin 里可执行文件按名发现（`find_engine_tool` 认该形态）。
+    let stem = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("pnpm");
+    let tag = short_content_tag(extracted);
+    // 无扩展名时**不得**留尾点：`pnpm-<hex>.` 的标签会变成 17 字符，而回退发现
+    // 逻辑按 16 位 hex 校验 → 认不出自己落的文件（实测踩到，已加测试钉住）。
+    let fallback = match dest.extension().and_then(|s| s.to_str()) {
+        Some(ext) if !ext.is_empty() => dest.with_file_name(format!("{stem}-{tag}.{ext}")),
+        _ => dest.with_file_name(format!("{stem}-{tag}")),
+    };
+    std::fs::copy(extracted, &fallback).with_context(|| {
+        format!(
+            "落位 pnpm 失败（目标 {} 重试 {} 次仍不可写：{}）",
+            dest.display(),
+            LAND_RETRIES,
+            last_err
+                .as_ref()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "未知".into())
+        )
+    })?;
+    tracing::warn!(
+        "pnpm 目标被占用，已回退为版本化落位：{}（旧文件可能仍被残留进程持有）",
+        fallback.display()
+    );
+    Ok(fallback)
+}
+
+/// 短内容标签（取文件字节的简单哈希片段）——用于版本化回退命名。
+fn short_content_tag(path: &Path) -> String {
+    use std::io::Read as _;
+    let mut buf = Vec::new();
+    if let Ok(f) = std::fs::File::open(path) {
+        let _ = f.take(64 * 1024).read_to_end(&mut buf);
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 偏移基数
+    for b in &buf {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// 落位重试次数与间隔（Windows 上 AV/句柄释放的实测窗口）。
+const LAND_RETRIES: u32 = 4;
+const LAND_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(600);
 
 fn run_engine_pnpm(
     data_dir: &Path,
@@ -454,7 +600,10 @@ pub fn runtime_set_node(
         );
         match result {
             Ok(()) => {
-                tracing::info!("node v{version} 就位（{progress_lines} 行下载进度）");
+                tracing::info!(
+                    "node v{} 就位（{progress_lines} 行下载进度）",
+                    crate::updates::display_version(version)
+                );
                 // 关单：pnpm 下完最后一段字节后转入 SHASUMS 校验/解包，不再输出
                 // 进度行——末行常停在 99%，按满额补发一次完成事件（字节确已下完），
                 // 前端据此收起下载卡（boot:progress 桥对完成事件不节流）。
@@ -475,29 +624,53 @@ pub fn runtime_set_node(
     ))
 }
 
+/// Node 包内 `node` 可执行文件的候选路径（纯函数，供测试）。
+///
+/// **2026-09-10 修复（v1.1.0 Windows 实测 1.2 / 1.4 / 1.7 的连带项）**：旧实现两条
+/// 候选路径都写死 `…/bin/node(.exe)`，**Windows 上必然找不到**——官方 Windows 份
+/// 是 zip 变体，按 npm 包形态落地时 `node.exe` 在**包根**，没有 `bin/` 目录
+/// （spike 0003 §2.7 已实测记录该布局分叉：「引擎 node 树根除 node.exe 外还有官方
+/// 文档与 package.json 等」）。
+///
+/// 后果链：本函数返回 `None` → `link_real_node_binary` 只留一条 warn →
+/// `engines/bin/node` 退化成 `pnpm shim add node` 的 shim dispatcher → 而
+/// `link_real_node_binary` 的注释自己写明：该 shim 会让全局安装的 postinstall 报
+/// `ERR_PNPM_SHIM_NO_TARGET`。
+fn node_bin_candidates(pkg_dir: &Path) -> Vec<PathBuf> {
+    let name = if cfg!(windows) { "node.exe" } else { "node" };
+    vec![
+        // unix 份（tar.gz）与 pnpm 虚拟 store 的标准布局
+        pkg_dir.join("bin").join(name),
+        // Windows 份（zip 变体）：可执行文件在包根
+        pkg_dir.join(name),
+        // 防御性：个别镜像再套一层 `node/`
+        pkg_dir.join("node").join("bin").join(name),
+    ]
+}
+
+/// 在给定 Node 包目录里按 [`node_bin_candidates`] 找出真实二进制。
+pub fn find_node_bin_in(pkg_dir: &Path) -> Option<PathBuf> {
+    node_bin_candidates(pkg_dir)
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
 /// 查找 pnpm runtime set 下载并解包的实际 Node 二进制文件。
 pub fn find_runtime_node_bin(data_dir: &Path) -> Option<PathBuf> {
     let base = pnpm_home(data_dir).join("node_modules");
-    let name = if cfg!(windows) { "node.exe" } else { "node" };
-    // 1. 标准软链路径：node_modules/node/bin/node
-    let direct = base.join("node").join("bin").join(name);
-    if direct.is_file() {
-        return Some(direct);
+    // 1. 标准软链路径：node_modules/node
+    if let Some(found) = find_node_bin_in(&base.join("node")) {
+        return Some(found);
     }
-    // 2. 虚拟 store 扫描：node_modules/.pnpm/node@runtime+*/node_modules/node/bin/node
+    // 2. 虚拟 store 扫描：node_modules/.pnpm/node@runtime+*/node_modules/node
     let pnpm_dir = base.join(".pnpm");
     if let Ok(entries) = std::fs::read_dir(&pnpm_dir) {
         for entry in entries.flatten() {
             let n = entry.file_name();
             if n.to_string_lossy().starts_with("node@runtime") {
-                let cand = entry
-                    .path()
-                    .join("node_modules")
-                    .join("node")
-                    .join("bin")
-                    .join(name);
-                if cand.is_file() {
-                    return Some(cand);
+                let dir = entry.path().join("node_modules").join("node");
+                if let Some(found) = find_node_bin_in(&dir) {
+                    return Some(found);
                 }
             }
         }
@@ -579,7 +752,10 @@ pub fn install_dsh_global(
         });
         match result {
             Ok(()) => {
-                tracing::info!("dsh v{version} 就位（{progress_lines} 行安装进度）");
+                tracing::info!(
+                    "dsh v{} 就位（{progress_lines} 行安装进度）",
+                    crate::updates::display_version(version)
+                );
                 // 关单：末条 Progress 行可能停在 downloaded < resolved，成功
                 // 返回即全部就位，按满额补发一次完成事件。
                 if let Some((_, total)) = last {
@@ -623,6 +799,13 @@ pub fn bootstrap(
     dsh_resolve: &mut dyn FnMut() -> Result<String>,
     progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
 ) -> Result<BootstrapOutcome> {
+    // ⓪ **免符号链接布局**（2026-09-10，v1.1.0 Windows 实测 1.2/1.4/1.7 根因）：
+    // 必须在**任何 pnpm 装包动作之前**写——pnpm 默认的 isolated 布局要建目录
+    // 符号链接，而 Windows 普通账户没有 SeCreateSymbolicLinkPrivilege，
+    // `runtime set node` 会以 os error 5 失败，进而 dsh 永远装不上。
+    // 非 Windows 平台也写（幂等、无副作用），保证三平台布局一致、行为可预期。
+    crate::build_policy::ensure_engine_linker_best_effort(&pnpm_home(data_dir));
+
     // ① pnpm 随壳 pin：每次 boot 重铺（幂等覆盖，版本不再参与判定）
     tracing::info!("引擎引导：重铺捆绑 pnpm…");
     stage_pnpm_from_bundle(pnpm_bundle, data_dir)?;
@@ -993,6 +1176,247 @@ mod tests {
         assert!(!outcome.node_switched);
         assert!(!outcome.dsh_installed);
         assert_eq!(outcome.status.node.as_deref(), Some("v24.18.0"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **Windows 布局分叉的回归闸门**（v1.1.0 实测 1.2/1.4/1.7 连带项）：
+    /// 候选路径必须同时认 `bin/node(.exe)`（unix 份）与**包根** `node.exe`
+    /// （Windows zip 变体）。旧实现只认前者，导致 Windows 上永远找不到真实
+    /// node，`engines/bin/node` 退化成会让 postinstall 失败的 shim。
+    #[test]
+    fn node_bin_candidates_cover_both_platform_layouts() {
+        let pkg = Path::new("/tmp/engines/node_modules/node");
+        let cands = node_bin_candidates(pkg);
+        let as_str: Vec<String> = cands.iter().map(|p| p.display().to_string()).collect();
+        let want_bin = pkg
+            .join("bin")
+            .join(if cfg!(windows) { "node.exe" } else { "node" });
+        let want_root = pkg.join(if cfg!(windows) { "node.exe" } else { "node" });
+        assert!(
+            as_str.contains(&want_bin.display().to_string()),
+            "必须认标准 bin/ 布局：{as_str:?}"
+        );
+        assert!(
+            as_str.contains(&want_root.display().to_string()),
+            "必须认 Windows zip 变体的包根布局（旧实现漏了这条 → Windows 必失败）：{as_str:?}"
+        );
+        assert!(cands.len() >= 2, "两种布局都要覆盖");
+    }
+
+    /// 实盘验证：包根放 node.exe（Windows 形态）也能被找到。
+    #[test]
+    fn find_node_bin_in_accepts_root_layout() {
+        let root = std::env::temp_dir().join(format!("dsh-node-layout-{}", std::process::id()));
+        let pkg = root.join("node");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let exe_name = if cfg!(windows) { "node.exe" } else { "node" };
+        // 只放「包根」这一种（模拟 Windows 份），不放 bin/
+        let root_exe = pkg.join(exe_name);
+        std::fs::write(&root_exe, b"fake").unwrap();
+        assert_eq!(
+            find_node_bin_in(&pkg).as_deref(),
+            Some(root_exe.as_path()),
+            "包根布局必须命中"
+        );
+
+        // 反例：都没有 → None（不猜、不返回不存在的路径）
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(find_node_bin_in(&empty), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **真机端到端（联网、分钟级，故 `#[ignore]`）**：在**空数据目录**里跑完整
+    /// 引擎引导，验证
+    /// ① `nodeLinker: hoisted` 被写进引擎目录（Windows 免符号链接的根因修复）；
+    /// ② node 与 dsh 真的装上且可执行；
+    /// ③ 布局是**真实目录**而非符号链接（Windows 普通账户的关键判据）。
+    ///
+    /// 这条同时是 **Windows 实机验证锚**：在未开开发者模式的 Windows 上跑它，
+    /// 旧实现必红（`os error 5`），新实现应绿。
+    ///
+    /// 跑法：`cargo test --lib engine_bootstrap_uses_symlink_free_layout -- --ignored --nocapture`
+    #[test]
+    #[ignore = "联网 + 分钟级；Windows 实机验证锚"]
+    fn engine_bootstrap_uses_symlink_free_layout() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "dsh-bootstrap-e2e-{}-{}",
+            std::process::id(),
+            crate::lifecycle::now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&data_dir);
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let bundle = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/pnpm")
+            .join(if cfg!(windows) {
+                "win32-x64.tgz"
+            } else if cfg!(target_os = "macos") {
+                if cfg!(target_arch = "aarch64") {
+                    "darwin-arm64.tgz"
+                } else {
+                    "darwin-x64.tgz"
+                }
+            } else {
+                "linux-x64.tgz"
+            });
+        if !bundle.is_file() {
+            eprintln!("跳过：捆绑 pnpm 不存在（{}）", bundle.display());
+            return;
+        }
+        crate::lifecycle::init(&data_dir);
+        let outcome = bootstrap(
+            &data_dir,
+            &crate::resolve::effective_path(),
+            &bundle,
+            &mut || Ok(crate::updates::node_plan(&data_dir).version),
+            &mut crate::updates::latest_stable_dsh_version,
+            &mut |_, _, _| {},
+        )
+        .expect("引擎引导应成功");
+
+        // ① 免符号链接布局已落位
+        let cfg_path = pnpm_home(&data_dir).join("pnpm-workspace.yaml");
+        let cfg = std::fs::read_to_string(&cfg_path).expect("引擎配置应存在");
+        assert!(
+            cfg.contains("nodeLinker: hoisted"),
+            "必须写入 nodeLinker: hoisted（Windows 免符号链接）：{cfg}"
+        );
+
+        // ② 三件就绪
+        assert!(outcome.status.pnpm.is_some(), "pnpm 应就绪");
+        let node_ver = outcome.status.node.expect("node 应就绪");
+        assert!(node_ver.contains("24."), "node 版本异常：{node_ver}");
+        assert!(outcome.status.dsh.is_some(), "dsh 应就绪");
+
+        // ③ 真实二进制可执行 + 布局免符号链接
+        let node_bin = engine_node_bin(&data_dir).expect("引擎 node 路径");
+        let out = crate::child_cmd(&node_bin).arg("-v").output().unwrap();
+        assert!(
+            String::from_utf8_lossy(&out.stdout).trim().starts_with('v'),
+            "引擎 node 应可执行"
+        );
+        let pkg_dir = pnpm_home(&data_dir).join("node_modules").join("node");
+        assert!(
+            !pkg_dir
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false),
+            "node 包应是真实目录（hoisted），不得是符号链接：{}",
+            pkg_dir.display()
+        );
+        std::fs::remove_dir_all(&data_dir).ok();
+    }
+
+    // ---------- 落位加固（v1.1.0 Windows 实测 2.0） ----------
+
+    /// 版本化回退产物必须能被引擎发现——否则"回退"等于没落位。
+    #[test]
+    fn versioned_fallback_is_discoverable() {
+        let root = std::env::temp_dir().join(format!("dsh-fallback-{}", std::process::id()));
+        let bin = engine_bin_dir(&root);
+        std::fs::create_dir_all(&bin).unwrap();
+        // 先只有回退产物（模拟"标准名被占用，落了版本化文件"）
+        let tag = "0123456789abcdef";
+        let fb = bin.join(if cfg!(windows) {
+            format!("pnpm-{tag}.exe")
+        } else {
+            format!("pnpm-{tag}")
+        });
+        std::fs::write(&fb, b"fake").unwrap();
+        assert_eq!(
+            find_versioned_fallback(&bin, "pnpm").as_deref(),
+            Some(fb.as_path()),
+            "版本化回退产物必须可被发现"
+        );
+
+        // 标准名出现后优先用标准名
+        let std_name = bin.join(if cfg!(windows) { "pnpm.exe" } else { "pnpm" });
+        std::fs::write(&std_name, b"fake").unwrap();
+        assert_eq!(
+            find_engine_tool(&root, "pnpm").as_deref(),
+            Some(std_name.as_path()),
+            "标准名存在时应优先"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 回退匹配必须**收紧**：非 16 位 hex 标签、其他工具名不得被吞。
+    #[test]
+    fn versioned_fallback_matching_is_strict() {
+        let root = std::env::temp_dir().join(format!("dsh-fb-strict-{}", std::process::id()));
+        let bin = engine_bin_dir(&root);
+        std::fs::create_dir_all(&bin).unwrap();
+        for bad in [
+            "pnpm-notahexlabel12",    // 非 hex
+            "pnpm-0123456789abcde",   // 15 位
+            "pnpm-0123456789abcdef0", // 17 位
+            "pnpm-backup.exe",        // 人为命名（非 hex 标签）
+        ] {
+            std::fs::write(bin.join(bad), b"x").unwrap();
+        }
+        assert_eq!(
+            find_versioned_fallback(&bin, "pnpm"),
+            None,
+            "可疑命名不得被当成回退产物（防误选任意文件）"
+        );
+        // 其他工具名不受影响
+        std::fs::write(bin.join("node"), b"x").unwrap();
+        assert_eq!(find_versioned_fallback(&bin, "dsh"), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 并发轮次不得互相踩（旧实现用固定 `stage-tmp`，B 轮会删掉 A 轮的解包产物）。
+    #[test]
+    fn staging_dirs_are_unique_per_call() {
+        let root = std::env::temp_dir().join(format!("dsh-stage-uniq-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let a = root.join(format!(
+            "stage-tmp-{}-{}",
+            std::process::id(),
+            STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let b = root.join(format!(
+            "stage-tmp-{}-{}",
+            std::process::id(),
+            STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        assert_ne!(a, b, "两次引导轮次的暂存目录必须不同名");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `land_binary`：目标不存在 → 正常落位；目标**已被占用**且不可覆盖 →
+    /// 回退版本化文件名（并返回实际路径）。
+    #[cfg(unix)]
+    #[test]
+    fn land_binary_falls_back_when_target_is_unwritable() {
+        let root = std::env::temp_dir().join(format!("dsh-land-{}", std::process::id()));
+        let src_dir = root.join("src");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let src = src_dir.join("pnpm");
+        std::fs::write(&src, b"content-1").unwrap();
+
+        // ① 正常落位
+        let dest = bin.join("pnpm");
+        let landed = land_binary(&src, &dest).unwrap();
+        assert_eq!(landed, dest, "目标可写时应落标准名");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"content-1");
+
+        // ② 目标是一个**不可写的目录**（模拟"被占用/不可覆盖"）
+        // 注意：① 的 rename 已把 src **移走**，这里必须重新造一份源。
+        std::fs::remove_file(&dest).unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(&src, b"content-2").unwrap();
+        let landed2 = land_binary(&src, &dest).unwrap();
+        assert_ne!(landed2, dest, "目标不可写时应回退到版本化文件名");
+        assert!(landed2.is_file(), "回退产物必须真的落地");
+        assert_eq!(std::fs::read(&landed2).unwrap(), b"content-2");
+        // 回退产物必须能被引擎发现
+        assert_eq!(
+            find_versioned_fallback(&bin, "pnpm").as_deref(),
+            Some(landed2.as_path())
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

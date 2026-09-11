@@ -38,9 +38,18 @@ export interface DshVersionsResult {
 }
 
 export interface NodeRuntimeInfo {
-  version: string
-  /** system = 复用用户已装的 node；managed = 应用私有缓存 */
+  /**
+   * **实测**版本（引擎 `engines/bin/node --version`）；未安装 = null。
+   *
+   * 2026-09-10 修复：此前这里是**下载计划**版本（恒非空），于是引擎 node 其实
+   * 没装时关于页照样显示「v24.18.0 · 应用托管」，与健康大盘的「未检出」自相矛盾
+   * ——用户看到的版本号从来没被安装过。现在"装没装"与"打算装什么"分开。
+   */
+  version: string | null
+  /** engine = 壳引擎资产（已装）；managed = 应用托管（未装，走引导补齐） */
   origin: "engine" | "system" | "managed"
+  /** 未安装时**计划**安装的版本——只用于提示，不得渲染成已装。 */
+  plannedVersion: string | null
 }
 
 /// boot:update 载荷 / get_update_status 返回值。

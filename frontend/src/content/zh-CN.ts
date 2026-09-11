@@ -205,6 +205,10 @@ export const t = {
     nodeFromSystem: "来自你的系统",
     nodeManaged: "应用托管 · 随启动自动准备",
     nodeUnknown: "尚未确定",
+    // 未安装态（2026-09-10）：如实报"没装"，并把**计划**版本放进括号——
+    // 绝不把计划版本渲染成已装版本（v1.1.0 Windows 实测 1.2 的"说谎"修复）。
+    nodeNotInstalled: "未安装",
+    nodeNotInstalledPlanned: (v: string) => `未安装（计划 ${v}）`,
     dshUpgradeNote: "升级 DSH 只动 pnpm/npm 全局包，不触碰你的数据与配置。",
     upgrading: "升级中…",
     upgradeFailed: "升级失败",

@@ -200,6 +200,19 @@ fn verify_signature_with(pubkey_hex: &str, msg: &[u8], sig_hex: &str) -> bool {
     publishing_key.verify(msg, &sig).is_ok()
 }
 
+/// 展示用版本号：剥掉可选的 `v` 前缀（**不要**用于传给 pnpm 的实参）。
+///
+/// **2026-09-10 修复（v1.1.0 Windows 实测 1.1）**：node-map 与内置基线里的版本是
+/// **带 `v` 的**（`v24.18.0`，与 nodejs.org 发布标签一致），而展示处又拼了一个
+/// `v` → 用户看到 `node vv24.18.0`（WSL 引导提示）。
+///
+/// 归一逻辑与 `engines::readiness_gaps` 同一口径（它一直会剥 `v` 再比较，说明
+/// 只有展示层忘了归一）。**喂 pnpm 的实参保持原样**——实测 `runtime set node
+/// v24.18.0` 是接受的，无需为显示问题去改调用契约。
+pub fn display_version(v: &str) -> &str {
+    v.strip_prefix('v').unwrap_or(v)
+}
+
 /// 解析并校验映射内容（format / 版本形态 / minShellVersion / 六平台全覆盖）。
 /// 任何一项不合法 → None（宁可回退内置，不采不完整映射）。
 fn parse_node_plan(map: &[u8]) -> Option<NodePlan> {
@@ -568,11 +581,22 @@ pub struct ComponentUpdate {
 }
 
 /// Node 运行时维度（只读信息，无升级动作——版本由下载计划决定）。
+///
+/// **2026-09-10 修复（v1.1.0 Windows 实测 1.2 的"说谎"项）**：原实现把**下载计划
+/// 版本**当成已装版本返回（`version` 恒为 `String`），于是引擎 node 其实**没装**
+/// 时，关于页照样显示「v24.18.0 · 应用托管 · 随启动自动准备」——与健康大盘（真探测
+/// `engines/bin`：未检出）自相矛盾。用户看到的那个版本号从来没被安装过。
+/// 现拆成两个字段：`version` = **实测**（未装 = None），`plannedVersion` = 计划
+/// （仅在未装时用于提示"将要装哪个"）。**判据是"装没装"，不是"打算装什么"。**
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeRuntimeInfo {
-    pub version: String,
-    /// system = 复用用户已装的 node；managed = 应用私有缓存（下载档自备）。
+    /// 实测版本（引擎 `engines/bin/node --version`）。**未安装 = None**。
+    pub version: Option<String>,
+    /// engine = 壳引擎资产；managed = 应用托管（计划下载，尚未落位）。
     pub origin: &'static str,
+    /// 引擎缺失时**计划**安装的版本——仅供"未安装"态展示，不得冒充已装。
+    pub planned_version: Option<String>,
 }
 
 /// 更新检测聚合：dsh 本体 + 桌面客户端 + Node 运行时 三维度（boot:update 载荷）。
@@ -623,18 +647,24 @@ fn engine_status(data_dir: &Path) -> crate::engines::EngineStatus {
     crate::engines::probe_engine(data_dir, &resolve::effective_path())
 }
 
-/// Node 运行时维度：引擎优先（ADR-0010）→ 系统探测（退役前过渡）→ 托管计划。
+/// Node 运行时维度：引擎实测优先（ADR-0010）；未装则报「未安装 + 计划版本」。
+///
+/// 探测层退役后只有引擎一个来源，故 `origin` 只可能是 `engine`（已装）或
+/// `managed`（未装，走引导补齐）。**不再回退系统探测**——系统 node 不再是任何
+/// 环节的来源（ADR-0010），报它只会误导。
 fn node_runtime_info(data_dir: &Path) -> Option<NodeRuntimeInfo> {
-    if let Some(v) = engine_status(data_dir).node {
-        return Some(NodeRuntimeInfo {
-            version: v,
+    match engine_status(data_dir).node {
+        Some(v) => Some(NodeRuntimeInfo {
+            version: Some(v),
             origin: "engine",
-        });
+            planned_version: None,
+        }),
+        None => Some(NodeRuntimeInfo {
+            version: None,
+            origin: "managed",
+            planned_version: Some(node_plan(data_dir).version),
+        }),
     }
-    Some(NodeRuntimeInfo {
-        version: node_plan(data_dir).version,
-        origin: "managed",
-    })
 }
 
 /// 当前宿主 dsh 版本：引擎优先（ADR-0010），引擎未就绪回退系统探测
@@ -1509,5 +1539,24 @@ mod packument_tests {
             ..Default::default()
         };
         assert!(fetch_node_map_with(&bases2(), &http).is_none());
+    }
+
+    /// **v1.1.0 Windows 实测 1.1 的回归闸门**：node-map 的版本是带 `v` 的，
+    /// 展示层必须先归一，否则用户看到 `node vv24.18.0`。
+    #[test]
+    fn display_version_strips_single_v_prefix() {
+        assert_eq!(display_version("v24.18.0"), "24.18.0");
+        assert_eq!(display_version("24.18.0"), "24.18.0", "无前缀时原样");
+        // 只剥一个：`vv` 是脏数据，不该被"修好"成版本号而掩盖问题
+        assert_eq!(display_version("vv24.18.0"), "v24.18.0");
+        assert_eq!(display_version(""), "");
+        // 与 readiness_gaps 的口径一致（那里也剥 v 再比较）：真实 node-map 版本
+        // 必须被归一成不带 v 的形态。
+        let plan = node_plan(&std::env::temp_dir());
+        assert_eq!(
+            display_version(&plan.version),
+            plan.version.trim_start_matches('v')
+        );
+        assert!(!display_version(&plan.version).starts_with('v'));
     }
 }

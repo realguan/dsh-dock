@@ -31,6 +31,62 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-10 fix(v110)：Windows 实测 7 项问题修复——引擎引导免符号链接 + 壳页地址 dev 门 + 控制中心建窗线程 + pnpm 落位加固 —— guan（AI 协作）
+
+- **背景**：`docs/known-issues/v110-测试问题记录.md`（v1.1.0 Windows 实机 9 张截图）。
+  定位全文见 `docs/known-issues/v110-测试问题定位.md`。7 项里 **5 项同源**——
+  引擎引导在普通权限 Windows 上必然失败，下游表现为「DSH 未检出 / 健康大盘全缺 /
+  插件安装报引擎未就绪 / 关于页版本号对不上」。
+- **变更**（按根因）：
+  1. **引擎引导免符号链接布局**（实测 1.2/1.4/1.7 的根因）：`build_policy.rs` 新增
+     `ensure_engine_linker`，引导开头向引擎目录幂等写 `nodeLinker: hoisted`
+     （复用 ADR-0013 同一套 YAML 解析/拒写纪律，只动这一个顶层键）。pnpm 默认的
+     `isolated` 布局要建**目录符号链接**，而 Windows 普通账户无
+     `SeCreateSymbolicLinkPrivilege` → `os error 5`；hoisted 是扁平真实目录，
+     不需要任何链接。**平台无关地写**（幂等、三平台一致）。
+  2. **`find_runtime_node_bin` 认 Windows 布局**：候选路径补「包根 `node.exe`」
+     （官方 Windows 份是 zip 变体，`node.exe` 在包根无 `bin/`，spike 0003 §2.7
+     已记录该分叉）。旧实现只认 `bin/`，Windows 上必然找不到 → `engines/bin/node`
+     退化成会让 postinstall 报 `ERR_PNPM_SHIM_NO_TARGET` 的 shim。
+  3. **`shell_app_url` 加 dev 门**（实测 1.6）：`devUrl` 会被编译进 **release**
+     二进制，旧判据 `dev_url.is_some()` 恒真 → 切 profile/切模式/崩溃自恢复全把主
+     窗口导航到已死的 Vite 端口（`localhost 拒绝连接`）。改用 `cfg!(dev)`
+     ——与 Tauri 自己解析 `WebviewUrl::App` 的口径**同源**。抽纯函数 + 4 例测试。
+  4. **窗口创建移出 WebView2 回调**（实测 1.3）：新增 `ui::post_to_event_loop`，
+     先跳独立线程再 `run_on_main_thread`，保证**永不就地执行**
+     （`send_user_message` 在主线程时是就地执行，不是"排队到下一帧"——旧注释写错）。
+     就地执行会让 `build()` 在 WebView2 回调里跑嵌套消息泵 → 白窗 + 卡死 + 关不掉；
+     托盘入口在 tao 事件循环故正常，正是实测的分叉现象。
+  5. **pnpm 落位加固**（实测 2.0）：暂存目录带唯一后缀（旧固定名会被并发轮次互删）
+     → 先删后放 + 短重试 → 仍失败回落**版本化文件名**（从根上绕开"目标被残留进程
+     占用不可覆盖"）→ `find_engine_tool` 认该回退形态 → 错误链 `{e:#}` 展开
+     （旧实现只打印最外层上下文，`os error` 全丢）。
+  6. **关于页不再说谎**（实测 1.2 的追问）：`NodeRuntimeInfo` 拆
+     `version`（实测，未装 = null）与 `plannedVersion`（计划）——旧实现拿**下载计划
+     版本**当已装版本渲染成「v24.18.0 · 应用托管」，与健康大盘的「未检出」自相矛盾。
+  7. **展示层**：`updates::display_version` 剥 `v` 前缀（修 `node vv24.18.0`）；
+     BootIndex「查看启动详情」的收起判据抽 `lib/bootTimeline.ts`——旧条件只看
+     `hasEverDownloaded`，而 WSL 客体引导**只发 boot:step 不发 boot:progress**，
+     该标志恒假 → 点开详情后**没有任何收起出口**；控制中心窗口底色改引
+     `WINDOW_BACKGROUND` 常量并纳入批次 E 闸门（消灭第四处真相源）。
+- **影响**：仅周知；无契约破坏、无 IPC 变更。`NodeRuntimeInfo` 增 `plannedVersion`
+  字段（Rust + 前端类型 + mock 同步；`version` 由 `String` 变 `Option<String>`，
+  属**载荷形状变更**——同包内两端同步，无外部消费方）。
+- **凭据**：`cargo test --lib` 280 绿（本轮新增 20：nodeLinker 6、node 布局 2、
+  落位回退/发现 4、shell_app_url 4、display_version 1、窗口底色闸门 1、其余为
+  ADR-0015 配套）；`cargo fmt --check` 绿；`clippy --all-targets -D warnings`
+  绿（macOS + `x86_64-pc-windows-gnu` **双平台 0 warning** —— Windows 侧曾因
+  unix-only 测试助手报 dead_code，已按平台正确 gate）；前端 `typecheck`/`lint`/
+  `test` 221 绿（新增 bootTimeline 7 例）；**引擎引导端到端**（`--ignored`：空数据
+  目录跑完整引导）绿——实测确认 `nodeLinker: hoisted` 下 `node_modules/node` 是
+  **真实目录而非符号链接**，node/dsh 均就绪可执行。
+- **未做（诚实登记）**：① Windows 实机复验（本机只有 macOS；上述 1/2/5 的修复
+  机制已在 macOS 端到端验证 + `x86_64-pc-windows-gnu` 类型检查，但**真机行为仍需
+  维护者跑一次**——建议用 `cargo test --lib engine_bootstrap_uses_symlink_free_layout
+  -- --ignored`，在**未开开发者模式**的 Windows 上跑，旧实现必红、新实现应绿）；
+  ② 1.5 进程数量分析（结论：WebView2 多进程 + 会话 node + 隐藏 conhost，量级正常，
+  唯一异常项是 1.3 那条「无响应」，已随本批修复）。
+
 ### 2026-09-10 宪法级（AGENTS §6/§9）· ADR-0015 子进程生命周期归属——硬杀收口 + 孤儿清扫 —— guan（AI 协作）
 
 - **变更**：新增 `docs/adr/0015-child-process-lifecycle-ownership.md`（已接受）+ 配套

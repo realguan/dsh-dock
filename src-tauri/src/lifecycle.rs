@@ -58,6 +58,10 @@ impl Role {
     }
 
     /// 是否需要生命线 watcher（壳横死时的主动收口）。
+    ///
+    /// 仅 unix 的生命线实现消费它（Windows 用 Job Object，不需要 watcher）；
+    /// 非 unix 构建下保留定义只为分类语义完整 + 测试可跨平台断言。
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn needs_lifeline(self) -> bool {
         matches!(
             self,
@@ -850,7 +854,9 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    #[cfg(unix)]
+    use std::io::Write as _;
+    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     /// 每个测试一个独立数据目录（登记表隔离）。
@@ -866,18 +872,13 @@ mod tests {
         dir
     }
 
+    /// 进程是否存活（仅 unix 测试用；Windows 侧硬杀收口由 Job Object 覆盖，
+    /// 断言方式不同，故这里不提供假的跨平台实现以免误导）。
+    #[cfg(unix)]
     fn alive(pid: u32) -> bool {
-        #[cfg(unix)]
-        {
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-            kill(Pid::from_raw(pid as i32), None).is_ok()
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = pid;
-            false
-        }
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+        kill(Pid::from_raw(pid as i32), None).is_ok()
     }
 
     /// 测试用子进程一律**脱离测试进程的 stdio**（2026-09-10 踩坑）。
@@ -886,12 +887,14 @@ mod tests {
     /// stdout/stderr，就会一直握着那条管道——于是 `cargo test | tail` 这类
     /// 管道读端永不 EOF，**测试早已结束但外层命令永久挂起**（实测把一次
     /// 5 分钟的测试拖成无限等待）。孤儿的数据口一律指向 /dev/null。
+    #[cfg(unix)]
     fn quiet(cmd: &mut Command) {
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
     }
 
+    #[cfg(unix)]
     fn wait_until(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
         let end = Instant::now() + deadline;
         while Instant::now() < end {

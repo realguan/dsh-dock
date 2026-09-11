@@ -1027,7 +1027,12 @@ pub(crate) fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>)
         status
             .node
             .clone()
-            .map(|n| format!("{}({})", n.version, n.origin))
+            .map(|n| match (&n.version, &n.planned_version) {
+                // 实测到就是实测；没装就明说"未安装 + 计划"，不拿计划冒充已装。
+                (Some(v), _) => format!("{v}({})", n.origin),
+                (None, Some(p)) => format!("未安装(计划 {p})"),
+                (None, None) => "未安装".to_string(),
+            })
     );
     *state.update_status.lock().unwrap() = Some(status.clone());
     ui::refresh_app_menu(app, state);

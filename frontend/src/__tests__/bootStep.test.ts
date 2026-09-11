@@ -64,7 +64,7 @@ describe("bootStore.setStep 推演", () => {
     st.setVersions({
       dsh: { current: "1", latest: null, newer: false, error: null, preview_latest: null },
       client: { current: "1", latest: null, newer: false, error: null, preview_latest: null },
-      node: { version: "v1", origin: "system" },
+      node: { version: "v1", origin: "system", plannedVersion: null },
     })
     st.reset()
     const after = useBootStore.getState()
