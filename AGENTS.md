@@ -37,6 +37,10 @@
 
 - 命令：Rust `cd src-tauri && cargo test`；前端 `cd frontend && pnpm install --frozen-lockfile && pnpm run
   typecheck/lint/test`；CI 闸门 `cargo fmt --check` + `clippy -D warnings`（三平台）。
+- **`cargo check` ≠ `clippy`：clippy 需逐目标各跑一次**（2026-09-11 教训，v1.1.1 发版
+  构建因此在 CI 才红）。`cfg(windows)` 等分叉代码在宿主上根本不编译，而 `check` 也不跑
+  lint——只跑"宿主 clippy + 交叉 check"必然漏掉目标平台独有的 lint。照 CI 同款：
+  `cargo clippy --all-targets -- -D warnings` 对宿主与各目标分别执行。
 - `src-tauri/rustfmt.toml` 仅锁 edition，改动 = 全仓 diff，改前须频道知会。
 
 ## 2. 目录（`ls` 即得，只留陷阱）

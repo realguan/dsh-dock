@@ -31,6 +31,35 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 发版返工 · v1.1.1 首次构建红（Windows clippy）→ 修复后重打 tag —— guan（AI 协作）
+
+- **事实**：v1.1.1 tag 推后，`build (windows-latest)` 的 **`Rust clippy gate`** 失败：
+  ```
+  error: casting raw pointers to the same type and constness is unnecessary
+         (`*mut c_void` -> `*mut c_void`)
+    --> src/lifecycle.rs:331  child.as_raw_handle() as *mut core::ffi::c_void
+  ```
+  （Windows Job Object FFI；`RawHandle` 本身就是 `*mut c_void`）。ubuntu 作业 success、
+  macOS 作业被取消（fail-fast）。**Release 从未发布**（当时最新仍是 v1.1.0）。
+- **漏检根因（流程教训，已写进 AGENTS §1）**：我在 Windows 侧只跑了
+  `cargo check --target x86_64-pc-windows-gnu`——**`check` 不跑 clippy lint**，而 CI
+  三平台跑的是 `cargo clippy --all-targets -- -D warnings`。`cfg(windows)` 分支在
+  macOS 上根本不编译，于是该 lint 对本地完全不可见，直到 CI 才暴露。
+  宪法新增一行：**clippy 需逐目标各跑一次，`cargo check` 不能替代**。
+- **修复**：`84a6ac3`（去掉多余 cast）。已按 CI 同款命令复验：
+  clippy host(macos) 0 issues · clippy `--target x86_64-pc-windows-gnu` 0 issues ·
+  `cargo test` 285 绿 · 前端 typecheck 0 err / oxlint 0 warning / test 221 绿。
+  （Linux 目标无法在 macOS 上跑 clippy：glib-sys/gdk-sys 缺 WebKitGTK pkg-config，
+  属环境限制；本次改动无 Linux 专属分支，且 CI ubuntu 作业已 success。）
+- **重发策略（维护者裁定）**：**强制移动 `v1.1.1` 到修复提交**——理由：内容确实就是
+  1.1.1、Release 从未发布过（不会留幽灵版本号）、tag 存在仅约 30 分钟且实际只有 CI
+  与本地 fetch 过。**这是本仓库首次移动已推 tag，故显式登记**；此后若再遇同类情形，
+  默认仍应优先考虑"改版本号重发"而非移 tag。
+- **另注**：`gh` 可用（`/opt/homebrew/bin/gh`，账号 realguan 已登录）——首次排查时
+  我因 PATH 未含 homebrew 而误判为"gh 不可用"，实际本机 PATH 一直缺 `/opt/homebrew/bin`
+  （同一天 Windows 交叉编译的 windres 也是这个原因）。教训：**PATH 类结论必须先
+  显式补全常见 bin 目录再下判断**。
+
 ### 2026-09-11 发版 · v1.1.1 会话占用根治与 Windows 首启修复 —— guan（AI 协作）
 
 - **范围**：`v1.1.0..HEAD` 共 6 笔提交，全部为**修复**（无用户可感知新能力，
