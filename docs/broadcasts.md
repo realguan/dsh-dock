@@ -32,6 +32,38 @@
 
 ## 三、记录
 
+### 2026-09-11 发版 v1.2.0 · WSL 客体管理面 + macOS Intel 原生包（含 G3 隐患修复）—— guan（AI 协作）
+
+- **发版依据**：AGENTS §8.8「发版严禁裸打 tag」——已按 `docs/prompts/release-notes.md`
+  生成规范日志并落盘 `docs/RELEASE_NOTES.md` 顶部（`## [v1.2.0] - 2026-09-11` 强契约，
+  `extract-release-notes.py --strict` 实测可提取）。
+- **版本号语义**：`1.1.1 → 1.2.0`（minor）。本批含两个 feat 级变更
+  ——WSL 客体管理面（ADR-0016）与 macOS Intel 原生包——按 semver 应升 minor。
+  四处版本号（`Cargo.toml` / `tauri.conf.json` / `frontend/package.json` /
+  `Cargo.lock`）同步改为 `1.2.0`，与 tag 一致（CI 有 tag 版本一致性闸门）。
+- **本批内容（含此前未发版的全部改动）**：PR #13 合并（WSL 客体管理面 ADR-0016
+  P1/P2/P3 + 契约/ADR 落档）、macOS Intel 构建通道、`cordis.patch.yml` 保真写入统一、
+  两处 `panic=abort` 崩溃修复、会话临时脚本泄漏修复、i18n 收口、
+  「唯一网络面」机器闸门、子进程生命周期闸门加固。
+- **G3 隐患修复（本次一并解决）**：`engine_pnpm_bundle` 会映射 `win32-arm64`，
+  而 `fetch-pnpm-bundle.sh` 白名单拒绝它（上游 `@pnpm/exe.win32-arm64` 实测存在，
+  registry 六平台全 200）⇒ 本仓脚本缺口。修法不止补名字：
+  1. 白名单补 `win32-arm64`；
+  2. `uname` 自动探测补 `MINGW*-aarch64|MSYS*-aarch64`（否则 Windows ARM64 上
+     无参调用会掉进 `*)` 直接退出——**只补白名单不够**）；
+  3. 新增**不变式闸门** `scripts/tests/test_release_platform_matrix.py`：
+     断言 engine 可产出集合 / uname 探测集合 / CI matrix 声明集合**三者皆 ⊆ 白名单**
+     ——把「映射与打包支持必须一致」变成机器判据，同类缺口不再复发。
+  **实证**：`fetch-pnpm-bundle.sh win32-arm64` 真跑成功（16.7 MB，
+  归档含 `package/pnpm.exe`，正是 `stage_pnpm_from_bundle` 期望成员名）；
+  **变异证伪**：回退白名单 ⇒ 3 条守卫用例红并点名该平台；恢复后 sha256 回一致、残留 0。
+- **验证（提交态，本机四闸门 + CI 同款脚本）**：`fmt=0` ·
+  `cargo test 364 passed / 0 failed / 3 ignored` · clippy 宿主 `0` · clippy win-gnu `0`；
+  `scripts/tests` **17 OK**（新增 4 条平台矩阵守卫）；tag 版本一致性四处比对通过；
+  发版日志 `--strict` 提取通过；workflow YAML 解析通过。
+- **待 CI 确认（tag 触发）**：三平台签名构建与公证、`latest.json` 出现 **7 个**平台条目
+  （含 `darwin-x86_64`）、两个 macOS `.app.tar.gz` 名字各带架构后缀不重名。
+
 ### 2026-09-11 macOS Intel (x86_64) 支持 · 发布矩阵加第四个 leg —— guan（AI 协作）
 
 - **背景与目标**：此前发布产物只覆盖 Apple Silicon（`README.md` 已声明「Intel Mac 需自行源码构建」）。

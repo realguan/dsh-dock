@@ -13,8 +13,8 @@
 #
 # 用法：scripts/fetch-pnpm-bundle.sh [platform ...]
 #   无参 = 取当前平台份（darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64 /
-#   win32-x64）；显式传参 = 取指定平台份（Windows 包需 win32-x64 + linux-x64
-#   两份：宿主引擎 + WSL 客体投递）。pack 期调用，幂等覆盖；需 node + curl。
+#   win32-x64 / win32-arm64）；显式传参 = 取指定平台份（Windows 包需 win32-x64 +
+#   linux-x64 两份：宿主引擎 + WSL 客体投递）。pack 期调用，幂等覆盖；需 node + curl。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,12 +30,16 @@ VERSION=$(sed -n 's/.*PINNED_PNPM_VERSION: &str = "\([^"]*\)".*/\1/p' \
 [[ -n "$VERSION" ]] || { echo "无法从 updates.rs 推导 PINNED_PNPM_VERSION" >&2; exit 2; }
 
 # 无参 = 当前平台（落位命名与 engine_pnpm_bundle 契约一致：<platform>.tgz）
+# Windows 分支按 `uname -m` 区分 x64 / ARM64：Git Bash 在 Windows ARM64 上报告
+# `aarch64`（Git for Windows 的 MSYS2 运行时）与 `x86_64`，两者都要有落位名，
+# 否则在 ARM64 机器上会掉进 `*)` 直接退出。
 if [[ $# -eq 0 ]]; then
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) set -- darwin-arm64 ;;
     Darwin-x86_64) set -- darwin-x64 ;;
     Linux-x86_64) set -- linux-x64 ;;
     Linux-aarch64) set -- linux-arm64 ;;
+    MINGW*-aarch64|MSYS*-aarch64) set -- win32-arm64 ;;
     MINGW*|MSYS*) set -- win32-x64 ;;
     *) echo "不支持的平台：$(uname -s)-$(uname -m)" >&2; exit 2 ;;
   esac
@@ -50,10 +54,17 @@ sha1_of() {
 }
 
 # 取单个平台（$1 = 落位名，映射 @pnpm/exe.<platform> 包）
+#
+# **白名单必须覆盖 engine_pnpm_bundle() 能求出的全部平台**（否则构建到那个平台时才
+# 会红，且是「内置 pnpm 从未随包发出」的运行时故障）。曾漏 `win32-arm64`：上游
+# `@pnpm/exe.win32-arm64` 一直存在，而此处直接 `return 2` ⇒ 本仓脚本缺口，非上游缺口
+# （2026-09-11 实测 registry 六个平台全 200）。该不变式由
+# `scripts/tests/test_release_platform_matrix.py` 机器守住——**加平台时改这里，
+# 那个测试会告诉你 rm 侧是否也齐**。
 fetch_one() {
   local PLATFORM="$1" PKG DEST
   case "$PLATFORM" in
-    darwin-arm64|darwin-x64|linux-x64|linux-arm64|win32-x64)
+    darwin-arm64|darwin-x64|linux-x64|linux-arm64|win32-x64|win32-arm64)
       PKG="exe.$PLATFORM" ;;
     *) echo "不支持的平台名：$PLATFORM" >&2; return 2 ;;
   esac
