@@ -873,6 +873,33 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
     }
 }
 
+/// `taskkill` 收口参数（**纯函数**，跨平台可测）：`/PID <pid> /T /F`。
+///
+/// **单一来源（2026-09-11，task-34 / E2）**：本函数是「taskkill 参数构造」的
+/// **唯一实现**。此前 `shell::windows_kill_args` 与本模块 `reap_pid` 各写一份
+/// 同形 `vec!`，且**只有 shell 侧那份被测**——两处实现、一处覆盖。
+/// 现 `shell::windows_kill_args` **委托**本函数（`shell → lifecycle` 依赖早已存在，
+/// 见 `shell.rs:101`，**未新增任何依赖边**），于是：
+/// - 参数构造只有一个来源；
+/// - `shell` 既有测试 `windows_kill_args_cover_whole_tree` 原样转绿 = 天然回归锚。
+///
+/// **依赖纪律（不得违反）**：本函数**必须**留在本模块内、**不得**改调
+/// `crate::shell::*` —— 那会形成 `lifecycle ↔ shell` 模块环，并破坏「本模块不依赖
+/// 持壳状态的兄弟模块」这条单向性前提（spawn 闸门把本文件纳入扫描面的地基）。
+/// `crate::child_cmd` 在 crate 根，不属兄弟模块、不成环，**允许**（见 `reap_pid`）。
+///
+/// `/T` = 整棵进程树、`/F` = 强制（Windows 无 POSIX 信号；`/F` 即 `TerminateProcess`）。
+/// 少 `/T` 会退回「只杀 `cmd.exe` 壳层、pnpm shim 的 node 继续跑」的老漏洞（ADR-0014）。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn reap_args(pid: u32) -> Vec<String> {
+    vec![
+        "/PID".to_string(),
+        pid.to_string(),
+        "/T".to_string(),
+        "/F".to_string(),
+    ]
+}
+
 /// Windows：孤儿防护由 Job Object 的 `KILL_ON_JOB_CLOSE` 承担——
 /// **内核保证**壳一死就杀光 job 内的进程，因此不存在可清扫的孤儿。
 /// 保留函数只为签名一致（且 Job 装配失败时也不会静默：见 `job::assign` 的 warn）。
@@ -884,16 +911,14 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
         "收口孤儿子进程（taskkill 回退路径）：pid={pid} role={}",
         role.as_str()
     );
-    let args: Vec<String> = vec!["/PID".into(), pid.to_string(), "/T".into(), "/F".into()];
+    let args = reap_args(pid);
     // 2026-09-11 修（task-30）：原为裸 `Command::new("taskkill")`，违 AGENTS §4.1——
-    // GUI 进程裸起控制台程序**会闪黑窗**，且丢掉 `.cmd/.bat` 包装；对照 `shell.rs:246`
+    // GUI 进程裸起控制台程序**会闪黑窗**，且丢掉 `.cmd/.bat` 包装；对照 `shell.rs:244`
     // 的**同一动作**本来就走了 `crate::child_cmd`，两处不一致。`child_cmd` 定义在
     // crate 根（`lib.rs:68`），子模块调用**不成环**。
     // 纪律：此处**不得**改调 `crate::shell::*`——`shell.rs:101` 已依赖本模块，
-    // 反向依赖会成模块环，并破坏「`lifecycle` 是零 `crate::` 依赖的叶模块」这一
-    // 单向性前提（该前提是 spawn 闸门把本文件纳入扫描面的地基）。
-    // 注：`/PID /T /F` 的参数构造仍留在本地，与 `shell::windows_kill_args` 的合并
-    // 属独立意图（task-29 §3.2 选项 A 已记，由 lead 另派）。
+    // 反向依赖会成模块环，并破坏「本模块不依赖持壳状态兄弟模块」的单向性前提
+    // （该前提是 spawn 闸门把本文件纳入扫描面的地基）。
     let mut cmd = crate::child_cmd(Path::new("taskkill"));
     cmd.args(&args)
         .stdin(std::process::Stdio::null())
@@ -2325,6 +2350,70 @@ mod tests {\n\
                 .map(|s| s.split(':').nth(1).map(str::to_string))
                 .collect::<Vec<_>>(),
             "CRLF 与 LF 必须报出相同行号：LF={a:?} CRLF={b:?}"
+        );
+    }
+
+    /// **`taskkill` 参数构造（E2，2026-09-11 / task-34）**：本模块自己的那份现已被测。
+    ///
+    /// 此前 `shell::windows_kill_args` 与 `reap_pid` 各写一份同形 `vec!`，
+    /// **只有 shell 侧被测**——清扫回退路径的参数构造从未被断言。现已委托同源
+    /// （`shell::windows_kill_args` → 本函数），本用例是该唯一实现的直接断言。
+    ///
+    /// **跨平台跑**（不 `#[cfg(windows)]`）：本函数是纯函数，在 macOS/Linux 同样可测，
+    /// 且 Windows 专用代码在宿主上**根本不编译**（AGENTS §1 的 clippy 漏检教训），
+    /// 故必须让它在宿主上也受测试管辖。
+    #[test]
+    fn reap_args_cover_whole_tree() {
+        let args = reap_args(4321);
+        assert_eq!(args, vec!["/PID", "4321", "/T", "/F"]);
+        // 语义要点：`/T` 少不得——退回「只杀壳层、node 继续跑」的老漏洞（ADR-0014）。
+        assert!(args.iter().any(|a| a == "/T"), "必须覆盖整棵进程树");
+        assert!(args.iter().any(|a| a == "/F"), "必须强制结束");
+        // pid 必须**逐字**出现在自己的位置上（防拼串错误）。
+        assert_eq!(args[1], "4321");
+        // 与参数个数绑定的负例：多一个/少一个都说明构造被改动了。
+        assert_eq!(args.len(), 4, "taskkill 参数个数固定为 4");
+    }
+
+    /// `reap_args` 的**依赖纪律**闸门：本模块不得反向依赖 `shell`（成环）。
+    ///
+    /// 为什么用源码文本判据：这是**架构约束**而非行为约束——一旦有人把
+    /// `crate::shell::windows_kill_args` 抄进来"消除重复"，编译**照样通过**、
+    /// 测试**照样绿**，但会形成 `lifecycle ↔ shell` 环并破坏 spawn 闸门把本文件
+    /// 纳入扫描面的单向性前提（task-30 的地基）。故只能从源码文本拦。
+    ///
+    /// 范围说明：本条只钉**依赖方向**（E2 的硬约束）。契约 §3.1「单向语义」里
+    /// 「守卫不得反向影响壳存活/重启」的完整方向哨兵属 task-29 §4 Tier 1，
+    /// **是独立意图，不在本任务内**——此处不越界实现，只保留本模块的依赖纪律。
+    #[test]
+    fn lifecycle_does_not_depend_on_state_holding_sibling_modules() {
+        // 行尾归一：任何以源码文本为判据的闸门都必须自己扛住 CRLF（v1.1.1 教训）。
+        let src = include_str!("lifecycle.rs").replace("\r\n", "\n");
+        let prod = match src.find("\n#[cfg(test)]\nmod tests") {
+            Some(i) => &src[..i],
+            None => &src[..],
+        };
+        // **必须跳过注释行**（2026-09-11 自测发现）：本模块的纪律注释里**必然**写着
+        // 「不得改调 `crate::shell::*`」——若按整段文本匹配，闸门会**被自己的文档触发**
+        // （首版即如此，实测红）。这同时是"文本判据必须做词法/注释处理"的又一实例。
+        let code_lines: Vec<&str> = prod
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with("//"))
+            .collect();
+        for forbidden in ["crate::shell::", "crate::boot::", "crate::ui::"] {
+            assert!(
+                !code_lines.iter().any(|l| l.contains(forbidden)),
+                "lifecycle.rs 生产代码出现 `{forbidden}`（注释除外）——本模块不得依赖\
+                 持有壳状态的兄弟模块：会与 shell → lifecycle 形成模块环，并破坏 spawn\
+                 闸门单向性证明的地基。确需共用逻辑时，把它下沉到本模块或 crate 根\
+                 （如 `crate::child_cmd`）。"
+            );
+        }
+        // 白名单：crate 根的 child_cmd 允许（不成环），正向钉住防被误删。
+        assert!(
+            code_lines.iter().any(|l| l.contains("crate::child_cmd(")),
+            "reap_pid 的 Windows 回退路径应经 `crate::child_cmd`（AGENTS §4.1 防闪窗）"
         );
     }
 

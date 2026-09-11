@@ -520,13 +520,33 @@ fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Op
 }
 
 /// 客体内停止标志文件：teardown touch 它 → wrapper 收到后 kill dsh 并退出。
-#[cfg(windows)]
+///
+/// **单一来源（2026-09-11，task-34）**：本常量既供宿主侧的 `touch`（`teardown`）用，
+/// 也**直接插值进**客体内 wrapper 脚本（`guest_boot_script` 的 `while [ ! -f … ]`）。
+/// 在本次改造前，脚本里写的是**字面量**，两处靠注释维系（旧注释原文：「注意
+/// /tmp/dsh-dock-stop 须与 guest_boot_script 内字面量一致」）——**注释在防，机器没防**：
+/// 只改常量不改字面量 ⇒ 宿主 touch 新路径、客体轮询旧路径 ⇒ **停止位永不生效
+/// （teardown 静默失效）**，而当时的测试断言的正是那个字面量 ⇒ 仍绿。
+/// 现已同源化，并由 `guest_boot_script_inlines_guest_paths_from_constants` 以
+/// **出现次数断言**钉住（漏改任一处即红）。
+///
+/// `cfg` 必须与 `guest_boot_script` 的 `any(windows, test)` **一致**（不是更窄的
+/// `windows`）：函数在测试构建下也被编译并调用，若常量只在 `windows` 下存在，
+/// macOS/Linux 的 `cargo test` 会因 `E0425: cannot find value … found an item that
+/// was configured out` **直接编译失败**（2026-09-11 实测复现）。
+/// 放宽是安全的：非 windows 非 test 目标下 `guest_boot_script` 自身也被 cfg 掉，
+/// 故常量不会成为无人引用的 dead_code。
+#[cfg(any(windows, test))]
 const GUEST_STOP_FILE: &str = "/tmp/dsh-dock-stop";
 
 /// 客体内就绪哨兵文件：guest_boot_script 用 `tee` 把 dsh 输出镜像到这里（WSL 内
 /// 行缓冲，**不**经 wsl.exe stdout 转发），壳经 `wsl.exe -e cat` 直读
 /// 绕开 wsl.exe 输出缓冲导致的就绪误判。详见 docs/executor.md。
-#[cfg(windows)]
+///
+/// **单一来源**：同 `GUEST_STOP_FILE`——宿主 `read_ready_marker` 的 `cat` 与本常量、
+/// 客体脚本内的 `tee` / `rm -f` 三处同源。此前它比 stop 更裸露：脚本里同样是硬编码
+/// 字面量，而且**连测试断言都没有**（task-34 发现）。
+#[cfg(any(windows, test))]
 const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
 
 /// 客体内「准备好 PATH + 引擎目录」的公共前缀（固定脚本，不插值用户输入）。
@@ -570,18 +590,31 @@ fn sh_quote(s: &str) -> String {
 /// tee 行缓冲把 dsh 输出复制到 `GUEST_READY_FILE`（WSL 侧），独立于 wsl.exe 转发到
 /// `dsh-wsl.log` 的路径——后者有缓冲（实测：90 s 不 flush，URL 不出现直到 wsl.exe 退
 /// 出），tee 路径实时（行级），壳优先读这条。dsh 退出时 `rm -f` 清理哨兵。
+///
+/// **停止位/就绪位同源（2026-09-11，task-34）**：两处路径一律经 `{stop}` / `{ready}`
+/// 具名参数插值（`GUEST_STOP_FILE` / `GUEST_READY_FILE`），**脚本内不得再出现硬编码
+/// 字面量**——改造前它写死 `/tmp/dsh-dock-stop` 与 `/tmp/dsh-dock-ready` 各 3 处，
+/// 与宿主侧常量构成「同一语义两份字面量 + 测试断言字面量」的**静默失效**结构：
+/// 改常量 ⇒ 宿主与客体各说各的路径 ⇒ teardown 永不生效，而测试仍绿。
+/// 现由 `guest_boot_script_inlines_guest_paths_from_constants` 的**出现次数断言**
+/// （stop=3 / ready=3）+ 负向断言（脚本内不再出现字面量）双向钉住。
+///
+/// 改后脚本与改前**逐字节等价**（2026-09-11 实测：589 字节，sha256 `cb170d50…`；
+/// 见 `docs/team/停止位同源与reap_args-2026-09-11.md`）——纯等价重构，零行为变更。
 #[cfg(any(windows, test))]
 // 非 Windows 非 test 目标下编译但无引用（引用点在 Windows 运行时路径与跨平台
 // 测试里）——保留 cfg 以维持「模板可在 macOS/Linux 直接实跑测试」，豁免 dead。
 #[allow(dead_code)]
 fn guest_boot_script(profile: &str) -> String {
     format!(
-        "rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready;{}\
-         cd \"$HOME\"; ( dsh --profile {} --port 0 --no-open 2>&1 | tee /tmp/dsh-dock-ready ) & PID=$!;\
-         (while [ ! -f /tmp/dsh-dock-stop ]; do sleep 1; done; kill -TERM \"$PID\" 2>/dev/null) & WATCH=$!;\
-         wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f /tmp/dsh-dock-stop /tmp/dsh-dock-ready; exit $RC",
-        guest_prep!(),
-        sh_quote(profile)
+        "rm -f {stop} {ready};{prep}\
+         cd \"$HOME\"; ( dsh --profile {prof} --port 0 --no-open 2>&1 | tee {ready} ) & PID=$!;\
+         (while [ ! -f {stop} ]; do sleep 1; done; kill -TERM \"$PID\" 2>/dev/null) & WATCH=$!;\
+         wait \"$PID\"; RC=$?; kill \"$WATCH\" 2>/dev/null; rm -f {stop} {ready}; exit $RC",
+        stop = GUEST_STOP_FILE,
+        ready = GUEST_READY_FILE,
+        prep = guest_prep!(),
+        prof = sh_quote(profile),
     )
 }
 
@@ -1304,6 +1337,60 @@ Windows Subsystem for Linux Distributions:
         // 含空格/引号名：安全进参、脚本不断裂
         assert!(guest_boot_script("my profile").contains("dsh --profile 'my profile' --port 0"));
         assert!(guest_boot_script("it's").contains("dsh --profile 'it'\\''s' --port 0"));
+    }
+
+    /// **停止位 / 就绪位同源化的门禁（2026-09-11，task-34）**。
+    ///
+    /// 改造前：宿主侧常量与客体脚本内的**字面量**各写一份，靠注释维系
+    /// （`teardown` 的旧注释：「须与 guest_boot_script 内字面量一致」）——**注释在防，
+    /// 机器没防**。只改常量 ⇒ 宿主 `touch` 新路径、客体 `while [ ! -f 旧路径 ]` 永远
+    /// 等不到 ⇒ **停止位静默失效**；而当时的测试断言的正是那个字面量 ⇒ 仍绿。
+    ///
+    /// 复现留证（实证）：让常量取三个不同值（原值 / `-x` / 完全不同的路径），
+    /// `guest_boot_script("web")` 的输出 **sha256 三次完全一致** —— 当时的脚本与常量
+    /// **零耦合**。详见 `docs/team/停止位同源与reap_args-2026-09-11.md`。
+    ///
+    /// 本用例分两层，**互补地覆盖两个方向**（缺一层就有盲区）：
+    ///
+    /// 1. **运行时计数**：脚本内每条路径各出现 **3** 次（`rm -f` 清理、`tee`/`while`
+    ///    使用、退出前再清理）。它抓的是**漂移**——常量改了而脚本没跟上时，计数随即
+    ///    下降 ⇒ 红。`contains` 式断言抓不到「漏改一处」。
+    /// 2. **源码参数化**（负向）：断言格式串用的是 `{stop}` / `{ready}` 具名占位符。
+    ///    这一层是必需的：**光靠计数有盲区**——若有人把脚本改回硬编码字面量、而该
+    ///    字面量恰等于常量**当前**取值，计数仍是 3，第 1 层断言**照绿**（2026-09-11
+    ///    自检发现：两条基于同一字面量的计数断言互为恒真式，等于没测）。
+    ///    第 2 层直接钉住「来源单一」而非「取值一致」。
+    #[test]
+    fn guest_boot_script_inlines_guest_paths_from_constants() {
+        let plain = guest_boot_script("web");
+        assert_eq!(
+            plain.matches(GUEST_STOP_FILE).count(),
+            3,
+            "停止位路径应出现 3 次（rm -f / while 轮询 / 退出前清理）——\
+             若常量值变更而脚本未跟上，此处会下降：{plain}"
+        );
+        assert_eq!(
+            plain.matches(GUEST_READY_FILE).count(),
+            3,
+            "就绪位路径应出现 3 次（rm -f / tee 镜像 / 退出前清理）：{plain}"
+        );
+        // 第 2 层：脚本必须由常量**构造**，不得写死（见本用例文档注释的盲区说明）。
+        //
+        // ⚠️ 必须**只扫生产段**：若对整文件做 `contains`，本断言自己的字面量就会命中
+        // 自己 ⇒ **恒真式，等于没测**（2026-09-11 自测发现：把生产段"彻底回退成硬编码"
+        // 后本断言仍绿，正是因为被搜索的串也出现在测试代码自身里）。
+        // 这是"闸门文本判据必须排除自身"的又一实例，与 spawn 闸门排除 `#[cfg(test)]`
+        // 段同源。
+        let src = include_str!("executor.rs").replace("\r\n", "\n");
+        let prod = match src.find("\n#[cfg(test)]\nmod tests") {
+            Some(i) => &src[..i],
+            None => &src[..],
+        };
+        assert!(
+            prod.contains("\"rm -f {stop} {ready};{prep}\\"),
+            "guest_boot_script 的格式串必须用 {{stop}} / {{ready}} 具名占位符插值；\
+             若退回硬编码字面量，即使取值恰好正确，也会在常量下次变更时静默失效"
+        );
     }
 
     #[test]

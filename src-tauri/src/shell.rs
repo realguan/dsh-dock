@@ -279,14 +279,16 @@ pub fn stop_dsh(child: &mut Child, grace: Duration) -> i32 {
 /// `taskkill` 参数（纯函数，供单测）：`/T` 整棵树、`/F` 强制。
 /// Windows 无 POSIX 信号，`/F` 即 TerminateProcess——与旧行为同强度，
 /// 区别只在**覆盖整棵树**（旧行为漏掉 node 后代）。
+///
+/// **委托（2026-09-11，task-34 / E2）**：参数构造现已**单一来源** ——
+/// 本函数委托 `crate::lifecycle::reap_args`（`lifecycle` 的孤儿清扫回退路径
+/// 用的是同一份参数）。此前两处各写一份同形 `vec!`，且**只有本处被测**。
+/// 依赖方向 `shell → lifecycle` **早已存在**（见本文件 `lifecycle::spawn` 调用），
+/// 故未新增任何依赖边、不成环。既有测试 `windows_kill_args_cover_whole_tree`
+/// 原样保留 = 这次委托的**天然回归锚**。
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn windows_kill_args(pid: u32) -> Vec<String> {
-    vec![
-        "/PID".to_string(),
-        pid.to_string(),
-        "/T".to_string(),
-        "/F".to_string(),
-    ]
+    crate::lifecycle::reap_args(pid)
 }
 
 #[cfg(test)]
