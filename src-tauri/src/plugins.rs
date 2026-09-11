@@ -1877,8 +1877,7 @@ pub fn copy_plugin_config_blocking(
         }
     }
     // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）。
-    // 本路径（配置复制，patch 写入例外 #4）尚未下沉客体——IPC 层在 WSL 世界
-    // 经 `mgmt::require_local` 先拒，故这里恒为本地世界（ADR-0016 §5-e）。
+    // 本函数为本地世界分支（WSL 客体分支见 `copy_plugin_config_in_guest`）。
     let row_id = plugin_rows_blocking(source, data_dir, &crate::mgmt::World::Local)?
         .into_iter()
         .find(|r| r.pkg_name == package)
