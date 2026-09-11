@@ -91,7 +91,21 @@ pub fn decode_project_dir_to_path(raw: &str) -> String {
     }
 
     // Windows 盘符判定，如 C:-Users-guan-project-
-    let is_windows = stripped.len() >= 2 && stripped.chars().nth(1) == Some(':');
+    // 2026-09-11 裁定（F2，task-12）：判据与切片统一为**字节**量纲。
+    // 旧实现判据用 `chars().nth(1) == Some(':')`（字符量纲）、切片却用
+    // `&stripped[..2]` / `stripped[2..]`（字节量纲）——首字符为多字节且第 2 个
+    // 字符是 `:` 时（如 `"信:"`，字节 `E4 BF A1 3A`），字节 2 落在字符内部 →
+    // `panic: end byte index 2 is not a char boundary`；release 剖面
+    // `panic = "abort"` ⇒ 进程被杀，而调用方是 `scan_sessions` 对
+    // `$DSH_HOME/sessions/` 下**目录名**的遍历（目录名用户可手工创建/改名）。
+    //
+    // 此处**字节判据本就是正确的**：`':'` = 0x3A 在 UTF-8 中不可能是多字节
+    // 序列的续字节（续字节 ∈ 0x80..=0xBF），故 `as_bytes()[1] == b':'` 蕴含
+    // 字节 0 是完整单字节字符、字节 2 必为字符边界 → 下方两处切片恒定安全。
+    // 语义后果：盘符限定为单字节 ASCII 字符，`"信:"` 不再被误判为盘符
+    // （按 POSIX 相对路径处理），既有 ASCII 盘符行为逐字不变。
+    // `.get(1)` 天然覆盖「长度 < 2」，无需另设 `len() >= 2`。
+    let is_windows = stripped.as_bytes().get(1) == Some(&b':');
     let (sep, mut current_base, remaining_raw) = if is_windows {
         let drive = &stripped[..2];
         let rest = stripped[2..].trim_start_matches('-');
@@ -424,21 +438,78 @@ fn unique_script_path(prefix: &str) -> PathBuf {
     ))
 }
 
+/// 临时脚本的 **RAII 守卫**（2026-09-11，task-13）：作用域结束即清理，一次覆盖
+/// **全部**出口——含 `scan_health_via_script` / `run_repair` 各自的**两个 `?` 早退**、
+/// 未来新增的出口、以及 panic 展开。
+///
+/// **为什么不是「早退前各补一行清理」**：本缺陷本身就是「显式清理会腐化」的实证——
+/// 两条链路各漏一处，且**加出口时没人会回去补清理**。guard 把清理变成 Drop 语义，
+/// 新增出口自动纳入，不再依赖人记得。
+///
+/// **Drop 纪律**：best-effort 且**绝不 panic**。Drop 中 panic 在 unwind 期间会直接
+/// `abort`；且清理失败**不得覆盖/替换正在传播的原始 `Err`**（`?` 的语义必须保真）——
+/// 此刻丢一份临时文件远比吞掉真实故障原因轻。
+struct TempScript {
+    path: PathBuf,
+}
+
+impl TempScript {
+    /// 可注入路径的构造（测试 seam：per-test 私有路径，不碰全局 `TMPDIR`）。
+    fn write_at(path: PathBuf, content: &str) -> std::io::Result<Self> {
+        fs::write(&path, content)?;
+        Ok(Self { path })
+    }
+
+    /// 脚本路径（喂给 node 实参）。
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempScript {
+    fn drop(&mut self) {
+        // 失败只留痕（debug 级，不惊扰用户）：此处若 `unwrap`/上抛，会覆盖正在
+        // 传播的原始 Err，或在 unwind 中 panic 成 abort。
+        if let Err(e) = fs::remove_file(&self.path) {
+            tracing::debug!(
+                path = %self.path.display(),
+                error = %e,
+                "临时脚本清理未成功（忽略——不得覆盖原始错误）"
+            );
+        }
+    }
+}
+
 /// 运行内置脚本 `--scan`（只读）并解析结果。失败返回 Err（调用方降级）。
 fn scan_health_via_script(
     home: &Path,
     data_dir: &Path,
     engine_alive: bool,
 ) -> Result<std::collections::HashMap<String, ScriptHealthEntry>, String> {
-    let script_content = include_str!("../../scripts/repair-session.mjs");
     let script_path = unique_script_path("dsh-dock-scan-session");
-    fs::write(&script_path, script_content).map_err(|e| format!("写入临时扫描脚本失败：{e}"))?;
+    scan_health_via_script_at(&script_path, home, data_dir, engine_alive)
+}
+
+/// [`scan_health_via_script`] 的**可注入脚本路径** seam（2026-09-11，task-13）：
+/// 测试传 per-test 私有路径即可断言清理结果，**不必扫 `TMPDIR`**——后者是进程
+/// 全局，`cargo test` 默认多线程下与并行用例竞态，计数断言必然 flaky。
+fn scan_health_via_script_at(
+    script_path: &Path,
+    home: &Path,
+    data_dir: &Path,
+    engine_alive: bool,
+) -> Result<std::collections::HashMap<String, ScriptHealthEntry>, String> {
+    let script_content = include_str!("../../scripts/repair-session.mjs");
+    // RAII guard：**两个 `?` 早退（node 缺失 / spawn 失败）都会走到它的 Drop**，
+    // 不需要在各出口手动补清理（见 `TempScript` 文档）。
+    let script = TempScript::write_at(script_path.to_path_buf(), script_content)
+        .map_err(|e| format!("写入临时扫描脚本失败：{e}"))?;
 
     let node_bin = crate::engines::engine_node_bin(data_dir)
         .ok_or_else(|| "引擎未就绪（node 缺失）".to_string())?;
 
     let mut cmd = crate::child_cmd(&node_bin);
-    cmd.arg(&script_path);
+    cmd.arg(script.path());
     cmd.arg("--scan");
     cmd.env("DSH_HOME", home);
     // 恢复层校验用引擎档 @deepseek-ai/dsh-session 本尊（与加载该会话的 dsh
@@ -453,7 +524,7 @@ fn scan_health_via_script(
         crate::lifecycle::GuardCtx::of("session-scan.mjs", None),
     )
     .map_err(|e| format!("执行扫描脚本失败（无法拉起 Node）：{e}"))?;
-    let _ = fs::remove_file(&script_path);
+    // 清理由 `script` 的 Drop 负责（正常路径语义不变：跑完即删）。
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -480,12 +551,25 @@ pub fn run_repair(
     data_dir: &Path,
     engine_alive: bool,
 ) -> Result<RepairOutcome, String> {
-    let script_content = include_str!("../../scripts/repair-session.mjs");
     // 脚本路径含 PID + 时间戳 + 进程内自增序号：并发修复（多窗口/并行单测）
     // 互不踩踏，且与「脚本执行中删除自身」的竞态彻底隔离。
     let script_path = unique_script_path("dsh-dock-repair-session");
+    run_repair_at(&script_path, target, home, data_dir, engine_alive)
+}
 
-    fs::write(&script_path, script_content).map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
+/// [`run_repair`] 的可注入脚本路径 seam（2026-09-11，task-13）——理由同
+/// [`scan_health_via_script_at`]（测试用私有路径断言清理，不扫全局 `TMPDIR`）。
+fn run_repair_at(
+    script_path: &Path,
+    target: Option<&str>,
+    home: &Path,
+    data_dir: &Path,
+    engine_alive: bool,
+) -> Result<RepairOutcome, String> {
+    let script_content = include_str!("../../scripts/repair-session.mjs");
+    // RAII guard：与扫描链同口径，覆盖两个 `?` 早退（见 `TempScript` 文档）。
+    let script = TempScript::write_at(script_path.to_path_buf(), script_content)
+        .map_err(|e| format!("写入临时修复脚本失败：{e}"))?;
 
     let node_bin = crate::engines::engine_node_bin(data_dir)
         .ok_or_else(|| "引擎未就绪（node 缺失）——请先启动应用完成引擎引导后重试".to_string())?;
@@ -496,7 +580,7 @@ pub fn run_repair(
     );
 
     let mut cmd = crate::child_cmd(&node_bin);
-    cmd.arg(&script_path);
+    cmd.arg(script.path());
     cmd.env("DSH_HOME", home);
     // 与 --scan 同源：恢复层校验定位引擎档 dsh-session（ADR-0010 资产）。
     cmd.env("DSH_DOCK_ENGINES", crate::engines::pnpm_home(data_dir));
@@ -516,7 +600,7 @@ pub fn run_repair(
     )
     .map_err(|e| format!("执行修复脚本失败（无法拉起 Node）：{e}"))?;
 
-    let _ = fs::remove_file(&script_path);
+    // 清理由 `script` 的 Drop 负责（正常路径语义不变）。
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -862,13 +946,185 @@ mod tests {
             .map(|d| d.join("node"))
             .find(|p| p.is_file())
     }
-
     #[cfg(windows)]
     fn find_system_node() -> Option<std::path::PathBuf> {
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path)
             .map(|d| d.join("node.exe"))
             .find(|p| p.is_file())
+    }
+
+    // ---------- task-13：临时脚本泄漏（复现先行，2026-09-11）----------
+    //
+    // 缺陷：`scan_health_via_script` / `run_repair` 都是「先写临时脚本，再跑
+    // node」，而清理语句排在**两个 `?` 早退之后** → 早退即泄漏。四条出口：
+    //   ① `engine_node_bin(...)?`——node 缺失；
+    //   ② `lifecycle::run(...)?`——spawn 失败 / 守卫拒绝 / 超时；**node 存在也会走**。
+    // 实测规模：一轮 `cargo test` 泄漏 +5 份 ≈460 KB（单份 ≈92 KB）；触发面 =
+    // `list_sessions` 每次加载会话面板，正是「引擎未就绪」窗口内的常态。
+    //
+    // 测试纪律：用 seam 注入 **per-test 私有路径**断言清理结果——
+    // **不扫 `TMPDIR`**（进程全局，`cargo test` 默认多线程与并行用例竞态，
+    // 计数断言必然 flaky）。
+
+    /// 独立 leak 测试根目录（tag + PID + 进程内自增，避免并行用例互踩）。
+    fn leak_root(tag: &str) -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("dsh-sess-leak-{tag}-{}-{seq}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// 早退①（node 缺失）：临时脚本必须被清理，且**原始错误保真**（清理不得覆盖）。
+    #[test]
+    fn temp_script_cleaned_on_early_exit_missing_node() {
+        let root = leak_root("noengine");
+        let home = root.join("home");
+        let data_dir = root.join("data"); // 无 engines/bin → engine_node_bin = None
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&data_dir).unwrap();
+        let script = root.join("scan-early1.mjs");
+
+        let err = scan_health_via_script_at(&script, &home, &data_dir, false)
+            .expect_err("node 缺失应返回 Err（降级由调用方处理）");
+        assert!(
+            err.contains("引擎未就绪"),
+            "清理不得覆盖原始错误，实测 = {err}"
+        );
+        assert!(
+            !script.exists(),
+            "早退①（node 缺失）后临时脚本必须已清理：{}",
+            script.display()
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 早退②（spawn 失败，`lifecycle::run` 返回 Err）：临时脚本必须被清理。
+    /// 造「存在但不可执行」的引擎 node——过早退①（`is_file` = true），spawn 必败。
+    #[test]
+    fn temp_script_cleaned_on_early_exit_spawn_failure() {
+        let root = leak_root("spawnfail");
+        let home = root.join("home");
+        let data_dir = root.join("data");
+        fs::create_dir_all(&home).unwrap();
+        let bin = crate::engines::engine_bin_dir(&data_dir);
+        fs::create_dir_all(&bin).unwrap();
+        let fake_node = bin.join("node");
+        fs::write(&fake_node, "not an executable\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&fake_node, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let script = root.join("scan-early2.mjs");
+
+        let err = scan_health_via_script_at(&script, &home, &data_dir, false)
+            .expect_err("不可执行的引擎 node 应让 lifecycle::run 失败");
+        assert!(
+            err.contains("无法拉起 Node"),
+            "应为早退②（spawn 失败），实测 = {err}"
+        );
+        assert!(
+            !script.exists(),
+            "早退②（spawn 失败）后临时脚本必须已清理：{}",
+            script.display()
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 同构早退路径之二：`run_repair`（修复链）同样不得泄漏。
+    #[test]
+    fn temp_script_cleaned_on_repair_early_exit() {
+        let root = leak_root("repairnoengine");
+        let home = root.join("home");
+        let data_dir = root.join("data");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&data_dir).unwrap();
+        let script = root.join("repair-early.mjs");
+
+        let err =
+            run_repair_at(&script, None, &home, &data_dir, false).expect_err("node 缺失应返回 Err");
+        assert!(err.contains("引擎未就绪"), "原始错误保真：{err}");
+        assert!(
+            !script.exists(),
+            "run_repair 早退后临时脚本必须已清理：{}",
+            script.display()
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// guard 的 Drop 纪律：写入失败 → 返回 Err（不 panic）；文件已在外部消失 →
+    /// Drop 再删（`NotFound`）必须**静默**，绝不 panic（unwind 中 panic = abort）。
+    #[test]
+    fn temp_script_guard_drop_is_silent_on_cleanup_failure() {
+        let root = leak_root("guardsilent");
+
+        // ① 父目录不存在 → 写入失败，返回 Err 而非 panic。
+        let bad = root.join("no-such-dir").join("x.mjs");
+        assert!(
+            TempScript::write_at(bad, "x").is_err(),
+            "写入失败应返回 Err（调用方转成可读错误）"
+        );
+
+        // ② 写入成功后文件被外部删除 → Drop 的 remove_file 得 NotFound，必须静默。
+        let script = root.join("guard.mjs");
+        {
+            let guard = TempScript::write_at(script.clone(), "x").unwrap();
+            fs::remove_file(&script).unwrap();
+            drop(guard); // 不 panic 即通过
+        }
+        assert!(!script.exists());
+
+        // ③ 正常 Drop 清理生效。
+        let script2 = root.join("guard2.mjs");
+        {
+            let _guard = TempScript::write_at(script2.clone(), "x").unwrap();
+            assert!(script2.exists(), "guard 存活期间脚本应存在");
+        }
+        assert!(!script2.exists(), "Drop 后脚本必须已清理");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 正常路径：真 node 跑完脚本后同样必须清理（既有清理语义不得改变）。
+    /// 系统无 node 时跳过（沿用 `require_node_or_skip` 的 CI 强制口径）。
+    #[cfg(unix)]
+    #[test]
+    fn temp_script_cleaned_on_normal_path() {
+        if !require_node_or_skip("temp_script_cleaned_on_normal_path") {
+            return;
+        }
+        let Some(node) = find_system_node() else {
+            eprintln!("跳过 temp_script_cleaned_on_normal_path：未定位到系统 node");
+            return;
+        };
+        let root = leak_root("normal");
+        let home = root.join("home");
+        let data_dir = root.join("data");
+        fs::create_dir_all(home.join("sessions")).unwrap();
+        let bin = crate::engines::engine_bin_dir(&data_dir);
+        fs::create_dir_all(&bin).unwrap();
+        // 引擎 bin 指向真 node（软链，不复制 ~100MB 二进制）。
+        std::os::unix::fs::symlink(&node, bin.join("node")).unwrap();
+        let script = root.join("scan-normal.mjs");
+
+        // 空 sessions 目录 → 脚本正常输出 `[]`，走完整成功路径。
+        let map = scan_health_via_script_at(&script, &home, &data_dir, false)
+            .expect("真 node + 空 sessions 应成功");
+        assert!(map.is_empty(), "空目录应得空表：{map:?}");
+        assert!(
+            !script.exists(),
+            "正常路径跑完后临时脚本必须已清理：{}",
+            script.display()
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     // ---------- 损坏类别 fixture（2026-09-08 架构评审批次 5 · P6）----------
@@ -1182,6 +1438,71 @@ mod tests {
             decode_project_dir_to_path("--var-log-dsh--"),
             "/var/log/dsh"
         );
+    }
+
+    /// F2 回归（2026-09-11 复现先行，task-12）：`decode_project_dir_to_path` 曾
+    /// **判据按字符、切片按字节**——判据 `chars().nth(1) == Some(':')` 只看
+    /// 「第 2 个**字符**是冒号」，切片却用 `&stripped[..2]` / `stripped[2..]`
+    /// （**字节**量纲）。首字符为多字节且第 2 字符是 `:` 时（如 `"信:"`，字节
+    /// `E4 BF A1 3A`），字节 2 落在「信」内部 → `panic: end byte index 2 is not
+    /// a char boundary`；release 剖面 `panic = "abort"` ⇒ **进程被杀**。
+    /// 可达路径 = `scan_sessions` 读 `$DSH_HOME/sessions/` 下的**目录名**，
+    /// 该目录名可由用户手工创建/改名 ⇒ 不是理论风险。
+    ///
+    /// 修复口径：判据与切片统一为**字节**量纲（`':'` = 0x3A 在 UTF-8 中不可能
+    /// 是续字节，故 `byte[1] == b':'` 蕴含字节 2 必为字符边界）。
+    /// 语义后果：`"信:"` 不再被误判为 Windows 盘符，按 POSIX 相对路径处理。
+    #[test]
+    fn decode_project_dir_non_ascii_prefix_does_not_panic() {
+        // 反例（修复前必 panic）：单多字节字符 + 冒号。
+        assert_eq!(decode_project_dir_to_path("信:"), "/信:");
+        assert_eq!(decode_project_dir_name("信:"), "信:");
+        // 多字节前缀、冒号在第 3 个字符位（修复前 `.nth(1)` 为「钥」→ 本就非 windows）。
+        assert_eq!(decode_project_dir_to_path("密钥:"), "/密钥:");
+        assert_eq!(decode_project_dir_name("密钥:"), "密钥:");
+        // 冒号在首位（`.nth(1)` 为 `x`；字节量纲下同为非 windows）。
+        assert_eq!(decode_project_dir_to_path(":x"), "/:x");
+
+        // 纯 ASCII 盘符路径：行为与修复前逐字相同（回归保护）。
+        assert_eq!(decode_project_dir_to_path("A:"), "A:\\");
+        assert_eq!(decode_project_dir_to_path("C:"), "C:\\");
+        assert_eq!(
+            decode_project_dir_to_path("-C:-Users-guan-project-"),
+            "C:\\Users\\guan\\project"
+        );
+        // 无冒号 / 空串：既有分支不变。
+        assert_eq!(decode_project_dir_to_path(""), "/");
+        assert_eq!(decode_project_dir_to_path("---"), "/");
+        assert_eq!(decode_project_dir_name("----"), "root");
+        assert_eq!(
+            decode_project_dir_to_path("zzz-nonexistent-qqq"),
+            "/zzz/nonexistent/qqq"
+        );
+    }
+
+    /// 端到端复现（真实可达路径）：`$DSH_HOME/sessions/<项目目录名>` 下只要存在
+    /// 一个名为 `"信:"` 的目录，`scan_sessions` 就会在遍历时调
+    /// `decode_project_dir_name`（`sessions.rs:196`）——修复前 panic，修复后
+    /// 正常返回空列表（该目录下无会话日志）。
+    #[test]
+    fn scan_sessions_with_non_ascii_project_dir_does_not_panic() {
+        let temp = std::env::temp_dir().join(format!(
+            "dsh-dock-nonascii-proj-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        // 目录名可含任意 UTF-8（用户手工创建/改名，或 dsh 之外的工具写入）。
+        fs::create_dir_all(temp.join("sessions").join("信:")).unwrap();
+        fs::create_dir_all(temp.join("sessions").join("密钥:")).unwrap();
+
+        let list = scan_sessions(&temp, &temp, false).unwrap();
+        assert!(list.is_empty(), "上述目录下无会话日志：{list:?}");
+
+        let _ = fs::remove_dir_all(&temp);
     }
 
     #[test]
