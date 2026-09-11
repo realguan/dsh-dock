@@ -27,24 +27,13 @@ pub struct McpServerConfig {
     pub disabled: bool,
 }
 
-/// 读取指定 profile 的全部 MCP 服务器配置
-pub fn list_mcp_servers(home: &Path, profile: &str) -> Result<Vec<McpServerConfig>, String> {
-    crate::profiles::validate_profile_name(profile)?;
-    let patch_path = home
-        .join("profiles")
-        .join(profile)
-        .join(PROFILE_PATCH_FILENAME);
-    if !patch_path.is_file() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&patch_path)
-        .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?;
+/// 从 cordis.patch.yml 文本中解析 MCP 服务器配置列表（纯函数，宿主/客体共用）
+pub fn parse_mcp_servers(content: &str) -> Result<Vec<McpServerConfig>, String> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
 
-    let entries: Vec<serde_json::Value> = serde_yaml::from_str(&content)
+    let entries: Vec<serde_json::Value> = serde_yaml::from_str(content)
         .map_err(|e| format!("解析 cordis.patch.yml YAML 失败：{e}"))?;
 
     let mut result = Vec::new();
@@ -96,9 +85,24 @@ pub fn list_mcp_servers(home: &Path, profile: &str) -> Result<Vec<McpServerConfi
     Ok(result)
 }
 
-/// 保存或更新单个 MCP 服务器配置（整体替换写回）
-pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> Result<(), String> {
+/// 读取指定 profile 的全部 MCP 服务器配置
+pub fn list_mcp_servers(home: &Path, profile: &str) -> Result<Vec<McpServerConfig>, String> {
     crate::profiles::validate_profile_name(profile)?;
+    let patch_path = home
+        .join("profiles")
+        .join(profile)
+        .join(PROFILE_PATCH_FILENAME);
+    if !patch_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&patch_path)
+        .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?;
+    parse_mcp_servers(&content)
+}
+
+/// 纯变换（宿主/客体共用）：在 cordis.patch.yml 文本中保存或更新单个 MCP 服务器配置
+pub fn apply_save_mcp_server(content: &str, server: McpServerConfig) -> Result<String, String> {
     if server.name.trim().is_empty() {
         return Err("MCP 服务器名称不能为空".to_string());
     }
@@ -109,23 +113,10 @@ pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> R
         ));
     }
 
-    let profile_dir = home.join("profiles").join(profile);
-    if !profile_dir.is_dir() {
-        return Err(format!("profile「{profile}」不存在或尚未物化"));
-    }
-
-    let patch_path = profile_dir.join(PROFILE_PATCH_FILENAME);
-    let content = if patch_path.is_file() {
-        std::fs::read_to_string(&patch_path)
-            .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?
-    } else {
-        String::new()
-    };
-
     let mut entries: Vec<serde_json::Value> = if content.trim().is_empty() {
         Vec::new()
     } else {
-        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?
+        serde_yaml::from_str(content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?
     };
 
     // 查找已有的 MCP client entry
@@ -189,8 +180,26 @@ pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> R
         entries.push(new_entry);
     }
 
-    let serialized = serde_yaml::to_string(&entries)
-        .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
+    serde_yaml::to_string(&entries).map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))
+}
+
+/// 保存或更新单个 MCP 服务器配置（整体替换写回）
+pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let profile_dir = home.join("profiles").join(profile);
+    if !profile_dir.is_dir() {
+        return Err(format!("profile「{profile}」不存在或尚未物化"));
+    }
+
+    let patch_path = profile_dir.join(PROFILE_PATCH_FILENAME);
+    let content = if patch_path.is_file() {
+        std::fs::read_to_string(&patch_path)
+            .map_err(|e| format!("读取 cordis.patch.yml 失败：{e}"))?
+    } else {
+        String::new()
+    };
+
+    let serialized = apply_save_mcp_server(&content, server)?;
 
     let tmp = profile_dir.join(format!(
         "{PROFILE_PATCH_FILENAME}.tmp.{}",
@@ -200,6 +209,29 @@ pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> R
     std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
 
     Ok(())
+}
+
+/// 纯变换（宿主/客体共用）：在 cordis.patch.yml 文本中删除指定 MCP 服务器配置
+pub fn apply_delete_mcp_server(content: &str, server_name: &str) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut entries: Vec<serde_json::Value> =
+        serde_yaml::from_str(content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?;
+
+    for entry in entries.iter_mut() {
+        if entry.get("package").and_then(|p| p.as_str()) == Some(MCP_CLIENT_PKG) {
+            if let Some(config) = entry.get_mut("config") {
+                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut())
+                {
+                    servers.remove(server_name);
+                }
+            }
+        }
+    }
+
+    serde_yaml::to_string(&entries).map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))
 }
 
 /// 删除指定 MCP 服务器配置
@@ -217,22 +249,7 @@ pub fn delete_mcp_server(home: &Path, profile: &str, server_name: &str) -> Resul
         return Ok(());
     }
 
-    let mut entries: Vec<serde_json::Value> =
-        serde_yaml::from_str(&content).map_err(|e| format!("解析 cordis.patch.yml 失败：{e}"))?;
-
-    for entry in entries.iter_mut() {
-        if entry.get("package").and_then(|p| p.as_str()) == Some(MCP_CLIENT_PKG) {
-            if let Some(config) = entry.get_mut("config") {
-                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut())
-                {
-                    servers.remove(server_name);
-                }
-            }
-        }
-    }
-
-    let serialized = serde_yaml::to_string(&entries)
-        .map_err(|e| format!("序列化 cordis.patch.yml 失败：{e}"))?;
+    let serialized = apply_delete_mcp_server(&content, server_name)?;
 
     let tmp = profile_dir.join(format!(
         "{PROFILE_PATCH_FILENAME}.tmp.{}",
@@ -242,6 +259,64 @@ pub fn delete_mcp_server(home: &Path, profile: &str, server_name: &str) -> Resul
     std::fs::rename(&tmp, &patch_path).map_err(|e| format!("覆盖 patch 失败：{e}"))?;
 
     Ok(())
+}
+
+/// 读取客体指定 profile 的全部 MCP 服务器配置
+pub fn list_mcp_servers_in_guest(
+    distro: &str,
+    profile: &str,
+) -> Result<Vec<McpServerConfig>, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let patch_rel = format!("profiles/{profile}/{PROFILE_PATCH_FILENAME}");
+    let files = crate::guest::read_files(distro, std::slice::from_ref(&patch_rel))?;
+    let content = files
+        .into_iter()
+        .find(|(p, _)| p == &patch_rel)
+        .and_then(|(_, c)| c)
+        .unwrap_or_default();
+    parse_mcp_servers(&content)
+}
+
+/// 在客体指定 profile 中保存或更新单个 MCP 服务器配置
+pub fn save_mcp_server_in_guest(
+    distro: &str,
+    profile: &str,
+    server: McpServerConfig,
+) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let pkg_rel = format!("profiles/{profile}/package.json");
+    let patch_rel = format!("profiles/{profile}/{PROFILE_PATCH_FILENAME}");
+    let files = crate::guest::read_files(distro, &[pkg_rel.clone(), patch_rel.clone()])?;
+    let mut map: std::collections::HashMap<String, Option<String>> = files.into_iter().collect();
+
+    if map.get(&pkg_rel).and_then(|o| o.as_ref()).is_none() {
+        return Err(format!("profile「{profile}」不存在或尚未物化"));
+    }
+
+    let content = map.remove(&patch_rel).flatten().unwrap_or_default();
+    let serialized = apply_save_mcp_server(&content, server)?;
+    crate::guest::write_home_files(distro, &[(patch_rel, serialized)])
+}
+
+/// 在客体指定 profile 中删除指定 MCP 服务器配置
+pub fn delete_mcp_server_in_guest(
+    distro: &str,
+    profile: &str,
+    server_name: &str,
+) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let patch_rel = format!("profiles/{profile}/{PROFILE_PATCH_FILENAME}");
+    let files = crate::guest::read_files(distro, std::slice::from_ref(&patch_rel))?;
+    let content = files
+        .into_iter()
+        .find(|(p, _)| p == &patch_rel)
+        .and_then(|(_, c)| c)
+        .unwrap_or_default();
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+    let serialized = apply_delete_mcp_server(&content, server_name)?;
+    crate::guest::write_home_files(distro, &[(patch_rel, serialized)])
 }
 
 #[cfg(test)]

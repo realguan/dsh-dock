@@ -14,14 +14,21 @@ use tauri::Manager;
 pub async fn list_sessions(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::sessions::SessionItem>, String> {
-    crate::mgmt::require_local(&app, "会话列表")?;
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
         engine_session_alive(&state)
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::scan_sessions(&crate::resolve::user_dsh_home(), &data_dir, engine_alive)
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => crate::sessions::scan_sessions(
+            &crate::resolve::user_dsh_home(),
+            &data_dir,
+            engine_alive,
+        ),
+        crate::mgmt::World::Wsl { distro } => {
+            crate::sessions::scan_sessions_in_guest(&distro, &data_dir, engine_alive)
+        }
     })
     .await
     .map_err(|e| format!("会话列表扫描任务异常终止：{e}"))?
@@ -32,19 +39,25 @@ pub async fn repair_session(
     app: tauri::AppHandle,
     session_path: String,
 ) -> Result<crate::sessions::RepairOutcome, String> {
-    crate::mgmt::require_local(&app, "单会话修复")?;
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
         engine_session_alive(&state)
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => crate::sessions::run_repair(
             Some(&session_path),
             &crate::resolve::user_dsh_home(),
             &data_dir,
             engine_alive,
-        )
+        ),
+        crate::mgmt::World::Wsl { distro } => crate::sessions::run_repair_in_guest(
+            Some(&session_path),
+            &distro,
+            &data_dir,
+            engine_alive,
+        ),
     })
     .await
     .map_err(|e| format!("单会话修复任务异常终止：{e}"))?
@@ -54,19 +67,22 @@ pub async fn repair_session(
 pub async fn repair_all_sessions(
     app: tauri::AppHandle,
 ) -> Result<crate::sessions::RepairOutcome, String> {
-    crate::mgmt::require_local(&app, "全量会话自愈")?;
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
         engine_session_alive(&state)
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::sessions::run_repair(
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => crate::sessions::run_repair(
             None,
             &crate::resolve::user_dsh_home(),
             &data_dir,
             engine_alive,
-        )
+        ),
+        crate::mgmt::World::Wsl { distro } => {
+            crate::sessions::run_repair_in_guest(None, &distro, &data_dir, engine_alive)
+        }
     })
     .await
     .map_err(|e| format!("全量会话自愈任务异常终止：{e}"))?
@@ -74,10 +90,15 @@ pub async fn repair_all_sessions(
 /// 会话管理：删除指定会话（4.6）
 #[tauri::command]
 pub async fn delete_session(app: tauri::AppHandle, session_path: String) -> Result<(), String> {
-    crate::mgmt::require_local(&app, "删除会话")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::sessions::remove_session(&home, &session_path)
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::sessions::remove_session(&home, &session_path)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::sessions::remove_session_in_guest(&distro, &session_path)
+        }
     })
     .await
     .map_err(|e| format!("删除会话任务异常终止：{e}"))?

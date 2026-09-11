@@ -318,20 +318,155 @@ pub fn scan_sessions(
     Ok(items)
 }
 
-/// 读取 dsh 工作区存储域的归档会话集合：`~/.dsh/storages/workspace.json` 的
-/// `global.archivedSessionIds`（裸会话 ID 数组；2026-09-07 实证结构：
-/// `{unit:{name,version}, global:{initialized,workspaceIds,archivedSessionIds},
-/// tables:{workspaces:{…}}}`，归档动作只原子重写这一个文件、不触碰会话日志）。
-/// 容错口径：文件缺失 / JSON 损坏 / 字段缺失一律视为「无归档」——归档信息
-/// 缺失只影响默认隐藏，不得阻断列表本身。
-fn read_archived_session_ids(home: &Path) -> std::collections::HashSet<String> {
-    let path = home.join("storages").join("workspace.json");
-    let text = match fs::read_to_string(&path) {
-        Ok(t) => t,
-        // 文件不存在 = 归档功能未使用/未生成：正常路径，不告警。
-        Err(_) => return Default::default(),
+/// 纯装配内核（宿主/客体共用）：根据收集到的文件元数据与归档集合组装 SessionItem 列表
+#[allow(clippy::type_complexity)]
+pub fn assemble_session_items(
+    entries: &[(String, u64, u64)],
+    archived_ids: &std::collections::HashSet<String>,
+) -> Vec<SessionItem> {
+    // 归组：(project_dir_name, session_id) -> Vec<(full_path, file_name, size, updated_at)>
+    let mut groups: std::collections::HashMap<(String, String), Vec<(String, String, u64, u64)>> =
+        std::collections::HashMap::new();
+
+    for (full_path, size, updated_at) in entries {
+        let normalized = full_path.replace('\\', "/");
+        let parts: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+        if let Some(pos) = parts.iter().rposition(|&p| p == "sessions") {
+            if parts.len() >= pos + 4 {
+                let project_dir = parts[pos + 1].to_string();
+                let session_id = parts[pos + 2].to_string();
+                let file_name = parts[pos + 3].to_string();
+                groups.entry((project_dir, session_id)).or_default().push((
+                    full_path.clone(),
+                    file_name,
+                    *size,
+                    *updated_at,
+                ));
+            }
+        }
+    }
+
+    let mut items = Vec::new();
+    for ((project_dir_name, session_id), files) in groups {
+        let project_name = decode_project_dir_name(&project_dir_name);
+        let decoded_project_path = decode_project_dir_to_path(&project_dir_name);
+
+        let mut selected: Option<(String, bool, u64, u32)> = None;
+        let mut has_backup = false;
+
+        for (full_path, file_name, size, _updated_at) in files {
+            if file_name.ends_with(".bak") {
+                has_backup = true;
+            }
+            if is_session_log_filename(&file_name) {
+                let better = match &selected {
+                    None => true,
+                    Some((_, _, _, current_gen)) => {
+                        session_log_generation(&file_name) > *current_gen
+                    }
+                };
+                if better {
+                    let compressed = file_name.ends_with(".zstd");
+                    let gen = session_log_generation(&file_name);
+                    selected = Some((full_path, compressed, size, gen));
+                }
+            }
+        }
+
+        if let Some((target_file, is_compressed, size_bytes, _)) = selected {
+            let updated_at = entries
+                .iter()
+                .find(|(p, _, _)| p == &target_file)
+                .map(|(_, _, m)| *m)
+                .unwrap_or(0);
+
+            items.push(SessionItem {
+                id: session_id.clone(),
+                title: String::new(),
+                project_name,
+                project_dir_raw: project_dir_name,
+                decoded_project_path,
+                file_path: target_file,
+                updated_at,
+                size_bytes,
+                is_compressed,
+                has_backup,
+                status: SessionStatus::Unknown,
+                health_detail: None,
+                active: false,
+                archived: archived_ids.contains(&session_id),
+                created_at: 0,
+                event_count: 0,
+                end_state: None,
+                subagent: false,
+                agent_preset: None,
+                validator: None,
+            });
+        }
+    }
+
+    items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+    items
+}
+
+/// 读取客体 dsh 工作区存储域的归档会话集合
+fn read_archived_session_ids_in_guest(distro: &str) -> std::collections::HashSet<String> {
+    let rel = "storages/workspace.json".to_string();
+    let Ok(files) = crate::guest::read_files(distro, std::slice::from_ref(&rel)) else {
+        return Default::default();
     };
-    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+    let Some(text) = files
+        .into_iter()
+        .find(|(p, _)| p == &rel)
+        .and_then(|(_, c)| c)
+    else {
+        return Default::default();
+    };
+    let Ok(parsed): Result<serde_json::Value, _> = serde_json::from_str(&text) else {
+        return Default::default();
+    };
+    parsed
+        .get("global")
+        .and_then(|g| g.get("archivedSessionIds"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 扫描客体环境下的会话列表
+pub fn scan_sessions_in_guest(
+    distro: &str,
+    _data_dir: &Path,
+    _engine_alive: bool,
+) -> Result<Vec<SessionItem>, String> {
+    let raw_entries = crate::guest::scan_sessions_raw_in_guest(distro)?;
+    let archived = read_archived_session_ids_in_guest(distro);
+    let items = assemble_session_items(&raw_entries, &archived);
+    Ok(items)
+}
+
+/// 删除客体指定会话
+pub fn remove_session_in_guest(distro: &str, session_path_str: &str) -> Result<(), String> {
+    crate::guest::delete_session_in_guest(distro, session_path_str)
+}
+
+/// 运行客体会话自愈修复
+pub fn run_repair_in_guest(
+    target: Option<&str>,
+    distro: &str,
+    _data_dir: &Path,
+    engine_alive: bool,
+) -> Result<RepairOutcome, String> {
+    crate::guest::run_repair_in_guest(distro, target, engine_alive)
+}
+
+/// 纯解析：从 workspace.json 文本提取归档会话 ID 集合（宿主/客体共用）
+pub(crate) fn parse_archived_session_ids(text: &str) -> std::collections::HashSet<String> {
+    let parsed: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("workspace.json 解析失败（按无归档处理）：{e}");
@@ -348,6 +483,22 @@ fn read_archived_session_ids(home: &Path) -> std::collections::HashSet<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// 读取 dsh 工作区存储域的归档会话集合：`~/.dsh/storages/workspace.json` 的
+/// `global.archivedSessionIds`（裸会话 ID 数组；2026-09-07 实证结构：
+/// `{unit:{name,version}, global:{initialized,workspaceIds,archivedSessionIds},
+/// tables:{workspaces:{…}}}`，归档动作只原子重写这一个文件、不触碰会话日志）。
+/// 容错口径：文件缺失 / JSON 损坏 / 字段缺失一律视为「无归档」——归档信息
+/// 缺失只影响默认隐藏，不得阻断列表本身。
+fn read_archived_session_ids(home: &Path) -> std::collections::HashSet<String> {
+    let path = home.join("storages").join("workspace.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        // 文件不存在 = 归档功能未使用/未生成：正常路径，不告警。
+        Err(_) => return Default::default(),
+    };
+    parse_archived_session_ids(&text)
 }
 
 /// 会话日志文件名判定（与脚本 `SESSION_LOG_FILENAME` 同口径）：
@@ -583,6 +734,51 @@ mod tests {
         assert_eq!(entries[1].title.as_deref(), Some("有标题"));
         assert!(entries[0].detail.is_none());
         assert_eq!(entries[1].detail.as_deref(), Some("重放重叠"));
+    }
+
+    #[test]
+    fn assemble_session_items_dedupes_generations_and_sorts() {
+        let entries = vec![
+            (
+                "/home/user/.dsh/sessions/--proj--/sess-1/session.jsonl".to_string(),
+                100,
+                1000,
+            ),
+            (
+                "/home/user/.dsh/sessions/--proj--/sess-1/session.v2.jsonl".to_string(),
+                200,
+                2000,
+            ),
+            (
+                "/home/user/.dsh/sessions/--proj--/sess-2/session.jsonl".to_string(),
+                300,
+                3000,
+            ),
+        ];
+        let mut archived = std::collections::HashSet::new();
+        archived.insert("sess-1".to_string());
+
+        let items = assemble_session_items(&entries, &archived);
+        assert_eq!(items.len(), 2);
+        // sess-2 has updated_at 3000 -> comes first
+        assert_eq!(items[0].id, "sess-2");
+        assert!(!items[0].archived);
+        // sess-1 has higher generation v2 -> chosen over v0
+        assert_eq!(items[1].id, "sess-1");
+        assert_eq!(
+            items[1].file_path,
+            "/home/user/.dsh/sessions/--proj--/sess-1/session.v2.jsonl"
+        );
+        assert!(items[1].archived);
+    }
+
+    #[test]
+    fn parse_archived_session_ids_extracts_list() {
+        let text = r#"{"global":{"archivedSessionIds":["s1","s2"]}}"#;
+        let ids = parse_archived_session_ids(text);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("s1"));
+        assert!(ids.contains("s2"));
     }
 
     #[test]
@@ -1932,5 +2128,54 @@ export const sessionFormatCatalog = {
         );
 
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn assemble_session_items_correctly_groups_and_picks_highest_generation() {
+        let entries = vec![
+            (
+                "/home/u/.dsh/sessions/--my-proj--/sess-1/session.jsonl".to_string(),
+                100,
+                1000,
+            ),
+            (
+                "/home/u/.dsh/sessions/--my-proj--/sess-1/session.v2.jsonl.zstd".to_string(),
+                200,
+                2000,
+            ),
+            (
+                "/home/u/.dsh/sessions/--my-proj--/sess-1/session.v2.jsonl.zstd.bak".to_string(),
+                200,
+                1500,
+            ),
+            (
+                "/home/u/.dsh/sessions/--other-proj--/sess-2/session.jsonl".to_string(),
+                50,
+                500,
+            ),
+        ];
+        let mut archived = std::collections::HashSet::new();
+        archived.insert("sess-1".to_string());
+
+        let items = assemble_session_items(&entries, &archived);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, "sess-1");
+        assert_eq!(
+            items[0].file_path,
+            "/home/u/.dsh/sessions/--my-proj--/sess-1/session.v2.jsonl.zstd"
+        );
+        assert!(items[0].is_compressed);
+        assert!(items[0].has_backup);
+        assert!(items[0].archived);
+        assert_eq!(items[0].project_name, "my-proj");
+
+        assert_eq!(items[1].id, "sess-2");
+        assert_eq!(
+            items[1].file_path,
+            "/home/u/.dsh/sessions/--other-proj--/sess-2/session.jsonl"
+        );
+        assert!(!items[1].is_compressed);
+        assert!(!items[1].has_backup);
+        assert!(!items[1].archived);
     }
 }

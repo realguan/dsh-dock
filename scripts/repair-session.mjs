@@ -1948,6 +1948,18 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
     const files = await findSessionFiles(sessionsDir)
     const out = files.map((file) => {
       const health = scanSessionHealth(file)
+      let sizeBytes = 0
+      let updatedAt = 0
+      try {
+        const st = statSync(file)
+        sizeBytes = st.size
+        updatedAt = Math.floor(st.mtimeMs)
+      } catch {}
+      const isZstd = file.endsWith('.zstd')
+      const dir = dirname(file)
+      const bakFile = isZstd ? join(dir, 'session.jsonl.zstd.bak') : join(dir, 'session.jsonl.bak')
+      const hasBackup = existsSync(`${file}.bak`) || existsSync(bakFile)
+
       return {
         path: file,
         status: health.status,
@@ -1960,6 +1972,9 @@ DSH Session Repair Tool (dsh-dock 自愈工具)
         endState: health.endState,
         subagent: health.subagent,
         agentPreset: health.agentPreset,
+        sizeBytes,
+        updatedAt,
+        hasBackup,
       }
     })
     console.log(JSON.stringify(out))

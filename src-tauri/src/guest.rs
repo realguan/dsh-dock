@@ -244,6 +244,7 @@ pub(crate) fn write_home_files_script(files: &[(String, String)]) -> String {
         out.push_str(&format!(
             "if [ -d \"$(dirname {path})\" ] && \
              printf '%s' {payload} | base64 -d > {path}.dsh-dock.tmp && \
+             case {label} in *credentials.y*) chmod 600 {path}.dsh-dock.tmp 2>/dev/null || true ;; esac && \
              mv -f {path}.dsh-dock.tmp {path}; then :; \
              else rm -f {path}.dsh-dock.tmp; \
              echo '{WRITE_FAILED}:{label}'; DSH_DOCK_FAIL=1; fi;"
@@ -331,6 +332,142 @@ pub(crate) fn delete_profile_script(profile: &str) -> String {
          if [ ! -d \"$dir\" ]; then printf '{DELETE_DIR_MISSING}:%s\\n' {label}; exit 0; fi; \
          rm -rf \"$dir\"; \
          if [ ! -e \"$dir\" ]; then printf '{DELETE_OK}\\n'; else printf 'DSH_DOCK_DELETE_FAILED\\n'; fi",
+        guest_prep!()
+    )
+}
+
+/// 备份成功哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const BACKUP_OK: &str = "DSH_DOCK_BACKUP_OK";
+
+/// 组装「客体文件覆写前留备份」脚本（与 fs_backup.rs 同口径）。
+/// 目标文件不存在时为 no-op，直接成功；存在时复制为 `<name>.bak-<unix秒>[-<seq>]`，
+/// `cp -p` 严格继承原有权限位（包括凭据的 0600）。
+#[cfg(any(windows, test))]
+pub(crate) fn backup_file_script(rel: &str) -> String {
+    let label = sh_quote(rel);
+    let path = format!("\"{HOME_EXPR}\"/{label}");
+    format!(
+        "{}target={path}; \
+         if [ -f \"$target\" ]; then \
+           stamp=$(date +%s 2>/dev/null || echo 0); \
+           bak=\"$target.bak-$stamp\"; \
+           seq=1; \
+           while [ -e \"$bak\" ]; do \
+             bak=\"$target.bak-$stamp-$seq\"; \
+             seq=$((seq + 1)); \
+           done; \
+           if ! cp -p \"$target\" \"$bak\"; then \
+             echo 'BACKUP_FAILED'; exit 0; \
+           fi; \
+         fi; \
+         echo '{BACKUP_OK}'; exit 0",
+        guest_prep!()
+    )
+}
+
+/// 诊断输出哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const DIAG_SENTINEL: &str = "DSH_DOCK_DIAG_JSON:";
+
+/// 组装「客体系统诊断信息采集」脚本。
+#[cfg(any(windows, test))]
+pub(crate) fn diagnostics_script(distro: &str) -> String {
+    let quoted_distro = sh_quote(distro);
+    format!(
+        "{}node_bin=$(which node 2>/dev/null || true); \
+         node_ver=\"\"; \
+         if [ -n \"$node_bin\" ]; then node_ver=$(\"$node_bin\" --version 2>/dev/null || true); fi; \
+         pnpm_bin=$(which pnpm 2>/dev/null || true); \
+         pnpm_ver=\"\"; \
+         if [ -n \"$pnpm_bin\" ]; then pnpm_ver=$(\"$pnpm_bin\" --version 2>/dev/null || true); fi; \
+         dsh_bin=$(which dsh 2>/dev/null || true); \
+         dsh_ver=\"\"; \
+         if [ -n \"$dsh_bin\" ]; then dsh_ver=$(\"$dsh_bin\" --version 2>/dev/null || true); fi; \
+         dsh_home=\"{HOME_EXPR}\"; \
+         calc_b() {{ d=\"$1\"; if [ ! -d \"$d\" ]; then echo 0; return; fi; b=$(du -sb \"$d\" 2>/dev/null | awk '{{print $1}}'); if [ -n \"$b\" ]; then echo \"$b\"; return; fi; k=$(du -sk \"$d\" 2>/dev/null | awk '{{print $1}}'); if [ -n \"$k\" ]; then echo $((k * 1024)); return; fi; echo 0; }}; \
+         tot_b=$(calc_b \"$dsh_home\"); \
+         prof_b=$(calc_b \"$dsh_home/profiles\"); \
+         sess_b=$(calc_b \"$dsh_home/sessions\"); \
+         cnt_dir() {{ d=\"$1\"; if [ ! -d \"$d\" ]; then echo 0; return; fi; ls -1q \"$d\" 2>/dev/null | wc -l; }}; \
+         prof_c=$(cnt_dir \"$dsh_home/profiles\"); \
+         sess_c=$(cnt_dir \"$dsh_home/sessions\"); \
+         arch_str=$(uname -m 2>/dev/null || echo \"unknown\"); \
+         node_bin_json=$(printf '%s' \"$node_bin\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         node_ver_json=$(printf '%s' \"$node_ver\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         pnpm_bin_json=$(printf '%s' \"$pnpm_bin\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         pnpm_ver_json=$(printf '%s' \"$pnpm_ver\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         dsh_bin_json=$(printf '%s' \"$dsh_bin\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         dsh_ver_json=$(printf '%s' \"$dsh_ver\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         home_json=$(printf '%s' \"$dsh_home\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); \
+         printf '{DIAG_SENTINEL}{{\"node\":{{\"path\":\"%s\",\"version\":\"%s\",\"source\":\"guest\",\"isReady\":%s}},\"pnpm\":{{\"path\":\"%s\",\"version\":%s,\"isReady\":%s}},\"dsh\":{{\"path\":\"%s\",\"version\":%s,\"source\":\"guest\",\"isReady\":%s}},\"storage\":{{\"dshHome\":\"%s\",\"totalBytes\":%s,\"profilesBytes\":%s,\"sessionsBytes\":%s,\"profilesCount\":%s,\"sessionsCount\":%s}},\"platform\":{{\"os\":\"linux (WSL: %s)\",\"arch\":\"%s\"}}}}\\n' \
+           \"$node_bin_json\" \
+           \"${{node_ver_json:-未检出}}\" \
+           \"$( [ -n \"$node_ver\" ] && echo true || echo false )\" \
+           \"$pnpm_bin_json\" \
+           \"$( [ -n \"$pnpm_ver\" ] && printf '\"%s\"' \"$pnpm_ver_json\" || echo null )\" \
+           \"$( [ -n \"$pnpm_ver\" ] && echo true || echo false )\" \
+           \"$dsh_bin_json\" \
+           \"$( [ -n \"$dsh_ver\" ] && printf '\"%s\"' \"$dsh_ver_json\" || echo null )\" \
+           \"$( [ -n \"$dsh_ver\" ] && echo true || echo false )\" \
+           \"$home_json\" \
+           \"${{tot_b:-0}}\" \"${{prof_b:-0}}\" \"${{sess_b:-0}}\" \
+           \"${{prof_c:-0}}\" \"${{sess_c:-0}}\" \
+           {quoted_distro} \
+           \"$arch_str\"; exit 0",
+        guest_prep!()
+    )
+}
+
+/// 删除会话成功哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const DELETE_SESSION_OK: &str = "DSH_DOCK_DELETE_SESSION_OK";
+
+/// 组装「删除客体会话」脚本。
+/// 仅允许删除 `${DSH_HOME:-$HOME/.dsh}/sessions/` 下的内容，严格禁止路径穿越。
+#[cfg(any(windows, test))]
+pub(crate) fn delete_session_script(session_path: &str) -> Result<String, String> {
+    if session_path.contains("..") {
+        return Err("非法会话路径：包含路径穿越符 '..' ".to_string());
+    }
+    let path_literal = sh_quote(session_path);
+    Ok(format!(
+        "{}target={path_literal}; \
+         root=\"{HOME_EXPR}/sessions\"; \
+         case \"$target\" in \
+           \"$root\"/*) : ;; \
+           *) echo 'DSH_DOCK_INVALID_SESSION_PATH'; exit 0 ;; \
+         esac; \
+         if [ ! -e \"$target\" ]; then \
+           echo '{DELETE_SESSION_OK}'; exit 0; \
+         fi; \
+         parent=$(dirname \"$target\"); \
+         if [ -f \"$target\" ] && [ \"$parent\" != \"$root\" ] && [ \"$(dirname \"$parent\")\" != \"$root\" ]; then \
+           rm -rf \"$parent\"; \
+         else \
+           rm -rf \"$target\"; \
+         fi; \
+         echo '{DELETE_SESSION_OK}'; exit 0",
+        guest_prep!()
+    ))
+}
+
+/// 扫描客体会话文件哨兵。
+#[cfg(any(windows, test))]
+pub(crate) const SESSIONS_PRESENT: &str = "DSH_DOCK_SESSIONS_PRESENT";
+#[cfg(any(windows, test))]
+pub(crate) const SESSIONS_EMPTY: &str = "DSH_DOCK_SESSIONS_EMPTY";
+
+/// 组装「扫描客体会话目录中文件元数据」脚本。
+/// 递归列举 `${DSH_HOME:-$HOME/.dsh}/sessions` 下 2-3 层的 session 相关文件。
+#[cfg(any(windows, test))]
+pub(crate) fn list_sessions_script() -> String {
+    format!(
+        "{}dir=\"{HOME_EXPR}/sessions\"; \
+         if [ ! -d \"$dir\" ]; then echo '{SESSIONS_EMPTY}'; exit 0; fi; \
+         echo '{SESSIONS_PRESENT}'; \
+         find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -printf '%p|%s|%T@\\n' 2>/dev/null || \
+         find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -exec stat -c '%n|%s|%Y' {{}} + 2>/dev/null",
         guest_prep!()
     )
 }
@@ -596,6 +733,197 @@ pub(crate) fn delete_profile_dir(distro: &str, profile: &str) -> Result<(), Stri
 /// 非 Windows 孪生。
 #[cfg(not(windows))]
 pub(crate) fn delete_profile_dir(_distro: &str, _profile: &str) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 覆写前留备份（客体版，与 fs_backup::backup_before_overwrite 契约一致）。
+#[cfg(windows)]
+pub(crate) fn backup_file(distro: &str, rel_path: &str) -> Result<(), String> {
+    let script = backup_file_script(rel_path);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("在 {distro} 备份文件 {rel_path} 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    if out.contains(BACKUP_OK) {
+        return Ok(());
+    }
+    Err(format!(
+        "备份客体文件 {rel_path} 失败（已中止写入）：{}",
+        out.trim()
+    ))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn backup_file(_distro: &str, _rel_path: &str) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 采集客体环境的系统诊断报告。
+#[cfg(windows)]
+pub(crate) fn collect_diagnostics_in_guest(
+    distro: &str,
+) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+    let script = diagnostics_script(distro);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("采集 {distro} 诊断信息失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    let line = out
+        .lines()
+        .find(|l| l.starts_with(DIAG_SENTINEL))
+        .ok_or_else(|| format!("客体诊断输出缺失哨兵行：{out}"))?;
+    let json_str = &line[DIAG_SENTINEL.len()..];
+    serde_json::from_str(json_str)
+        .map_err(|e| format!("解析客体诊断 JSON 失败：{e}（原文：{json_str}）"))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn collect_diagnostics_in_guest(
+    _distro: &str,
+) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 删除客体会话目录或文件。
+#[cfg(windows)]
+pub(crate) fn delete_session_in_guest(distro: &str, session_path: &str) -> Result<(), String> {
+    let script = delete_session_script(session_path)?;
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| format!("在 {distro} 删除会话失败：wsl.exe 调用失败或无输出（客体不可达？）"))?;
+    if out.contains(DELETE_SESSION_OK) {
+        return Ok(());
+    }
+    Err(format!("在 {distro} 删除会话失败：{}", out.trim()))
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn delete_session_in_guest(_distro: &str, _session_path: &str) -> Result<(), String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 扫描客体会话文件原始元数据列表。
+#[cfg(windows)]
+pub(crate) fn scan_sessions_raw_in_guest(distro: &str) -> Result<Vec<(String, u64, u64)>, String> {
+    let script = list_sessions_script();
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("扫描 {distro} 会话列表失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    if out.contains(SESSIONS_EMPTY) {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for line in out.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == SESSIONS_PRESENT || trimmed == SESSIONS_EMPTY {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').collect();
+        if parts.len() >= 3 {
+            let path = parts[0].to_string();
+            let size = parts[1].parse::<u64>().unwrap_or(0);
+            let mtime_sec = parts[2]
+                .split('.')
+                .next()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
+            let mtime_ms = mtime_sec * 1000;
+            entries.push((path, size, mtime_ms));
+        }
+    }
+    Ok(entries)
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn scan_sessions_raw_in_guest(_distro: &str) -> Result<Vec<(String, u64, u64)>, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 在客体中运行自愈脚本进行会话修复。
+#[cfg(windows)]
+pub(crate) fn run_repair_in_guest(
+    distro: &str,
+    target: Option<&str>,
+    engine_alive: bool,
+) -> Result<crate::sessions::RepairOutcome, String> {
+    let script_content = include_str!("../../scripts/repair-session.mjs");
+    let target_arg = match target {
+        Some(t) => sh_quote(t),
+        None => "'--all'".to_string(),
+    };
+    let alive_arg = if engine_alive { "'1'" } else { "'0'" };
+    let runner_script = format!(
+        "{}node_bin=$(which node 2>/dev/null || true); \
+         if [ -z \"$node_bin\" ]; then \
+           echo '客体中未检测到 Node.js——请先在该发行版安装 Node.js 或在终端直接运行 dsh' >&2; exit 1; \
+         fi; \
+         tmp=\"/tmp/dsh-dock-repair-$$.mjs\"; \
+         trap 'rm -f \"$tmp\"' EXIT; \
+         cat > \"$tmp\" || exit 1; \
+         export DSH_HOME=\"{HOME_EXPR}\"; \
+         export DSH_ENGINE_ALIVE={alive_arg}; \
+         exec \"$node_bin\" \"$tmp\" {target_arg}",
+        guest_prep!()
+    );
+    let mut cmd = crate::executor::wsl_command(Some(distro));
+    cmd.args(["-e", "bash", "-lic", &runner_script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("拉起 WSL 修复进程失败：{e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(script_content.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("等待 WSL 修复进程失败：{e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Err(format!("修复失败：\n{stderr}\n{stdout}"));
+    }
+
+    Ok(crate::sessions::RepairOutcome {
+        session_id: target.unwrap_or("all").to_string(),
+        success: true,
+        message: stdout.trim_end().to_string(),
+    })
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn run_repair_in_guest(
+    _distro: &str,
+    _target: Option<&str>,
+    _engine_alive: bool,
+) -> Result<crate::sessions::RepairOutcome, String> {
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
@@ -958,6 +1286,107 @@ rc 噪音一行
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains(DELETE_DIR_MISSING), "{stdout}");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn backup_file_script_runs_correctly_in_bash() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-bak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dsh_home = home.join(".dsh");
+        std::fs::create_dir_all(&dsh_home).unwrap();
+        let target = dsh_home.join(".credentials.yaml");
+        std::fs::write(&target, "k: v\n").unwrap();
+
+        let script = backup_file_script(".credentials.yaml");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(BACKUP_OK), "{stdout}");
+
+        let backups: Vec<_> = std::fs::read_dir(&dsh_home)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(".credentials.yaml.bak-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "应生成一份备份");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn diagnostics_script_runs_correctly_in_bash() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-diag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dsh_home = home.join(".dsh");
+        std::fs::create_dir_all(&dsh_home).unwrap();
+
+        let script = diagnostics_script("Ubuntu-24.04");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(DIAG_SENTINEL), "{stdout}");
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with(DIAG_SENTINEL))
+            .unwrap();
+        let json_str = &line[DIAG_SENTINEL.len()..];
+        let rep: crate::diagnostics::SystemDiagnosticsReport =
+            serde_json::from_str(json_str).unwrap();
+        assert_eq!(rep.platform.os, "linux (WSL: Ubuntu-24.04)");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn session_lifecycle_scripts_run_correctly_in_bash() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-sess-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let sess_dir = home.join(".dsh/sessions/--proj--/session-1");
+        std::fs::create_dir_all(&sess_dir).unwrap();
+        let log_file = sess_dir.join("session.jsonl.zstd");
+        std::fs::write(&log_file, "data").unwrap();
+
+        // 1. List sessions script
+        let list_s = list_sessions_script();
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&list_s)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(SESSIONS_PRESENT), "{stdout}");
+        assert!(stdout.contains("session.jsonl.zstd"), "{stdout}");
+
+        // 2. Delete session script
+        let del_s = delete_session_script(&log_file.to_string_lossy()).unwrap();
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&del_s)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(DELETE_SESSION_OK), "{stdout}");
+        assert!(!sess_dir.exists(), "会话目录应已被递归删除");
 
         let _ = std::fs::remove_dir_all(&home);
     }

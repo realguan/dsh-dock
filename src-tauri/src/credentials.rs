@@ -166,13 +166,12 @@ pub fn read_credentials(home: &Path) -> Result<String, String> {
     std::fs::read_to_string(&file).map_err(|e| format!("读取 .credentials.yaml 失败：{e}"))
 }
 
-/// 解析凭据文件并生成脱敏摘要列表
-pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>, String> {
-    let raw = read_credentials(home)?;
+/// 解析凭据文件并生成脱敏摘要列表（纯函数，宿主/客体共用）
+pub fn parse_credentials_summary(raw: &str) -> Vec<CredentialSummaryItem> {
     let parsed: BTreeMap<String, serde_json::Value> = if raw.trim().is_empty() {
         BTreeMap::new()
     } else {
-        serde_yaml::from_str(&raw).unwrap_or_default()
+        serde_yaml::from_str(raw).unwrap_or_default()
     };
 
     let mut result = Vec::new();
@@ -257,7 +256,13 @@ pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>
         }
     }
 
-    Ok(result)
+    result
+}
+
+/// 解析凭据文件并生成脱敏摘要列表
+pub fn get_credentials_summary(home: &Path) -> Result<Vec<CredentialSummaryItem>, String> {
+    let raw = read_credentials(home)?;
+    Ok(parse_credentials_summary(&raw))
 }
 
 /// 原子安全写入凭据文件（严格 0600 权限）
@@ -299,13 +304,12 @@ pub fn overwrite_credentials(home: &Path, content: &str) -> Result<(), String> {
     write_credentials(home, content)
 }
 
-/// 针对单个 Provider 安全设置 API Key（原子写回 + 保持 0600 权限）
-pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), String> {
-    let raw = read_credentials(home)?;
+/// 纯变换（宿主/客体共用）：对凭据 YAML 文本修改单个 Provider 的 API Key 并序列化为新 YAML
+pub fn apply_set_provider_key(raw: &str, provider: &str, key: &str) -> Result<String, String> {
     let mut parsed: BTreeMap<String, serde_json::Value> = if raw.trim().is_empty() {
         BTreeMap::new()
     } else {
-        serde_yaml::from_str(&raw).map_err(|e| format!("解析 .credentials.yaml 失败：{e}"))?
+        serde_yaml::from_str(raw).map_err(|e| format!("解析 .credentials.yaml 失败：{e}"))?
     };
 
     let trimmed = key.trim();
@@ -343,8 +347,53 @@ pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), St
         }
     }
 
-    let serialized = serde_yaml::to_string(&parsed).map_err(|e| format!("序列化凭据失败：{e}"))?;
+    serde_yaml::to_string(&parsed).map_err(|e| format!("序列化凭据失败：{e}"))
+}
+
+/// 针对单个 Provider 安全设置 API Key（原子写回 + 保持 0600 权限）
+pub fn set_provider_key(home: &Path, provider: &str, key: &str) -> Result<(), String> {
+    let raw = read_credentials(home)?;
+    let serialized = apply_set_provider_key(&raw, provider, key)?;
     write_credentials(home, &serialized)
+}
+
+/// 读取客体 `.credentials.yaml` 原文（不存在返回空串）
+pub fn get_credentials_raw_in_guest(distro: &str) -> Result<String, String> {
+    let files = crate::guest::read_files(distro, &[".credentials.yaml".to_string()])?;
+    Ok(files
+        .into_iter()
+        .find_map(|(p, c)| {
+            if p.ends_with(".credentials.yaml") {
+                c
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default())
+}
+
+/// 解析客体凭据文件并生成脱敏摘要列表
+pub fn get_credentials_summary_in_guest(
+    distro: &str,
+) -> Result<Vec<CredentialSummaryItem>, String> {
+    let raw = get_credentials_raw_in_guest(distro)?;
+    Ok(parse_credentials_summary(&raw))
+}
+
+/// 覆写客体 `.credentials.yaml`（先留备份再原子写回，保持 0600 权限）
+pub fn save_credentials_raw_in_guest(distro: &str, content: &str) -> Result<(), String> {
+    crate::guest::backup_file(distro, ".credentials.yaml")?;
+    crate::guest::write_home_files(
+        distro,
+        &[(".credentials.yaml".to_string(), content.to_string())],
+    )
+}
+
+/// 针对客体单个 Provider 安全设置 API Key（原子写回 + 保持 0600 权限）
+pub fn set_provider_key_in_guest(distro: &str, provider: &str, key: &str) -> Result<(), String> {
+    let raw = get_credentials_raw_in_guest(distro)?;
+    let serialized = apply_set_provider_key(&raw, provider, key)?;
+    crate::guest::write_home_files(distro, &[(".credentials.yaml".to_string(), serialized)])
 }
 
 #[cfg(test)]

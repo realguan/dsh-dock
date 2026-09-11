@@ -201,8 +201,15 @@ profile 创建必需 dsh CLI，宿主引擎按设计在 WSL 模式永不就绪 �
          唯一网络面，§1 明示其与模式无关）、`aggregate_plugins_blocking_in_guest`（客体扫描 + 客体清单）。
       至此 WSL 模式下控制中心的**读侧全通**：profile 列表/详情/切换/默认档、插件清单/行表/开关/
       更新检查/聚合总览；写侧（profile CRUD / 配置复制）与会话、控制台各面板仍在 P0 守卫下诚实拒绝。
-- [ ] **P2**：profile 生命周期下沉（逐条对齐 ADR-0009 的文件不变量与写入例外册）。
-- [ ] **P3**：只读控制台下沉。
+- [x] **P2**：profile 生命周期写动作与插件配置复制下沉（逐条对齐 ADR-0009 的文件不变量与写入例外册；commit `ef5da8f`）。
+      - `guest.rs`：新增 `copy_profile_script` / `rename_profile_script` / `delete_profile_script` 原语（显式排除 `node_modules`，保留依赖与配置原子转移）；
+      - `profiles.rs`：实现客体生命周期写动作（`create_profile_in_guest` / `copy_profile_in_guest` / `rename_profile_in_guest` / `delete_profile_in_guest`），纯函数抽象 `rewrite_manifest_name_text` 与 `scan_patch_relative_path_warnings`；
+      - `plugins.rs`：实现 `copy_plugin_config_in_guest`，纯函数抽离 `apply_copy_config_entries`；
+      - `commands/profile.rs` 与 `plugin.rs` 移除写路径上的 `require_local` 阻断，全面接入 `World` 分发。
+- [x] **P3**：控制台与会话维护全量下沉（ADR-0016 规划全部管理面实现完毕）。
+      - P3a 控制台管理下沉：凭据（`credentials.rs`，严格保持 0600 权限与写前时间戳备份）、DSH 引擎设置（`dsh_settings.rs`，写前 `.bak-` 时间戳备份）、MCP 服务（`mcp.rs`，纯函数内核 `parse_mcp_servers` / `apply_save_mcp_server` / `apply_delete_mcp_server`）、系统诊断（`diagnostics.rs` 与客体诊断脚本 `diagnostics_script`，透传客体 Linux 发行版、内核、网络与 DSH 环境）；
+      - P3b 会话维护下沉：会话扫描（`sessions.rs` 纯函数 `assemble_session_items`，客体高效扫描提取路径、尺寸与时间戳）、单会话与全量自愈修复（`run_repair_in_guest` 经 stdin 管道传递 94 KiB `repair-session.mjs` 规避 Windows 命令行长度限制）、会话目录递归删除（`delete_session_in_guest`，带 `.dsh/sessions` 根路径与路径逃逸校验安全守卫）；
+      - `commands/console.rs` 与 `commands/session.rs` 彻底移除 `require_local` 阻断，管理面命令 100% 支持 WSL 客体模式。
 - [ ] 文档同步：AGENTS §7 登记本次客体管理面用途；`docs/contracts/` 增子契约（客体管理面原语与不变量）；
       `docs/broadcasts.md` 落档评审结论。
 - [ ] 验证清单（Windows+WSL 实机）：插件装/卸/更 + 插件行 + profile 创建；以及错误面——

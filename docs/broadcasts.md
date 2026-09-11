@@ -31,6 +31,30 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 分支推送 · ADR-0016 P2 与 P3 全量下沉：WSL 客体模式管理面全部打通 —— guan（AI 协作）
+
+- **背景与目标**：在 P1（插件链）与读侧下沉基础上，完成 ADR-0016 规划的 P2（profile 生命周期写动作与配置复制）和 P3（控制台面板与会话维护），彻底解除全部 `require_local` 阻断，让 WSL 客体模式具备与 Local 模式对等的完整管理能力。
+- **变更清单**：
+  1. **P2 Profile 生命周期写动作**（commit `ef5da8f`）：
+     - `guest.rs`：新增 `copy_profile_script`、`rename_profile_script`、`delete_profile_script` 及其执行原语，排除 `node_modules` 保持原子高效迁移；
+     - `profiles.rs`：实现 `create_profile_in_guest`、`copy_profile_in_guest`、`rename_profile_in_guest`、`delete_profile_in_guest`；纯函数抽离 `rewrite_manifest_name_text` 与 `scan_patch_relative_path_warnings`；
+     - `plugins.rs`：实现 `copy_plugin_config_in_guest`，纯函数抽离 `apply_copy_config_entries`；
+     - `commands/profile.rs` 与 `plugin.rs`：移除写路径上的 `require_local` 阻断，按 `World` 分发。
+  2. **P3a 控制台管理下沉**：
+     - `guest.rs`：`write_home_files_script` 补充 `chmod 600` 凭据权限安全保障；新增 `backup_file_script` / `backup_file` 实现写前带时间戳备份；新增 `diagnostics_script` 收集客体系统报告；
+     - `credentials.rs`：纯函数 `parse_credentials_summary` 与 `apply_set_provider_key`；实现 `get_credentials_raw_in_guest`、`get_credentials_summary_in_guest`、`save_credentials_raw_in_guest`、`set_provider_key_in_guest`；
+     - `dsh_settings.rs`：实现 `read_dsh_settings_in_guest` 与写前自动备份的 `overwrite_dsh_settings_in_guest`；
+     - `mcp.rs`：纯函数内核 `parse_mcp_servers`、`apply_save_mcp_server`、`apply_delete_mcp_server`；实现 `list_mcp_servers_in_guest`、`save_mcp_server_in_guest`、`delete_mcp_server_in_guest`；
+     - `diagnostics.rs`：实现客体诊断结果收集与报告生成；
+     - `commands/console.rs`：全部 10 个控制台命令移除 `require_local` 阻断，接入 `World` 分发。
+  3. **P3b 会话维护下沉**：
+     - `guest.rs`：新增 `list_sessions_script` / `scan_sessions_raw_in_guest` 原语扫描会话文件；新增 `delete_session_script` / `delete_session_in_guest`（带根路径与逃逸校验安全防线）；新增 `run_repair_in_guest` 经 stdin 管道传递 94 KiB `repair-session.mjs` 规避 Windows 命令行 32K 长度截断风险；
+     - `sessions.rs`：纯函数内核 `assemble_session_items`；实现 `read_archived_session_ids_in_guest`、`scan_sessions_in_guest`、`remove_session_in_guest`、`run_repair_in_guest`；
+     - `commands/session.rs`：全部 4 个会话维护命令移除 `require_local` 阻断，接入 `World` 分发。
+- **影响**：WSL 客体模式现已支持全部控制中心功能：Profile 管理（增/删/改/查/复制/切换）、插件管理（装/卸/更/配置/配置复制/开关）、控制台（凭据/DSH 设置/MCP/系统诊断）、会话维护（扫描/单会话自愈/全量自愈/删除）。宿主与客体逻辑严格保持单一解析与对等文件不变量。
+- **待他人动作**：仅周知。
+- **验证**：`cargo fmt --check` ✓、宿主 target clippy 0 警告 ✓、Windows target clippy（MinGW 桩工具链）0 警告 ✓、前端 32 组 223 个测试全绿 ✓、单元测试覆盖客体会话装配与 bash 脚本端到端执行。
+
 ### 2026-09-11 分支推送 · ADR-0016 第三批（读侧下沉）：WSL 模式下控制中心恢复可用 —— guan（AI 协作）
 
 - **原委（实机反馈）**：第二批的 P0 守卫把 `list_profiles` 一并挡住，实机会话里控制中心着陆页

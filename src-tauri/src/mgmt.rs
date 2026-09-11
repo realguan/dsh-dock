@@ -72,6 +72,7 @@ fn world_unresolved() -> String {
 ///
 /// 替代路径必须**真的可行**：WSL 终端里的 `dsh` 就是运行中会话用的那一个
 /// （ADR-0016 §2.1：网络与 CLI 都在客体进程内），切换本地模式则回到现状路径。
+#[allow(dead_code)]
 pub(crate) fn unsupported_in_wsl(action: &str, distro: &str) -> String {
     format!(
         "「{action}」在 WSL 客体模式下暂不支持：本版本只下沉了插件装卸与插件清单\
@@ -97,6 +98,7 @@ fn active_wsl_distro(app: &tauri::AppHandle) -> Option<String> {
 /// **P0 守卫**：未下沉到客体的管理动作在 WSL 世界一律拒绝执行（诚实可行动）。
 ///
 /// 本地世界（含非 Windows 平台）零行为变化——调用点只多一次世界判定。
+#[allow(dead_code)]
 pub(crate) fn require_local(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     match current_world(app)? {
         World::Local => Ok(()),

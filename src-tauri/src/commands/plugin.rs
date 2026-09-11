@@ -246,7 +246,7 @@ pub async fn list_all_plugins(
 /// 目标已有同 id 条目则零写入 skipped）。dump-config spawn + 文件操作走
 /// spawn_blocking。
 ///
-/// **世界择源（2026-09-11 P2 下沉）**：WSL 模式下沉至客体 patch 读取与写回。
+/// **世界择源（ADR-0016 §4 P2）**：WSL 模式读写客体 patch 并使用客体行表。
 #[tauri::command]
 pub async fn copy_plugin_config(
     app: tauri::AppHandle,
@@ -254,11 +254,11 @@ pub async fn copy_plugin_config(
     target: String,
     package: String,
 ) -> Result<crate::plugins::CopyConfigOutcome, String> {
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => crate::plugins::copy_plugin_config_blocking(
             &crate::resolve::user_dsh_home(),
