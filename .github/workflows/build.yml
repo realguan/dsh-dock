@@ -125,6 +125,22 @@ jobs:
         with:
           toolchain: stable
 
+      # **非宿主架构 leg 必须显式装 std**（2026-09-11，独立验证发现）：
+      # `macos-latest` = **arm64** runner，而 rustup 只装宿主架构的 std
+      # （action 实跑 `rustup toolchain install stable --profile minimal`，
+      # `--profile minimal` = rustc + **仅宿主** rust-std + cargo，且全仓无
+      # `rustup target add`）。rustup **不会**在缺 target 时自动补装。
+      # ⇒ 交叉 leg 若不装，会在第一个消费 target 的步骤（clippy）直接
+      # `error[E0463]: can't find crate for 'std'` 而红，Intel 产物根本不会产出。
+      # arm64 leg 不受影响（`--target aarch64-apple-darwin` = 宿主本身），
+      # **正因如此该缺陷极易漏掉**——两个 macOS leg 看着像同一回事。
+      # 本机之所以"能跑"，是因为本机早就手动装过该 target；CI runner 是干净的。
+      # 不传 action 的 `targets:`（Windows/Linux leg 的 rust_target 为空串，
+      # 避免依赖 action 对空串的解释），改用显式一步，零歧义。
+      - name: Install Rust target std (non-host arch legs only)
+        if: matrix.rust_target != ''
+        run: rustup target add ${{ matrix.rust_target }}
+
       # Tauri v2 官方要求的系统依赖（Linux 构建安装包必需）
       - name: Ubuntu system deps
         if: runner.os == 'Linux'

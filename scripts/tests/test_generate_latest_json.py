@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 _SCRIPT_PATH = Path(__file__).parents[1] / "generate-latest-json.py"
@@ -14,6 +15,7 @@ _SPEC.loader.exec_module(_MODULE)
 
 REQUIRED_TARGETS = _MODULE.REQUIRED_TARGETS
 build_platforms = _MODULE.build_platforms
+load_signatures = _MODULE.load_signatures
 release_asset_name = _MODULE.release_asset_name
 target_for_artifact = _MODULE.target_for_artifact
 
@@ -121,18 +123,45 @@ class GenerateLatestJsonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "darwin-aarch64"):
             build_platforms(assets, signatures, "realguan/dsh-dock", "v0.9.3")
 
-    def test_duplicate_darwin_tarball_name_is_rejected(self) -> None:
-        """两个 macOS leg 若撞名（未打标），feed 生成必须红——不是静默取其一。"""
-        signatures = {
-            "DSH Dock.app.tar.gz": "sig-a",
-            "DSH Dock_0.9.3_amd64.deb": "sig-b",
+    def test_duplicate_darwin_target_is_rejected(self) -> None:
+        """**两个不同资产名映射到同一目标** ⇒ 必须报「目标重复」，不得静默取其一。
+
+        ⚠️ 本用例原先写成「一个未打标名 + 一个已打标名」，结果**因「缺少目标」而通过**，
+        并未真正触发重复目标检查——独立验证者用「删掉该检查后用例仍 ok」证伪了它。
+        现改为**先用齐全的 7 个目标满足完整性要求**，再额外塞一个别名
+        （`_arm64` 与 `_aarch64` 是同义标记，都映射 `darwin-aarch64`），
+        并**断言错误消息**——只断言 `ValueError` 会让它再次因别的理由通过。
+        """
+        names = list(ARTIFACTS) + ["DSH Dock_arm64.app.tar.gz"]
+        assets = {
+            release_asset_name(name): f"https://example.invalid/{index}"
+            for index, name in enumerate(names, start=1)
         }
-        assets = {release_asset_name(n): f"https://example.invalid/{n}" for n in signatures}
-        # 先落一个已映射的 darwin 目标，再让第二个同名/同目标的资产出现 ⇒ 目标重复。
-        signatures["DSH Dock_aarch64.app.tar.gz"] = "sig-c"
-        assets[release_asset_name("DSH Dock_aarch64.app.tar.gz")] = "https://example.invalid/c"
-        with self.assertRaises(ValueError):
+        signatures = {name: f"signature-{index}" for index, name in enumerate(names)}
+
+        with self.assertRaisesRegex(ValueError, "目标重复：darwin-aarch64"):
             build_platforms(assets, signatures, "realguan/dsh-dock", "v0.9.3")
+
+    def test_same_filename_with_conflicting_signatures_is_rejected(self) -> None:
+        """**真实撞名场景**：两个 macOS leg 各自上传未打标的同名 tarball 与其签名。
+
+        两个 macOS leg 把 artifact 下到不同目录（`updater/macos` /
+        `updater/macos-x86_64`），`rglob` 会看到**同一个文件名**两份。若签名不同，
+        必须在**读签名阶段**就红——否则 feed 可能拿到一个架构的签名去配另一个架构的
+        二进制，用户更新后装上的是不匹配的包。
+        """
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            (root_path / "macos").mkdir()
+            (root_path / "macos-x86_64").mkdir()
+            (root_path / "macos" / "DSH Dock.app.tar.gz.sig").write_text(
+                "sig-from-arm64", encoding="utf-8"
+            )
+            (root_path / "macos-x86_64" / "DSH Dock.app.tar.gz.sig").write_text(
+                "sig-from-x86_64", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "同名资产出现不一致签名"):
+                load_signatures(root_path)
 
 
 if __name__ == "__main__":
