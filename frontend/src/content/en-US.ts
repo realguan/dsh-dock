@@ -194,7 +194,6 @@ export const enUS: AppCopy = {
     nodeFromEngine: "Shell engine · managed by the app",
     nodeFromSystem: "From your system",
     nodeManaged: "Managed by App · Automatically prepared",
-    nodeUnknown: "Unknown",
     // Not-installed state (2026-09-10): report "not installed" truthfully and put
     // the *planned* version in parentheses — never render a plan as installed.
     nodeNotInstalled: "Not installed",

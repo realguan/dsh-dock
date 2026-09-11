@@ -32,11 +32,14 @@ export function NodeVersionCard() {
         </div>
       ) : (
         <span className="text-faint font-mono text-xs">
-          {/* 未安装：如实报，并给出"将要装哪个"（不是"已装哪个"） */}
+          {/*
+            未安装：如实报"没装"，并给出**将装**哪个（不是"已装哪个"）。
+            注意这里**不再**追加 `nodeUnknown`（"尚未确定"）：既然已经明确知道
+            "未安装 + 计划版本"，说"尚未确定"是自相矛盾（2026-09-10 审核修正）。
+          */}
           {node?.plannedVersion
             ? t.about.nodeNotInstalledPlanned(node.plannedVersion)
-            : t.about.nodeNotInstalled}{" "}
-          <DimNote>{t.about.nodeUnknown}</DimNote>
+            : t.about.nodeNotInstalled}
         </span>
       )}
     </DimRow>

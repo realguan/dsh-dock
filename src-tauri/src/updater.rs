@@ -95,6 +95,7 @@ fn friendly_error(e: &tauri_plugin_updater::Error) -> String {
     if let tauri_plugin_updater::Error::Reqwest(re) = e {
         // status() = None 表示非 HTTP 响应错误（连接被拒 / 超时 / TLS / DNS），
         // 即 GitHub 直连受阻的典型形态。
+        // spawn-gate: exempt(reqwest::Error::status() 是 HTTP 状态码读取，不拉起子进程)
         if re.status().is_none() {
             return "无法连接更新服务器（GitHub 直连失败），请检查网络或代理后重试。".to_string();
         }

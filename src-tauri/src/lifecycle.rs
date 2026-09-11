@@ -688,6 +688,38 @@ impl SweepReport {
     }
 }
 
+/// 一条登记记录的判定结果（纯函数，供测试）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationVerdict {
+    /// 加锁成功 = 持有者已死 → 陈旧文件，删除（不算孤儿）
+    Stale,
+    /// 明确"被别人持有" = 真孤儿 → 收口
+    LiveOrphan,
+    /// **无法判定**（锁机制本身报错：文件系统不支持 flock、权限、I/O 故障）
+    /// → **跳过，绝不收口**
+    Indeterminate,
+}
+
+/// 由 `try_lock` 的结果判定登记记录的归属（纯函数，供测试）。
+///
+/// **2026-09-10 审核修正（安全方向）**：`File::try_lock` 返回 `Result<(),
+/// TryLockError>`，而 `TryLockError` 有**两个**变体（std `fs.rs:144-152`）：
+/// - `WouldBlock` = 确实被别的句柄/进程持有 → 真孤儿；
+/// - `Error(io::Error)` = **锁机制本身失败**（文件系统不支持、I/O 故障、权限）。
+///
+/// 首版实现把 `Err(_)` 一律当成"仍被持有"，于是**在不支持 flock 的文件系统上，
+/// 每一条登记都会被判成活跃孤儿**，随后按文件内容里的 pid 去 SIGTERM——那个 pid
+/// 完全可能已被复用给无关进程。这正是 ADR-0015 反复强调要避免的**误杀**。
+/// 现在把"无法判定"单列一档：**不确定时宁可不收口**（收口还有下次启动兜底，
+/// 误杀无法挽回）。
+pub fn classify_lock_result(result: &Result<(), std::fs::TryLockError>) -> RegistrationVerdict {
+    match result {
+        Ok(()) => RegistrationVerdict::Stale,
+        Err(std::fs::TryLockError::WouldBlock) => RegistrationVerdict::LiveOrphan,
+        Err(std::fs::TryLockError::Error(_)) => RegistrationVerdict::Indeterminate,
+    }
+}
+
 /// 启动期清扫（契约 §1/§2）：收口**上一代壳**遗留的、仍持有登记锁的子进程。
 ///
 /// 判据 = **能否对登记文件加锁**（内核锁，非 pid → PID 复用免疫）：
@@ -724,9 +756,10 @@ fn sweep_orphans_with(
         else {
             continue;
         };
-        match file.try_lock() {
+        let verdict = classify_lock_result(&file.try_lock());
+        match verdict {
             // 加锁成功 = 持有者已死 → 陈旧文件
-            Ok(()) => {
+            RegistrationVerdict::Stale => {
                 // 只 close，不 `unlock()`：见 `Registration::drop` 的 flock 语义说明
                 // （本函数是独立 fd，unlock 无害但没必要；统一纪律避免后人照抄出错）。
                 drop(file);
@@ -734,8 +767,16 @@ fn sweep_orphans_with(
                     report.stale += 1;
                 }
             }
-            // 加锁失败 = 子进程仍持有 → 真孤儿
-            Err(_) => {
+            // 锁机制本身失败 → 无法判定，**跳过**（绝不按 pid 去杀）
+            RegistrationVerdict::Indeterminate => {
+                drop(file);
+                tracing::warn!(
+                    "登记文件无法判定归属（锁机制报错，可能文件系统不支持 flock）：{}——跳过收口",
+                    path.display()
+                );
+            }
+            // 明确被持有 = 真孤儿
+            RegistrationVerdict::LiveOrphan => {
                 drop(file);
                 let pid = std::fs::read_to_string(&path)
                     .ok()
@@ -1080,17 +1121,41 @@ mod tests {
         let dir = PathBuf::from(std::env::var("DSH_DOCK_LIFECYCLE_DIR").unwrap());
         let pid_file = PathBuf::from(std::env::var("DSH_DOCK_LIFECYCLE_PIDFILE").unwrap());
         init(&dir);
-        let mut cmd = Command::new("sleep");
-        cmd.arg("300");
-        quiet(&mut cmd);
-        let child = spawn(
-            &mut cmd,
-            Role::DshServer,
-            GuardCtx::of("sleep", Some("web")),
-        )
-        .expect("守卫式 spawn");
+        // `DSH_DOCK_LIFECYCLE_REAL_DSH=1` → 用**真的 dsh**（生产同一条 spawn_dsh
+        // 路径）当被守护对象，否则用 `sleep` 替身。前者是"用户会话被孤儿占死"
+        // 那条链路的逐字复刻，故由专门的 `real_dsh_...` 用例驱动。
+        let pid = if std::env::var("DSH_DOCK_LIFECYCLE_REAL_DSH").is_ok() {
+            let data_dir = crate::resolve::launch_data_dir_for_test();
+            let engine = crate::engines::engine_dsh_bin(&data_dir).expect("本机引擎未就绪");
+            let node = crate::engines::engine_node_bin(&data_dir).expect("引擎 node");
+            let launch = crate::resolve::LaunchSpec {
+                node_bin: node,
+                dsh_entry: crate::resolve::DshEntry::Launcher { bin: engine },
+                dsh_home: crate::resolve::user_dsh_home(),
+                profile: "web".to_string(),
+                tier: crate::manifest::TierKind::Engine,
+                no_open: true,
+                first_bootstrap: false,
+            };
+            // 生产路径：内部就是 lifecycle::spawn(Role::DshServer)
+            crate::shell::spawn_dsh(&launch, &data_dir)
+                .expect("spawn_dsh")
+                .child
+                .id()
+        } else {
+            let mut cmd = Command::new("sleep");
+            cmd.arg("300");
+            quiet(&mut cmd);
+            spawn(
+                &mut cmd,
+                Role::DshServer,
+                GuardCtx::of("sleep", Some("web")),
+            )
+            .expect("守卫式 spawn")
+            .id()
+        };
         let mut f = std::fs::File::create(&pid_file).unwrap();
-        write!(f, "{}", child.id()).unwrap();
+        write!(f, "{pid}").unwrap();
         f.sync_all().unwrap();
         // 阻塞等待被 SIGKILL。超时兜底（120s）防测试基础设施异常时永久占着。
         std::thread::sleep(Duration::from_secs(120));
@@ -1387,21 +1452,35 @@ mod tests {
                 Some(i) => &text[..i],
                 None => text,
             };
+            let mut prev_trimmed = "";
             for (lineno, line) in prod.lines().enumerate() {
                 let t = line.trim();
+                let prev = prev_trimmed;
+                prev_trimmed = t;
                 if t.starts_with("//") {
                     continue;
                 }
-                let bare = t.contains(".spawn()") || t.contains(".output()");
+                // 覆盖**全部**会真正拉起子进程的 std 入口：`spawn()` /
+                // `output()` / `status()` / `wait_with_output()`（后两者易被漏记
+                // ——2026-09-10 审核发现闸门原先只查前两个）。
+                let bare = t.contains(".spawn()")
+                    || t.contains(".output()")
+                    || t.contains(".status()")
+                    || t.contains("wait_with_output()");
                 if !bare {
                     continue;
                 }
                 // 用 lifecycle 的写法：`lifecycle::spawn(` / `lifecycle::run(`
                 // 不会出现 `.spawn()`/`.output()` 直接挂在 Command 上的形态。
-                if t.contains("lifecycle::spawn(") || t.contains("lifecycle::run(") {
+                if t.contains("lifecycle::spawn(")
+                    || t.contains("lifecycle::run(")
+                    || t.contains("lifecycle::wait_with_output(")
+                {
                     continue;
                 }
-                if t.contains("spawn-gate: exempt(") {
+                // 豁免标注可写在本行（行尾）或**紧邻上一行**（后者更贴近
+                // `#[allow(...)]` 的惯例，且不必为一个长表达式硬塞行尾注释）。
+                if t.contains("spawn-gate: exempt(") || prev.contains("spawn-gate: exempt(") {
                     continue;
                 }
                 violations.push(format!("{name}:{}: {}", lineno + 1, t));
@@ -1409,7 +1488,9 @@ mod tests {
         }
         assert!(
             violations.is_empty(),
-            "以下生产代码绕过了 lifecycle 守卫 seam（子进程会成为不受清扫管辖的孤儿）：\n{}\n             请改用 `crate::lifecycle::spawn` / `crate::lifecycle::run`；             确需豁免时在该行标注 `// spawn-gate: exempt(<理由>)`。",
+            "以下生产代码绕过了 lifecycle 守卫 seam（子进程会成为不受清扫管辖的孤儿）：\n{}\n\
+             请改用 `crate::lifecycle::spawn` / `crate::lifecycle::run`；确需豁免时\
+             在本行或紧邻上一行标注 `// spawn-gate: exempt(<理由>)`。",
             violations.join("\n")
         );
     }
@@ -1462,6 +1543,167 @@ mod tests {
             again.lifeline_write.as_raw_fd(),
             g.lifeline_write.as_raw_fd(),
             "写端句柄应稳定常驻，不得被替换或释放"
+        );
+    }
+
+    // ---------- 审核修正：锁判定的安全方向（2026-09-10） ----------
+
+    /// `TryLockError` 有两档，**必须分开**：只有 `WouldBlock` 才是"真被持有"。
+    /// `Error(_)`（文件系统不支持 flock / I/O 故障）属**无法判定**——首版把它
+    /// 当成"仍被持有"，会在不支持锁的盘上把每条登记都判成活跃孤儿并按文件里的
+    /// pid 去杀（pid 可能已复用），正是 ADR-0015 要避免的误杀。
+    #[test]
+    fn lock_verdict_separates_would_block_from_io_error() {
+        use std::fs::TryLockError;
+
+        assert_eq!(
+            classify_lock_result(&Ok(())),
+            RegistrationVerdict::Stale,
+            "加锁成功 = 持有者已死"
+        );
+        assert_eq!(
+            classify_lock_result(&Err(TryLockError::WouldBlock)),
+            RegistrationVerdict::LiveOrphan,
+            "明确被持有 = 真孤儿"
+        );
+        // 关键：I/O 错误**不得**升级为 LiveOrphan（那会导致误杀）
+        assert_eq!(
+            classify_lock_result(&Err(TryLockError::Error(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "flock unsupported"
+            )))),
+            RegistrationVerdict::Indeterminate
+        );
+        assert_eq!(
+            classify_lock_result(&Err(TryLockError::Error(std::io::Error::other("io")))),
+            RegistrationVerdict::Indeterminate
+        );
+    }
+
+    /// 不变量：判定为 `LiveOrphan` 的**唯一**来源是 `WouldBlock`。
+    #[test]
+    fn only_would_block_may_authorize_reaping() {
+        use std::fs::TryLockError;
+        let cases: Vec<Result<(), TryLockError>> = vec![
+            Ok(()),
+            Err(TryLockError::WouldBlock),
+            Err(TryLockError::Error(std::io::Error::other("x"))),
+            Err(TryLockError::Error(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied",
+            ))),
+            Err(TryLockError::Error(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "gone",
+            ))),
+        ];
+        for c in cases {
+            let reaps = classify_lock_result(&c) == RegistrationVerdict::LiveOrphan;
+            if reaps {
+                assert!(
+                    matches!(c, Err(TryLockError::WouldBlock)),
+                    "只有 WouldBlock 才允许收口，实际：{c:?}"
+                );
+            }
+        }
+    }
+
+    /// **端到端复刻用户事故（真 dsh 版，需已装引擎，故 `#[ignore]`）**：
+    /// 走**生产同一条** `spawn_dsh` 起一个真的 dsh，然后对壳进程发 `SIGKILL`
+    /// （不留任何跑清理代码的机会），断言真 dsh 被生命线收口。
+    ///
+    /// 与 `guarded_child_dies_when_parent_is_sigkilled` 的分工：那条用 `sleep`
+    /// 替身验**机制**（快、无依赖、进默认套件）；本用例验**真身**——真的 dsh
+    /// 进程、真的 LaunchSpec、真的 spawn_dsh 装配链，正是"会话被孤儿占死"现场。
+    ///
+    /// 跑法：`cargo test --lib real_dsh_is_reaped_when_shell_is_sigkilled -- --ignored --nocapture`
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "需要本机已装引擎（engines/bin）；CI 与无引擎环境跳过"]
+    fn real_dsh_is_reaped_when_shell_is_sigkilled() {
+        // 无引擎（CI / 干净机器）时优雅跳过——本用例是"真机锚"，不进默认套件。
+        if crate::engines::engine_dsh_bin(&crate::resolve::launch_data_dir_for_test()).is_none() {
+            eprintln!("跳过：本机引擎未就绪");
+            return;
+        }
+        let dir = scratch("realdsh");
+        let pid_file = dir.join("child.pid");
+        let exe = std::env::current_exe().expect("测试二进制路径");
+
+        let mut parent = Command::new(&exe)
+            .args([
+                "--exact",
+                "lifecycle::tests::parent_role_probe",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("DSH_DOCK_LIFECYCLE_PARENT", "1")
+            .env("DSH_DOCK_LIFECYCLE_REAL_DSH", "1")
+            .env("DSH_DOCK_LIFECYCLE_DIR", &dir)
+            .env("DSH_DOCK_LIFECYCLE_PIDFILE", &pid_file)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("唤起父角色进程");
+
+        assert!(
+            wait_until(Duration::from_secs(30), || pid_file.is_file()),
+            "父角色未在 30s 内落盘真 dsh 的 pid"
+        );
+        let dsh_pid: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .expect("dsh pid");
+        let parent_pid = parent.id();
+
+        // 前置：真 dsh 起来了、父还活着。
+        assert!(alive(dsh_pid), "真 dsh 应已启动（pid={dsh_pid}）");
+        assert!(alive(parent_pid), "父角色应仍在运行");
+
+        // 事故时刻：硬杀壳，且**不给它任何清理机会**。
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            kill(Pid::from_raw(parent_pid as i32), Signal::SIGKILL).expect("SIGKILL 父角色");
+        }
+        let _ = parent.wait();
+
+        // 生命线必须在 grace 内收口真 dsh。
+        assert!(
+            wait_until(Duration::from_secs(15), || !alive(dsh_pid)),
+            "壳被 SIGKILL 后真 dsh 仍存活（pid={dsh_pid}）——生命线未生效，\
+             用户会话仍会被这个孤儿占死"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------- 闸门：引导必须真的调用清扫（否则用户的事故会静默复发） ----------
+
+    /// 机器闸门：`lib.rs` 的启动线程必须在**派发执行器之前**调用
+    /// `lifecycle::sweep_orphans`。
+    ///
+    /// 为什么需要它：`sweep_orphans` 本身有完整单测，但"引导到底调没调它"没有任何
+    /// 测试覆盖——2026-09-10 审核用变异测试证实：把这一行删掉，**全部测试照样绿**。
+    /// 而这一行一旦丢失，用户报的「会话打不开、只能删会话」就会**静默复发**（存量
+    /// 孤儿没人回收）。引导路径依赖完整 Tauri App，无法在单测里跑，故照仓库既有
+    /// 惯例用**源码文本闸门**钉住（同 `production_spawns_go_through_lifecycle_seam`
+    /// 与 `background_color_matches_theme_token`）。
+    ///
+    /// 同时钉住**顺序**：清扫必须在 `executor_for_mode`（→ probe → 建会话）之前，
+    /// 否则可能与新一代探测竞争同一份 profile 目录（契约 §3.3）。
+    #[test]
+    fn boot_sweeps_orphans_before_dispatching_executor() {
+        let src = include_str!("lib.rs");
+        let sweep_at = src
+            .find("lifecycle::sweep_orphans(")
+            .expect("引导路径必须调用 lifecycle::sweep_orphans——缺了它，上一代壳遗留的孤儿不会被回收，用户会话会被永久占死");
+        let dispatch_at = src
+            .find("executor_for_mode(")
+            .expect("引导路径应有 executor_for_mode 派发点");
+        assert!(
+            sweep_at < dispatch_at,
+            "清扫必须在派发执行器（probe/建会话）之前——否则可能与新一代探测竞争同一份 profile 目录"
         );
     }
 }
