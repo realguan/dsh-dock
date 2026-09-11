@@ -9,7 +9,7 @@ import {
   Store,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
-import { useI18n, useI18nStore } from "@/stores/i18nStore"
+import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { useQueueStore } from "@/stores/queueStore"
@@ -95,10 +95,9 @@ export function ProfileManager() {
   })
   const [overviewTick, setOverviewTick] = useState(0)
 
-  // 初始化语言
-  useEffect(() => {
-    void useI18nStore.getState().initFromSettings()
-  }, [])
+  // 语言初始化已于 2026-09-11（task-24）**收敛到 App.tsx**：该处对所有窗口统一
+  // 执行一次 initFromSettings() 并订阅 app:settings-changed（跨窗同步）。
+  // 此处原先的重复调用已移除，避免同一窗口两次 IPC 读设置。
 
   // Profile 搜索筛选
   const [profileFilter, setProfileFilter] = useState("")

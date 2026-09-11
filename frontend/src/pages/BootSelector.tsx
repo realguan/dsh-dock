@@ -26,6 +26,33 @@ import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { ErrorCard } from "@/components/boot/ErrorCard"
 import { logger } from "@/lib/logger"
 
+/**
+ * 工厂默认工作台名——**判定用稳定标识，不是文案**。
+ * AGENTS §6（2026-09-11 措辞校正后）：`defaultProfile` 为 **None 时由消费方兜底
+ * `web`**；**失效值不消费**（走常规流程＝出选择器，不预选任何 profile）。
+ * 本常量只承担前半句的兜底语义。
+ *
+ * 两条口径与 `resolveIsDefault` 的对应关系：
+ *   · `defaultProfile === null`  → 命中 `web`（兜底：web 会被启动）；
+ *   · `defaultProfile` 是失效值  → 不命中任何候选（不消费：没有"将被启动的默认"）。
+ */
+export const FACTORY_DEFAULT_PROFILE = "web"
+
+/**
+ * 「该卡片是否标为默认工作台」**纯函数**（2026-09-11，task-23）。
+ *
+ * 判据只允许来自两个**与文案无关**的稳定来源：settings 里的 `defaultProfile`
+ * （真实数据）与 `FACTORY_DEFAULT_PROFILE`（模块常量）。
+ *
+ * 修复前这里是 `name === defaultProfile || meta.tag === "DEFAULT"`——`meta.tag`
+ * 是**字典值**（`t.selector.items.web.tag`）。后果：任何人把该值"翻译"成
+ * `"默认"`，`isDefault` 判定会**静默失效**——改文案改掉控制流。本函数把判定与
+ * 文案彻底隔开，防复发断言见 `__tests__/bootSelectorDefault.test.ts`。
+ */
+export function resolveIsDefault(name: string, defaultProfile: string | null): boolean {
+  return name === (defaultProfile ?? FACTORY_DEFAULT_PROFILE)
+}
+
 export function BootSelector() {
   const { t } = useI18n()
   const [params] = useSearchParams()
@@ -98,12 +125,21 @@ export function BootSelector() {
 
     return candidateNames.map((name) => {
       const summary = summaryMap.get(name)
+      // 未知名（无字典条目的自定义工作台）回退：标题即 profile 名——语言中立。
+      // 2026-09-11（task-25）：原为 `title: name === "web" ? "默认工作台" : name`。
+      //   ① 该 web 分支**不可达**：`items.web` 恒存在，`??` 回退对 "web" 不触发；
+      //   ② 更糟的是**潜在陷阱**：若将来删掉 `items.web`，回退分支就会向 en 用户
+      //      吐中文（en 侧漏译闸门只扫 en 字典，抓不到组件内字面量）。
+      // 等价性：对任何**真正走到 `??` 回退**的 name，必有 `name !== "web"`，
+      //   故旧代码取值恒为 `name`，与新写法逐字一致；差别仅在「items.web 被删」
+      //   这一假想未来——那时新写法展示 profile 名（诚实、可本地化），而非中文。
+      // 内置条目（含 web）的标题一律由字典 `t.selector.items[*].title` 提供。
       const meta = t.selector.items[name] ?? {
-        title: name === "web" ? "默认工作台" : name,
+        title: name,
         desc: t.selector.customDesc,
         tag: t.selector.customTag,
       }
-      const isDefault = name === defaultProfile || meta.tag === "DEFAULT"
+      const isDefault = resolveIsDefault(name, defaultProfile)
       const pluginCount = summary?.dependencies.length ?? 0
       const isTemplate = summary ? !summary.materialized : false
 
@@ -111,7 +147,6 @@ export function BootSelector() {
         name,
         title: meta.title || name,
         desc: meta.desc || (pluginCount > 0 ? t.selector.pluginsCount.replace("{count}", String(pluginCount)) : t.selector.customDesc),
-        tag: isDefault ? t.selector.defaultBadge : isTemplate ? "TEMPLATE" : meta.tag,
         pluginCount,
         isTemplate,
         isDefault,
@@ -136,7 +171,7 @@ export function BootSelector() {
       setLaunchingName(null)
       setLocalError({
         title: t.error.fallbackTitle,
-        detail: `${String(e instanceof Error ? e.message : e)}（可返回重选）`,
+        detail: `${String(e instanceof Error ? e.message : e)}${t.error.reselectHint}`,
         actions: ["retry"],
       })
     }
@@ -307,7 +342,7 @@ export function BootSelector() {
                       {p.pluginCount > 0
                         ? t.selector.pluginsCount.replace("{count}", String(p.pluginCount))
                         : p.name === "web"
-                          ? "官方开箱即用"
+                          ? t.selector.officialReadyToUse
                           : t.selector.customDesc}
                     </span>
                     <div className="flex items-center gap-1 text-xs font-medium text-brand-deep transition-transform group-hover:translate-x-0.5">

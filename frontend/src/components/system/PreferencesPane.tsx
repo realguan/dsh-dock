@@ -104,7 +104,7 @@ export function PreferencesPane({
     return (
       <div className="flex h-64 items-center justify-center text-xs text-faint">
         <LoaderCircle className="mr-2 size-4 animate-spin text-brand-deep" />
-        <span>正在加载偏好设置…</span>
+        <span>{t.console.settingsLoading}</span>
       </div>
     )
   }
@@ -169,7 +169,7 @@ export function PreferencesPane({
                   {t.console.localeSystem}
                 </span>
               </div>
-              <p className="mt-1 text-label text-faint">Auto Detect</p>
+              <p className="mt-1 text-label text-faint">{t.console.localeSystemHint}</p>
             </div>
             {preference === "system" && <Check className="size-4 text-brand-deep" />}
           </button>
@@ -188,12 +188,14 @@ export function PreferencesPane({
               <span className="text-xs font-semibold text-ink">
                 {t.console.localeZh}
               </span>
-              <p className="mt-1 text-label text-faint">简体中文 (默认)</p>
             </div>
             {preference === "zh-CN" && <Check className="size-4 text-brand-deep" />}
           </button>
 
-          {/* English */}
+          {/* English —— 卡面无副标题：其标题已是语言自名，原副标题只是同串复述。
+              中文卡原本也没有副标题了（task-22：原「默认」主张为假——产品默认是
+              「跟随系统」；撇开该主张后剩下的是实现细节，无用户价值）。
+              三张卡片仅系统卡保留副标题，理由见 content/zh-CN.ts 同名键注释。 */}
           <button
             type="button"
             onClick={() => handleLanguageChange("en-US")}
@@ -207,7 +209,6 @@ export function PreferencesPane({
               <span className="text-xs font-semibold text-ink">
                 {t.console.localeEn}
               </span>
-              <p className="mt-1 text-label text-faint">English (US)</p>
             </div>
             {preference === "en-US" && <Check className="size-4 text-brand-deep" />}
           </button>
@@ -273,20 +274,20 @@ export function PreferencesPane({
         <div className="mt-4 rounded-xl border border-line/80 bg-bg p-3.5 text-xs text-dim">
           <div className="flex items-center gap-2 font-medium text-ink">
             <ShieldAlert className="size-3.5 text-warn" />
-            <span>智能熔断保护协议（Circuit Breaker）</span>
+            <span>{t.console.breakerTitle}</span>
           </div>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-label">
             <div className="rounded-lg bg-panel p-2 border border-line">
-              <span className="text-faint">监控窗口：</span>
-              <span className="text-ink font-semibold ml-1">60 秒滑动窗口</span>
+              <span className="text-faint">{t.console.breakerWindowLabel}</span>
+              <span className="text-ink font-semibold ml-1">{t.console.breakerWindowValue}</span>
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
-              <span className="text-faint">熔断阈值：</span>
-              <span className="text-warn font-semibold ml-1">连续 3 次崩溃</span>
+              <span className="text-faint">{t.console.breakerThresholdLabel}</span>
+              <span className="text-warn font-semibold ml-1">{t.console.breakerThresholdValue}</span>
             </div>
             <div className="rounded-lg bg-panel p-2 border border-line">
-              <span className="text-faint">熔断后动作：</span>
-              <span className="text-ink font-semibold ml-1">停机并弹诊断卡</span>
+              <span className="text-faint">{t.console.breakerActionLabel}</span>
+              <span className="text-ink font-semibold ml-1">{t.console.breakerActionValue}</span>
             </div>
           </div>
         </div>
