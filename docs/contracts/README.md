@@ -109,7 +109,13 @@ flowchart TD
 | IPC 命令与事件 | AGENTS.md §7（登记册） | 随登记演进 | ui/\*.html ↔ src-tauri |
 | Executor 抽象 | [../executor.md](../executor.md) | local+wsl v1 | shell/lib ↔ 各执行环境 |
 | 客户端自更新 feed | tauri.conf updater endpoint | latest.json | 壳 updater ↔ GitHub Releases |
+| 子进程生命周期 | [child-lifecycle.md](./child-lifecycle.md) | v1 | 壳全部 spawn 面（6 模块 / 13 调用点：`lib.rs`·`shell.rs`·`executor.rs`·`engines.rs`·`profiles.rs`·`sessions.rs`·`resolve.rs`）↔ 各子进程 |
 
 > [!WARNING]
 > 台账里没有、但两个模块正在共享的东西 = 未登记的事实契约。
 > 发现即登记（开 PR 补契约），或在 review 中打回——最危险的不是坏契约，是没写下来的契约。
+>
+> **补登记录（2026-09-11）**：`child-lifecycle.md` 原先**不在本台账内**，而它自
+> 2026-09-10 起就被 6 个模块消费——**契约自己成了未登记的事实契约**，漂移因此长期无人复核
+> （判据：`docs/team/child-lifecycle契约漂移-2026-09-11.md` §2 G 第 42 条）。补登一行，
+> 并保留此记录以说明「台账缺登记」这一失效模式确实发生过。

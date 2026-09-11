@@ -128,8 +128,8 @@
   `node-map.json` / `.sig`（`updates.rs:339`，签名校验过的 node 版本映射缓存，
   1 MiB 上限、校验失败回退内置基线）· `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
   PID 锁登记表）· `<文件名>.bak-<unix秒>` 覆写前备份族（`fs_backup.rs`，2026-09-08 U9）·
-  MCP 服务器增删改对 profile `cordis.patch.yml` 的重序列化写入（`mcp.rs`；
-  **待与插件中心头部保真写入器统一**，见 `docs/team/待裁定清册-2026-09-11.md` B2）。
+  MCP / 插件配置对 profile `cordis.patch.yml` 的写入：**统一走 `plugins.rs::PatchFile`**
+  （未改动条目原文保真含行间注释 + 覆写前备份 + 原子替换；2026-09-11 统一，此前两套写入器）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
