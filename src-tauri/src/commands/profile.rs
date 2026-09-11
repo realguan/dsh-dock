@@ -107,8 +107,9 @@ pub async fn rename_profile(
     .map_err(|e| format!("重命名任务异常终止：{e}"))?
 }
 /// Profile 管理器（4.3 生命周期刀）：删除——整目录删除，不级联 sessions
-/// （dsh 明示）；运行中防护；defaultProfile 指向被删 profile → 清除（读取侧
-/// 兜底 web，ADR-0009 §4）。node_modules 体量大，删除走 spawn_blocking。
+/// （dsh 明示）；运行中防护；defaultProfile 指向被删 profile → **删除时置 None**
+/// （「兜底 web」在消费方，见 `executor.rs` 的 `consume_default_profile` 调用；
+/// ADR-0009 §4）。node_modules 体量大，删除走 spawn_blocking。
 #[tauri::command]
 pub async fn delete_profile(
     app: tauri::AppHandle,
@@ -130,7 +131,8 @@ pub async fn delete_profile(
         }
         crate::profiles::delete_profile_dir(&home, &profile)?;
         // 默认启动 profile 引用检查（Spike B §3.3/ADR-0009 §4）：指向被删
-        // profile → 清除；None 读取侧即兜底 web
+        // profile → **置 None**（不保留失效值）；「兜底 web」在消费方
+        // （executor.rs 的 consume_default_profile），不在读设置这一步。
         let mut settings = crate::settings::load(&data_dir);
         let mut default_cleared = false;
         if settings.default_profile.as_deref() == Some(profile.as_str()) {
@@ -148,8 +150,8 @@ pub async fn delete_profile(
     .map_err(|e| format!("删除任务异常终止：{e}"))?
 }
 /// Profile 管理器（4.3④）：设置默认启动 profile（持久化 settings.json
-/// `defaultProfile`，第二最小面例外，AGENTS §6 已登记；None/失效值读取侧
-/// 兜底 web）。
+/// `defaultProfile`，第二最小面例外，AGENTS §6 已登记；**None 由消费方兜底
+/// `web`，失效值不消费＝出选择器**——本命令本身不做兜底）。
 #[tauri::command]
 pub fn set_default_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
     let home = crate::resolve::user_dsh_home();

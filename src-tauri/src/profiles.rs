@@ -689,7 +689,10 @@ pub struct LifecycleOutcome {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeleteOutcome {
     pub profile: String,
-    /// 该 profile 是默认启动 profile，引用已清除（读取侧兜底 web，ADR-0009 §4）。
+    /// 该 profile 是默认启动 profile，**引用已置 None**（删除时清除，不保留失效值）。
+    /// 「兜底 web」发生在**消费方**而非读设置时：`executor.rs` 经
+    /// `resolve::consume_default_profile` 消费，None 与失效值都不命中 → 按常规流程
+    /// （多 webUi 出选择器，否则用 manifest 默认 `web`）。ADR-0009 §4。
     pub default_cleared: bool,
 }
 
