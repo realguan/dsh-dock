@@ -167,7 +167,7 @@ pub async fn get_plugin_rows(
 /// 禁用/启用切换（4.4③）：patch 写入例外 #3（`{id, disabled}` 单键，
 /// ADR-0009 第四次修订）；运行中会话不热生效，重启承接。
 ///
-/// **世界择源（2026-09-11 第二批）**：WSL 模式读客体 patch 原文、同一份纯变换、
+/// **世界择源（2026-09-11 第三批）**：WSL 模式读客体 patch 原文、同一份纯变换、
 /// 客体侧原子写回——装上了却关不掉是半截功能（行表已在 P1 下沉）。
 #[tauri::command]
 pub async fn set_plugin_disabled(
@@ -192,7 +192,7 @@ pub async fn set_plugin_disabled(
 /// 更新检查（4.4④）：逐外挂插件查 registry dist-tags.latest（外网经
 /// `updates.rs` 镜像链，§7 已登记）；串行阻塞走 spawn_blocking，按钮触发。
 ///
-/// **世界择源（2026-09-11 第二批）**：已装版本来自当前世界（WSL = 客体清单）；
+/// **世界择源（2026-09-11 第三批）**：已装版本来自当前世界（WSL = 客体清单）；
 /// registry 查询仍是 `updates.rs` 唯一网络面（ADR-0016 §1：registry 拉取与模式无关）。
 #[tauri::command]
 pub async fn check_plugin_updates(
@@ -223,7 +223,7 @@ pub async fn list_plugin_versions(package: String) -> Result<Vec<String>, String
 /// 插件总览聚合（4.4④ 收口，ADR-0009 第五次修订）：全部已物化 profile 的第
 /// 三方插件按包名归组。只读纯文件扫描（零 dsh 子进程、零网络），spawn_blocking。
 ///
-/// **世界择源（2026-09-11 第二批）**：按当前世界的全部 profile 聚合
+/// **世界择源（2026-09-11 第三批）**：按当前世界的全部 profile 聚合
 /// （WSL = 客体扫描 + 客体清单；纯读，零 dsh 子进程、零网络）。
 #[tauri::command]
 pub async fn list_all_plugins(

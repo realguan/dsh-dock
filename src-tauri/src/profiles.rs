@@ -113,7 +113,7 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
     assemble_profile_summaries(&entries)
 }
 
-/// **客体档孪生**（ADR-0016 §5 读侧下沉，2026-09-11 第二批）：目录列举 + 批量读
+/// **客体档孪生**（ADR-0016 §5 读侧下沉，2026-09-11 第三批）：目录列举 + 批量读
 /// 各 profile 的 `package.json`（两次 `wsl.exe` 往返），派生逻辑走同一份
 /// [`assemble_profile_summaries`]——两侧口径由构造保证一致，不产生第二套扫描。
 ///
