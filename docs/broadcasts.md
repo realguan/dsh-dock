@@ -32,6 +32,41 @@
 
 ## 三、记录
 
+### 2026-09-11 发版 v1.2.1（Windows 实测问题修复）· 发版结果回填 —— guan（AI 协作）
+
+- **版本**：`v1.2.0` → **`v1.2.1`**（patch：全部来自实机缺陷报告，无新契约/新 IPC）。
+  四处版本号同步（`Cargo.toml` / `tauri.conf.json` / `package.json` / `Cargo.lock`）。
+- **发版日志（AGENTS §8.8 先落盘再打 tag）**：`docs/RELEASE_NOTES.md` 顶部
+  `## [v1.2.1] - 2026-09-11`；`extract-release-notes.py v1.2.1 --strict` 通过，
+  并已作为 Release 正文发布。
+- **打 tag 前闸门（提交态实测）**：版本号四处一致 ✅ · cargo fmt `0` · clippy 宿主 `0` ·
+  clippy win-gnu `0`（touch 后确认 `Checking dsh-dock` 真编译，防缓存假绿）·
+  `cargo test` **394 passed / 0 failed / 3 ignored** · 前端 typecheck `0` / lint `0` /
+  test **45 files · 365 passed** · scripts **17 OK**。
+- **CI 结果（tag `v1.2.1`，全绿）**：
+  - `build` run **`34622009396`**：**6/6 job 全绿**——4 个 build leg（`macos-latest` /
+    `macos-latest-x86_64` / `windows-latest` / `ubuntu-latest`）+ **`release`**；
+    `coverage` 按设计在 tag 上跳过。**注意 `macos-latest` 正是前一 run 红掉的那条**。
+  - `boot-smoke` run **`34622009478`**：4/4 全绿（含 `engine-bootstrap (windows-latest)`）。
+  - **Windows 单测 345 passed / 0 failed**（v1.2.0 为 316）。
+  - **双 macOS 架构公证均 Accepted**：arm64 id `32186889-0891-48a3-9022-abbd899e7c88`、
+    Intel id `9e2279d6-0bbc-4b12-8eaf-552375b674f9`；两者均 `accepted` +
+    `source=Notarized Developer ID`。
+  - **Release 资产 17 个**；`latest.json` = **7 平台**，两个 macOS updater 目标
+    （`darwin-aarch64` → `DSH.Dock_aarch64.app.tar.gz`、`darwin-x86_64` →
+    `DSH.Dock_x86_64.app.tar.gz`）**均带架构后缀、无重名**——v1.2.0 引入的架构打标
+    在本次继续生效。
+- **发布内容**：见 `docs/RELEASE_NOTES.md` v1.2.1；逐条处置与证据见
+  `docs/known-issues/v120-测试问题定位.md` §10 与本档同日「v1.2.0 实测问题处置」条目。
+- **⚠️ 必须与发版同时知悉的边界**：
+  1. **Windows 普通账户下的「本地模式」仍装不上引擎**——本次修的是**诊断与出路**，
+     安装能力未变（pnpm 12 上游缺陷，架构级替代需 ADR-0010 修订，**未决策**）。
+     发版日志已在「已知限制」中向用户明示（推荐改用 WSL 模式）。
+  2. 涉 Windows / WSL / 真下载的路径为**机制级修复 + 单元与契约级验证**，
+     **Windows 真机复验待排期**（维护者已搁置）；**不得**把 CI 全绿当作该类验证证据
+     （roadmap §4.16）。
+- **凭据**：tag `v1.2.1` → commit **`59eba77`**；CI `34622009396` / `34622009478`。
+
 ### 2026-09-11 推 CI 后补修：guest 脚本夹具密封化（第二次同根因）—— guan（AI 协作）
 
 - **触发**：推 `2e864a4` 后 CI run `34618124850` **`build (macos-latest)` 单测红**（其余 3 leg 含 Windows 全绿）：
