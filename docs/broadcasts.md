@@ -75,6 +75,37 @@
   - 打标脚本以本机产物真跑，覆盖「无 `.sig`」（`--no-sign` 的 PR 构建）分支。
   - 工作流 YAML 解析通过：4 leg、全 leg 键集合一致、job 名唯一、既有三个名未变。
   - 发布侧 `scripts/tests` 12 用例全绿。
+- **独立验证（qa-verify，task-41）推翻了本批的一处阻断缺陷与一处测试恒真式**：
+  1. **🔴 阻断级：新 leg 在 CI 必然红**（本批 `0631edf` 态）。证据链五环：
+     `macos-latest` = **arm64** runner（runner-images README）→ 镜像脚本 `--profile=minimal`
+     （只装**宿主** std）→ 全镜像链无 `rustup target add` → 本 workflow 也无
+     → 实测 rustup **不自动补装**（wasm32 探针 + 精确复现首个失败点
+     `error[E0463]: can't find crate for 'std'`, EXIT=101）⇒ 新 leg 会在第一个消费
+     target 的步骤（clippy）就红，**Intel 产物根本不会产出**。
+     **arm64 leg 不受影响**（`--target aarch64-apple-darwin` = 宿主本身）——正因如此极易漏掉。
+     **已修（`c2cbde1`）**：加一步 `if: matrix.rust_target != ''` →
+     `rustup target add ${{ matrix.rust_target }}`（不传 action 的 `targets:`，
+     避免依赖 action 对空串的解释）。qa-verify 已独立复验。
+     **教训：「本机可交叉构建」≠「CI 可交叉构建」**——本机绿灯是因为**早装过该 target**，
+     CI runner 是干净的。这与 R1 同族但更隐蔽：**环境前置条件**不写在代码里，
+     只看代码或只看本机绿灯都发现不了。
+  2. **🟡 测试恒真式**：原「撞名」用例实为**因「缺少目标」而通过**，未触发目标重复检查
+     ⇒ 该检查无覆盖（qa-verify 用「删掉该检查后用例仍 ok」证伪）。
+     已改为「先用齐全 7 目标满足完整性，再塞同义标记别名（`_arm64`/`_aarch64`）」
+     并**断言错误消息**；另增真实撞名场景用例（两 leg 各传未打标同名 tarball + 不同签名
+     ⇒ 读签名阶段必须红）。**我方按同一证伪法自证**：删掉该检查 ⇒ 新用例报
+     `ValueError not raised`（证明它是**唯一**红因）；恢复后 sha256 逐字节回一致、残留 0。
+  3. **口径修正（A5，采纳）**：本批 commit message 写的「Windows/Linux 的命令与路径
+     **逐字未变**」**不准确**——实测为**功能等价**（3 处 `if/elif` 分支求值后回落旧命令，
+     另有 2 处纯空白差异：clippy 双空格、test 尾随空格）。
+     **但不宜为消除空格改用 shell `if`**：本 workflow **无顶层 `defaults.run.shell`**，
+     且 `Unit tests` 步骤未指定 shell ⇒ Windows 上默认走 **pwsh**，`[ -n … ]` 会直接报错。
+     现用的 **GitHub 内联表达式**是跨 shell 中性且正确的最小选择，故保留并**只更正措辞**。
+     （CI 日志原始行：`cargo clippy  --all-targets -- -D warnings`）
+  4. 独立验证另确认：C1–C6 全部证实；A1 非静默跳过（有 `cargo test --no-run` 补偿步）；
+     A2 全部 macOS 下游路径已带 triple；A4 空串正确；A6 真实资产名无歧义；
+     **体积机制坐实**：三份 tgz 齐备时 x64 dmg = 58.87 MiB，与单份构建差
+     **34.38 MiB ≈ 两份 tgz 之和（误差 0.004）**——「整目录塞进 .app」由此闭环。
 - **未验证 / 边界（不假装闭合）**：**CI 尚未实跑**（本次改动未推送）——真实 arm64 runner 上的
   交叉构建、签名/公证、打标与 feed 生成须由 push 后的 CI 与下次 tag 发布确认；
   本机验证为 `--no-sign`，**签名与公证路径未实测**；Windows/Linux leg 未改动但同批推送，
