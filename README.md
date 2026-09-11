@@ -240,6 +240,7 @@ DSH 长任务会话在遭遇断电、进程强杀后，日志序列可能出现�
 | 操作系统 | 支持架构 | 安装包格式 | 体积（约） | 说明 |
 | :--- | :--- | :--- | ---: | :--- |
 | **macOS** | Apple Silicon (arm64) | `.dmg` | 22 MB | 原生 ARM64，开箱即用 |
+| **macOS** | Intel (x86_64) | `.dmg` | 24 MB | 原生 x86_64，非 Rosetta 转译 |
 | **Windows** | x64 | `.exe` (NSIS) / `.msi` | 39 / 40 MB | 支持 Win 10 / 11，内置 WSL2 穿透；ARM64 设备经系统仿真运行 |
 | **Linux** | x64 (amd64) | `.deb` / `.rpm` | 23 MB | Ubuntu / Debian / Fedora 等主流发行版 |
 | **Linux** | x64 (amd64) | `.AppImage` | 94 MB | 免安装单文件；因内置 WebKit 运行时故体积偏大 |
@@ -247,7 +248,10 @@ DSH 长任务会话在遭遇断电、进程强杀后，日志序列可能出现�
 > [!IMPORTANT]
 > **首次启动需要联网**：安装包不内置 Node.js 与 DSH 引擎（这也是体积能保持在几十 MB 的原因）。首次运行时客户端会经镜像链拉取 Node 运行时并安装 DSH 引擎，补齐后即可离线启动，后续升级全部显式触发。
 
-**其他架构**：当前发布产物覆盖 Apple Silicon (arm64)、Windows x64 与 Linux x64；Intel Mac 等架构可参照 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 从源码自行构建。
+**其他架构**：当前发布产物覆盖 macOS（Apple Silicon + Intel）、Windows x64 与 Linux x64；Windows ARM64 等其余架构可参照 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 从源码自行构建。
+
+> [!TIP]
+> **Intel Mac 选哪个包**：文件名带 `x64` 的 `.dmg` 是 Intel 原生版，带 `aarch64` 的是 Apple Silicon 版。两者是**独立构建**（非 universal 通用包），各自只内置对应架构的 pnpm 引擎，因此体积与原生性能都不打折；客户端自更新会按 CPU 架构自动取对应版本。
 
 > [!WARNING]
 > **macOS 首次打开**：若被系统安全策略拦截，在「系统设置 → 隐私与安全性」中点击「仍要打开」即可。

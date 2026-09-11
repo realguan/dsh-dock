@@ -32,6 +32,56 @@
 
 ## 三、记录
 
+### 2026-09-11 macOS Intel (x86_64) 支持 · 发布矩阵加第四个 leg —— guan（AI 协作）
+
+- **背景与目标**：此前发布产物只覆盖 Apple Silicon（`README.md` 已声明「Intel Mac 需自行源码构建」）。
+  维护者裁定补上 Intel 原生产物。
+- **方案选择（记录取舍，便于日后复核）**：
+  - **否决 universal 通用包**：Tauri 的 `darwin-universal` 会让已装 arm64 客户端在
+    `latest.json` 里找不到自己运行时请求的 `darwin-aarch64` 键 ⇒ **存量用户收不到更新**
+    （迁移风险）；且体积翻倍（与「安装包保持在几十 MB」的既有取向相悖）。
+  - **采用独立 x86_64 leg**：**纯增**——既有的 `darwin-aarch64` 条目与下载路径一字未动，
+    存量用户升级链零影响；两个 arch 各自只内置对应 pnpm 引擎，体积与原生性能都不打折。
+  - 不用 `macos-13`（Intel runner，GitHub 已在退役流程中），改在 arm64 runner 上
+    **交叉构建**（`--target x86_64-apple-darwin`）。
+- **变更清单**：
+  1. `.github/workflows/build.yml`：build job 矩阵改为 `include:` **4 leg**；新增
+     `macos-latest-x86_64`（`rust_target=x86_64-apple-darwin`、`pnpm_platform=darwin-x64`）。
+     **既有三个 leg 的 job 名逐字未变**（不动分支保护的必需检查）。
+  2. 每个 leg 显式 fetch **自己那一份** pnpm tgz——实测 Tauri 会把 `resources/` **整目录**
+     塞进 `.app`，多取会让包里多背另两份（本机实测 59MB → 应约 24MB）。
+  3. 新增「按架构打标」步骤：Tauri 对 `.app.tar.gz` 的默认名**不含架构**
+     （`DSH Dock.app.tar.gz`），两个 macOS leg 会产出**同名文件**（Release 资产重名 +
+     artifact 相互覆盖）⇒ 打标为 `DSH Dock_aarch64.app.tar.gz` / `_x86_64.app.tar.gz`
+     （重命名不影响签名：签名对象是 tarball **内容**）。
+  4. `scripts/generate-latest-json.py`：`REQUIRED_TARGETS` 加 `darwin-x86_64`；
+     macOS 分支改为按资产名架构标记映射，且**刻意不设默认架构**——若漏打标，
+     回落成 `darwin-aarch64` 会把 **Intel 包当 Apple Silicon 发出去**（用户装完起不来），
+     故判为不可映射、由完整性检查**响亮失败**。
+  5. `scripts/tests/test_generate_latest_json.py`：夹具带架构标记 + 新增
+     「架构标记→目标键」「未打标不得静默映射」「同名撞车必须拒绝」3 个用例（共 12 用例）。
+  6. `README.md`：平台表加 Intel 行（`.dmg` 24 MB）+ Intel/ARM 选包说明；原
+     「Intel Mac 可自行源码构建」改为「Windows ARM64 等其余架构」。
+- **影响**：`latest.json` 由六平台条目变为 **七平台**（新增 `darwin-x86_64`）；
+  Intel Mac 用户获得原生包与自更新能力；存量 Apple Silicon 用户升级路径不受影响。
+- **验证（实测，非推演）**：
+  - 本机交叉构建 x86_64 成功，产物 `lipo -archs` = **x86_64**，DMG **24 MB**；
+    只留 arm64 份重建，`DSH Dock_<ver>_aarch64.dmg` 仍是 **arm64**，DMG 23 MB；
+    两个 leg 的 app 内 pnpm 资源各只有对应那一份（证明「每 leg 只取自己那份」这条约束）。
+  - **端到端真跑 feed 生成**：伪造 CI 会产出的资产名 ⇒ `platforms` = 7 条，
+    `darwin-aarch64` 与 `darwin-x86_64` URL 各自独立；
+    **两个反例均响亮失败**：① macOS tarball 未打标 ⇒ `缺少目标：darwin-aarch64, darwin-x86_64`；
+    ② 只缺 Intel 那份 ⇒ `缺少目标：darwin-x86_64`。
+  - 打标脚本以本机产物真跑，覆盖「无 `.sig`」（`--no-sign` 的 PR 构建）分支。
+  - 工作流 YAML 解析通过：4 leg、全 leg 键集合一致、job 名唯一、既有三个名未变。
+  - 发布侧 `scripts/tests` 12 用例全绿。
+- **未验证 / 边界（不假装闭合）**：**CI 尚未实跑**（本次改动未推送）——真实 arm64 runner 上的
+  交叉构建、签名/公证、打标与 feed 生成须由 push 后的 CI 与下次 tag 发布确认；
+  本机验证为 `--no-sign`，**签名与公证路径未实测**；Windows/Linux leg 未改动但同批推送，
+  以其 CI 结果为准。
+- **后续动作项**：下一次 `v*` tag 前建议先跑一次 `workflow_dispatch` 或 push 观察
+  `build (macos-latest-x86_64)` 是否绿，再发版。
+
 ### 2026-09-11 合并 PR #13（WSL 客体管理面 ADR-0016）并统一 patch 写入内核 —— guan（AI 协作）
 
 - **背景与目标**：`feat/wsl-guest-management-plane`（PR #13，15 笔）与本地 `master`

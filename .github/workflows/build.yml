@@ -33,11 +33,55 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    # `matrix.name` 而非 `matrix.os`：macOS 有两个 leg（arm64 / x86_64）跑在同一
+    # runner 镜像上，必须有可区分的 job 名。**既有三个 leg 的 name 与旧值逐字相同**
+    # （macos-latest / windows-latest / ubuntu-latest），避免改名影响分支保护里
+    # 既有的必需检查；新 leg 才引入新名字。
+    name: build (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        # 每个 leg 显式列全所有键——不依赖「未设置的 matrix 键求值为空」这类隐式
+        # 行为（新增 leg 时漏键会让 condition 静默走错分支）。
+        #
+        # macOS x86_64 leg（2026-09-11，Intel Mac 支持）：
+        #   `macos-latest` 现为 arm64 runner，Intel 产物由**交叉构建**得到
+        #   （`--target x86_64-apple-darwin`）。不用 `macos-13`——那是 Intel
+        #   runner，GitHub 已在退役流程中，长期不可依赖。
+        #   本机已实测：交叉构建可产出可用的 `..._x64.dmg`（Mach-O x86_64）。
+        #
+        # 资源约束（本机实测，不是推测）：Tauri 把 `resources/` **整目录**塞进
+        #   .app，故每个 macOS leg 只能 fetch 自己那一份 pnpm tgz——否则包里会
+        #   多背另两份（实测 54MB，应约 19MB）。见下方 fetch 步骤。
+        include:
+          - name: macos-latest
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+            pnpm_platform: darwin-arm64
+            asset_arch: aarch64
+            artifact_suffix: ""
+            native_arch: true
+          - name: macos-latest-x86_64
+            os: macos-latest
+            rust_target: x86_64-apple-darwin
+            pnpm_platform: darwin-x64
+            asset_arch: x86_64
+            artifact_suffix: "-x86_64"
+            native_arch: false
+          - name: windows-latest
+            os: windows-latest
+            rust_target: ""
+            pnpm_platform: ""
+            asset_arch: ""
+            artifact_suffix: ""
+            native_arch: true
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            rust_target: ""
+            pnpm_platform: ""
+            asset_arch: ""
+            artifact_suffix: ""
+            native_arch: true
     runs-on: ${{ matrix.os }}
     steps:
       # 固定到完整 commit SHA，供应链更新由 Dependabot 提交可审查 PR。
@@ -110,6 +154,9 @@ jobs:
       # resources/pnpm/，随安装包分发（engine_pnpm_bundle 契约）；镜像链 +
       # shasum 完整性校验。三平台各自取本平台份；Windows 另取 linux-x64 份
       # （WSL 客体投递，guest_pnpm_bundle 契约，ADR-0010 台账）。
+      # **macOS 必须显式指定份**：x86_64 leg 跑在 arm64 runner 上，无参调用会取到
+      # darwin-arm64（错份）。且 Tauri 把 resources/ 整目录塞进 .app ⇒ 多取的份会
+      # 直接增大安装包（本机实测 54MB vs 约 19MB）。
       # 必须先于一切 cargo 编译步骤——build.rs 的 tauri-build 会 glob 校验
       # resources/pnpm/**/*，检出里无 tgz 直接 panic（2026-09-07 实证）。
       - name: Fetch bundled pnpm binary (engine bootstrap)
@@ -117,29 +164,46 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             scripts/fetch-pnpm-bundle.sh win32-x64 linux-x64
+          elif [ -n "${{ matrix.pnpm_platform }}" ]; then
+            scripts/fetch-pnpm-bundle.sh "${{ matrix.pnpm_platform }}"
           else
             scripts/fetch-pnpm-bundle.sh
           fi
 
       # Rust 质量闸门：fmt 是全局一致的格式契约，只需 Linux 一次；clippy/test
-      # 仍三平台执行，覆盖 #[cfg] 分叉（如 Windows spawn / unix 信号）。
+      # 仍按 leg 执行，覆盖 #[cfg] 分叉（如 Windows spawn / unix 信号）与**目标
+      # 架构**分叉（macOS 两个 leg 各自的目标三元组）。
       - name: Rust fmt gate
         if: runner.os == 'Linux'
         working-directory: src-tauri
         run: cargo fmt --check
 
+      # macOS leg 显式带 `--target`：arm64 上 `--target aarch64-apple-darwin` 与
+      # 不加等价（行为不变），x86_64 leg 才真正 lint Intel 目标。Windows/Linux
+      # 的 rust_target 为空 ⇒ 命令与旧版逐字相同。
       - name: Rust clippy gate
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy ${{ matrix.rust_target != '' && format('--target {0}', matrix.rust_target) || '' }} --all-targets -- -D warnings
 
       - name: Unit tests
+        if: matrix.native_arch
         working-directory: src-tauri
         # DSH_TEST_REQUIRE_NODE=1（2026-09-08，架构评审批次 5）：sessions 的修复链用例
         # 依赖 PATH 上的 node 真跑；缺 node 时本地允许跳过，CI 必须硬失败——
         # 否则「静默 0 断言」会让红灯不亮、绿灯失真。
         env:
           DSH_TEST_REQUIRE_NODE: "1"
-        run: cargo test
+        run: cargo test ${{ matrix.rust_target != '' && format('--target {0}', matrix.rust_target) || '' }}
+
+      # 非原生架构 leg（macOS x86_64）：在 arm64 runner 上**运行** x86_64 测试
+      # 二进制依赖 Rosetta（不保证预装）⇒ 改为只编译不执行。编译本身即有效证据
+      # ——目标架构下生产码与测试码都能过编译；执行面由原生 leg 覆盖。
+      - name: Compile tests for target arch (no run)
+        if: matrix.native_arch == false
+        working-directory: src-tauri
+        env:
+          DSH_TEST_REQUIRE_NODE: "1"
+        run: cargo test --no-run --target ${{ matrix.rust_target }}
 
       # 前端构建（2026-08-27 前端迁移，ADR-0008；2026-09-04 切 pnpm 12）：beforeBuildCommand 钩子会跑
       # pnpm install --frozen-lockfile && pnpm run build；锁文件 = frontend/pnpm-lock.yaml（node 22 LTS）。
@@ -244,7 +308,10 @@ jobs:
           # 即公证 Invalid。打包前解包重签回填（成员路径不变，运行时 tar -xzf
           # 消费无感；win/linux tgz 含 PE/ELF 不在公证范围）。tauri 自身的证书
           # 导入发生在其 bundler 内部，此处重签须自备临时 keychain。
-          if [ -f "src-tauri/resources/pnpm/darwin-arm64.tgz" ] && [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+          # **按 leg 平台份**（2026-09-11）：Intel leg 重签的是 darwin-x64 那份；
+          # 硬编码 arm64 会让 Intel 包漏签、公证 Invalid。
+          PNPM_TGZ="src-tauri/resources/pnpm/${{ matrix.pnpm_platform }}.tgz"
+          if [ -f "$PNPM_TGZ" ] && [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
             SIGN_TMP=$(mktemp -d)
             KEYCHAIN="$SIGN_TMP/sign.keychain-db"
             KEYCHAIN_PASS=$(openssl rand -hex 16)
@@ -256,21 +323,21 @@ jobs:
             security import "$SIGN_TMP/cert.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
             security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASS" "$KEYCHAIN" > /dev/null
             security list-keychains -d user -s "$KEYCHAIN" $DEFAULT_KCS
-            tar -xzf src-tauri/resources/pnpm/darwin-arm64.tgz -C "$SIGN_TMP"
+            tar -xzf "$PNPM_TGZ" -C "$SIGN_TMP"
             codesign --force --options runtime --timestamp \
               --sign "$APPLE_SIGNING_IDENTITY" "$SIGN_TMP/package/pnpm"
             codesign --verify --strict "$SIGN_TMP/package/pnpm"
-            tar -czf src-tauri/resources/pnpm/darwin-arm64.tgz -C "$SIGN_TMP" package
+            tar -czf "$PNPM_TGZ" -C "$SIGN_TMP" package
             security list-keychains -d user -s $DEFAULT_KCS
             security delete-keychain "$KEYCHAIN" 2>/dev/null || true
             rm -rf "$SIGN_TMP"
             echo "::notice::捆绑 pnpm 已重签（Developer ID + hardened runtime + timestamp）"
           fi
 
-          cargo tauri build
+          cargo tauri build --target "${{ matrix.rust_target }}"
 
           if [[ "$has_apple_credentials" == true ]]; then
-            app_path=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)
+            app_path=$(find "src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -type d -name '*.app' -print -quit)
             test -n "$app_path" || {
               echo "::error::未找到 macOS .app 产物"
               exit 1
@@ -301,13 +368,51 @@ jobs:
         shell: bash
         working-directory: .
         run: |
-          cargo tauri build --no-sign
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo tauri build --no-sign --target "${{ matrix.rust_target }}"
+          else
+            cargo tauri build --no-sign
+          fi
+
+      # Tauri 对 updater tarball 的默认名**不含架构**（`DSH Dock.app.tar.gz`）：
+      # 两个 macOS leg 会产出**同名文件** ⇒ Release 资产重名（生成脚本会拒绝）且
+      # download-artifact 相互覆盖。此处按架构打标，使
+      # `scripts/generate-latest-json.py` 能把 `.app.tar.gz` 精确映射到
+      # darwin-aarch64 / darwin-x86_64（该脚本刻意不给默认架构——见其注释）。
+      # 重命名不影响签名：签名对象是 tarball **内容**，`.sig` 随之改名即可。
+      # 非 tag 构建走 `--no-sign`，无 .sig，故对签名文件的存在与否容错。
+      - name: Tag macOS updater artifact with architecture
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos"
+          test -d "$dir" || { echo "::error::未找到 macOS bundle 目录：$dir"; exit 1; }
+          shopt -s nullglob
+          tarballs=("$dir"/*.app.tar.gz)
+          test "${#tarballs[@]}" -gt 0 || { echo "::error::$dir 下无 .app.tar.gz 产物"; exit 1; }
+          for f in "${tarballs[@]}"; do
+            base="${f%.app.tar.gz}"
+            mv "$f" "${base}_${{ matrix.asset_arch }}.app.tar.gz"
+            if [ -f "$f.sig" ]; then
+              mv "$f.sig" "${base}_${{ matrix.asset_arch }}.app.tar.gz.sig"
+            fi
+          done
+          echo "已按架构打标："
+          find "$dir" -maxdepth 1 -type f | sort
 
       # 诊断：打印 bundle 产物布局（updater 文件真实路径靠日志定，不靠猜）。
       - name: List bundle outputs
         shell: bash
         working-directory: src-tauri
-        run: find target/release/bundle -type f | sort
+        run: |
+          # macOS leg 显式带 --target ⇒ 产物在 target/<triple>/release/bundle 下；
+          # Windows/Linux 无 target ⇒ 仍是 target/release/bundle（路径不变）。
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            find "target/${{ matrix.rust_target }}/release/bundle" -type f | sort
+          else
+            find target/release/bundle -type f | sort
+          fi
 
       # 只上传安装器「文件」(.dmg/.exe/.msi/.deb/.rpm/.AppImage)——
       # 不打包整个 bundle 目录（含 .app 应用目录，下载解压会一堆东西）。
@@ -316,9 +421,9 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: DSH Dock-macOS
+          name: DSH Dock-macOS${{ matrix.artifact_suffix }}
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -356,10 +461,10 @@ jobs:
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && runner.os == 'macOS'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: DSH Dock-macOS-updater
+          name: DSH Dock-macOS${{ matrix.artifact_suffix }}-updater
           path: |
-            src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*.sig
+            src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/*.app.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -462,6 +567,14 @@ jobs:
           name: DSH Dock-macOS
           path: installers/macos
 
+      # Intel Mac 产物（2026-09-11）：与 arm64 分 leg 构建，资产名不同 ⇒ 不覆盖。
+      # 两份 updater 签名进同一目录不冲突：tarball 已按架构打标（见上）。
+      - name: Download macOS x86_64 installers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: DSH Dock-macOS-x86_64
+          path: installers/macos-x86_64
+
       - name: Download Windows installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -479,6 +592,12 @@ jobs:
         with:
           name: DSH Dock-macOS-updater
           path: updater/macos
+
+      - name: Download macOS x86_64 updater artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: DSH Dock-macOS-x86_64-updater
+          path: updater/macos-x86_64
 
       - name: Download Windows updater artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

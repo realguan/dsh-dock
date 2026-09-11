@@ -15,6 +15,7 @@ from urllib.parse import quote
 REQUIRED_TARGETS = frozenset(
     {
         "darwin-aarch64",
+        "darwin-x86_64",
         "linux-x86_64-appimage",
         "linux-x86_64-deb",
         "linux-x86_64-rpm",
@@ -23,10 +24,37 @@ REQUIRED_TARGETS = frozenset(
     }
 )
 
+# macOS 资产名内的架构标记 → Tauri updater 目标键。
+# 顺序敏感：`universal` 是特例要先判；`x86_64` 与 `x64` 互不为子串，无歧义。
+_DARWIN_ARCH_MARKERS: tuple[tuple[str, str], ...] = (
+    ("universal", "darwin-universal"),
+    ("x86_64", "darwin-x86_64"),
+    ("amd64", "darwin-x86_64"),
+    ("x64", "darwin-x86_64"),
+    ("aarch64", "darwin-aarch64"),
+    ("arm64", "darwin-aarch64"),
+)
+
 
 def release_asset_name(name: str) -> str:
     """返回 GitHub Release 对含空格的上传文件采用的资产名。"""
     return name.replace(" ", ".")
+
+
+def darwin_target_for(name_lower: str) -> str | None:
+    """按**资产名内的架构标记**判定 macOS updater 目标键。
+
+    **刻意不设默认架构**：Tauri 对 `.app.tar.gz` 的默认命名不含架构
+    （`DSH Dock.app.tar.gz`），两个 macOS leg 会撞名——CI 已按架构重命名
+    （`DSH Dock_aarch64.app.tar.gz` / `DSH Dock_x86_64.app.tar.gz`）。若这里默默
+    回落到 `darwin-aarch64`，那么一旦 CI 漏掉打标步骤，**Intel 包会被当成 Apple
+    Silicon 包装进 feed**——静默发错架构，用户装上去直接无法启动。故架构不可判时
+    返回 `None`，由 `build_platforms` 的完整性检查**响亮失败**。
+    """
+    for marker, target in _DARWIN_ARCH_MARKERS:
+        if marker in name_lower:
+            return target
+    return None
 
 
 def release_download_url(repository: str, tag: str, asset_name: str) -> str:
@@ -43,7 +71,7 @@ def target_for_artifact(name: str) -> str | None:
     """把 Tauri updater 签名对象名映射为 static feed 的目标键。"""
     lower_name = name.lower()
     if lower_name.endswith(".app.tar.gz"):
-        return "darwin-universal" if "universal" in lower_name else "darwin-aarch64"
+        return darwin_target_for(lower_name)
     if lower_name.endswith(".appimage"):
         return "linux-x86_64-appimage"
     if lower_name.endswith(".deb"):

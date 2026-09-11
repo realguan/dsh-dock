@@ -163,6 +163,10 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
   cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
   ```
   边界（如实）：只验 Rust 侧编译与 lint（含测试目标）；链接与运行仍只在 CI / 真机。
+  **陷阱（2026-09-11 实测）**：`build script` 命中缓存时会**掩盖**缺 windres 这件事——
+  闸门看起来绿，其实是没重跑 build.rs。只要 `resources/` 有任何变动（例如换一批
+  pnpm tgz），build.rs 即重跑并暴露 `tauri-winres` 的 `NotAttempted("x86_64-w64-mingw32-windres")`。
+  故**新增/替换 resources 资产后必须用上面的桩工具链重跑一次**，不能凭上次绿灯推断。
 - **Windows 实机未验**：WSL 运行时行为（`wsl -l -v` 实机输出、localhost 转发、
   stop 标志 teardown、rc source）需按 ADR-0004 的执行要求验证。
   shell.log / dsh-wsl.log 位于 `%APPDATA%\io.github.realguan.dsh-dock\`。
