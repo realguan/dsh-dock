@@ -31,6 +31,48 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 依赖升级 · 三个 Dependabot PR 处置（合 2 · 改 1 后关闭）—— guan（AI 协作）
+
+- **背景**：GitHub 积压 3 个 Dependabot PR（#10 pnpm/action-setup、#11 actions/checkout、
+  #12 taiki-e/install-action），全部 CI 绿且 MERGEABLE。逐个核验后**没有照单全收**。
+- **落地**：`c879d3c`（pnpm/action-setup v4 → v6.1.0）· `542275e`（taiki-e/install-action
+  2.87.2 → 2.87.6）· `2f8db5c`（spike 文件 checkout 改固定 SHA）。三个 PR 均已带说明关闭，
+  Dependabot 分支已清理。
+- **#10 采纳理由（不是"版本新"，是支持范围错配）**：上游大版本依次为 v5.0.0 = 换 node24
+  运行时、v6.0.0 = 支持 pnpm 11、v6.1.0 = 支持 pnpm 12（v6.1.0 唯一改动）。而四个作业
+  pin 的都是 `version: "12.3.1"`、`frontend/package.json` 的 `packageManager` 亦为
+  `pnpm@12.3.1` —— 等于长期用"早于 pnpm 11 就冻结"的 action 去装 pnpm 12。该线有前科：
+  `30fb277` 记录该 action 的 SHA pin 上游失效，三平台 CI 自 09-05 起 3~5 秒死于 Set up job。
+  新 SHA 经 `gh api` 复核可解析（HTTP 200）。
+- **#12 采纳但属 no-op（已取证）**：两个 pin 的 `manifests/cargo-llvm-cov.json` **逐字节
+  相同**（`diff` 为空）；2.87.3~2.87.6 的更新只落在未使用工具（zizmor / uv / typos / biome），
+  升 `cargo-llvm-cov` 的是 2.87.7。价值仅在于不让更新 PR 堆积、避免下次跨度过大。
+- **#11 不按原样合**：它标题写 "4 → 7"，实际只动 `spike-0003-verify.yml` 一行（其余 8 处
+  早已是 v7.0.1），但它给的是**浮动 tag** `@v7` —— 与 `.github/dependabot.yml` 写明的
+  「工作流 action 固定完整 SHA」纪律相悖。改为手工 pin 到与其余一致的
+  `3d3c42e5… # v7.0.1`。成因是遗漏而非决策：checkout 7.0.1 于 09-01 合并（`d2cf73f`），
+  而该文件 09-04 才新增（`eb50f7f`）。改后全仓 `uses:` 已无浮动 tag。
+- **凭据（实测，非仅绿灯）**：`build` run 34559781660 —— 三平台 build + coverage 全 success
+  （release skipped，非 tag 推送，未触发行）；`spike-0003-verify` run 34559781694 ——
+  engine-bootstrap ×3 + wsl-delivery-channel 全 success，且 step 日志实证
+  `Run actions/checkout@3d3c42e5…` 在三平台均执行成功（**该行此前从未在本工作流跑过**）。
+- **流程教训（新，AI 犯后自纠）**：**"PR 绿" ≠ "覆盖了本 PR 的改动"**，必须按 run 的
+  `head_sha` + `path`（workflow 文件）归属核对——否则会把 `boot-smoke` 的作业名
+  误认成别的 workflow，得出"该 PR 的改动没被验证"的错误结论，或反之。本次仍应对
+  Dependabot 的浮动 tag 保持警惕：**Dependabot 会沿用该行原有的 ref 风格**——行内本是
+  浮动 tag 时它就给浮动 tag，不会自动升级为 SHA 固定。
+- **工具限制（新发现，影响后续每周 Dependabot PR）**：本机 `gh` token scope 为
+  `admin:public_key / gist / read:org / repo`，**缺 `workflow`** → `gh pr merge` 对任何
+  改动 `.github/workflows/` 的 PR 会被 GraphQL 拒绝
+  （`refusing to allow an OAuth App to create or update workflow`）。本次改经 **SSH 推送**
+  落地（远端为 `git@github.com:`，推送不走 OAuth token），内容与 squash 合并等价，PR 以
+  说明关闭。若希望 PR 正常标记为 merged，需 `gh auth refresh -s workflow`。
+- **残留未覆盖（如实登记）**：`boot-smoke.yml` 的 3 处 pnpm pin **从未运行过**——该工作流
+  仅 `workflow_dispatch` 触发，且 `windows-*` 两个作业是 `continue-on-error` 的实验档
+  （近期 4 失败 1 成功）。同一 action SHA 与同一 `version: "12.3.1"` 已由 build.yml 三平台
+  实证，故未额外手动触发；如需 boot 路径端到端覆盖，手动 `gh workflow run boot-smoke.yml`。
+- **影响**：仅周知。workflow 改动不影响已发布的 v1.1.1 产物（产物由 tag 构建）。
+
 ### 2026-09-11 发版返工 · v1.1.1 首次构建红（Windows clippy）→ 修复后重打 tag —— guan（AI 协作）
 
 - **事实**：v1.1.1 tag 推后，`build (windows-latest)` 的 **`Rust clippy gate`** 失败：
