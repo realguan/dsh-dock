@@ -31,6 +31,34 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 发版 · v1.1.1 会话占用根治与 Windows 首启修复 —— guan（AI 协作）
+
+- **范围**：`v1.1.0..HEAD` 共 6 笔提交，全部为**修复**（无用户可感知新能力，
+  故定 patch）。三条主线：
+  ① **会话被占用／打不开的根治**（ADR-0015 子进程生命周期：硬杀收口 + 启动期
+     孤儿清扫 + spawn 单点 seam）；
+  ② **Windows 普通账户首启修复**（引擎引导改免符号链接布局，连带修掉「DSH 未检出／
+     健康大盘全空／插件装不上」同一根因的一批现象），另含壳页地址 dev 门、
+     控制中心建窗线程、pnpm 落位加固；
+  ③ **测试与生产隔离**（审核期发现真机用例会打开用户真实 profile 并顶掉正式包会话，
+     已修并加闸门）。
+- **tag**：`v1.1.1`（待推）。版本号四处同步（Cargo.toml / tauri.conf.json /
+  frontend/package.json / Cargo.lock）；`docs/RELEASE_NOTES.md` 顶部已落
+  `## [v1.1.1] - 2026-09-11`（AGENTS §8.8 强契约）。
+- **本地已复现 CI 两道 tag 闸门**：三处版本一致性 ✅；发布日志存在性 ✅；
+  `scripts/extract-release-notes.py v1.1.1 --strict` 提取成功（1331 字符，
+  未误伤 v1.1.0）。
+- **凭据**：`cargo test` 285 绿（3 个 `#[ignore]` 真机锚不进默认套件）；`fmt --check`
+  绿；`clippy --all-targets -D warnings` macOS 与 `x86_64-pc-windows-gnu` **双平台
+  0 warning**；前端 `typecheck` 0 err · `oxlint` 0 warning · `test` 221 绿。
+- **⚠️ 冻结期起：Release notes 已落盘 → 至三平台产物验收通过为止，master 只收 fix。**
+- **⚠️ 未验证项（发版不免除，必须显式登记）**：**Windows 真机未验**。本机仅有
+  macOS，本批 Windows 相关修复（免符号链接布局 / 建窗线程 / 死端口 / 落位加固）
+  只在 macOS 端到端 + `x86_64-pc-windows-gnu` 类型检查层面验证过。验收流程已落
+  `docs/executor.md` §「Windows 实机验证清单」（A 引擎引导 / B 真机 7 项 / C 孤儿
+  收口），**待维护者用 Windows 笔记本跑**；跑完请回填该表。
+  另：ADR-0015 的 Windows Job Object 路径同理未在真机验证（已在 ADR §5 登记为已知边界）。
+
 ### 2026-09-10 审核 · 上两笔修复的自查（含 3 处安全/覆盖缺口修补） —— guan（AI 协作）
 
 - **触发**：维护者问「你需要再审核一下本次 bug 修复情况吗」——对 `8baffb7` /
