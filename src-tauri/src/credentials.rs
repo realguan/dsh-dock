@@ -34,16 +34,26 @@ const KNOWN_PROVIDERS: &[(&str, &str)] = &[
 ];
 
 /// 生成脱敏掩码（如 `sk-1234567890abcdef` → `sk-1•••••••cdef`）
+///
+/// **2026-09-11 修复（F1，复现先行）**：口径为**字符数**而非字节数。
+/// 旧实现用字节下标切片（`&trimmed[..4]` / `&trimmed[len-4..]`），值含非 ASCII
+/// （CJK / 全角 / emoji 等任何多字节 UTF-8）时，字节 4 或 `len-4` 落在字符中间 →
+/// `panic: byte index is not a char boundary`；而 `Cargo.toml:52` release 剖面
+/// `panic = "abort"` ⇒ **不是返回错误而是进程被杀**，且调用点全在
+/// `get_credentials_summary` 路径上（凭据面板加载即中招）。
+/// 长度判据同改字符数：旧 `len() <= 8` 让「3 个 CJK 字符 = 9 字节」误入切片分支。
+/// 掩码语义 = 前 4 字符 + `••••••••` + 后 4 字符；字符数 ≤ 8 时整串掩掉。
 pub fn mask_api_key(key: &str) -> String {
     let trimmed = key.trim();
     if trimmed.is_empty() {
         return String::new();
     }
-    if trimmed.len() <= 8 {
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 8 {
         return "••••••••".to_string();
     }
-    let prefix = &trimmed[..4];
-    let suffix = &trimmed[trimmed.len() - 4..];
+    let prefix: String = chars[..4].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
     format!("{prefix}••••••••{suffix}")
 }
 
@@ -362,6 +372,85 @@ mod tests {
             mask_api_key("sk-ant-api03-abcdefghijklmn"),
             "sk-a••••••••klmn"
         );
+    }
+
+    /// F1 回归（2026-09-11 复现先行）：`mask_api_key` 曾用**字节**下标切片
+    /// （`&trimmed[..4]` / `&trimmed[trimmed.len()-4..]`）——非 ASCII 值的字节 4
+    /// 或 `len-4` 落在字符中间 → `panic: byte index is not a char boundary`。
+    /// release 剖面 `panic = "abort"`（Cargo.toml:52）下不是返回错误而是**进程被杀**，
+    /// 而调用点在 `get_credentials_summary` 路径上 ⇒ 凭据面板加载即中招。
+    ///
+    /// 掩码语义裁定（本任务）：**按字符数**——前 4 字符 + `••••••••` + 后 4 字符；
+    /// 字符数 ≤ 8 时整串掩掉（维持既有 `"••••••••"` 回退语义）。
+    #[test]
+    fn mask_api_key_handles_non_ascii_without_panic() {
+        // ① 3 个 CJK 字符 = 9 **字节**（旧判据 `len() <= 8` 判否 → 走进切片分支），
+        //    但字符数 3 ≤ 8 → 全掩码。
+        assert_eq!(mask_api_key("凭据测"), "••••••••");
+        // ② 前缀与后缀各自跨多字节边界：9 字符 = 5 CJK + 4 ASCII
+        //    （旧实现 `&trimmed[..4]` 直接 panic：字节 4 落在「据」中间）。
+        assert_eq!(mask_api_key("凭据测试值abcd"), "凭据测试••••••••abcd");
+        // 前后缀都是多字节、总字符数 7 ≤ 8 → 全掩码（不得 panic）。
+        assert_eq!(mask_api_key("密钥abc密钥"), "••••••••");
+        // ③ 单字符多字节。
+        assert_eq!(mask_api_key("密"), "••••••••");
+        // 多字节超长：12 个 CJK 字符 → 前 4 + 掩码 + 后 4。
+        assert_eq!(
+            mask_api_key("凭据测试密钥对甲乙丙丁"),
+            "凭据测试••••••••甲乙丙丁"
+        );
+        // 4 字节码位（emoji）：11 字符，前后缀都含 4 字节字符。
+        assert_eq!(
+            mask_api_key("🔑🔑a🔑🔑🔑🔑🔑🔑🔑🔑"),
+            "🔑🔑a🔑••••••••🔑🔑🔑🔑"
+        );
+    }
+
+    /// 边界自查（修复后口径写死，防回归）：
+    /// - 空串 / 全空白 → `""`（trim 后为空，无值不显示掩码）；
+    /// - 1–8 字符（含多字节）→ `"••••••••"`（不足 4+4 可披露，整串掩掉）；
+    /// - 9 字符 → 前 4 + 掩码 + 后 4，ASCII 与多字节同口径；
+    /// - ASCII 超长 → 与修复前逐字相同（见上方既有用例，不得改坏）。
+    #[test]
+    fn mask_api_key_boundaries_are_char_counted() {
+        assert_eq!(mask_api_key(""), "");
+        assert_eq!(mask_api_key("   "), "");
+        assert_eq!(mask_api_key("12345678"), "••••••••");
+        assert_eq!(mask_api_key("123456789"), "1234••••••••6789");
+        assert_eq!(mask_api_key("密密密密密密密密"), "••••••••");
+        assert_eq!(
+            mask_api_key("密密密密密密密密密"),
+            "密密密密••••••••密密密密"
+        );
+    }
+
+    /// 端到端复现：真实调用路径（`get_credentials_summary` 的 refs 分支与顶层
+    /// 自定义 provider 分支）拿到非 ASCII 秘密值时必须不 panic——这是本缺陷
+    /// 从"函数边界"升级为"进程被杀"的那一跳。
+    #[test]
+    fn summary_with_non_ascii_secret_does_not_panic() {
+        let tmp =
+            std::env::temp_dir().join(format!("dsh-cred-test-nonascii-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join(".credentials.yaml"),
+            "refs:\n  DEEPSEEK_API_KEY: 凭据测试值abcd\ncustom-provider: 密钥abc密钥\n",
+        )
+        .unwrap();
+
+        let summary = get_credentials_summary(&tmp).unwrap();
+        let ds = summary.iter().find(|s| s.provider == "deepseek").unwrap();
+        assert!(ds.configured);
+        assert_eq!(ds.masked_key, "凭据测试••••••••abcd");
+        let custom = summary
+            .iter()
+            .find(|s| s.provider == "custom-provider")
+            .unwrap();
+        assert!(custom.configured);
+        assert_eq!(custom.masked_key, "••••••••");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
