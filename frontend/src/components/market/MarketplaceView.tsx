@@ -195,7 +195,7 @@ export function MarketplaceView({
   const handleOpenExternal = (url: string) => {
     if (!url) return
     api.openExternal(url).catch((err) => {
-      onNotice?.(`打开链接失败: ${err}`, "warn")
+      onNotice?.(t.market.openLinkFailed(String(err)), "warn")
     })
   }
 
@@ -302,7 +302,7 @@ export function MarketplaceView({
             className="h-8.5 gap-1.5 rounded-xl text-xs"
           >
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : ""}`} />
-            <span>{loading ? "加载中…" : t.market.refreshRegistry}</span>
+            <span>{loading ? t.market.loadingBtn : t.market.refreshRegistry}</span>
           </Button>
         </div>
 
@@ -460,7 +460,7 @@ export function MarketplaceView({
                   }}
                   className="rounded-xl mt-3 text-xs"
                 >
-                  清除所有筛选条件
+                  {t.market.clearFilters}
                 </Button>
               )}
             </div>

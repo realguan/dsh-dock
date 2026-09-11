@@ -74,6 +74,10 @@ export const t = {
       upgrade_only: "后台升级",
       reselect: "返回重选",
     } as Record<string, string>,
+    // 失败详情后缀（2026-09-11 task-25）：原为组件内联字面量（zh-CN 全角括号、
+    // en 侧需 ASCII 括号 + 前置空格），故并入字典。两处同源拼接：
+    // `pages/BootSelector.tsx` 与 `components/boot/ErrorCard.tsx`。
+    reselectHint: "（可返回重选）",
     // 错误卡静态标签（2026-09-08，ADR-0012 顺手收口硬编码中文）
     diagHeader: "DIAG 诊断控制台",
     cardHeader: "启动中断",
@@ -145,6 +149,9 @@ export const t = {
     engineReady: "引擎环境已就绪",
     pluginsCount: "{count} 个插件",
     defaultBadge: "默认",
+    // 官方 web 工作台且无第三方依赖时的卡片底栏说明（2026-09-11 task-25）：
+    // 原为组件内联字面量（en 用户可见中文），可达条件见 pages/BootSelector.tsx。
+    officialReadyToUse: "官方开箱即用",
     enterWorkbench: "进入工作台",
     launching: "正在启动…",
   },
@@ -611,15 +618,36 @@ export const t = {
     preferencesSection: "客户端偏好",
     localeLabel: "界面语言",
     localeDesc: "选择桌面壳界面的显示语言；更改后立即生效",
-    localeSystem: "跟随系统语言 (System Default)",
-    localeZh: "简体中文 (Chinese Simplified)",
+    // 2026-09-11（task-18）：两侧各自对「自己的语言」纯净——原值夹带英文括注
+    // `(System Default)` / `(Chinese Simplified)`，zh 语境下冗余（en 侧同名键由
+    // 门禁 `enUsNoLeak.test.ts` 反向覆盖）。
+    localeSystem: "跟随系统语言",
+    localeZh: "简体中文",
     localeEn: "English (US)",
+    // 语言卡片副标题（2026-09-11 task-20；2026-09-11 task-22 修正）
+    // 原为组件内硬编码。中文卡的「默认」主张已**删除**——产品默认偏好是「跟随系统」
+    // （i18nStore `preference: "system"`；Rust `settings.rs` 的 `locale: Option<String>`
+    // 默认 None = 跟随操作系统语言），对 navigator.language 非 zh 的用户，把简体中文
+    // 标为「默认」是**谎报默认语言** ⇒ 用户可见事实失真（与「2700+」「240+」同类）。
+    // 该主张无法靠改措辞救活：撇开「默认」后只剩「内置字典」这类实现细节，无用户价值。
+    // 故中文卡与英文卡均无副标题，**仅系统卡保留 `localeSystemHint`**——
+    // 该条为真且有用：preference === "system" 时确实经 resolveSystemLocale() 探测系统语言。
+    localeSystemHint: "自动检测",
     // 崩溃守护
     guardianSection: "高可用与崩溃守护",
     autoRestartLabel: "崩溃自动恢复守护",
     autoRestartDesc: "当检测到 DSH 会话进程意外退出时，后台自动拉起恢复；60 秒内若连续崩溃达到 3 次将自动触发熔断保护，停止重试并弹出诊断错误卡。",
     autoRestartEnabled: "已开启守护（含 3次/60s 熔断保护）",
     autoRestartDisabled: "未开启（默认手动重试）",
+    // 熔断机制图解卡（2026-09-11 task-20）：原为组件内硬编码（en 用户可见中文）。
+    // 数值单位随语言不同（「60 秒」vs "60s"），故标签与取值一并入字典。
+    breakerTitle: "智能熔断保护协议（Circuit Breaker）",
+    breakerWindowLabel: "监控窗口：",
+    breakerWindowValue: "60 秒滑动窗口",
+    breakerThresholdLabel: "熔断阈值：",
+    breakerThresholdValue: "连续 3 次崩溃",
+    breakerActionLabel: "熔断后动作：",
+    breakerActionValue: "停机并弹诊断卡",
     // 悬浮胶囊与快捷键
     switcherSection: "工作台快速切换与胶囊挂件",
     floatingSwitcherLabel: "工作台悬浮胶囊",
@@ -635,6 +663,7 @@ export const t = {
     // 读取失败时停用写入：settings.json 是整体覆盖写，拿不到真实基线就回写
     // 会清空其他键（2026-09-08 裁定，见 lib/shellSettings.ts）
     settingsLoadFailed: "偏好设置读取失败——为避免覆盖写坏其他配置，已停用保存",
+    settingsLoading: "正在加载偏好设置…",
     retryLoad: "重试",
     diagnosticsLoadFailed: "诊断数据采集失败",
     // 诊断大盘
@@ -690,9 +719,17 @@ export const t = {
     filterInstalled: "仅看已装",
     filterAll: "全部插件",
     installBtn: "安装",
+    reinstallBtn: "重新安装",
+    installToBtn: (prof: string) => `安装到 ${prof}`,
     distributeBtn: "分发",
     installedIn: (count: number) => `已装于 ${count} 个 Profile`,
+    installedBadge: "已安装",
+    installedInProfile: (prof: string) => `已安装在 ${prof}`,
+    installedWillOverwrite: "已在此 Profile 安装（将执行覆盖/重装）",
+    installedWillReinstall: "已在此 Profile 安装（将覆盖重装）",
     notInstalled: "未安装",
+    noDescription: "暂无描述",
+    officialCoreTitle: "DSH 官方核心插件",
     installModalTitle: (pkg: string) => `安装插件「${pkg}」`,
     installModalDesc: "选择要安装的目标 Profile。安装后将自动写入该 Profile 的 package.json 并通过 pnpm 自动构建安装。",
     selectProfile: "选择目标 Profile",
@@ -711,12 +748,15 @@ export const t = {
     retry: "重试",
     noResults: "未找到符合条件的插件",
     noResultsHint: "尝试更换搜索词或清除分类筛选条件",
+    clearFilters: "清除所有筛选条件",
     paginationPrev: "上一页",
     paginationNext: "下一页",
     pageInfo: (current: number, total: number, count: number) => `第 ${current} / ${total} 页（共 ${count} 款）`,
     pageSize: "每页",
     cacheHit: "本地缓存命中",
     refreshRegistry: "刷新市场",
+    loadingBtn: "加载中…",
+    openLinkFailed: (msg: string) => `打开链接失败: ${msg}`,
     author: "作者",
     addedDate: "上架时间",
     subtabMarket: "插件市场",

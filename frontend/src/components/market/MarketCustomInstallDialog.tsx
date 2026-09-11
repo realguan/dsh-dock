@@ -156,7 +156,7 @@ export function MarketCustomInstallDialog({
               {selectedProfile && isAlreadyInstalled && (
                 <span className="text-meta text-warn font-mono flex items-center gap-1">
                   <AlertCircle className="size-3" />
-                  已在此 Profile 安装（将覆盖重装）
+                  {t.market.installedWillReinstall}
                 </span>
               )}
             </label>
@@ -176,7 +176,7 @@ export function MarketCustomInstallDialog({
                         )}
                         {hasIt && (
                           <span className="rounded-md bg-ok-soft px-1 py-0.2 text-micro text-ok">
-                            已安装
+                            {t.market.installedBadge}
                           </span>
                         )}
                       </div>
@@ -198,7 +198,7 @@ export function MarketCustomInstallDialog({
 
         <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-line/60">
           <Button variant="outline" size="sm" onClick={onClose} className="rounded-xl text-xs">
-            {t.about.cancelBtn || "取消"}
+            {t.about.cancelBtn}
           </Button>
           <Button
             size="sm"
@@ -207,7 +207,7 @@ export function MarketCustomInstallDialog({
             className="rounded-xl bg-brand text-white hover:bg-brand/90 text-xs font-medium gap-1.5 shadow-xs"
           >
             <Download className="size-3.5" />
-            <span>{selectedProfile ? `安装到 ${selectedProfile}` : t.market.manualInstallSubmit}</span>
+            <span>{selectedProfile ? t.market.installToBtn(selectedProfile) : t.market.manualInstallSubmit}</span>
           </Button>
         </DialogFooter>
       </DialogContent>

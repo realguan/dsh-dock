@@ -59,15 +59,15 @@ export function MarketPluginCard({
           <div className="flex items-center gap-2.5 min-w-0">
             {/* 左上角品牌/来源定制主图标 */}
             {isOfficial ? (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-brand/40 bg-brand/10 text-brand-deep shadow-2xs group-hover:border-brand transition-colors" title="DSH 官方核心插件">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-brand/40 bg-brand/10 text-brand-deep shadow-2xs group-hover:border-brand transition-colors" title={t.market.officialCoreTitle}>
                 <Sparkles className="size-4.5 text-brand-deep" />
               </div>
             ) : plugin.npm ? (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title="NPM 官方包">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title={t.market.sourceNpm}>
                 <NpmIcon className="h-3 w-5 text-ink/80" />
               </div>
             ) : plugin.url?.includes("github.com") ? (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title="GitHub 仓库">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title={t.market.sourceGithub}>
                 <GithubIcon className="size-4.5 text-ink/80" />
               </div>
             ) : (
@@ -112,7 +112,7 @@ export function MarketPluginCard({
           className="mt-3 line-clamp-2 text-xs text-dim leading-relaxed min-h-[32px]"
           title={desc || undefined}
         >
-          {desc || "暂无描述"}
+          {desc || t.market.noDescription}
         </p>
 
         {/* 指标栏 (Stars, Downloads, Added) */}
@@ -148,7 +148,7 @@ export function MarketPluginCard({
                   <span
                     key={prof}
                     className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta font-mono font-medium shrink-0 shadow-2xs ${PROFILE_CHIP_CLASS}`}
-                    title={`已安装在 ${prof}`}
+                    title={t.market.installedInProfile(prof)}
                   >
                     <span className="size-1 rounded-full bg-current opacity-80" />
                     {prof}

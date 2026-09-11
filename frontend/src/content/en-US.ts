@@ -67,6 +67,10 @@ export const enUS: AppCopy = {
       upgrade_only: "Upgrade in Background",
       reselect: "Reselect",
     } as Record<string, string>,
+    // Failure-detail suffix (2026-09-11, task-25): was an inline literal in the
+    // component. ASCII parens + a leading space (zh uses full-width parens, which
+    // need no space); composed as `${msg}${reselectHint}`.
+    reselectHint: " (you can go back and reselect)",
     // Error-card static labels (2026-09-08, ADR-0012)
     diagHeader: "DIAG Console",
     cardHeader: "Launch Interrupted",
@@ -137,6 +141,9 @@ export const enUS: AppCopy = {
     engineReady: "Engine Ready",
     pluginsCount: "{count} plugins",
     defaultBadge: "DEFAULT",
+    // Footer note for the official web workbench with no third-party deps
+    // (2026-09-11, task-25): was an inline literal (Chinese, visible to en users).
+    officialReadyToUse: "Official · ready to use",
     enterWorkbench: "Open Workbench",
     launching: "Starting…",
   },
@@ -586,14 +593,37 @@ export const enUS: AppCopy = {
     preferencesSection: "Client Preferences",
     localeLabel: "Interface Language",
     localeDesc: "Choose display language for the desktop shell UI; updates immediately",
-    localeSystem: "System Default (跟随系统)",
+    // 2026-09-11（task-18）：原值 `"System Default (跟随系统)"` 夹带中文，en 用户可见
+    // ⇒ 漏译缺陷。语义对齐 zh 侧 `console.localeSystem`「跟随系统语言」；此处采用
+    // 语言选择器通行标签 `System Default`（与 zh 侧括注一致），保持纯英文。
+    // `localeZh` 为语言自名（endonym）例外：en 语境下以「简体中文」书写是正确的，
+    // 门禁 `enUsNoLeak.test.ts` 的例外表内已显式登记理由。
+    localeSystem: "System Default",
     localeZh: "简体中文 (Chinese Simplified)",
     localeEn: "English (US)",
+    // Locale card subtitles (2026-09-11, task-20; corrected task-22): moved out
+    // of the component (were hardcoded Chinese there). The zh card's "Default"
+    // claim was REMOVED — the product default is "follow system"
+    // (`preference: "system"` in i18nStore.ts; `locale: Option<String>` defaults
+    // to None in settings.rs), so labelling Simplified Chinese as the default
+    // lied about the default language for any non-zh system locale. Only the
+    // system card keeps a subtitle, and that one is true and useful.
+    localeSystemHint: "Auto Detect",
     guardianSection: "High Availability & Crash Guardian",
     autoRestartLabel: "Auto-Recovery Guardian",
     autoRestartDesc: "Automatically restarts and recovers DSH session upon unexpected process exit. If 3 crashes occur within 60 seconds, circuit-breaker triggers automatically to prevent restart loops.",
     autoRestartEnabled: "Guardian active (with 3 crashes / 60s circuit breaker)",
     autoRestartDisabled: "Guardian disabled (manual retry by default)",
+    // Circuit-breaker diagram (2026-09-11, task-20): was hardcoded Chinese in the
+    // component; units differ per locale ("60s" vs 「60 秒」), so labels and values
+    // both live here.
+    breakerTitle: "Smart Circuit Breaker Protocol",
+    breakerWindowLabel: "Window:",
+    breakerWindowValue: "60s sliding window",
+    breakerThresholdLabel: "Trip threshold:",
+    breakerThresholdValue: "3 crashes in a row",
+    breakerActionLabel: "On trip:",
+    breakerActionValue: "Stop and show diagnostics",
     switcherSection: "Workbench Quick Switcher & Floating Pill",
     floatingSwitcherLabel: "Workbench Floating Pill",
     floatingSwitcherDesc: "Display quick switcher capsule at top-center in DSH workbench (supports mouse drag; shortcuts remain active when disabled)",
@@ -610,6 +640,7 @@ export const enUS: AppCopy = {
     // (2026-09-08, see lib/shellSettings.ts)
     settingsLoadFailed:
       "Failed to read preferences — saving is disabled to avoid overwriting other settings",
+    settingsLoading: "Loading preferences…",
     retryLoad: "Retry",
     diagnosticsLoadFailed: "Failed to collect diagnostics",
     diagnosticsTitle: "Runtime Environment Health",
@@ -662,9 +693,17 @@ export const enUS: AppCopy = {
     filterInstalled: "Installed Only",
     filterAll: "All Plugins",
     installBtn: "Install",
+    reinstallBtn: "Reinstall",
+    installToBtn: (prof: string) => `Install to ${prof}`,
     distributeBtn: "Distribute",
     installedIn: (count: number) => `Installed in ${count} profiles`,
+    installedBadge: "Installed",
+    installedInProfile: (prof: string) => `Installed in ${prof}`,
+    installedWillOverwrite: "Already installed in this profile (will overwrite/reinstall)",
+    installedWillReinstall: "Already installed in this profile (will be overwritten and reinstalled)",
     notInstalled: "Not Installed",
+    noDescription: "No description",
+    officialCoreTitle: "DSH official core plugin",
     installModalTitle: (pkg: string) => `Install Plugin "${pkg}"`,
     installModalDesc: "Choose target profile. It will be added to package.json and built via pnpm automatically.",
     selectProfile: "Select Target Profile",
@@ -683,12 +722,15 @@ export const enUS: AppCopy = {
     retry: "Retry",
     noResults: "No matching plugins found",
     noResultsHint: "Try changing your search query or clearing the category filter",
+    clearFilters: "Clear all filters",
     paginationPrev: "Previous",
     paginationNext: "Next",
     pageInfo: (current: number, total: number, count: number) => `Page ${current} of ${total} (${count} items)`,
     pageSize: "Per page",
     cacheHit: "Cache Hit",
     refreshRegistry: "Refresh",
+    loadingBtn: "Loading…",
+    openLinkFailed: (msg: string) => `Failed to open link: ${msg}`,
     author: "Author",
     addedDate: "Added",
     subtabMarket: "Marketplace",

@@ -158,7 +158,7 @@ export function MarketInstallDialog({
               {selectedProfile && isAlreadyInstalled && (
                 <span className="text-meta text-warn font-mono flex items-center gap-1">
                   <AlertCircle className="size-3" />
-                  已在此 Profile 安装（将执行覆盖/重装）
+                  {t.market.installedWillOverwrite}
                 </span>
               )}
             </label>
@@ -178,7 +178,7 @@ export function MarketInstallDialog({
                         )}
                         {hasIt && (
                           <span className="rounded-md bg-ok-soft px-1 py-0.2 text-micro text-ok">
-                            已安装
+                            {t.market.installedBadge}
                           </span>
                         )}
                       </div>
@@ -237,7 +237,7 @@ export function MarketInstallDialog({
             className="rounded-xl bg-brand text-white hover:bg-brand/90 text-xs font-medium gap-1.5 shadow-xs"
           >
             <Download className="size-3.5" />
-            <span>{isAlreadyInstalled ? "重新安装" : t.market.installBtn}</span>
+            <span>{isAlreadyInstalled ? t.market.reinstallBtn : t.market.installBtn}</span>
           </Button>
         </DialogFooter>
       </DialogContent>
