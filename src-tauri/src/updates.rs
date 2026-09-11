@@ -1547,6 +1547,16 @@ mod world_probe_tests {
     /// `guest.rs::diagnostics_script`，把它的真实输出经 `guest_versions_from_report`
     /// 解析——证明「脚本输出 ⇄ 我读的字段」这条接口一致（哨兵/`isReady`/版本形态）。
     /// 脚本内容本身读 `which node/dsh --version`，故用假 shim 目录模拟客体 PATH。
+    ///
+    /// **shim 必须落在 `$HOME/.dsh-dock/engines/bin`，不能只靠 PATH**（2026-09-11 CI 实测）：
+    /// `guest_prep!()` 开头会 `. /etc/profile`，而 macOS 的 `/etc/profile` 执行
+    /// `path_helper` —— 它把 `/etc/paths` 各项（首项 `/usr/local/bin`）**前置**到 PATH。
+    /// GitHub macOS runner 的 node 恰在 `/usr/local/bin`（v24.20.0）⇒ 只把 shim 放进 PATH
+    /// 会被 runner 的真 node 顶掉（实测 `left: Some("24.20.0")`）。本机却**恰好绿**：
+    /// `/usr/local/bin/node` 不存在，而本机真 node（引擎 bin）**也是 v24.18.0，与夹具同值**
+    /// —— 双重巧合掩盖了它，属 M10/M11「夹具可移植性」同类。
+    /// 引擎 bin 是脚本 **source 三个 rc 之后**才前置的（`PATH="$DSH_ENGINES/bin:$PATH"`），
+    /// 故放这里确定胜出。
     #[cfg(unix)]
     #[test]
     fn guest_script_output_parses_into_versions() {
@@ -1554,12 +1564,12 @@ mod world_probe_tests {
         let root = std::env::temp_dir().join(format!("dsh-dock-d45-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let home = root.join("home");
-        let bin = root.join("bin");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&bin).unwrap();
-        // 假 shim：node → v24.18.0（带 v），dsh → 0.1.5-rc.1（不带 v）
+        // 引擎 bin：脚本在 source 完 rc 之后前置它，故这里是唯一能压过宿主 PATH 的位置。
+        let engine_bin = home.join(".dsh-dock").join("engines").join("bin");
+        std::fs::create_dir_all(&engine_bin).unwrap();
+        // 假 shim：node → v24.18.0（带 v，验 v 前缀归一），dsh → 0.1.5-rc.1（不带 v）
         for (name, out) in [("node", "v24.18.0"), ("dsh", "0.1.5-rc.1")] {
-            let p = bin.join(name);
+            let p = engine_bin.join(name);
             std::fs::write(&p, format!("#!/bin/sh\necho {out}\n")).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
@@ -1569,7 +1579,7 @@ mod world_probe_tests {
             .arg("-c")
             .arg(&script)
             .env("HOME", &home)
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("PATH", format!("{}:/usr/bin:/bin", engine_bin.display()))
             .env_remove("DSH_HOME")
             // spawn-gate: exempt(测试专用——在宿主 bash 里真跑客体脚本，做「脚本输出 ⇄ 读取字段」契约断言；本模块名非 `mod tests`，spawn 闸门的 cfg(test) 截断标记覆盖不到它，2026-09-11)
             .output()
@@ -1584,6 +1594,15 @@ mod world_probe_tests {
                 .expect("脚本 JSON 应可解析");
 
         let v = guest_versions_from_report(&report);
+        // **夹具自证**（防上面那个坑复发）：脚本必须读到**我们的** shim，而不是
+        // 宿主 PATH 上的真 node/pnpm/dsh。若哪天 shim 位置又被改回"只进 PATH"，
+        // 这条会比版本断言更早、更明确地报出原因（而不是在 CI 上莫名其妙地版本不符）。
+        assert!(
+            std::path::Path::new(&report.node.path).starts_with(&home),
+            "脚本读到的 node 不在假 HOME 内（{}）——夹具 shim 未生效，说明宿主 PATH \
+             抢在了前面；shim 须落在 $HOME/.dsh-dock/engines/bin（脚本 source 完 rc 后才前置）",
+            report.node.path
+        );
         assert_eq!(v.node.as_deref(), Some("24.18.0"), "脚本的 v 前缀须被归一");
         assert_eq!(v.dsh.as_deref(), Some("0.1.5-rc.1"));
 
