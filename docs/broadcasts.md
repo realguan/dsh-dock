@@ -31,6 +31,61 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 团队建制 · AI 研发团队组建与本轮五笔合入（3 个真缺陷 + 文案/文档）—— guan（AI 协作）
+
+- **建制**：按仓库真实接缝设 5 执行角色 + lead，写入
+  [`docs/team/README.md`](./team/README.md)：`rust-core`（壳运行时）/ `rust-mgmt`
+  （dsh 管理域）/ `frontend`（React SPA）/ `docs-contract`（契约与文档）/
+  `qa-verify`（**独立验证者，不写生产代码**），各域独占写入范围 + 共享区（IPC
+  三件套）单写纪律，任务板 write scope 声明制，越界先申请。lead 保留宪法级文件、
+  本档与团队章程的写入权，并统一组装提交。
+- **变更（5 笔，按序；均为 fix/docs，无 feat）**：
+  - `f4cd394 fix(credentials)`：`mask_api_key` 字节切片 → 按字符数判长与切前后 4
+    字符。**真缺陷**：非 ASCII 凭据值（CJK/全角/emoji）必 panic，而 release 剖面
+    `panic="abort"`（`Cargo.toml:52`）⇒ 进程被杀；调用点全在
+    `get_credentials_summary` 路径 ⇒ **凭据面板加载即崩**。
+  - `d6edc65 fix(sessions)`：① `decode_project_dir_name` 同源量纲不一致（判据按
+    字符、切片按字节）⇒ 会话目录名含 CJK 即 panic（目录名用户可手工创建，非理论
+    风险）；改字节判据并用「`0x3A` 不可能是 UTF-8 续字节」的不变式证明切片恒安全。
+    ② 临时脚本泄漏：两函数各有**两个** `?` 早退在清理之前（node 缺失 / `lifecycle::run`
+    失败——**node 存在也会泄漏**），每次加载会话面板泄漏 ~90 KB；改 RAII guard 单点
+    收口。实测修前单轮 `cargo test` +5 份 / 463,140 B、本机存量 68 项 / 6256 KB，
+    修后同轮 +0，存量清理归零。
+  - `a265c5e fix(i18n)`：市场文案写死「2700+」（Registry 实为 3408）——**如实界定
+    影响面：6 处中仅 `searchPlaceholder` 用户可见**，另 2 键 × 2 locale 为死键，一并清
+    错数字；`ProfileDetailPane`「240+ 预置服务」经核实**不成立**（实测 239 包，差值
+    为平台专属包，且随 dsh 版本漂移、壳侧无事实源）→ 改不依赖数字的表述并迁入字典。
+  - `1251bef docs(roadmap)`：时效刷新——头部日期、Next 阶段状态、Later 六项（随
+    v0.9.0 `b9973fd` 已落地）补回收注（**未闭合子项据实标注**）、IPC 口径改指针。
+  - `4879b3d docs(team)`：团队章程 + 本轮全部报告与待裁定清册。
+- **凭据**：`cargo fmt --check` 0 · `clippy --all-targets -D warnings` 0（host +
+  `x86_64-pc-windows-gnu` 交叉，21.5s 真 check）· `cargo test` **297 passed /
+  0 failed / 3 ignored**（基线 292 → +5，与新增 `#[test]` 精确吻合）· 前端
+  `typecheck` 0 / `oxlint` 0 warning（132 files）/ `test` **34 files · 229 passed**。
+  diff 规模 7 文件 481+/30−。提交前独立验证（`docs/team/本轮收尾验证-2026-09-11.md`
+  + `复验-task13-2026-09-11.md`）：**新增测试 5/5 实测红**（回退→跑→trap 复原→
+  sha256 校验）、**修前 +5 / 修后 +0 双向独立复现**、9 文件哈希与快照逐一相同、
+  清理后 `dsh-dock-scan-session-*` 归零。
+- **影响（需维护者动作）**：本轮**未推送**（5 笔留在本地 master 之上，未 push）。
+  另有 **[`docs/team/待裁定清册-2026-09-11.md`](./team/待裁定清册-2026-09-11.md)**
+  登记 AI 团队无权自行决定的事项，其中两项请优先：
+  1. **§7 网络面登记缺口**：`boot.rs:361-405 authenticate_workbench_session` 用
+     `ureq` 发本地 HTTP GET，未见于 §7 任何登记处（同形态的 `plugins.rs` 环回已登记），
+     与 ADR-0006 §2 冲突。修复须先取舍「补登记 vs 下沉 `updates.rs` seam」；
+     且 `AGENTS.md` 实测 **250/250 行**、§11 预算用满，**加一行须先决定回收哪一行**
+     （建议 §7 那份 55 条枚举改指针，唯一事实源 = `ipc.rs::COMMANDS`，可回收约 20 行）。
+  2. **Windows 真机验证**（v1.1.1 唯一未验证项，清单见 `executor.md`）。
+- **两条团队教训（已写入 `docs/team/README.md` 防复发）**：
+  1. `docs/known-issues/` 被 `.gitignore:20` 忽略——写在那里的报告不进提交，
+     「不落盘 = 不存在」直接失效；团队产物改落 `docs/team/`。
+  2. 本档是**倒序**档案（最新在顶部）——本轮曾因只读尾部而误判「冻结期仍在」，
+     把已于 2026-09-11T03:30Z 解除的临时约束当成现行约束；涉「当前状态」判断一律
+     `head` 读顶部。
+- **另核（本轮复核既有结论，无需动作）**：v1.1.1 tag 经三方独立解引用一致指向
+  `43f65fd2c`（首打 `2b4272a` 当日返工后移动，仅留一轮 cancelled 构建、未产出
+  Release）；`AGENTS §7` IPC 清单 ↔ `ipc.rs::COMMANDS` ↔ `capabilities` 三处集合
+  比对**无偏差**（闸门有效）；桌面端 `-` 与 `wsl` 相关未动。
+
 ### 2026-09-11 补记 · `gh` token 已补 `workflow` scope（上条遗留动作项闭环）—— guan
 
 - **原委**：上一条（依赖升级处置）登记了本机 `gh` token 缺 `workflow` scope、导致
