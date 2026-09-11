@@ -26,6 +26,10 @@ pub mod ipc;
 mod lifecycle;
 mod manifest;
 mod mcp;
+// 「唯一网络面」（AGENTS §7 / ADR-0006）的机器闸门。**只存在于测试构建**：它没有
+// 任何运行时职责，全部内容 = 源码扫描 + 豁免表 + 单测（2026-09-11，A2）。
+#[cfg(test)]
+mod network_gate;
 mod plugins;
 mod profiles;
 mod resolve;
