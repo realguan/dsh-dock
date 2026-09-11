@@ -106,12 +106,31 @@
      A2 全部 macOS 下游路径已带 triple；A4 空串正确；A6 真实资产名无歧义；
      **体积机制坐实**：三份 tgz 齐备时 x64 dmg = 58.87 MiB，与单份构建差
      **34.38 MiB ≈ 两份 tgz 之和（误差 0.004）**——「整目录塞进 .app」由此闭环。
-- **未验证 / 边界（不假装闭合）**：**CI 尚未实跑**（本次改动未推送）——真实 arm64 runner 上的
-  交叉构建、签名/公证、打标与 feed 生成须由 push 后的 CI 与下次 tag 发布确认；
-  本机验证为 `--no-sign`，**签名与公证路径未实测**；Windows/Linux leg 未改动但同批推送，
-  以其 CI 结果为准。
-- **后续动作项**：下一次 `v*` tag 前建议先跑一次 `workflow_dispatch` 或 push 观察
-  `build (macos-latest-x86_64)` 是否绿，再发版。
+- **CI 实跑结果（2026-09-11 推送后，run `34600694255`，`conclusion = success`）**：
+  5 个 job 全绿——`build (macos-latest)` / `build (macos-latest-x86_64)` /
+  `build (windows-latest)` / `build (ubuntu-latest)` / `coverage (baseline)`。
+  - **Intel leg 从零到产物走通**：日志逐字显示
+    `rustup target add x86_64-apple-darwin` → `cargo clippy --target x86_64-apple-darwin`
+    → `cargo test --no-run --target …` → `cargo tauri build --no-sign --target …`
+    → `DSH Dock_1.1.1_x64.dmg`（**产物 `DSH Dock-macOS-x86_64` = 24.4 MB**）。
+  - **撞名消除在真 CI 被证实**（C3）：日志先后出现未打标的
+    `DSH Dock.app.tar.gz`（Tauri 默认名）与打标后的 `DSH Dock_x86_64.app.tar.gz`
+    ——**这就是「若不打标两 leg 必同名」的直接实据**。arm64 leg 同步为
+    `DSH Dock_aarch64.app.tar.gz`，两者互不冲突。
+  - **README 体积数字被 CI 产物证实**：arm64 `22.5 MB`（声明 22）、
+    Intel `24.4 MB`（声明 24）、Windows `78.8 MB` = NSIS 39 + MSI 40（声明 39/40）、
+    Linux `140 MB` = deb 23 + rpm 23 + AppImage 94（声明相符）。
+  - **Windows 上次的红已消除**：`Unit tests` step = success（即本批 `0ab796c`
+    的测试夹具修复在真 Windows 生效）。
+- **未验证 / 边界（不假装闭合）**：**签名与公证路径仍未实测**（普通 push 走
+  `--no-sign`；签名只在 `v*` tag 构建触发），故 Intel 包的
+  codesign/notarize 链路要到下次 tag 才验；**self-update feed 的端到端**（真实客户端
+  从 `darwin-aarch64` / `darwin-x86_64` 各自取到正确包）需下次 tag 发布后验；
+  Intel leg **只编译不运行**测试（arm64 runner 上跑 x86_64 二进制依赖 Rosetta，
+  不保证预装）——执行面由原生 leg 覆盖。
+- **后续动作项**：下次 `v*` tag 发布时重点核对 ① macOS 两个 leg 的签名/公证均通过
+  ② `latest.json` 出现 **7 个**平台条目（含 `darwin-x86_64`）
+  ③ Release 资产里两个 `.app.tar.gz` 名字各带架构后缀、不重名。
 
 ### 2026-09-11 合并 PR #13（WSL 客体管理面 ADR-0016）并统一 patch 写入内核 —— guan（AI 协作）
 
