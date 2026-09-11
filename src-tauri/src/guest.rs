@@ -115,10 +115,14 @@ pub(crate) const FILE_FRAME: &str = "@@DSH_DOCK_FILE@@";
 pub(crate) const ENTRY_FRAME: &str = "@@DSH_DOCK_ENTRY@@";
 
 /// 目录**不存在**（与「存在但为空」必须区分：前者 = 该世界尚未初始化，
-/// 后者 = 真的没有子项）。也兼作「脚本确实跑到了」的哨兵——否则空目录的
-/// 输出为空串，会被 `run_wsl_capture` 折叠成「无输出」而误判为客体不可达。
+/// 后者 = 真的没有子项）。
 #[cfg(any(windows, test))]
 pub(crate) const LIST_MISSING: &str = "@@DSH_DOCK_LIST_MISSING@@";
+
+/// 目录**存在**的确认哨兵：即使目录为空或无匹配项，也确保脚本至少产生一行输出，
+/// 避免被 `run_wsl_capture` 的空串折叠误判为客体不可达。
+#[cfg(any(windows, test))]
+pub(crate) const LIST_PRESENT: &str = "@@DSH_DOCK_LIST_PRESENT@@";
 
 /// 组装「列客体 dsh home 下某目录」脚本：一条 entry 帧一行。
 /// 显式覆盖点文件（`.[!.]*` / `..?*`）——shell 通配默认不匹配点文件，而宿主侧
@@ -128,6 +132,7 @@ pub(crate) fn list_dir_script(rel_dir: &str) -> String {
     let path = format!("\"{HOME_EXPR}\"/{}", sh_quote(rel_dir));
     format!(
         "{}if [ -d {path} ]; then \
+         printf '{LIST_PRESENT}\\n'; \
          for e in {path}/* {path}/.[!.]* {path}/..?*; do \
          [ -e \"$e\" ] || continue; \
          printf '{ENTRY_FRAME}%s:%s\\n' \
@@ -607,6 +612,10 @@ rc 噪音一行
             "缺 kind 段的坏帧应跳过"
         );
         assert_eq!(parse_list_dir("@@DSH_DOCK_LIST_MISSING@@\n"), None);
+        assert_eq!(
+            parse_list_dir("@@DSH_DOCK_LIST_PRESENT@@\n"),
+            Some(Vec::new())
+        );
         assert_eq!(parse_list_dir(""), Some(Vec::new()));
     }
 

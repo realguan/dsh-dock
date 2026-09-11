@@ -135,13 +135,17 @@ pub fn scan_profiles_in_guest(distro: &str) -> Result<Vec<ProfileSummary>, Strin
             .iter()
             .map(|n| format!("profiles/{n}/package.json"))
             .collect();
+        let mut map: std::collections::HashMap<String, Option<String>> =
+            crate::guest::read_files(distro, &rels)?
+                .into_iter()
+                .collect();
         names
             .into_iter()
-            .zip(
-                crate::guest::read_files(distro, &rels)?
-                    .into_iter()
-                    .map(|(_, text)| text),
-            )
+            .map(|n| {
+                let rel = format!("profiles/{n}/package.json");
+                let text = map.remove(&rel).flatten();
+                (n, text)
+            })
             .collect()
     };
     Ok(assemble_profile_summaries(&entries))
@@ -303,14 +307,17 @@ pub fn read_profile_detail_in_guest(distro: &str, name: &str) -> Result<ProfileD
     validate_profile_name(name)?;
     let manifest_rel = format!("profiles/{name}/package.json");
     let patch_rel = format!("profiles/{name}/{PROFILE_PATCH_FILENAME}");
-    let mut got = crate::guest::read_files(distro, &[manifest_rel.clone(), patch_rel])?.into_iter();
-    let text = got.next().and_then(|(_, text)| text).ok_or_else(|| {
+    let mut got: std::collections::HashMap<String, Option<String>> =
+        crate::guest::read_files(distro, &[manifest_rel.clone(), patch_rel.clone()])?
+            .into_iter()
+            .collect();
+    let text = got.remove(&manifest_rel).flatten().ok_or_else(|| {
         format!(
             "profile「{name}」尚未物化（客体 {distro} 内无 {manifest_rel}）：\
                  内置模板名首次启动或首次 plugin add 后才有详情"
         )
     })?;
-    let patch_yaml = got.next().and_then(|(_, text)| text);
+    let patch_yaml = got.remove(&patch_rel).flatten();
     assemble_profile_detail(&text, patch_yaml, &format!("{distro}:{manifest_rel}"))
 }
 
