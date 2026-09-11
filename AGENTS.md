@@ -49,7 +49,7 @@
   prompts · contracts（含 dsh 复现台账）· adr 决策记录（§9）· executor ·
   macos-signing · roadmap（陷阱清单）· frontend-migration · spikes
 - `src-tauri/`：`src/` 模块按职责命名（updates = 唯一网络面；settings = 唯一持久化）；
-  **main.rs 6 行勿动**；build.rs 自动生成 allow-* 权限；capabilities/ 授权 remote 页面
+  **main.rs 6 行有效代码勿动**（7 物理行含 1 空行）；build.rs 自动生成 allow-* 权限；capabilities/ 授权 remote 页面
   （§7 三处同步）；resources/ 的 `dsh-snapshot/` 与 `pnpm/`（打包期经
   `scripts/fetch-pnpm-bundle.sh` 拉取）**永不入库**
 - `frontend/`：React SPA，单入口按窗口 label 路由；`node-map/` 的
@@ -124,6 +124,12 @@
   `~/.dsh-dock-test`（`cargo test` 的 dsh home，2026-09-10 审核：测试**一律无视**
   环境里的 `DSH_HOME` 并锁进此目录——否则真机用例会打开用户真实 profile 与正式包
   抢同一 profile；可丢失可重建）。
+- 已登记落盘资产（2026-09-11 补登记，判据 `docs/team/文档一致性巡检-2026-09-11.md`）：
+  `node-map.json` / `.sig`（`updates.rs:339`，签名校验过的 node 版本映射缓存，
+  1 MiB 上限、校验失败回退内置基线）· `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
+  PID 锁登记表）· `<文件名>.bak-<unix秒>` 覆写前备份族（`fs_backup.rs`，2026-09-08 U9）·
+  MCP 服务器增删改对 profile `cordis.patch.yml` 的重序列化写入（`mcp.rs`；
+  **待与插件中心头部保真写入器统一**，见 `docs/team/待裁定清册-2026-09-11.md` B2）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
@@ -142,49 +148,42 @@
 
 ## 7. IPC 与网络面（例外册，登记制）
 
-- **IPC 命令登记**（新命令先登记再实现）：`choose_profile` `terminal_action`
-  `get_update_status` `check_updates` `list_dsh_versions`（DSH 版本列表·版本选择器
-  数据源：packument 全版本 + 通道归类 + 与已装版本相对关系，2026-09-09）
-  `get_client_update` `client_update_check`
-  `client_update_apply` `open_external` `open_workbench_in_browser` `get_workbench_url`
-  `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`
-  `copy_profile` `rename_profile` `delete_profile` `set_default_profile`
-  `get_default_profile` `switch_profile` `get_active_profile`
-  `list_profile_plugins` `get_plugin_runtime`。
-  `install_plugin` `remove_plugin` `update_plugin`。
-  `get_plugin_rows` `set_plugin_disabled`。
-  `check_plugin_updates` `list_plugin_versions`。
-  `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
-  配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
-  `list_sessions` `repair_session` `repair_all_sessions`（会话维护与自愈，2026-08-31）。
-  `get_shell_settings` `set_shell_settings` `get_system_diagnostics` `get_app_logs`（系统控制台与诊断，2026-08-31）。
-  `get_credentials_raw` `save_credentials_raw` `get_credentials_summary` `set_credential_key`（凭据安全管理与脱敏，2026-08-31）。
-  `get_dsh_settings_raw` `save_dsh_settings_raw`（DSH 全局引擎设置，2026-08-31）。
-  `list_mcp_servers` `save_mcp_server` `delete_mcp_server`（MCP 服务器结构化管理，2026-08-31）。
-  `delete_session`（会话删除，2026-08-31）。
-  `fetch_market_registry`（社区插件市场 Registry 拉取，2026-08-31）。
-  `open_profiles_window` `focus_main_window`（控制中心与主工作台窗口双向切换，2026-09-01）。
-  `get_boot_status`（读取启动阶段缓存的状态与错误，防早期事件竞态丢失，2026-09-04）。
+- **IPC 命令登记**（新命令先登记再实现；55 条，清单一致性另有 cargo test 闸门）：
+  核心与工作台：`choose_profile` `terminal_action` `get_update_status` `check_updates`
+  `list_dsh_versions`（packument 全版本 + 通道归类，2026-09-09）`get_client_update`
+  `client_update_check` `client_update_apply` `open_external` `open_workbench_in_browser`
+  `get_workbench_url` `boot_in_wsl` `choose_mode` `get_boot_status`（启动态缓存，防竞态，2026-09-04）。
+  Profile：`list_profiles` `get_profile_detail` `create_profile` `copy_profile`
+  `rename_profile` `delete_profile` `set_default_profile` `get_default_profile`
+  `switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
+  插件：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
+  `update_plugin` `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates`
+  `list_plugin_versions` `list_all_plugins` `copy_plugin_config`（patch 行原样复制，
+  写入例外 #4，ADR-0009 五修 2026-08-30）。
+  会话/控制台/凭据/设置/MCP（2026-08-31 批）：`list_sessions` `repair_session`
+  `repair_all_sessions` `delete_session` `get_shell_settings` `set_shell_settings`
+  `get_system_diagnostics` `get_app_logs` `get_credentials_raw` `save_credentials_raw`
+  `get_credentials_summary` `set_credential_key` `get_dsh_settings_raw`
+  `save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`。
+  市场：`fetch_market_registry`（2026-08-31）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update` / `app:settings-changed`
   （仅 main/about/profiles，capability 授权）。
 - **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`src/ipc.rs` COMMANDS 登记 →
   `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
-- **唯一网络面 = `updates.rs`**；其余模块禁触网，新网络需求先在此登记；外链域名在
-  `EXTERNAL_URL_HOSTS` 登记。已登记用途：~~boot 期 pnpm 补齐（`npm i -g pnpm`，
-  2026-08-28，ADR-0009 口径 2）~~（2026-09-04 随探测层退役，由下方引擎引导接替）；
-  **插件运行态回环只读查询**（`plugins.rs`，
-  `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
-  一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
-  registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /
-  同超时 / 同 packument 体积上限（2026-08-29，4.4④）；**社区插件市场 Registry 拉取**：
-  `updates.rs` `fetch_market_registry`，镜像链 `awesome-dsh-plugin.com` 与 GitHub raw（2026-08-31）；
-  **引擎引导**（2026-09-03，ADR-0010）：壳内置 pnpm12 经 `runtime set node` /
-  `pnpm add -g` 下载 node 与 dsh（`PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS` 注入
-  npmmirror → 官方镜像链），updates.rs 编排的子进程网络动作；WSL 客体同源
-  （投递 musl pnpm、网络在客体进程内、镜像链同注入——客体 pnpm 属壳资产）。
-  专项裁定见 §9 索引对应 ADR。
+- **唯一网络面 = `updates.rs`**（专项裁定见 §9 ADR-0006）；其余模块禁触网，新网络需求先在此
+  登记；外链域名在 `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**
+  （`plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、
+  仅活跃会话、一次性快照不订阅——2026-08-29）；**工作台 Token 环回兑换**
+  （`boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET、5s、redirects=0；
+  2026-09-04 落地、**2026-09-11 补登记**——原漏登，`docs/team/待裁定清册-2026-09-11.md` A1）；
+  **插件更新检查 / 市场 Registry 拉取**（`updates.rs` `npm_packument_versions` /
+  `fetch_market_registry`，镜像链与超时同 dsh 版本检查，2026-08-29 / 08-31）；
+  **客户端自更新**（`updates.rs::APP_RELEASE_FEED` + `updater.rs`，清单端点在
+  `tauri.conf` 的 `plugins.updater.endpoints`——**2026-09-11 补登记**）；**引擎引导**
+  （2026-09-03，ADR-0010）：壳内置 pnpm12 经 `runtime set node` / `pnpm add -g` 下载
+  node 与 dsh（镜像 env 注入），WSL 客体同源。~~boot 期 pnpm 补齐~~（2026-09-04 退役）。
 
 ## 8. AI 交互约束
 
