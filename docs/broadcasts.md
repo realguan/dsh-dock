@@ -59,6 +59,37 @@
   我因 PATH 未含 homebrew 而误判为"gh 不可用"，实际本机 PATH 一直缺 `/opt/homebrew/bin`
   （同一天 Windows 交叉编译的 windres 也是这个原因）。教训：**PATH 类结论必须先
   显式补全常见 bin 目录再下判断**。
+- **第二次返工（同日）**：clippy 修好后 CI 继续跑，windows-latest 的 `Unit tests`
+  又红，两条**都是真 bug**（非笔误），且都只在 Windows 暴露：
+  1. **源码闸门被 CRLF 打穿**：`production_spawns_go_through_lifecycle_seam` 的模式
+     写死 LF，而仓库**没有 `.gitattributes`**——Git for Windows 的 `autocrlf` 把源码
+     checkout 成 CRLF → 测试模块截断失效 → 测试里的裸 spawn 被误报成生产违规，
+     **闸门在 Windows 上恒红**（维护者本地跑 cargo test 必撞）。修：抽
+     `scan_unguarded_spawns` 纯函数并先把 `\r\n` 归一到 `\n`，补 CRLF/LF 双跑回归
+     （变异验证：还原归一即红，且**精确复现 CI 的那条误报**）。
+  2. **持锁期间写文件**：Windows 的 `LockFileEx` 是**强制锁**，持锁时另一句柄写不进去
+     （os error 33）；macOS 的 `flock` 是劝告锁故绿。修：先写内容再加锁。
+  修复提交 `413b708`。
+- **防复发性加固**：新增 `.gitattributes`（`* text=auto eol=lf` + 二进制声明，
+  `43f65fd`）——从根上消除"本地 checkout 换行 ≠ CI"这类只在一端暴露的偏差。
+  **零 churn 验证**：`git add --renormalize .` 后暂存区仅该文件本身（索引原本即 LF），
+  无大 diff、无历史改写。
+- **收尾方式（维护者裁定）**：删除指向坏提交的 tag（Release 从未发布，可安全删）→
+  **先把修复推 master 让 CI 三平台验一遍 → 验绿再打 tag**（不再"先打后赌"）。
+  master 三平台全绿（含 windows-latest）后重打 `v1.1.1` 并推送。
+- **✅ 发版成功（2026-09-11T03:30:00Z）**：三平台构建 + `release` 作业**全绿**；
+  Release 已发布（非 draft / 非 prerelease）：
+  <https://github.com/realguan/dsh-dock/releases/tag/v1.1.1>
+  - 产物 14 件：macOS `.dmg`(aarch64) / `.app.tar.gz`、Windows `.msi` + `-setup.exe`、
+    Linux `.deb` / `.rpm` / `.AppImage`，各平台 updater `.sig`，以及 `latest.json`。
+  - `latest.json` 已核验：version=`v1.1.1`，六平台条目（darwin-aarch64 /
+    windows-x86_64-msi / windows-x86_64-nsis / linux-x86_64-appimage / -deb / -rpm）
+    url 与 signature 齐全——客户端「检查更新」数据源正确。
+  - Release 正文已核验：1332 字符，首行为强契约标题 `## [v1.1.1] - 2026-09-11`。
+- **冻结期解除（三平台产物验收通过）**：master 恢复收 feat。
+  仍挂着的**唯一未验证项 = Windows 真机人工验证**（安装包已出，但"普通账户首启
+  三卡就绪 / 胶囊开控制中心 / 重启无 ERR_CONNECTION_REFUSED / 强杀后不卡落位"
+  这四项只有真机能确认）——清单见 `docs/executor.md`，待维护者用 Windows 笔记本跑。
 
 ### 2026-09-11 发版 · v1.1.1 会话占用根治与 Windows 首启修复 —— guan（AI 协作）
 
