@@ -72,11 +72,22 @@ export const enUS: AppCopy = {
       upgrade: "Upgrade DSH & Retry",
       upgrade_only: "Upgrade in Background",
       reselect: "Reselect",
+      // v1.2.0 D1 (task-52): the way out when the local Windows mode fails on
+      // symlink privilege. Contract: boot_failure.rs:135
+      // `vec!["boot_in_wsl", "retry"]`. Without this key the label falls back to
+      // the raw English id `boot_in_wsl` (`actionLabel`'s `?? id`).
+      boot_in_wsl: "Switch to WSL mode",
     } as Record<string, string>,
     // Failure-detail suffix (2026-09-11, task-25): was an inline literal in the
     // component. ASCII parens + a leading space (zh uses full-width parens, which
     // need no space); composed as `${msg}${reselectHint}`.
     reselectHint: " (you can go back and reselect)",
+    // Error-card collapse/expand (v1.2.0 report 2.1): the card could only be read,
+    // not dismissed, so a stale card kept fighting the wizard. Collapsing folds the
+    // body only — the header (icon + title + index) stays visible, so the error is
+    // never silently hidden.
+    collapseDetail: "Collapse",
+    expandDetail: "Expand",
     // Error-card static labels (2026-09-08, ADR-0012)
     diagHeader: "DIAG Console",
     cardHeader: "Launch Interrupted",
@@ -102,6 +113,15 @@ export const enUS: AppCopy = {
       network_unavailable: {
         title: "Network unavailable",
         suggestion: "Live downloads need a network connection; check your network and retry.",
+      },
+      // v1.2.0 D1 (task-52): aligned with Rust `boot_failure.rs::title/suggestion`.
+      // Design point (D1 §4): **rule out the wrong direction first** — users
+      // naturally suspect the network, but the real cause is missing Windows
+      // symlink privilege; not saying so wastes their time.
+      symlink_privilege_required: {
+        title: "Insufficient system permission: cannot create symbolic links",
+        suggestion:
+          "This is not a network problem: the engine needs to create a symbolic link, and the current Windows account lacks that privilege. The easiest fix is to switch to the \"WSL\" environment (pick it on the launch screen, or set it as the default in Control Center) — an already-installed WSL distro does not need that privilege. If you must stay in local mode: run this app as administrator, or enable Developer Mode in Settings → System → For developers, then retry.",
       },
       unknown: {
         title: "DSH workbench failed to start",
@@ -623,6 +643,17 @@ export const enUS: AppCopy = {
     // lied about the default language for any non-zh system locale. Only the
     // system card keeps a subtitle, and that one is true and useful.
     localeSystemHint: "Auto Detect",
+    // Launch environment on next start (v1.2.0 report 1.3). Values map 1:1 to the
+    // Rust `defaultMode`: null = ask every time; "local" / "wsl" = start directly.
+    bootModeSection: "Launch Environment on Next Start",
+    bootModeDesc: "Pick the environment the app enters by default at each launch. This affects startup only; the running session is untouched.",
+    bootModeAsk: "Ask Every Time",
+    bootModeAskHint: "Show the environment picker at startup",
+    bootModeLocal: "Run Locally",
+    bootModeLocalHint: "Start directly in the local environment",
+    bootModeWsl: "Inside WSL2",
+    bootModeWslHint: "Start directly inside the WSL2 distro",
+    bootModeFallbackHint: "If the local environment fails to initialise (e.g. no symlink privilege on Windows), set the default to \"Inside WSL2\" to work around it.",
     guardianSection: "High Availability & Crash Guardian",
     autoRestartLabel: "Auto-Recovery Guardian",
     autoRestartDesc: "Automatically restarts and recovers DSH session upon unexpected process exit. If 3 crashes occur within 60 seconds, circuit-breaker triggers automatically to prevent restart loops.",

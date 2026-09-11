@@ -42,13 +42,12 @@ pub fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), Stri
 #[tauri::command]
 pub fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
-        let error = shell_state.boot_error.lock().ok().and_then(|e| e.clone());
-        let steps = shell_state
-            .boot_steps
-            .lock()
-            .ok()
-            .map(|s| s.clone())
-            .unwrap_or_default();
+        // 语义（2026-09-11 收紧）：缓存由轮次起点 `begin_boot()` 清空，故这里返回的
+        // 永远是**当前轮次**的可见状态——新一轮已开始但尚无新错误时必为 `null`，
+        // 而不是上一轮的错误。曾因清缓存散落在 3 个调用点（漏 2 处）导致旧错误
+        // 经本命令补水进新文档（v1.2.0 实测 2.1）。
+        let error = shell_state.boot.error();
+        let steps = shell_state.boot.steps();
         Ok(serde_json::json!({
             "steps": steps,
             "error": error,
@@ -88,9 +87,11 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
         return Err("WSL 仅支持 Windows 平台。".to_string());
     }
     let state = app.state::<Arc<ShellState>>().inner().clone();
-    state.clear_boot_cache();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // 选择落地同样是一次全新启动（ADR-0014）：领令牌作废在途启动线程。
+    // 可见缓存（上一轮的错误/步骤）随 begin_boot 一并撤销——2026-09-11 前此处
+    // 另有一句 clear_boot_cache()，与 begin_boot 合并后由轮次起点统一负责。
+    // 位置刻意留在 data_dir 解析之后：解析失败时本轮尚未开始，不应作废在途启动。
     let token = state.begin_boot();
     *state.handoff.lock().unwrap() = None;
     if set_default {

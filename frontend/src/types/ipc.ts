@@ -335,10 +335,14 @@ export interface LogQueryResult {
 }
 
 /// 启动失败分类（ADR-0012）：tagged enum，`kind` 为判别式。
+/// 2026-09-11（task-52）：补 `symlink_privilege_required`（v1.2.0 D1 新增，
+/// Windows 本地模式符号链接特权不足）——**只加不重排**，与
+/// `boot_failure.rs` 的 serde 序列化值逐字对应。
 export type BootFailureKind =
   | "credentials_mismatch"
   | "incompatible_options"
   | "network_unavailable"
+  | "symlink_privilege_required"
   | "unknown"
 
 export interface BootFailure {

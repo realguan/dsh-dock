@@ -21,7 +21,43 @@ import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { Button } from "@/components/ui/button"
 
-const INVOKABLE: ReadonlySet<string> = new Set(["retry", "upgrade", "upgrade_only"])
+/**
+ * 动作 id → IPC 分派表（2026-09-11，task-52 / T-F5）。
+ *
+ * **为什么抽成表**：改前 `run()` 是 `if (!INVOKABLE.has(id)) return` +
+ * `api.terminalAction(id as TerminalAction)` —— 一条**只认 terminalAction** 的隐式假设。
+ * rust-core 的 D1 给错误卡下发了 `actions=["boot_in_wsl","retry"]`（Windows 本地模式
+ * 因符号链接特权失败 → 引导改用 WSL），而 `boot_in_wsl` 是**另一条 IPC**
+ * （`api.bootInWsl()`），既不在 INVOKABLE 里、也不是 `TerminalAction` 的成员 ⇒
+ * `run()` 直接 return ⇒ **按钮点了没反应（假按钮，比没有更糟）**。
+ *
+ * 现在分派是**显式**的：每个可点动作都必须在此登记目标 IPC，未知 id 才 return。
+ * 契约来源：`docs/team/V120-D1-引擎引导全局安装.md` §5、
+ * `src-tauri/src/boot_failure.rs:135`（`vec!["boot_in_wsl", "retry"]`）。
+ */
+export type ActionIpc = "terminalAction" | "bootInWsl"
+
+/** 可点动作 → 目标 IPC 的**唯一事实源**（`INVOKABLE_ACTIONS` 由它派生，两处不漂移）。 */
+const ACTION_IPC: Readonly<Record<string, ActionIpc>> = {
+  retry: "terminalAction",
+  upgrade: "terminalAction",
+  upgrade_only: "terminalAction",
+  boot_in_wsl: "bootInWsl",
+}
+
+/** 可由本组件分派的动作 id 集合（从分派表派生，避免"集合/分派"两处漂移）。 */
+export const INVOKABLE_ACTIONS: ReadonlySet<string> = new Set(Object.keys(ACTION_IPC))
+
+/**
+ * 纯函数：动作 id → 该调哪条 IPC。未知 id 返回 `null`（调用方不猜、保持原姿态）。
+ * 抽成纯函数是为了可测——本仓禁 RTL/jsdom（AGENTS §4.3），否则"假按钮"这类
+ * 「接线存在但目标错」的缺陷无法被机器化拦住。
+ */
+export function resolveActionCall(id: string): { kind: "invoke"; ipc: ActionIpc } | null {
+  const ipc = ACTION_IPC[id]
+  if (!ipc) return null
+  return { kind: "invoke", ipc }
+}
 
 export function ErrorCard({
   payload,
@@ -41,6 +77,8 @@ export function ErrorCard({
   const [pending, setPending] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const { copied, copy } = useCopy()
+  // 诊断卡折叠态（v1.2.0 实测 2.1）：默认展开——错误必须被看见；折叠是用户显式选择。
+  const [collapsed, setCollapsed] = useState(false)
   const actions = payload.actions?.length ? payload.actions : ["retry"]
   // 2026-09-08（ADR-0012）：优先按结构化分类取本地化文案；后端文案作为兼容分支
   // （旧缓存载荷 / 未来新增的未识别 kind）。
@@ -54,12 +92,19 @@ export function ErrorCard({
 
   const run = (id: string) => {
     if (pending) return
-    if (!INVOKABLE.has(id)) return
+    // 显式分派（task-52）：未知 id 才放弃；已知 id 各自走正确的那条 IPC。
+    const call = resolveActionCall(id)
+    if (!call) return
     setPending(id)
     setActionError(null)
     useBootStore.getState().clearError()
-    api
-      .terminalAction(id as TerminalAction)
+    // `boot_in_wsl` 不是 terminalAction 的成员（TerminalAction 联合类型不含它），
+    // 故必须按分派目标分别调用，不能统一 `id as TerminalAction` 蒙混过去。
+    const invoke =
+      call.ipc === "bootInWsl"
+        ? api.bootInWsl()
+        : api.terminalAction(id as TerminalAction)
+    invoke
       .catch((e) => {
         setPending(null)
         const msg = String(e instanceof Error ? e.message : e)
@@ -96,11 +141,29 @@ export function ErrorCard({
             {diag ? t.error.diagHeader : t.error.cardHeader}
           </span>
         </div>
-        <span className="font-mono text-label font-medium text-dim tabular-nums">
-          #{typeof index === "number" ? String(index).padStart(2, "0") : "01"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-label font-medium text-dim tabular-nums">
+            #{typeof index === "number" ? String(index).padStart(2, "0") : "01"}
+          </span>
+          {/* 收起/展开出口（v1.2.0 实测 2.1）：诊断卡不再是"只能看不能关"的一块。
+              **不误藏**：收起后卡头（警示图标 + 标题 + 序号 + 展开按钮）仍在原位，
+              用户随时能展开回来——折的是内容，不是"这里出过错"这一事实。 */}
+          <button
+            type="button"
+            aria-expanded={!collapsed}
+            title={collapsed ? t.error.expandDetail : t.error.collapseDetail}
+            onClick={() => setCollapsed((c) => !c)}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-label font-medium text-dim transition-colors hover:text-ink"
+          >
+            <ChevronDown
+              className={`size-3.5 transition-transform ${collapsed ? "" : "rotate-180"}`}
+            />
+            {collapsed ? t.error.expandDetail : t.error.collapseDetail}
+          </button>
+        </div>
       </div>
 
+      {!collapsed && (
       <div className="p-5">
         <h2 className="text-base font-semibold tracking-tight text-ink">{title}</h2>
 
@@ -206,6 +269,7 @@ export function ErrorCard({
           </details>
         )}
       </div>
+      )}
     </motion.section>
   )
 }

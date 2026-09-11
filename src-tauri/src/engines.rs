@@ -722,6 +722,73 @@ pub fn shim_add_node(data_dir: &Path, path_env: &str) -> Result<()> {
     Ok(())
 }
 
+/// 单条 registry 安装失败的成因类别（v1.2.0 D1，2026-09-11）。
+///
+/// **为什么需要它**：两条 registry 的失败被合并成一句「registry 均不可达」——
+/// 但 Windows 普通账户的失败根本不是网络问题（是 global package hash link 需要
+/// `SeCreateSymbolicLinkPrivilege`）。文案把真因盖住 ⇒ 错误卡给「检查网络后重试」
+/// ⇒ 重试必然再失败。分类拆开后才可能给可行动出路。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstallFailureKind {
+    /// 符号链接特权不足（Windows 普通账户；非网络问题）。
+    SymlinkPrivilege,
+    /// 网络 / registry 不可达。
+    Network,
+    /// 其它（构建脚本、磁盘、未知）。
+    Other,
+}
+
+/// 归类单条安装错误文本（**纯函数**，供单测）。
+///
+/// 判据顺序：**先特权、后网络**——特权失败的文本里可能同时出现 `registry`
+/// 与 `os error 5`（聚合文案即如此），顺序反了就会把特权类吸进网络类。
+pub(crate) fn classify_install_failure(err: &str) -> InstallFailureKind {
+    let e = err.to_lowercase();
+    if crate::boot_failure::is_symlink_privilege_detail(&e) {
+        InstallFailureKind::SymlinkPrivilege
+    } else if e.contains("network")
+        || e.contains("registry")
+        || e.contains("econnrefused")
+        || e.contains("etimedout")
+        || e.contains("tls")
+        || e.contains("handshake")
+        || e.contains("eai_again")
+    {
+        InstallFailureKind::Network
+    } else {
+        InstallFailureKind::Other
+    }
+}
+
+/// 由各 registry 的失败明细聚合出**面向用户**的失败原因（纯函数，供单测）。
+///
+/// 语义：
+/// - 任一条为特权类 ⇒ 归为特权类（这是**可行动**的结论，且与"网络"完全不同）；
+///   并带 [`crate::boot_failure::SYMLINK_PRIVILEGE_MARKER`] 稳定标记，供分类表命中。
+/// - 否则若任一条为网络类 ⇒ 归为网络类（沿用原「registry 均不可达」口径）。
+/// - 否则落兜底文案。
+///
+/// 保留逐条明细（`errors`）以便排查——聚合结论**不吞**证据。
+pub(crate) fn install_failure_message(errors: &[String]) -> String {
+    let kinds: Vec<InstallFailureKind> =
+        errors.iter().map(|e| classify_install_failure(e)).collect();
+    let any_privilege = kinds.contains(&InstallFailureKind::SymlinkPrivilege);
+    let any_network = kinds.contains(&InstallFailureKind::Network);
+    let detail = errors.join("；");
+    if any_privilege {
+        format!(
+            "{}引擎安装需要创建符号链接，但当前账户没有该权限（Windows 的 \
+             SeCreateSymbolicLinkPrivilege）。这不是网络问题，重试不会成功。\n\
+             各 registry 明细：{detail}",
+            crate::boot_failure::SYMLINK_PRIVILEGE_MARKER
+        )
+    } else if any_network {
+        format!("dsh 引导安装失败（registry 均不可达）：{detail}")
+    } else {
+        format!("dsh 引导安装失败：{detail}")
+    }
+}
+
 /// `pnpm add -g @deepseek-ai/dsh@<version>`：registry 镜像链逐个尝试
 ///（allow-build 放行沿 ADR-0009/0005 同一口径）。非 TTY 安装进度行
 ///（`Progress: resolved N, … downloaded M`）经回调上抛（阶段 = Dsh，
@@ -769,10 +836,9 @@ pub fn install_dsh_global(
             }
         }
     }
-    Err(anyhow!(
-        "dsh 引导安装失败（registry 均不可达）：{}",
-        errors.join("；")
-    ))
+    // 失败归类后再聚合（v1.2.0 D1）：此前一律说「registry 均不可达」，
+    // 把 Windows 的符号链接特权失败也说成网络问题 ⇒ 错误卡给「检查网络后重试」。
+    Err(anyhow!(install_failure_message(&errors)))
 }
 
 // ---------- 编排入口 ----------
@@ -902,6 +968,88 @@ fn describe_found(found: &Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **v1.2.0 D1 复现锚（纯函数层）**：Windows 普通账户的 `os error 5` 必须归为
+    /// **特权类**而非网络类——否则聚合文案会继续说「registry 均不可达」。
+    #[test]
+    fn install_failure_classifies_privilege_apart_from_network() {
+        // 截图① 的原文形态（含 `registry` 字样 + os error 5）——顺序判据的关键反例
+        let privilege = "npmjs.org: link the global package install directory at \
+                         C:\\x\\engines\\global\\v11\\db8a\\2082 -> 拒绝访问。(os error 5)";
+        assert_eq!(
+            classify_install_failure(privilege),
+            InstallFailureKind::SymlinkPrivilege,
+            "特权失败被归类错误（其中含 registry 字样，必须先判特权）"
+        );
+        // 纯网络类
+        for net in [
+            "npmmirror: tls handshake eof",
+            "registry https://registry.npmjs.org/ unreachable",
+            "connect ECONNREFUSED 104.16.0.35:443",
+        ] {
+            assert_eq!(
+                classify_install_failure(net),
+                InstallFailureKind::Network,
+                "网络类误判：{net}"
+            );
+        }
+        // 其它（不认识）
+        assert_eq!(
+            classify_install_failure("postinstall script failed: koffi build error"),
+            InstallFailureKind::Other
+        );
+        // 英文形（`Access is denied` 是 pnpm 12 在 Windows 的原始文案）
+        assert_eq!(
+            classify_install_failure("Failed to create symlink: Access is denied. (os error 5)"),
+            InstallFailureKind::SymlinkPrivilege
+        );
+    }
+
+    /// 聚合文案：特权优先于网络，且带稳定标记（供 `boot_failure` 分类表命中）。
+    #[test]
+    fn install_failure_message_privileges_take_precedence_and_carry_marker() {
+        // 混合：一条网络 + 一条特权 ⇒ 结论必须是特权（"可行动"的那条）
+        let mixed = vec![
+            "npmmirror: tls handshake eof".to_string(),
+            "npmjs.org: -> 拒绝访问。(os error 5)".to_string(),
+        ];
+        let msg = install_failure_message(&mixed);
+        assert!(
+            msg.contains(crate::boot_failure::SYMLINK_PRIVILEGE_MARKER),
+            "特权类结论必须带稳定标记（否则分类表命中不了）：{msg}"
+        );
+        assert!(
+            !msg.contains("registry 均不可达"),
+            "特权类不得继续说『registry 均不可达』：{msg}"
+        );
+        assert!(
+            msg.contains("不是网络问题"),
+            "文案必须掐断错误排查方向：{msg}"
+        );
+        // 明细不吞：两条原文都要在
+        assert!(msg.contains("tls handshake eof") && msg.contains("os error 5"));
+
+        // 纯网络 ⇒ 沿用原口径（回归保护：不要改掉既有的网络文案）
+        let net = vec!["npmmirror: tls handshake eof".to_string()];
+        assert!(install_failure_message(&net).contains("registry 均不可达"));
+
+        // 其它 ⇒ 不冒充网络
+        let other = vec!["build script failed".to_string()];
+        let m = install_failure_message(&other);
+        assert!(!m.contains("registry 均不可达") && !m.contains("不是网络问题"));
+    }
+
+    /// 端到端粘合：生产侧聚合出的特权文案，必须被 `boot_failure` 分类表判为
+    /// **特权变体**（两条判据共用同一个标记常量 ⇒ 不会各自漂移）。
+    #[test]
+    fn privilege_message_round_trips_through_boot_failure_classifier() {
+        let msg = install_failure_message(&["npmjs.org: -> 拒绝访问。(os error 5)".to_string()]);
+        assert_eq!(
+            crate::boot_failure::BootFailure::from_legacy_detail(&msg),
+            crate::boot_failure::BootFailure::SymlinkPrivilegeRequired,
+            "生产文案未被分类表识别——标记常量两侧漂移了"
+        );
+    }
 
     #[test]
     fn parse_download_progress_handles_spike_formats() {

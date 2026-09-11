@@ -201,10 +201,9 @@ pub fn run() {
                 forced_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
                 crash_timestamps: Mutex::new(Vec::new()),
-                boot_error: Mutex::new(None),
-                boot_steps: Mutex::new(Vec::new()),
-                // 首启代际从 0 起：首启线程用 begin_boot() 领 1（ADR-0014）。
-                boot_generation: AtomicU64::new(0),
+                // 启动轮次状态（代际令牌 + 可见缓存）：首启代际从 0 起，
+                // 首启线程用 begin_boot() 领 1（ADR-0014）。
+                boot: boot::BootRound::default(),
                 shutting_down: AtomicBool::new(false),
                 handoff: Mutex::new(None),
             });

@@ -223,3 +223,66 @@ describe("偏好设置面板文案收口（task-20）", () => {
     expect(String(en.shortcutDefault)).toContain("⌘ + ,")
   })
 })
+
+/**
+ * F2：「下次启动的运行环境」入口（2026-09-11，v1.2.0 实测 1.3）。
+ *
+ * 缺口措辞（lead 订正）：不是「用户完全不可达」——Windows 托盘菜单「打开方式」
+ * （boot.rs:777 的 switch_mode）也会写 default_mode；真实缺口是
+ * 「**应用窗口内无入口**」。本组断言该窗口内入口的接线与契约约束。
+ */
+describe("F2：下次启动的运行环境入口", () => {
+  const BOOT_MODE_KEYS = [
+    "bootModeSection",
+    "bootModeDesc",
+    "bootModeAsk",
+    "bootModeAskHint",
+    "bootModeLocal",
+    "bootModeLocalHint",
+    "bootModeWsl",
+    "bootModeWslHint",
+    "bootModeFallbackHint",
+  ] as const
+
+  it("9 个新键两侧对称、非空，且 en 侧不含 CJK（enUsNoLeak 口径）", () => {
+    for (const key of BOOT_MODE_KEYS) {
+      expect(key in zh, `zh-CN 缺 console.${key}`).toBe(true)
+      expect(key in en, `en-US 缺 console.${key}`).toBe(true)
+      expect(String(zh[key]).length, `zh-CN console.${key} 为空`).toBeGreaterThan(0)
+      expect(String(en[key]).length, `en-US console.${key} 为空`).toBeGreaterThan(0)
+      expect(CJK.test(String(en[key])), `en-US console.${key} 含中文`).toBe(false)
+    }
+  })
+
+  it("组件消费全部新键（入口真的渲染出来了）", () => {
+    for (const key of BOOT_MODE_KEYS) {
+      expect(preferencesPaneCode, `组件未消费 t.console.${key}`).toContain(
+        `t.console.${key}`,
+      )
+    }
+  })
+
+  it("平台语义走 usePlatform().can.*（不散写 os === 'windows'）", () => {
+    expect(preferencesPaneCode).toContain("can.chooseMode")
+    expect(preferencesPaneCode).not.toMatch(/os === ["']windows["']/)
+  })
+
+  it("经 patchShellSettings 写 defaultMode —— 不新增 IPC（§7 登记制）", () => {
+    expect(preferencesPaneCode).toContain("patchShellSettings({ defaultMode:")
+    // 新增 IPC 的红线：本模块不得出现新的 invoke/api.* 调用面
+    expect(preferencesPaneCode, "疑似新增 IPC 调用").not.toMatch(/api\.\w+\(/)
+  })
+
+  it("三态取值与 Rust 契约一致：null = 每次询问，local/wsl = 直接启动", () => {
+    // 断言组件确实提供了三个选项，且 null 那一支存在（None 语义）
+    expect(preferencesPaneCode).toContain("bootModeAsk")
+    expect(preferencesPaneCode).toContain("bootModeLocal")
+    expect(preferencesPaneCode).toContain("bootModeWsl")
+    expect(preferencesPaneCode).toMatch(/value:\s*null/)
+  })
+
+  it("含「可切到 WSL」的可行动出路文案（与 T-D1 引导失败呼应）", () => {
+    expect(String(zh.bootModeFallbackHint)).toContain("WSL")
+    expect(String(en.bootModeFallbackHint)).toContain("WSL")
+  })
+})

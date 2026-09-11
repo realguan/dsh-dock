@@ -77,11 +77,21 @@ export const t = {
       upgrade: "升级 DSH 并重试",
       upgrade_only: "后台升级",
       reselect: "返回重选",
+      // v1.2.0 D1（task-52）：Windows 本地模式因符号链接特权失败时的出路。
+      // 契约：`boot_failure.rs:135` `vec!["boot_in_wsl", "retry"]`；
+      // 无此键会兜底成英文 id `boot_in_wsl`（`actionLabel` 的 `?? id`）。
+      // 文案取自 D1 §5 建议：zh「改用 WSL 模式打开」。
+      boot_in_wsl: "改用 WSL 模式打开",
     } as Record<string, string>,
     // 失败详情后缀（2026-09-11 task-25）：原为组件内联字面量（zh-CN 全角括号、
     // en 侧需 ASCII 括号 + 前置空格），故并入字典。两处同源拼接：
     // `pages/BootSelector.tsx` 与 `components/boot/ErrorCard.tsx`。
     reselectHint: "（可返回重选）",
+    // 错误卡收起/展开（v1.2.0 实测 2.1）：诊断卡此前只能看不能关，卡在已迁移成功的
+    // 画面上与向导互相顶着。折叠只折内容——卡头（警示图标 + 标题 + 序号）保持可见，
+    // 故「错误信息不得被误藏」仍成立。
+    collapseDetail: "收起",
+    expandDetail: "展开",
     // 错误卡静态标签（2026-09-08，ADR-0012 顺手收口硬编码中文）
     diagHeader: "DIAG 诊断控制台",
     cardHeader: "启动中断",
@@ -106,6 +116,14 @@ export const t = {
       network_unavailable: {
         title: "网络不可用",
         suggestion: "实时下载需要网络连接；检查网络后重试。",
+      },
+      // v1.2.0 D1（task-52）：与 Rust `boot_failure.rs::title/suggestion` 对齐。
+      // 设计要点（D1 §4）：**先否定错误方向**——用户的自然排查方向是网络，
+      // 真因是 Windows 符号链接特权；不点破就会继续白费时间。
+      symlink_privilege_required: {
+        title: "系统权限不足：无法创建符号链接",
+        suggestion:
+          "这不是网络问题：引擎需要创建符号链接，而当前 Windows 账户没有该权限。最省事的办法是改用「WSL」运行环境（在启动页选择，或在控制中心设为默认）——已装好的 WSL 发行版不需要该权限。若必须用本地模式：以管理员身份运行本应用，或在「设置 → 系统 → 开发者选项」开启开发者模式后重试。",
       },
       unknown: {
         title: "DSH 工作台启动失败",
@@ -645,6 +663,21 @@ export const t = {
     // 故中文卡与英文卡均无副标题，**仅系统卡保留 `localeSystemHint`**——
     // 该条为真且有用：preference === "system" 时确实经 resolveSystemLocale() 探测系统语言。
     localeSystemHint: "自动检测",
+    // 下次启动的运行环境（v1.2.0 实测 1.3）：后端 `defaultMode` 早已具备
+    // （`settings.rs:42`：None = 首次运行先出运行环境选择）。缺口是「**应用窗口内
+    // 无入口**」——此前窗口内唯一路径是 URL 参数 `?default=1`（BootIndex.tsx）；
+    // Windows 托盘菜单「打开方式」也会写 default_mode（boot.rs:777），故并非完全不可达。
+    // 本组键即该窗口内入口的文案。
+    // 取值语义与 Rust 一一对应：null = 每次询问；"local" / "wsl" = 直接启动。
+    bootModeSection: "下次启动的运行环境",
+    bootModeDesc: "选择每次打开应用时默认进入的运行环境；只影响启动方式，不改变当前正在运行的会话。",
+    bootModeAsk: "每次询问",
+    bootModeAskHint: "启动时先显示运行环境选择页",
+    bootModeLocal: "本机运行",
+    bootModeLocalHint: "直接以本机环境启动",
+    bootModeWsl: "WSL2 内运行",
+    bootModeWslHint: "直接以 WSL2 发行版内的环境启动",
+    bootModeFallbackHint: "若本机环境初始化失败（例如 Windows 无符号链接权限），可把默认切到「WSL2 内运行」绕开该限制。",
     // 崩溃守护
     guardianSection: "高可用与崩溃守护",
     autoRestartLabel: "崩溃自动恢复守护",

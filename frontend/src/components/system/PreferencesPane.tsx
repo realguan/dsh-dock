@@ -6,6 +6,7 @@ import {
   Globe,
   Keyboard,
   LoaderCircle,
+  MonitorCog,
   RefreshCw,
   Shield,
   ShieldAlert,
@@ -27,7 +28,7 @@ export function PreferencesPane({
   onNotice: (msg: string, kind?: "ok" | "warn") => void
 }) {
   const { t, preference, setLocale } = useI18n()
-  const { platform } = usePlatform()
+  const { platform, can } = usePlatform()
   const isMac = platform.os === "macos"
   const [settings, setSettings] = useState<ShellSettings | null>(null)
   const [saving, setSaving] = useState(false)
@@ -100,6 +101,27 @@ export function PreferencesPane({
     }
   }
 
+  /**
+   * 下次启动的运行环境（v1.2.0 实测 1.3）。
+   *
+   * 写入走 `patchShellSettings`（读改写安全基线），**不新增 IPC**：后端
+   * `defaultMode` 早已存在（`settings.rs:42`），`ShellSettings` 已是既有契约。
+   * 取值与 Rust 一一对应：`null` = 每次询问（None = 首次运行先出选择页）、
+   * `"local"` / `"wsl"` = 直接以该环境启动。
+   */
+  const handleChangeDefaultMode = async (mode: "local" | "wsl" | null) => {
+    if (!settings || saving) return
+    setSaving(true)
+    try {
+      setSettings(await patchShellSettings({ defaultMode: mode }))
+      onNotice(t.console.saveSuccess, "ok")
+    } catch (e) {
+      onNotice(`${t.console.saveFailed}: ${e}`, "warn")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center text-xs text-faint">
@@ -134,6 +156,8 @@ export function PreferencesPane({
   const autoRestartActive = settings?.autoRestart ?? false
   const floatingSwitcherActive = settings?.showFloatingSwitcher ?? true
   const shortcutChoice = settings?.switcherShortcut ?? "default"
+  // null = 每次询问（与 settings.rs 的 None 同义）
+  const defaultMode = settings?.defaultMode ?? null
 
   return (
     <div className="space-y-6">
@@ -215,7 +239,61 @@ export function PreferencesPane({
         </div>
       </section>
 
-      {/* 模块 2：崩溃自动恢复与熔断守护 */}
+      {/* 模块 2：下次启动的运行环境（v1.2.0 实测 1.3）
+          仅 Windows 渲染：平台语义一律经 usePlatform().can.*（can.chooseMode
+          即 isWindows，见 lib/host.ts）——「运行环境」在 macOS/Linux 上无意义，
+          渲染一个永远无效的控件比不渲染更糟。 */}
+      {can.chooseMode && (
+        <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
+              <MonitorCog className="size-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-ink">
+                {t.console.bootModeSection}
+              </h2>
+              <p className="text-xs text-faint">{t.console.bootModeDesc}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            {[
+              { value: null, label: t.console.bootModeAsk, hint: t.console.bootModeAskHint },
+              { value: "local" as const, label: t.console.bootModeLocal, hint: t.console.bootModeLocalHint },
+              { value: "wsl" as const, label: t.console.bootModeWsl, hint: t.console.bootModeWslHint },
+            ].map((opt) => {
+              const active = defaultMode === opt.value
+              return (
+                <button
+                  key={opt.value ?? "ask"}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleChangeDefaultMode(opt.value)}
+                  className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all disabled:opacity-60 ${
+                    active
+                      ? "border-brand bg-brand/5 shadow-xs"
+                      : "border-line bg-bg hover:border-line-hover"
+                  }`}
+                >
+                  <div>
+                    <span className="text-xs font-semibold text-ink">{opt.label}</span>
+                    <p className="mt-1 text-label text-faint">{opt.hint}</p>
+                  </div>
+                  {active && <Check className="size-4 shrink-0 text-brand-deep" />}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* 可行动出路（与 T-D1 的错误卡呼应）：本机环境起不来时改用 WSL */}
+          <p className="mt-3 text-label leading-relaxed text-faint">
+            {t.console.bootModeFallbackHint}
+          </p>
+        </section>
+      )}
+
+      {/* 模块 3：崩溃自动恢复与熔断守护 */}
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">

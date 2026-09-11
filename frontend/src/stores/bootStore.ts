@@ -79,6 +79,20 @@ interface BootState {
   /** 播种/更新交接意图（null = 清除，导轨随之收起） */
   setIntent: (intent: HandoffSnapshot | HandoffIntent | null) => void
   clearError: () => void
+  /**
+   * 开新一轮启动：清掉上一轮遗留的错误与进度（**权威清零点**，2026-09-11 v1.2.0 实测 2.1）。
+   *
+   * 存在的理由：`api.chooseMode` 是**原地**调用（Rust `commands/boot.rs::choose_mode`
+   * 只 spawn 启动线程，不 navigate）⇒ SPA document 不重载、store 实例存活，
+   * 于是上一轮的错误会挂在新会话上（截图 ②：切 WSL 成功后诊断卡仍显示本机模式的
+   * `os error 5`）。托盘 `switch_mode` / 重启交接路径会 `window.navigate`，
+   * store 随之重建而**自愈**——这正是该缺陷只在原地路径可见的原因。
+   *
+   * 与 `reset()` 的区别：`reset` 连**步骤视图**一起清（用于整轮重来）；
+   * 本方法只清「属于上一轮、且在新一轮必然失效」的跨轮状态（error / progress），
+   * 保留交接意图（intent）与步骤推进，避免新轮的早期步进被抹掉。
+   */
+  beginNewRound: () => void
   reset: () => void
 }
 
@@ -134,6 +148,13 @@ export const useBootStore = create<BootState>((set) => ({
   setVersions: (v) => set({ versions: v }),
   setIntent: (intent) => set({ intent }),
   clearError: () => set({ error: null }),
+
+  beginNewRound: () =>
+    set(() => {
+      // 速度采样缓冲同属上一轮：清了才不会把两轮字节数算进同一速度窗口。
+      prevSamples.length = 0
+      return { error: null, progress: null }
+    }),
   reset: () =>
     set(() => {
       prevSamples.length = 0

@@ -673,6 +673,211 @@ pub fn detect_current_version(data_dir: &Path) -> Option<String> {
     engine_status(data_dir).dsh
 }
 
+// ---------- 世界感知的引擎探测（2026-09-11，task-45 / D5） ----------
+//
+// 缺陷（v1.2.0 Windows 实测 2.2）：`get_update_status` 的版本/引擎维度**只探宿主**
+// `engines/`，而健康大盘走 `mgmt::current_world` → 客体诊断（截图④：客体 dsh
+// v0.1.5-rc.1 就绪）。WSL 模式下 dsh 装在客体，宿主必然为 None → 关于页「未检出」
+// （截图③）——同一个 dsh，两块界面两个答案。ADR-0016 §2.6：呈现对象必须与**当前
+// 会话实际运行的世界**一致。
+//
+// 复用既有客体通道（`guest.rs::diagnostics_script` → `diagnostics::
+// collect_diagnostics_in_guest`），**不新造第二套客体探测**——同名第二实现是
+// 本仓已记录的返工项。
+
+/// 探测源：世界择源的结果（纯值，便于单测）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProbeSource {
+    /// 宿主：壳引擎目录（现状路径，行为零变化）。
+    Host,
+    /// WSL 客体：`distro` 的世界；经既有客体诊断通道采集版本。
+    Guest { distro: String },
+}
+
+/// 世界 → 探测源（纯函数，供单测）。
+pub(crate) fn probe_source_for(world: &crate::mgmt::World) -> ProbeSource {
+    match world {
+        crate::mgmt::World::Local => ProbeSource::Host,
+        crate::mgmt::World::Wsl { distro } => ProbeSource::Guest {
+            distro: distro.clone(),
+        },
+    }
+}
+
+/// 客体版本探测的最小结果（只取关于页需要的两个维度）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct GuestVersions {
+    /// 客体 dsh 实测版本；None = 客体**确实没有** dsh（不是探测失败）。
+    pub dsh: Option<String>,
+    /// 客体 node 实测版本；None = 客体确实没有 node。
+    pub node: Option<String>,
+}
+
+/// 把宿主基底状态改写为「本世界」的实测结果（纯逻辑；探测经 `probe` 注入 → 离线可测）。
+///
+/// 契约兼容：只改 `dsh.current` / `dsh.error` / `dsh.newer` 与 `node` 四个既有字段的
+/// **取值**，不新增字段（`ipc-shapes.json` 的形状闸门不动，前端零改动即可正确）。
+pub(crate) fn status_for_source(
+    base: UpdateStatus,
+    source: &ProbeSource,
+    probe: &dyn Fn(&str) -> Result<GuestVersions, String>,
+) -> UpdateStatus {
+    let ProbeSource::Guest { distro } = source else {
+        // 宿主世界：现状路径，行为零变化（也不触碰客体探测）。
+        return base;
+    };
+    let mut out = base;
+    match probe(distro) {
+        Ok(v) => {
+            out.dsh.current = v.dsh;
+            // 网络检查的既有失败标记与本维度无关，保留；但本次探测成功不得**新增**失败。
+            out.dsh.newer = component_newer(&out.dsh.current, &out.dsh.latest);
+            out.node = Some(NodeRuntimeInfo {
+                version: v.node,
+                // 客体 node 同属壳管理资产（ADR-0010：WSL 客体同源）——TS 契约的
+                // origin 是闭集 engine|system|managed，此处取 engine，不加新值。
+                origin: "engine",
+                // 宿主 node 下载计划（node-map，宿主平台）不描述客体：不冒充客体计划。
+                planned_version: None,
+            });
+        }
+        Err(e) => {
+            // **探测失败 ≠ 未检出**（DiagnosticsPane.tsx:69/99 的既有纪律）：
+            // 如实报失败原因，绝不静默渲染成「未检出」。
+            out.dsh.current = None;
+            out.dsh.error = Some(match out.dsh.error.take() {
+                Some(prev) => format!("{distro} 客体版本探测失败：{e}（另有检查失败：{prev}）"),
+                None => format!("{distro} 客体版本探测失败：{e}"),
+            });
+            out.dsh.newer = false;
+            out.node = None;
+        }
+    }
+    out
+}
+
+/// `newer` 重算（与 `component_update` 同口径：两侧都有值才比对）。
+fn component_newer(current: &Option<String>, latest: &Option<String>) -> bool {
+    match (current, latest) {
+        (Some(c), Some(l)) => is_newer(c, l),
+        _ => false,
+    }
+}
+
+/// 归一客体版本：与宿主 `engines::probe_engine` 的 `norm` 同口径
+/// （trim + 剥一个 `v`）——两侧形态不一致会让 `is_newer` 拿 `v0` 去比 `0`。
+fn norm_guest_version(v: &str) -> String {
+    v.trim().trim_start_matches('v').to_string()
+}
+
+/// 客体版本的**真探测**：复用既有客体诊断通道（`guest.rs::diagnostics_script` →
+/// `diagnostics::collect_diagnostics_in_guest`，30s 超时）——不新造第二套客体探测。
+fn probe_guest_versions(distro: &str) -> Result<GuestVersions, String> {
+    let report = crate::diagnostics::collect_diagnostics_in_guest(distro)?;
+    Ok(guest_versions_from_report(&report))
+}
+
+/// 诊断报告 → 版本维度（**纯函数**，离线可测：哨兵值/`v` 前缀/未就绪三态）。
+///
+/// `is_ready` 是唯一可信判据：诊断结构在未就绪时把 version 填成哨兵「未检出」
+/// （宿主 `collect_diagnostics` 与客体脚本两条路径同口径，2026-09-10 已核对）——
+/// 直接读 version 会把哨兵当成版本号显示给用户。
+fn guest_versions_from_report(
+    report: &crate::diagnostics::SystemDiagnosticsReport,
+) -> GuestVersions {
+    GuestVersions {
+        dsh: report
+            .dsh
+            .is_ready
+            .then(|| report.dsh.version.clone())
+            .flatten()
+            .map(|v| norm_guest_version(&v)),
+        node: report
+            .node
+            .is_ready
+            .then(|| norm_guest_version(&report.node.version))
+            .filter(|v| !v.is_empty() && v != "未检出"),
+    }
+}
+
+/// 客体探测缓存 TTL。量级依据：诊断脚本含 `du -sb` 全 home 统计（客体侧秒级），
+/// 且每次都要起一个 `wsl.exe` 子进程——关于页 + 托盘 + 手动刷新会重复问，必须缓存。
+/// 60s：版本变化只可能由本壳的升级动作引起（显式、低频），一分钟的陈旧无风险。
+const GUEST_PROBE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+type GuestProbeCache =
+    std::collections::HashMap<String, (std::time::Instant, Result<GuestVersions, String>)>;
+
+fn guest_probe_cache() -> &'static std::sync::Mutex<GuestProbeCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<GuestProbeCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(GuestProbeCache::new()))
+}
+
+/// 缓存命中判定 + 探测（纯逻辑，时钟/探测均注入 → 离线可测）。
+/// **失败也缓存**：客体不可达时反复重试只会反复付 30s 超时，同样在 TTL 内复用结论。
+fn cache_get_or_probe(
+    cache: &mut GuestProbeCache,
+    distro: &str,
+    now: std::time::Instant,
+    ttl: std::time::Duration,
+    probe: &dyn Fn(&str) -> Result<GuestVersions, String>,
+) -> Result<GuestVersions, String> {
+    if let Some((at, cached)) = cache.get(distro) {
+        if now.duration_since(*at) < ttl {
+            return cached.clone();
+        }
+    }
+    let fresh = probe(distro);
+    cache.insert(distro.to_string(), (now, fresh.clone()));
+    fresh
+}
+
+/// 带缓存的客体版本探测（真实路径）。
+fn guest_versions_cached(distro: &str) -> Result<GuestVersions, String> {
+    let mut cache = guest_probe_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    cache_get_or_probe(
+        &mut cache,
+        distro,
+        std::time::Instant::now(),
+        GUEST_PROBE_TTL,
+        &probe_guest_versions,
+    )
+}
+
+/// 关于页/托盘读取路径的世界择源入口：按 `world` 取本世界的实测版本。
+///
+/// **不得阻塞启动**：调用方把本函数放在 `spawn_blocking` 里（客体探测会起
+/// `wsl.exe` 子进程，最坏 30s 超时）。
+///
+/// 调用点（2026-09-11 订正）：**两条路径都走本函数**——
+/// ① `commands/update.rs` 的关于页/托盘读取；② `boot::refresh_update_ui`
+/// （首启 / 手动「检查更新」/ 升级后的后台刷新，经 `boot::status_for_world` 委托）。
+/// 原注释写「两者互不重叠」已与事实不符：D5b 修复（v1.2.0 实测 2.2 的续修）
+/// 的成因正是 `refresh_update_ui` 曾直连**只探宿主**的 `check_now` 并 emit，
+/// 于是 WSL 模式下点一次「检查更新」就把关于页刷回「未检出」。
+///
+/// 由此增加的成本**已核并在可接受范围**（D5b 报告 §未决）：
+/// ① 该刷新跑在**后台线程**，不阻塞 UI 与启动；
+/// ② 客体探测有 **60s TTL 缓存**，关于页随后读取会命中缓存；
+/// ③ 最坏情形（WSL 挂死）仅 30s 超时，且仍发生在后台。
+pub(crate) fn world_aware_status(base: UpdateStatus, world: &crate::mgmt::World) -> UpdateStatus {
+    status_for_source(base, &probe_source_for(world), &guest_versions_cached)
+}
+
+/// 世界无法确定（WSL 模式但发行版未记录）时的诚实降级：不回落宿主数据，
+/// 而是把原因写进既有 `error` 字段（ADR-0016「绝不回落 Local」的同口径）。
+pub(crate) fn status_world_unresolved(base: UpdateStatus, reason: &str) -> UpdateStatus {
+    let mut out = base;
+    out.dsh.current = None;
+    out.dsh.error = Some(reason.to_string());
+    out.dsh.newer = false;
+    out.node = None;
+    out
+}
+
 fn component_update(
     current: Option<String>,
     latest: Option<String>,
@@ -1028,6 +1233,362 @@ fn fetch_market_registry_with(http: &dyn HttpGet) -> Result<String, String> {
         }
     }
     Err(last_err)
+}
+
+#[cfg(test)]
+mod world_probe_tests {
+    use super::*;
+
+    fn base_host_status() -> UpdateStatus {
+        UpdateStatus {
+            // 宿主演现状：WSL 模式下 dsh 装在客体 → 宿主探测恒 None（截图③「未检出」）
+            dsh: component_update(None, Some("0.1.5-rc.2".to_string()), None),
+            client: component_update(Some("1.2.0".to_string()), None, None),
+            node: Some(NodeRuntimeInfo {
+                version: Some("v24.18.0".to_string()),
+                origin: "engine",
+                planned_version: None,
+            }),
+        }
+    }
+
+    fn never_called(_: &str) -> Result<GuestVersions, String> {
+        panic!("宿主世界不得触碰客体探测（会白起 WSL 子进程）");
+    }
+
+    /// 世界择源（ADR-0016 §2.6）：Local → 宿主；Wsl{distro} → 该发行版客体。
+    #[test]
+    fn probe_source_follows_the_running_world() {
+        assert_eq!(
+            probe_source_for(&crate::mgmt::World::Local),
+            ProbeSource::Host
+        );
+        assert_eq!(
+            probe_source_for(&crate::mgmt::World::Wsl {
+                distro: "Ubuntu-20.04".to_string()
+            }),
+            ProbeSource::Guest {
+                distro: "Ubuntu-20.04".to_string()
+            },
+            "WSL 世界必须择客体源，否则关于页与健康大盘继续互相矛盾（D5 根因）"
+        );
+    }
+
+    /// **D5 主断言**：WSL 世界的 dsh/node 实测版本必须来自客体——
+    /// 客体有 v0.1.5-rc.1 时，关于页不得再显示「未检出」。
+    #[test]
+    fn guest_world_reports_the_guest_versions() {
+        let probe = |d: &str| {
+            assert_eq!(d, "Ubuntu-20.04");
+            Ok(GuestVersions {
+                dsh: Some("0.1.5-rc.1".to_string()),
+                node: Some("v24.18.0".to_string()),
+            })
+        };
+        let out = status_for_source(
+            base_host_status(),
+            &ProbeSource::Guest {
+                distro: "Ubuntu-20.04".to_string(),
+            },
+            &probe,
+        );
+        assert_eq!(
+            out.dsh.current.as_deref(),
+            Some("0.1.5-rc.1"),
+            "客体 dsh 版本必须呈现在关于页（对照截图④的就绪版本）"
+        );
+        assert_eq!(out.dsh.error, None, "探测成功不得带失败标记");
+        let node = out.node.expect("客体 node 维度不得为 None");
+        assert_eq!(node.version.as_deref(), Some("v24.18.0"));
+        assert_eq!(node.origin, "engine", "客体引擎同属壳管理资产（ADR-0010）");
+        assert_eq!(
+            node.planned_version, None,
+            "宿主 node 下载计划不描述客体，不得冒充客体计划"
+        );
+    }
+
+    /// 客体版本必须参与 `newer` **重算**：基底状态的 `newer` 是用宿主
+    /// `current = None` 算出来的（恒 false），直接用会让「客体确实有新版」漏报。
+    /// 语义：`newer` = `latest > current`（有更新可用），故客体低于 latest → true。
+    #[test]
+    fn guest_world_recomputes_newer_from_guest_version() {
+        let lower = |_: &str| {
+            Ok(GuestVersions {
+                dsh: Some("0.1.5-rc.1".to_string()),
+                node: None,
+            })
+        };
+        let out = status_for_source(
+            base_host_status(),
+            &ProbeSource::Guest {
+                distro: "Ubuntu".to_string(),
+            },
+            &lower,
+        );
+        assert!(
+            out.dsh.newer,
+            "客体 0.1.5-rc.1 < latest 0.1.5-rc.2 → 应判有新版（基底恒 false，未重算即漏报）"
+        );
+
+        // 反向：客体版本高于 latest（如手装 alpha/预览）→ 不得误报「有新版」
+        let higher = |_: &str| {
+            Ok(GuestVersions {
+                dsh: Some("0.1.5-rc.3".to_string()),
+                node: None,
+            })
+        };
+        let out = status_for_source(
+            base_host_status(),
+            &ProbeSource::Guest {
+                distro: "Ubuntu".to_string(),
+            },
+            &higher,
+        );
+        assert!(
+            !out.dsh.newer,
+            "客体 0.1.5-rc.3 > latest 0.1.5-rc.2 → 不应报「有新版」"
+        );
+    }
+
+    /// **探测失败 ≠ 未检出**（DiagnosticsPane.tsx:69/99 的既有纪律）：
+    /// 客体不可达时必须带失败原因，不得静默渲染成「未检出」。
+    #[test]
+    fn guest_probe_failure_is_reported_as_failure_not_absence() {
+        let probe = |_: &str| Err("wsl.exe 调用失败或无输出（客体不可达？）".to_string());
+        let out = status_for_source(
+            base_host_status(),
+            &ProbeSource::Guest {
+                distro: "Ubuntu-20.04".to_string(),
+            },
+            &probe,
+        );
+        assert_eq!(out.dsh.current, None);
+        let err = out.dsh.error.expect("探测失败必须带原因");
+        assert!(err.contains("Ubuntu-20.04"), "失败原因须点名发行版：{err}");
+        assert!(err.contains("客体不可达"), "失败原因须保留底层原因：{err}");
+    }
+
+    /// 客体**确实没装** dsh（脚本跑通、版本为空）→ 这才是「未检出」，且不得带失败标记。
+    #[test]
+    fn guest_absence_is_not_a_probe_failure() {
+        let probe = |_: &str| Ok(GuestVersions::default());
+        let out = status_for_source(
+            base_host_status(),
+            &ProbeSource::Guest {
+                distro: "Ubuntu".to_string(),
+            },
+            &probe,
+        );
+        assert_eq!(out.dsh.current, None);
+        assert_eq!(out.dsh.error, None, "装没装与「探测失败」是两件事");
+    }
+
+    /// 宿主世界**零行为变化**：不得触碰客体探测（否则每次读关于页都白起 WSL 子进程）。
+    #[test]
+    fn local_world_never_probes_the_guest() {
+        let before = base_host_status();
+        let out = status_for_source(before.clone(), &ProbeSource::Host, &never_called);
+        assert_eq!(out.dsh.current, before.dsh.current);
+        assert_eq!(out.dsh.latest, before.dsh.latest);
+        assert_eq!(
+            out.node.map(|n| n.version),
+            Some(before.node.map(|n| n.version)).flatten()
+        );
+    }
+
+    /// 诊断报告 → 版本维度：哨兵「未检出」不得当版本号；`v` 前缀按宿主同口径剥掉。
+    #[test]
+    fn guest_report_maps_to_versions_without_sentinel_or_v_prefix() {
+        use crate::diagnostics::{
+            DshDiagnosticInfo, NodeDiagnosticInfo, PlatformDiagnosticInfo, PnpmDiagnosticInfo,
+            StorageDiagnosticInfo, SystemDiagnosticsReport,
+        };
+        let mk = |node_v: &str, node_ready: bool, dsh_v: Option<&str>, dsh_ready: bool| {
+            SystemDiagnosticsReport {
+                node: NodeDiagnosticInfo {
+                    path: "/home/guan/.dsh-dock/engines/bin/node".into(),
+                    version: node_v.into(),
+                    source: "engine".into(),
+                    is_ready: node_ready,
+                },
+                pnpm: PnpmDiagnosticInfo {
+                    path: String::new(),
+                    version: None,
+                    is_ready: false,
+                },
+                dsh: DshDiagnosticInfo {
+                    path: "/home/guan/.dsh-dock/engines/bin/dsh".into(),
+                    version: dsh_v.map(String::from),
+                    source: "engine".into(),
+                    is_ready: dsh_ready,
+                },
+                storage: StorageDiagnosticInfo {
+                    dsh_home: String::new(),
+                    total_bytes: 0,
+                    profiles_bytes: 0,
+                    sessions_bytes: 0,
+                    profiles_count: 0,
+                    sessions_count: 0,
+                },
+                platform: PlatformDiagnosticInfo {
+                    os: "linux".into(),
+                    arch: "x86_64".into(),
+                },
+            }
+        };
+
+        // ④ 图的实际形态：客体两者就绪（node 带 v，dsh 为 rc 版本）
+        let both = guest_versions_from_report(&mk("v24.18.0", true, Some("v0.1.5-rc.1"), true));
+        assert_eq!(
+            both.node.as_deref(),
+            Some("24.18.0"),
+            "v 前缀须按宿主 norm 同口径剥掉"
+        );
+        assert_eq!(both.dsh.as_deref(), Some("0.1.5-rc.1"));
+
+        // 未就绪：node 版本是哨兵「未检出」，绝不可当版本号透出
+        let none_ready = guest_versions_from_report(&mk("未检出", false, None, false));
+        assert_eq!(none_ready.node, None, "哨兵不得冒充客体 node 版本");
+        assert_eq!(none_ready.dsh, None, "未就绪 + version 缺失 = 客体确实没有");
+
+        // 边界：is_ready 为真但版本是哨兵（异常组合）→ 仍不得透出哨兵
+        let odd = guest_versions_from_report(&mk("未检出", true, Some("未检出"), true));
+        assert_eq!(odd.node, None, "is_ready 为真但版本是哨兵：宁可报无");
+        assert_eq!(
+            odd.dsh.as_deref(),
+            Some("未检出"),
+            "dsh 走 Option 通道，交由上层判据"
+        );
+    }
+
+    /// **缓存（性能纪律）**：TTL 内重复调用只探测一次；过期后重新探测；
+    /// 失败同样进缓存（避免反复付 30s 超时）。
+    #[test]
+    fn guest_probe_cache_hits_within_ttl_and_refreshes_after() {
+        use std::cell::Cell;
+        use std::time::{Duration, Instant};
+
+        let calls = Cell::new(0);
+        let probe = |_: &str| {
+            calls.set(calls.get() + 1);
+            Ok(GuestVersions {
+                dsh: Some(format!("0.1.5-rc.{}", calls.get())),
+                node: None,
+            })
+        };
+        let ttl = Duration::from_secs(60);
+        let t0 = Instant::now();
+        let mut cache = GuestProbeCache::new();
+
+        // 首次：探测
+        let a = cache_get_or_probe(&mut cache, "Ubuntu", t0, ttl, &probe).unwrap();
+        assert_eq!(calls.get(), 1);
+        // TTL 内多次（关于页 + 托盘 + 刷新）：命中缓存，不再起 WSL
+        for _ in 0..5 {
+            let _ = cache_get_or_probe(
+                &mut cache,
+                "Ubuntu",
+                t0 + Duration::from_secs(30),
+                ttl,
+                &probe,
+            );
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "TTL 内 6 次调用应只探测 1 次（缓存命中 5 次）"
+        );
+        assert_eq!(a.dsh.as_deref(), Some("0.1.5-rc.1"));
+        // 过期：重新探测
+        let b = cache_get_or_probe(&mut cache, "Ubuntu", t0 + ttl, ttl, &probe).unwrap();
+        assert_eq!(calls.get(), 2, "TTL 到期后应重新探测");
+        assert_eq!(b.dsh.as_deref(), Some("0.1.5-rc.2"));
+        // 不同发行版各自成键（不串味）
+        let _ = cache_get_or_probe(&mut cache, "Debian", t0, ttl, &probe);
+        assert_eq!(calls.get(), 3, "换发行版必须重新探测");
+
+        // 失败也缓存：客体不可达时不反复重试
+        let fails = Cell::new(0);
+        let bad = |_: &str| {
+            fails.set(fails.get() + 1);
+            Err("wsl.exe 调用失败".to_string())
+        };
+        let mut cache2 = GuestProbeCache::new();
+        for _ in 0..4 {
+            let _ = cache_get_or_probe(&mut cache2, "Ubuntu", t0, ttl, &bad);
+        }
+        assert_eq!(
+            fails.get(),
+            1,
+            "失败结论同样在 TTL 内复用（否则每次白付 30s 超时）"
+        );
+    }
+
+    /// 世界未定（WSL 模式但发行版未记录）：**绝不回落宿主数据**——
+    /// 否则关于页又会拿宿主「未检出」充当客体结论（ADR-0016「绝不回落 Local」）。
+    #[test]
+    fn unresolved_world_reports_reason_instead_of_host_data() {
+        let out = status_world_unresolved(base_host_status(), "无法确定当前管理世界：…");
+        assert_eq!(out.dsh.current, None);
+        assert!(
+            out.dsh
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("无法确定当前管理世界"),
+            "必须如实给出未定原因：{:?}",
+            out.dsh.error
+        );
+        assert!(!out.dsh.newer);
+        assert!(out.node.is_none(), "世界未定时不得拿宿主 node 冒充");
+    }
+
+    /// **客体脚本契约**（真客体行为不可测的替代验证）：在宿主 bash 里真跑
+    /// `guest.rs::diagnostics_script`，把它的真实输出经 `guest_versions_from_report`
+    /// 解析——证明「脚本输出 ⇄ 我读的字段」这条接口一致（哨兵/`isReady`/版本形态）。
+    /// 脚本内容本身读 `which node/dsh --version`，故用假 shim 目录模拟客体 PATH。
+    #[cfg(unix)]
+    #[test]
+    fn guest_script_output_parses_into_versions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("dsh-dock-d45-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        // 假 shim：node → v24.18.0（带 v），dsh → 0.1.5-rc.1（不带 v）
+        for (name, out) in [("node", "v24.18.0"), ("dsh", "0.1.5-rc.1")] {
+            let p = bin.join(name);
+            std::fs::write(&p, format!("#!/bin/sh\necho {out}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let script = crate::guest::diagnostics_script("Ubuntu-20.04");
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env_remove("DSH_HOME")
+            // spawn-gate: exempt(测试专用——在宿主 bash 里真跑客体脚本，做「脚本输出 ⇄ 读取字段」契约断言；本模块名非 `mod tests`，spawn 闸门的 cfg(test) 截断标记覆盖不到它，2026-09-11)
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with(crate::guest::DIAG_SENTINEL))
+            .unwrap_or_else(|| panic!("脚本未输出哨兵行：{stdout}"));
+        let report: crate::diagnostics::SystemDiagnosticsReport =
+            serde_json::from_str(&line[crate::guest::DIAG_SENTINEL.len()..])
+                .expect("脚本 JSON 应可解析");
+
+        let v = guest_versions_from_report(&report);
+        assert_eq!(v.node.as_deref(), Some("24.18.0"), "脚本的 v 前缀须被归一");
+        assert_eq!(v.dsh.as_deref(), Some("0.1.5-rc.1"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 #[cfg(test)]

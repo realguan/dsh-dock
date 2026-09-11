@@ -153,14 +153,16 @@ pub(crate) struct ShellState {
     pub(crate) client_update: Mutex<Option<crate::updater::ClientUpdate>>,
     /// 崩溃历史时间戳（4.12 崩溃守护与熔断，记录最近 60s 内异常退出次数）。
     pub(crate) crash_timestamps: Mutex<Vec<std::time::Instant>>,
-    /// 最近发射的 boot:error（用于前端挂载后经 get_boot_status 补水，防早期事件竞态丢失）。
-    pub(crate) boot_error: Mutex<Option<serde_json::Value>>,
-    /// 最近发射的 boot:step 列表（用于前端挂载后经 get_boot_status 补水）。
-    pub(crate) boot_steps: Mutex<Vec<serde_json::Value>>,
-    /// 启动代际令牌源（2026-09-10，ADR-0014）：每次「开始一次启动」自增；
-    /// 启动线程持令牌，各分叉点校验——被取代者在 spawn 前静默退出，
-    /// 从根上消灭并发双 spawn（旧实现里后到者会覆盖会话槽丢掉旧会话）。
-    pub(crate) boot_generation: AtomicU64,
+    /// 启动轮次状态：代际令牌 + 面向前端的可见缓存（错误 / 步骤），三者同生同灭。
+    ///
+    /// **为什么收成一个字段**（2026-09-11，v1.2.0 实测问题 2.1）：此前它们是三个并列
+    /// 字段，于是「开启新一轮」与「撤销上一轮可见状态」是**两件分开的事**——
+    /// `begin_boot()` 只自增代际，清缓存靠调用点自己记得，而 7 处轮次起点里只有 3 处
+    /// 记得。漏掉的崩溃自动拉起与 profile 选择器会把上一轮的错误留在缓存里，随后
+    /// **任何整文档重载都会经 `get_boot_status` 把旧错补水进新文档**（前端
+    /// `BootIndex.tsx` 的补水只读不判新旧）。收成 `BootRound` 后，两件事由
+    /// `begin_round()` 一个动作完成，调用点无从忘记。
+    pub(crate) boot: BootRound,
     /// 应用退出中（2026-09-10，ADR-0014）：RunEvent::Exit 先置位再收会话，
     /// 阻断在途启动线程在退出之后 spawn 出无人认领的 dsh。
     pub(crate) shutting_down: AtomicBool,
@@ -169,28 +171,82 @@ pub(crate) struct ShellState {
     pub(crate) handoff: Mutex<Option<Handoff>>,
 }
 
-impl ShellState {
-    pub(crate) fn clear_boot_cache(&self) {
-        if let Ok(mut err) = self.boot_error.lock() {
+/// 一次启动轮次的可变状态：代际令牌 + 前端可见缓存（错误 / 步骤）。
+///
+/// **不变式（有单测钉住）**：`begin_round()` 返回后，`error()` 必为 `None`、
+/// `steps()` 必为空——「新一轮开始」与「撤销上一轮可见状态」是同一个动作。
+#[derive(Default)]
+pub(crate) struct BootRound {
+    /// 启动代际令牌源（2026-09-10，ADR-0014）：每次「开始一次启动」自增；
+    /// 启动线程持令牌，各分叉点校验——被取代者在 spawn 前静默退出，
+    /// 从根上消灭并发双 spawn（旧实现里后到者会覆盖会话槽丢掉旧会话）。
+    generation: AtomicU64,
+    /// 最近发射的 boot:error（前端挂载后经 get_boot_status 补水，防早期事件竞态丢失）。
+    error: Mutex<Option<serde_json::Value>>,
+    /// 最近发射的 boot:step 列表（用于前端挂载后经 get_boot_status 补水）。
+    steps: Mutex<Vec<serde_json::Value>>,
+}
+
+impl BootRound {
+    /// 开启一轮：**先撤销上一轮的可见状态**，再领取新代际令牌。
+    ///
+    /// 顺序无关正确性（两把锁独立，领令牌不读缓存），但先清后领让「失败在领令牌
+    /// 之后」的分叉点也不会看到旧缓存——这是本类型要保证的不变式。
+    pub(crate) fn begin_round(&self) -> u64 {
+        self.clear_visible();
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// 撤销上一轮的可见状态（错误 + 步骤）。
+    fn clear_visible(&self) {
+        if let Ok(mut err) = self.error.lock() {
             *err = None;
         }
-        if let Ok(mut steps) = self.boot_steps.lock() {
+        if let Ok(mut steps) = self.steps.lock() {
             steps.clear();
         }
     }
 
-    /// 开启一次启动：代际自增并返回本次令牌（所有启动路径的唯一入口）。
+    /// 本次启动是否已被取代（含应用退出）。
+    fn superseded(&self, token: u64, shutting_down: bool) -> bool {
+        boot_token_stale(self.generation.load(Ordering::SeqCst), token, shutting_down)
+    }
+
+    pub(crate) fn set_error(&self, value: serde_json::Value) {
+        if let Ok(mut err) = self.error.lock() {
+            *err = Some(value);
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<serde_json::Value> {
+        self.error.lock().ok().and_then(|e| e.clone())
+    }
+
+    pub(crate) fn steps(&self) -> Vec<serde_json::Value> {
+        self.steps.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn push_step(&self, value: serde_json::Value) {
+        if let Ok(mut steps) = self.steps.lock() {
+            steps.push(value);
+        }
+    }
+}
+
+impl ShellState {
+    /// 开启一次启动：撤销上一轮的可见状态并领取新代际令牌
+    ///（**所有启动路径的唯一入口**，ADR-0014）。
+    ///
+    /// 清缓存已并入本动作（2026-09-11）：此前它由调用点各自记得调用，7 处起点只有
+    /// 3 处记得。现在**任何**轮次起点都必然撤销上一轮的可见状态，调用点无从遗漏。
     pub(crate) fn begin_boot(&self) -> u64 {
-        self.boot_generation.fetch_add(1, Ordering::SeqCst) + 1
+        self.boot.begin_round()
     }
 
     /// 本次启动是否已被取代（含应用退出）：各分叉点在 spawn / 导航前调用。
     pub(crate) fn boot_superseded(&self, token: u64) -> bool {
-        boot_token_stale(
-            self.boot_generation.load(Ordering::SeqCst),
-            token,
-            self.shutting_down.load(Ordering::SeqCst),
-        )
+        self.boot
+            .superseded(token, self.shutting_down.load(Ordering::SeqCst))
     }
 
     /// 推进在途交接的阶段（无交接或已终结时静默：不复活旧意图）。
@@ -738,7 +794,6 @@ pub(crate) fn lib_boot_again(
     data_dir: PathBuf,
     token: u64,
 ) {
-    state.clear_boot_cache();
     let mode = state
         .active_mode
         .lock()
@@ -763,9 +818,9 @@ pub(crate) fn switch_mode(
 ) {
     tracing::info!("切换运行环境 → {}", mode.as_str());
     // 先领令牌再动手（ADR-0014）：模式切换同样是一次新启动，在途启动线程即刻作废。
+    // 可见缓存（上一轮的错误/步骤）随 begin_boot 一并撤销——不再由本处另行清。
     let token = state.begin_boot();
     let _ = teardown_session(&state);
-    state.clear_boot_cache();
     // 模式切换不是 profile 交接：清掉交接意图，控制中心导轨也随之收起。
     *state.handoff.lock().unwrap() = None;
     // 清空强制目标：模式切换重走常规解析（defaultProfile → 选择器），
@@ -909,9 +964,7 @@ pub(crate) fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail
         "detail": detail,
     });
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
-        if let Ok(mut steps) = shell_state.boot_steps.lock() {
-            steps.push(payload.clone());
-        }
+        shell_state.boot.push_step(payload.clone());
     }
     let _ = app.emit("boot:step", payload);
 }
@@ -976,9 +1029,7 @@ pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &s
         serde_json::json!({ "detail": detail, "log": log_tail })
     });
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
-        if let Ok(mut err) = shell_state.boot_error.lock() {
-            *err = Some(value.clone());
-        }
+        shell_state.boot.set_error(value.clone());
         // 交接失败 → 控制中心导轨推进到终态（失败必须在用户所在窗口可见，
         // ADR-0014 §2.7）。emit_boot_error 是所有失败路径的唯一出口，故在此收口。
         shell_state.advance_handoff(HandoffPhase::Failed);
@@ -1018,12 +1069,43 @@ pub(crate) fn emit_update(app: &tauri::AppHandle, status: &crate::updates::Updat
     let _ = app.emit("boot:update", status);
 }
 
+/// 把「宿主基线状态」按**当前世界**择源；世界未定则诚实降级（不回落宿主）。
+///
+/// **纯函数 + 薄委托**：本函数自身**不含任何探测/择源逻辑**——两个分支分别委托
+/// rust-mgmt 已导出的 `updates::world_aware_status` 与 `updates::status_unresolved`
+/// （**复用，不新造第二份**；D5 报告 §6.2 的口径）。
+///
+/// 抽出来的理由（v1.2.0 D5b，2026-09-11）：
+/// - `refresh_update_ui` 收 `&AppHandle`，单测环境起不出 Tauri 运行时 ⇒ 择源决策
+///   不可测；抽成收 `Result<World, String>` 的纯函数后可离线断言。
+/// - 让"按世界择源"这一决策**只有一处**：关于页读取路径（`commands/update.rs`）
+///   与本刷新路径共用同一语义，避免两处各自 `match` 而漂移。
+pub(crate) fn status_for_world(
+    base: crate::updates::UpdateStatus,
+    world: Result<crate::mgmt::World, String>,
+) -> crate::updates::UpdateStatus {
+    match world {
+        Ok(world) => crate::updates::world_aware_status(base, &world),
+        Err(reason) => {
+            tracing::warn!("更新检测世界未定，版本维度按「探测不可用」呈现：{reason}");
+            crate::updates::status_world_unresolved(base, &reason)
+        }
+    }
+}
+
 /// 后台检测一次并同步应用菜单 + 事件（首启/手动/升级后共用）。
+///
+/// **世界感知（v1.2.0 D5b，2026-09-11）**：检测结果必须按运行世界择源——
+/// 此前这里直接 `check_now(&data_dir)`（**只探宿主**）并 emit，于是 **WSL 模式下
+/// 点一次「检查更新」就把关于页从客体版本刷回「未检出」**（前端 `events.ts`
+/// 的 `setVersions` 覆盖已播种的世界感知结果），即 D5 的修复被这条路径打回原状。
+/// 现经 [`status_for_world`] 收口（与关于页读取路径同语义）。
 pub(crate) fn refresh_update_ui(app: &tauri::AppHandle, state: &Arc<ShellState>) {
     let Ok(data_dir) = app.path().app_data_dir() else {
         return;
     };
-    let status = crate::updates::check_now(&data_dir);
+    let base = crate::updates::check_now(&data_dir);
+    let status = status_for_world(base, crate::mgmt::current_world(app));
     tracing::info!(
         "更新检测：dsh={:?}/{:?}(newer={}) client={:?}/{:?} node={:?}",
         status.dsh.current,
@@ -1066,6 +1148,126 @@ extern "C" fn signal_exit_handler(_: i32) {
 #[cfg(unix)]
 pub(crate) static SIGNAL_EXIT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+mod update_ui_tests {
+    use super::*;
+
+    /// **复现锚（v1.2.0 D5b，2026-09-11）**：`refresh_update_ui` 的检测必须**世界感知**。
+    ///
+    /// 缺陷（D5 报告 §6.2）：关于页「检查更新」→ `check_updates` → 本函数 →
+    /// `updates::check_now(&data_dir)`（**无世界参数**）→ `emit_update` → 前端
+    /// `events.ts:43` 的 `setVersions` **覆盖**掉世界感知结果 ⇒ **WSL 模式下点一次
+    /// 「检查更新」，关于页从客体版本退回「未检出」**——把 D5 的修复在真实使用中打回原状。
+    ///
+    /// **为什么用源码文本闸门**：本函数入参是 `tauri::AppHandle`，本仓无 Tauri 测试基建
+    /// （AGENTS §5 不引 dev-dependency），单测环境起不出 Tauri 运行时。这是**调用点缺陷**
+    /// ——判据就是"那条调用长什么样"，源码文本闸门正是对症的机器闸门（同
+    /// `lifecycle.rs` 的 `boot_sweeps_orphans_before_dispatching_executor` 与 spawn 闸门范式）。
+    /// 行为侧另由 `status_for_world_*` 两条用例覆盖。
+    #[test]
+    fn refresh_update_ui_routes_through_world_aware_status() {
+        // CRLF 归一（v1.1.1 教训：文本判据必须自己扛住行尾）。
+        let src = include_str!("boot.rs").replace("\r\n", "\n");
+        let start = src
+            .find("pub(crate) fn refresh_update_ui(")
+            .expect("refresh_update_ui 应存在");
+        let rest = &src[start..];
+        let end = rest.find("\n}\n").unwrap_or(rest.len());
+        let body = &rest[..end];
+        assert!(
+            body.contains("world_aware_status") || body.contains("status_for_world"),
+            "refresh_update_ui 未走世界感知路径——WSL 模式下「检查更新」会把关于页\
+             刷回宿主结论（D5b 缺陷复发）。必须经 `world_aware_status` / `status_for_world`；\
+             不得直接把 `check_now` 的宿主结果 emit 出去。\n函数体：\n{body}"
+        );
+    }
+
+    /// 测试基线状态（宿主探测的典型形态）。
+    fn sample_status() -> crate::updates::UpdateStatus {
+        crate::updates::UpdateStatus {
+            dsh: crate::updates::ComponentUpdate {
+                current: Some("0.1.5-rc.1".into()),
+                latest: Some("0.1.5-rc.2".into()),
+                newer: true,
+                error: None,
+                preview_latest: None,
+            },
+            client: crate::updates::ComponentUpdate {
+                current: Some("1.2.0".into()),
+                latest: None,
+                newer: false,
+                error: None,
+                preview_latest: None,
+            },
+            node: None,
+        }
+    }
+
+    /// **Local 世界行为不变**（回归保护，task-51 交付项 3）：
+    /// 宿主世界必须原样返回 `check_now` 的基线——不触碰客体探测、不改任何字段。
+    #[test]
+    fn status_for_world_local_is_unchanged() {
+        let base = sample_status();
+        let out = status_for_world(base.clone(), Ok(crate::mgmt::World::Local));
+        // 逐字段比较（`UpdateStatus` 未派 `PartialEq`，且它属 rust-mgmt 域——
+        // 不为一处测试去改他人结构体的 derive，用 `Debug` 结构等价即可）。
+        assert_eq!(
+            format!("{out:?}"),
+            format!("{base:?}"),
+            "Local 世界不得改写基线状态（宿主路径行为零变化）"
+        );
+    }
+
+    /// **Wsl 世界不得回落宿主数据**（D5b 的核心判据）：客体分支若探测不可用，
+    /// 必须以「探测失败」呈现，**绝不**保留宿主探到的 `dsh.current`——
+    /// 否则就是「关于页从客体版本退回未检出」那条用户可见回退。
+    #[test]
+    fn status_for_world_wsl_never_falls_back_to_host_data() {
+        let mut base = sample_status();
+        base.dsh.current = Some("9.9.9-host-only".into());
+        base.node = Some(crate::updates::NodeRuntimeInfo {
+            version: Some("v99.0.0".into()),
+            origin: "engine",
+            planned_version: None,
+        });
+        // 本机（macOS）无 wsl.exe ⇒ 客体探测必然失败 ⇒ 走诚实降级分支。
+        let out = status_for_world(
+            base,
+            Ok(crate::mgmt::World::Wsl {
+                distro: "Ubuntu-20.04".into(),
+            }),
+        );
+        assert_ne!(
+            out.dsh.current.as_deref(),
+            Some("9.9.9-host-only"),
+            "WSL 世界把宿主探到的版本留下了——这正是 D5b 要消灭的回退"
+        );
+        assert!(out.dsh.current.is_none(), "客体不可用时应为无版本");
+        assert!(
+            out.dsh.error.is_some(),
+            "客体探测失败必须如实报错（『探测失败 ≠ 未检出』纪律）"
+        );
+        assert!(out.node.is_none(), "客体不可用时 node 维度不得留宿主值");
+    }
+
+    /// 世界**未定**（WSL 模式但发行版未记录）时同样不得回落宿主（ADR-0016 口径）。
+    #[test]
+    fn status_for_world_unresolved_world_is_honest() {
+        let mut base = sample_status();
+        base.dsh.current = Some("9.9.9-host-only".into());
+        let out = status_for_world(base, Err("WSL 模式但发行版未记录".into()));
+        assert!(out.dsh.current.is_none(), "世界未定不得冒充宿主数据");
+        assert!(
+            out.dsh
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("未记录")),
+            "必须把原因写进 error：{:?}",
+            out.dsh.error
+        );
+    }
+}
 
 #[cfg(test)]
 mod handoff_tests {
@@ -1153,5 +1355,59 @@ mod handoff_tests {
         assert_eq!(v["phase"], "waiting");
         assert_eq!(v["startedAt"], 1_700_000_000_000u64);
         assert_eq!(v["generation"], 9);
+    }
+
+    /// **轮次起点不变式**（2026-09-11，v1.2.0 实测问题 2.1 修复的守门测试）：
+    /// 开启新一轮**必须**撤销上一轮的可见状态（错误 + 步骤）。
+    ///
+    /// 为什么必须有这条测试：清缓存原先散落在调用点（7 处轮次起点只有 3 处记得清），
+    /// 漏掉的崩溃自动拉起与 profile 选择器会把上一轮的 `boot:error` 留在缓存里，
+    /// 随后任何整文档重载都会经 `get_boot_status` 把旧错补水进新文档——用户看到
+    /// 「新一轮 01–03 全绿，下方诊断卡还挂着上一轮的错误」。
+    ///
+    /// 本测试直接打**生产类型 `BootRound`**（而非本地复刻一份逻辑），因此把
+    /// `begin_round()` 里的 `clear_visible()` 去掉即变红（M8/M9：测试钉住真实实现路径）。
+    #[test]
+    fn begin_round_always_clears_previous_visible_state() {
+        let round = BootRound::default();
+
+        // 造一个「上一轮失败」的现场：有错误 + 有步骤。
+        round.push_step(serde_json::json!({"step": 0, "state": "done"}));
+        round.push_step(serde_json::json!({"step": 1, "state": "error"}));
+        round.set_error(serde_json::json!({"title": "上一轮的错误"}));
+        assert!(round.error().is_some(), "现场准备：错误应已写入");
+        assert_eq!(round.steps().len(), 2, "现场准备：步骤应已写入");
+
+        // 第一次轮次起点：代际 1，且上一轮可见状态被撤销。
+        let token1 = round.begin_round();
+        assert_eq!(token1, 1, "首轮代际应为 1（前端/日志用它对齐轮次）");
+        assert!(
+            round.error().is_none(),
+            "轮次起点后不得残留上一轮的错误——否则 get_boot_status 会把旧错\
+             补水进新文档（v1.2.0 实测 2.1 的机制）"
+        );
+        assert!(
+            round.steps().is_empty(),
+            "轮次起点后上一轮的步骤必须清空（新轮次的步骤从 0 重新累积）"
+        );
+
+        // 单调性：代际只增不减，且每一轮都重复撤销可见状态。
+        round.set_error(serde_json::json!({"title": "第二轮又失败"}));
+        round.push_step(serde_json::json!({"step": 0, "state": "done"}));
+        let token2 = round.begin_round();
+        assert_eq!(token2, 2, "第二轮代际应递增到 2");
+        assert!(round.error().is_none(), "第二轮起点同样必须清错");
+        assert!(round.steps().is_empty(), "第二轮起点同样必须清步骤");
+
+        // 轮次起点不改变「是否已被取代」的判据：旧令牌一律失效。
+        assert!(
+            round.superseded(token1, false),
+            "旧令牌在轮次推进后必须判为被取代（ADR-0014 防双 spawn）"
+        );
+        assert!(!round.superseded(token2, false), "当前令牌不得误判为被取代");
+        assert!(
+            round.superseded(token2, true),
+            "应用退出中时当前令牌同样判为被取代"
+        );
     }
 }

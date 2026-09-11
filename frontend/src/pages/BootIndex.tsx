@@ -3,7 +3,7 @@
 // （标题/副题逐字复现步骤行）。现在控制台卡是唯一主角：卡头讲述「现在怎样」
 // （徽标 + 当前状态 + 分段进度），步骤列表讲述「到哪了」；下载进度经 banner
 // 槽位入卡；出错时卡头转警示态、ErrorCard 就地展开。
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { TerminalSquare } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
@@ -13,7 +13,12 @@ import type { BootErrorEvent } from "@/types/events"
 import { normalizeError, normalizeStep } from "@/lib/events"
 import { useBootStore } from "@/stores/bootStore"
 import { deriveHandoff } from "@/lib/handoff"
-import { shouldOfferTimelineCollapse, shouldShowTimeline } from "@/lib/bootTimeline"
+import {
+  shouldOfferTimelineCollapse,
+  shouldShowTimeline,
+  type TimelineIntent,
+} from "@/lib/bootTimeline"
+import { shouldClearStaleError, type Step0Status } from "@/lib/bootRound"
 import { handoffHeadline } from "@/components/boot/HandoffRail"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
 import { BootTimeline } from "@/components/boot/BootTimeline"
@@ -46,7 +51,9 @@ export function BootIndex() {
   const [hideDownload, setHideDownload] = useState(false)
   const [maxStepSeen, setMaxStepSeen] = useState(-1)
   const [hasEverDownloaded, setHasEverDownloaded] = useState(false)
-  const [forceShowTimeline, setForceShowTimeline] = useState(false)
+  // 用户对启动详情的显式意图（v1.2.0 实测 1.2）：三态而非布尔——布尔表达不了
+  // 「用户主动收起」，收起后自动信号仍为真 → 收起点不动任何东西（死按钮）。
+  const [timelineIntent, setTimelineIntent] = useState<TimelineIntent>("auto")
 
   // —— store 订阅（细粒度选择器防高频重渲染） ——
   const steps = useBootStore((s) => s.steps)
@@ -55,6 +62,7 @@ export function BootIndex() {
   const progress = useBootStore((s) => s.progress)
   const intent = useBootStore((s) => s.intent)
   const clearError = useBootStore((s) => s.clearError)
+  const beginNewRound = useBootStore((s) => s.beginNewRound)
 
   const shownError: BootErrorEvent | null = localError ?? error
 
@@ -145,6 +153,20 @@ export function BootIndex() {
     setWslBusy(false)
   }, [error])
 
+  // 新一轮启动起跑（步 0 重新 running）⇒ 上一轮的错误已描述过一个不存在的世界，
+  // 撤销它（v1.2.0 实测 2.1）。判据是**边沿**而非稳态，见 lib/bootRound.ts。
+  // 与模式切换处的显式调用共用同一个 store 动作（唯一清零点，不散落）。
+  const prevStep0 = useRef<Step0Status>(undefined)
+  const step0Status = steps[0]?.status
+  useEffect(() => {
+    const prev = prevStep0.current
+    prevStep0.current = step0Status
+    if (shouldClearStaleError(prev, step0Status, shownError !== null)) {
+      setLocalError(null)
+      beginNewRound()
+    }
+  }, [step0Status, shownError, beginNewRound])
+
   // —— 卡头文案推演：错误 > 交接 > 下载准备期 > 当前步骤名（detail 兜底回 hint） ——
   const idx = Math.min(lastRunning, 4)
   const inDownload = !hideDownload && progress !== null && maxStepSeen < 2
@@ -168,12 +190,13 @@ export function BootIndex() {
   // 开机长得一模一样（复用，不是新页面）；连续性由文案 + 连续计时 + 幕布承担。
   // 想看步骤的用户仍有「查看启动详情」这个既有出口。
   // 判据抽到 lib/bootTimeline.ts（纯函数 + 测试）：这两处曾用不同信号，
-  // 导致「点开详情后回不去」（2026-09-10 修复，见该文件注释）。
+  // 导致「点开详情后回不去」（2026-09-10 修复；2026-09-11 v1.2.0 实测 1.2 续修：
+  // hasError 不再否决收起——ErrorCard 渲染在本区块之外，收起不会藏掉错误）。
   const timelineVisibility = {
     hasError: shownError !== null,
     hasEverDownloaded,
     inDownload,
-    forceShowTimeline,
+    userIntent: timelineIntent,
   }
   const isSetupMode = shouldShowTimeline(timelineVisibility)
   const canCollapseTimeline = shouldOfferTimelineCollapse(timelineVisibility)
@@ -193,6 +216,12 @@ export function BootIndex() {
             onClick={() => {
               setWslBusy(true)
               const target = isWsl ? "local" : "wsl"
+              // 切换模式 = 一次全新启动（ADR-0014），且 `choose_mode` 是**原地**
+              // 调用（不 navigate）⇒ store 存活，必须显式开新一轮清掉上一轮的
+              // 错误/进度，否则旧诊断卡会挂在新会话上（v1.2.0 实测 2.1）。
+              // 失败时下面会写入新的 localError，故不存在"错误被误藏"。
+              setLocalError(null)
+              beginNewRound()
               api
                 .chooseMode(target, false)
                 .catch((e) =>
@@ -234,7 +263,7 @@ export function BootIndex() {
                 <div className="mt-3 text-center">
                   <button
                     type="button"
-                    onClick={() => setForceShowTimeline(false)}
+                    onClick={() => setTimelineIntent("collapsed")}
                     className="text-meta text-dim transition-colors hover:text-ink"
                   >
                     {t.boot.hideTimeline}
@@ -268,7 +297,7 @@ export function BootIndex() {
               )}
               <button
                 type="button"
-                onClick={() => setForceShowTimeline(true)}
+                onClick={() => setTimelineIntent("expanded")}
                 className="mt-8 text-meta text-faint transition-colors hover:text-dim"
               >
                 {t.boot.viewTimeline}
