@@ -31,6 +31,29 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 分支推送 · ADR-0016 第三批（读侧下沉）：WSL 模式下控制中心恢复可用 —— guan（AI 协作）
+
+- **原委（实机反馈）**：第二批的 P0 守卫把 `list_profiles` 一并挡住，实机会话里控制中心着陆页
+  直接报「profile 列表在 WSL 客体模式下暂不支持」——而**市场安装的目标 profile 选择器**也吃这条
+  列表，等于把第二批刚打通的插件链**挡在门外**（分期设计疏漏：把"读"与"写"一起归进了 P2/P3）。
+- **变更**：`guest.rs` 新增 `list_dir`（客体目录列举：base64 条目帧 + 目录/文件标志 + 目录不存在
+  哨兵；显式覆盖点文件，与宿主 `read_dir` 同口径）；`profiles.rs` 抽出纯装配内核
+  （`assemble_profile_summaries` / `assemble_profile_detail` / `ensure_default_candidate_from`）
+  并加客体孪生（`scan_profiles_in_guest` / `read_profile_detail_in_guest` /
+  `web_ui_profiles_in_guest` / `ensure_default_candidate_in_guest`）；
+  `commands/profile.rs` 的列表、详情、切换候选、默认档校验全部按世界择源（**消掉第二批登记的
+  `switch_profile` 边界**）；`plugins.rs` 补齐同类读侧断点——禁用/启用切换
+  （patch 读改写抽成纯内核 + 客体原子写）、更新检查（已装版本取自客体清单）、总览聚合
+  （客体扫描 + 客体清单）。
+- **影响**：WSL 模式下控制中心**读侧全通**（profile 列表/详情/切换/默认档 + 插件清单/行表/开关/
+  更新检查/聚合总览）；写侧（profile 创建/复制/重命名/删除、插件配置复制）与会话、控制台面板
+  仍在 P0 诚实守卫下报「暂不支持 + 替代路径」。本地模式行为零变化。
+- **待他人动作**：仅周知；仍未签名构建（覆盖安装，identifier 同）。
+- **验证**：宿主 `cargo fmt --check` ✓ / `cargo clippy --all-targets -D warnings` ✓ /
+  **windows 目标 clippy ✓（用上次广播的桩 C 工具链法，本轮把新 `#[cfg(windows)]` 代码也验了）**；
+  离线 harness 实跑：profiles 37 · plugins+build_policy 84（仅 2 个需真引擎桩件的用例跑不了）·
+  guest 9 · mgmt 6；`cargo test` 与链接仍只能在 CI（本机缺 webkit2gtk-4.1 dev）。
+
 ### 2026-09-11 补记 · Windows 目标 clippy 本地可跑（桩 C 工具链法）+ 首次 CI 红灯复盘 —— guan（AI 协作）
 
 - **红灯**：上一批（`a870d2d`）推 CI 后 `build (windows-latest)` 在 **Rust clippy gate** 红 ——

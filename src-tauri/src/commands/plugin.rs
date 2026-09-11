@@ -167,7 +167,8 @@ pub async fn get_plugin_rows(
 /// 禁用/启用切换（4.4③）：patch 写入例外 #3（`{id, disabled}` 单键，
 /// ADR-0009 第四次修订）；运行中会话不热生效，重启承接。
 ///
-/// P0 诚实兜底（ADR-0016 §5-e）：本动作尚未下沉客体（P1 只含装卸/行/清单）。
+/// **世界择源（2026-09-11 第二批）**：WSL 模式读客体 patch 原文、同一份纯变换、
+/// 客体侧原子写回——装上了却关不掉是半截功能（行表已在 P1 下沉）。
 #[tauri::command]
 pub async fn set_plugin_disabled(
     app: tauri::AppHandle,
@@ -175,10 +176,15 @@ pub async fn set_plugin_disabled(
     row_id: String,
     disabled: bool,
 ) -> Result<(), String> {
-    crate::mgmt::require_local(&app, "插件启用/禁用")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::plugins::set_plugin_disabled_in_guest(&distro, &profile, &row_id, disabled)
+        }
     })
     .await
     .map_err(|e| format!("切换任务异常终止：{e}"))?
@@ -186,17 +192,22 @@ pub async fn set_plugin_disabled(
 /// 更新检查（4.4④）：逐外挂插件查 registry dist-tags.latest（外网经
 /// `updates.rs` 镜像链，§7 已登记）；串行阻塞走 spawn_blocking，按钮触发。
 ///
-/// P0 诚实兜底（ADR-0016 §5-e）：本动作按**宿主** home 的已装版本比对 registry
-/// ——WSL 模式下那是错的世界，故先拒（P1 不含更新检查）。
+/// **世界择源（2026-09-11 第二批）**：已装版本来自当前世界（WSL = 客体清单）；
+/// registry 查询仍是 `updates.rs` 唯一网络面（ADR-0016 §1：registry 拉取与模式无关）。
 #[tauri::command]
 pub async fn check_plugin_updates(
     app: tauri::AppHandle,
     profile: String,
 ) -> Result<crate::plugins::PluginUpdateReport, String> {
-    crate::mgmt::require_local(&app, "插件更新检查")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::check_updates_blocking(&home, &profile)
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::plugins::check_updates_blocking(&home, &profile)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::plugins::check_updates_blocking_in_guest(&distro, &profile)
+        }
     })
     .await
     .map_err(|e| format!("更新检查任务异常终止：{e}"))?
@@ -212,17 +223,20 @@ pub async fn list_plugin_versions(package: String) -> Result<Vec<String>, String
 /// 插件总览聚合（4.4④ 收口，ADR-0009 第五次修订）：全部已物化 profile 的第
 /// 三方插件按包名归组。只读纯文件扫描（零 dsh 子进程、零网络），spawn_blocking。
 ///
-/// P0 诚实兜底（ADR-0016 §5-e）：聚合按**宿主** home 全部 profile 扫描——WSL
-/// 模式下那是错的世界（ADR-0016 §2.6）。
+/// **世界择源（2026-09-11 第二批）**：按当前世界的全部 profile 聚合
+/// （WSL = 客体扫描 + 客体清单；纯读，零 dsh 子进程、零网络）。
 #[tauri::command]
 pub async fn list_all_plugins(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
-    crate::mgmt::require_local(&app, "插件总览聚合")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok(crate::plugins::aggregate_plugins_blocking(
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => Ok(crate::plugins::aggregate_plugins_blocking(
             &crate::resolve::user_dsh_home(),
-        ))
+        )),
+        crate::mgmt::World::Wsl { distro } => {
+            crate::plugins::aggregate_plugins_blocking_in_guest(&distro)
+        }
     })
     .await
     .map_err(|e| format!("聚合任务异常终止：{e}"))?

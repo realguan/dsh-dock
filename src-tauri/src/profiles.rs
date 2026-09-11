@@ -92,9 +92,9 @@ pub struct ProfileSummary {
 /// 内置模板名（web/headless）。排序：已物化在前，各组内按名字典序。
 /// 纯函数：home 由调用方传入（IPC 层用 `resolve::user_dsh_home()`）。
 pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
-    let mut out = Vec::new();
-    if let Ok(entries) = fs::read_dir(home.join("profiles")) {
-        for entry in entries.flatten() {
+    let mut entries: Vec<(String, Option<String>)> = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(home.join("profiles")) {
+        for entry in read_dir.flatten() {
             let dir = entry.path();
             if !dir.is_dir() {
                 continue;
@@ -107,19 +107,79 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
             if name == "node_modules" {
                 continue;
             }
-            let (bundles, dependencies) = read_manifest_fields(&dir.join("package.json"));
-            // webUi 判定在本模块内做（不可复用 resolve::list_web_ui_profiles，
-            // 见模块头）：bundles 含 WEBUI_BUNDLE 即是；损坏清单 → false（无
-            // URL 可导航，不给启动入口，与详情页容忍损坏的口径一致）。
-            let web_ui = bundles.iter().any(|b| b == WEBUI_BUNDLE);
-            out.push(ProfileSummary {
-                name,
-                materialized: true,
-                bundles,
-                dependencies,
-                web_ui,
-            });
+            entries.push((name, fs::read_to_string(dir.join("package.json")).ok()));
         }
+    }
+    assemble_profile_summaries(&entries)
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉，2026-09-11 第二批）：目录列举 + 批量读
+/// 各 profile 的 `package.json`（两次 `wsl.exe` 往返），派生逻辑走同一份
+/// [`assemble_profile_summaries`]——两侧口径由构造保证一致，不产生第二套扫描。
+///
+/// 客体 `profiles/` 目录不存在 = 该世界尚未初始化（与宿主 `read_dir` 失败同口径：
+/// 列表只剩内置模板名），**不**报错——报错会让控制中心在"刚装好还没首启"时白屏。
+pub fn scan_profiles_in_guest(distro: &str) -> Result<Vec<ProfileSummary>, String> {
+    let Some(listing) = crate::guest::list_dir(distro, "profiles")? else {
+        return Ok(assemble_profile_summaries(&[]));
+    };
+    let names: Vec<String> = listing
+        .into_iter()
+        .filter(|(name, is_dir)| *is_dir && name != "node_modules")
+        .map(|(name, _)| name)
+        .collect();
+    let entries: Vec<(String, Option<String>)> = if names.is_empty() {
+        Vec::new()
+    } else {
+        let rels: Vec<String> = names
+            .iter()
+            .map(|n| format!("profiles/{n}/package.json"))
+            .collect();
+        names
+            .into_iter()
+            .zip(
+                crate::guest::read_files(distro, &rels)?
+                    .into_iter()
+                    .map(|(_, text)| text),
+            )
+            .collect()
+    };
+    Ok(assemble_profile_summaries(&entries))
+}
+
+/// 客体档 webUi 候选名单（切换 / 默认档校验用）：恒含内置 `web`，其余取客体扫描
+/// 结果里 **bundles 含 WEBUI_BUNDLE** 的已物化 profile（`web` 不重复）。
+/// 判据与宿主 `resolve::list_web_ui_profiles` 同源（同一份 [`assemble_profile_summaries`]）。
+pub fn web_ui_profiles_in_guest(distro: &str) -> Result<Vec<String>, String> {
+    let mut out = vec!["web".to_string()];
+    for p in scan_profiles_in_guest(distro)? {
+        if p.materialized && p.name != "web" && p.web_ui {
+            out.push(p.name);
+        }
+    }
+    Ok(out)
+}
+
+/// 纯装配（宿主扫描 / 客体扫描**共用**）：`(名字, package.json 原文)` → 列表条目
+/// + 未物化的内置模板名。清单缺失/损坏 → 字段置空（半初始化目录也占名）。
+fn assemble_profile_summaries(entries: &[(String, Option<String>)]) -> Vec<ProfileSummary> {
+    let mut out = Vec::new();
+    for (name, text) in entries {
+        let (bundles, dependencies) = text
+            .as_deref()
+            .map(manifest_fields_from_text)
+            .unwrap_or_default();
+        // webUi 判定在本模块内做（不可复用 resolve::list_web_ui_profiles，
+        // 见模块头）：bundles 含 WEBUI_BUNDLE 即是；损坏清单 → false（无
+        // URL 可导航，不给启动入口，与详情页容忍损坏的口径一致）。
+        let web_ui = bundles.iter().any(|b| b == WEBUI_BUNDLE);
+        out.push(ProfileSummary {
+            name: name.clone(),
+            materialized: true,
+            bundles,
+            dependencies,
+            web_ui,
+        });
     }
     for (name, bundles) in PROFILE_TEMPLATES {
         if out.iter().any(|p| &p.name == name) {
@@ -158,10 +218,16 @@ pub fn is_desktop_internal_spec(spec: Option<&str>) -> bool {
 /// 缺失 / 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
 /// 官方桌面运行时的 desktop-packages 视为内置底座，不计入第三方 dependencies。
 pub(crate) fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
-    let Ok(text) = fs::read_to_string(path) else {
-        return (Vec::new(), Vec::new());
-    };
-    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else {
+    match fs::read_to_string(path) {
+        Ok(text) => manifest_fields_from_text(&text),
+        Err(_) => (Vec::new(), Vec::new()),
+    }
+}
+
+/// 清单**原文** → `(bundles, dependencies)`（纯函数：宿主读文件 / 客体读原语共用）。
+/// 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
+pub(crate) fn manifest_fields_from_text(text: &str) -> (Vec<String>, Vec<String>) {
+    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(text) else {
         return (Vec::new(), Vec::new());
     };
     let bundles = manifest_bundles(&pkg);
@@ -226,8 +292,36 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
     let manifest_path = dir.join("package.json");
     let text = fs::read_to_string(&manifest_path)
         .map_err(|e| format!("读取 package.json 失败（{}）：{e}", manifest_path.display()))?;
-    let pkg: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("package.json 非法 JSON（{}）：{e}", manifest_path.display()))?;
+    let patch_yaml = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)).ok();
+    assemble_profile_detail(&text, patch_yaml, &manifest_path.display().to_string())
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：清单 + patch 一次往返读回，派生走同一份
+/// [`assemble_profile_detail`]。`label` 只用于错误文案（宿主显示路径、客体显示
+/// `<发行版>:profiles/<名>/package.json`）。
+pub fn read_profile_detail_in_guest(distro: &str, name: &str) -> Result<ProfileDetail, String> {
+    validate_profile_name(name)?;
+    let manifest_rel = format!("profiles/{name}/package.json");
+    let patch_rel = format!("profiles/{name}/{PROFILE_PATCH_FILENAME}");
+    let mut got = crate::guest::read_files(distro, &[manifest_rel.clone(), patch_rel])?.into_iter();
+    let text = got.next().and_then(|(_, text)| text).ok_or_else(|| {
+        format!(
+            "profile「{name}」尚未物化（客体 {distro} 内无 {manifest_rel}）：\
+                 内置模板名首次启动或首次 plugin add 后才有详情"
+        )
+    })?;
+    let patch_yaml = got.next().and_then(|(_, text)| text);
+    assemble_profile_detail(&text, patch_yaml, &format!("{distro}:{manifest_rel}"))
+}
+
+/// 纯装配（宿主 / 客体共用）：清单原文 + patch 原文 → 详情。
+fn assemble_profile_detail(
+    pkg_json: &str,
+    patch_yaml: Option<String>,
+    label: &str,
+) -> Result<ProfileDetail, String> {
+    let pkg: serde_json::Value = serde_json::from_str(pkg_json)
+        .map_err(|e| format!("package.json 非法 JSON（{label}）：{e}"))?;
     let dependencies = pkg
         .pointer("/dependencies")
         .and_then(|v| v.as_object())
@@ -244,7 +338,6 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
                 .collect()
         })
         .unwrap_or_default();
-    let patch_yaml = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)).ok();
     Ok(ProfileDetail {
         package_name: pkg.get("name").and_then(|v| v.as_str()).map(String::from),
         bundles: manifest_bundles(&pkg),
@@ -764,8 +857,19 @@ pub fn running_conflict(active: Option<&str>, target: &str) -> Result<(), String
 /// 默认启动 profile 候选校验（set_default_profile 用）：名字合法且在扫描结果中
 /// （已物化或内置模板名均可——模板名恒可首启，web 本身就是 ADR 定死的回退值）。
 pub fn ensure_default_candidate(home: &Path, name: &str) -> Result<(), String> {
+    ensure_default_candidate_from(&scan_profiles(home), name)
+}
+
+/// 客体档孪生（世界择源）：候选来自客体扫描结果（P1 读侧下沉后默认档在 WSL 世界
+/// 也可设——启动时按**当前模式**的候选过滤，跨世界残留名字读取侧兜底，不会误启动）。
+pub fn ensure_default_candidate_in_guest(distro: &str, name: &str) -> Result<(), String> {
+    ensure_default_candidate_from(&scan_profiles_in_guest(distro)?, name)
+}
+
+/// 纯校验内核（宿主 / 客体共用）：名字合法且在给定世界的扫描结果里。
+fn ensure_default_candidate_from(list: &[ProfileSummary], name: &str) -> Result<(), String> {
     validate_profile_name(name)?;
-    if scan_profiles(home).iter().any(|p| p.name == name) {
+    if list.iter().any(|p| p.name == name) {
         Ok(())
     } else {
         Err(format!(
@@ -916,6 +1020,24 @@ pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod profiles_tests {
     use super::*;
+
+    /// **客体档读侧在非 Windows 上必须是诚实错误**（ADR-0016 §2.6：绝不静默回落
+    /// 宿主世界）——四条读路径全部由 `guest::list_dir` / `guest::read_files` 的非
+    /// Windows 孪生兜底拒绝。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_profile_reads_never_silently_fall_back_on_non_windows() {
+        let err = scan_profiles_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = web_ui_profiles_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        // 详情：profile 名先过校验（防路径遍历），合法名才打到客体
+        assert!(read_profile_detail_in_guest("Ubuntu", "../escape").is_err());
+        let err = read_profile_detail_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = ensure_default_candidate_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
 
     #[test]
     fn format_utc_known_timestamps() {

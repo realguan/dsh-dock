@@ -110,6 +110,58 @@ pub(crate) fn base64_encode(data: &[u8]) -> String {
 #[cfg(any(windows, test))]
 pub(crate) const FILE_FRAME: &str = "@@DSH_DOCK_FILE@@";
 
+/// `list_dir` 的条目帧：`@@DSH_DOCK_ENTRY@@<b64 名字>:<d|f>`（d=目录，f=文件）。
+#[cfg(any(windows, test))]
+pub(crate) const ENTRY_FRAME: &str = "@@DSH_DOCK_ENTRY@@";
+
+/// 目录**不存在**（与「存在但为空」必须区分：前者 = 该世界尚未初始化，
+/// 后者 = 真的没有子项）。也兼作「脚本确实跑到了」的哨兵——否则空目录的
+/// 输出为空串，会被 `run_wsl_capture` 折叠成「无输出」而误判为客体不可达。
+#[cfg(any(windows, test))]
+pub(crate) const LIST_MISSING: &str = "@@DSH_DOCK_LIST_MISSING@@";
+
+/// 组装「列客体 dsh home 下某目录」脚本：一条 entry 帧一行。
+/// 显式覆盖点文件（`.[!.]*` / `..?*`）——shell 通配默认不匹配点文件，而宿主侧
+/// `read_dir` 会列出它们（两侧口径必须一致，否则同名 profile 在两个世界可不见）。
+#[cfg(any(windows, test))]
+pub(crate) fn list_dir_script(rel_dir: &str) -> String {
+    let path = format!("\"{HOME_EXPR}\"/{}", sh_quote(rel_dir));
+    format!(
+        "{}if [ -d {path} ]; then \
+         for e in {path}/* {path}/.[!.]* {path}/..?*; do \
+         [ -e \"$e\" ] || continue; \
+         printf '{ENTRY_FRAME}%s:%s\\n' \
+         \"$(printf '%s' \"$(basename \"$e\")\" | base64 | tr -d '\\n')\" \
+         \"$([ -d \"$e\" ] && printf d || printf f)\"; \
+         done; else printf '{LIST_MISSING}\\n'; fi",
+        guest_prep!()
+    )
+}
+
+/// 解析 `list_dir_script` 输出：`None` = 目录不存在；`Some` = `(名字, 是否目录)`。
+/// 非帧行（rc 噪音等）忽略；解码失败的行跳过（一个怪名字不该让整张列表塌掉）。
+#[cfg(any(windows, test))]
+pub(crate) fn parse_list_dir(raw: &str) -> Option<Vec<(String, bool)>> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.contains(LIST_MISSING) {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix(ENTRY_FRAME) else {
+            continue;
+        };
+        let Some((name_b64, kind)) = rest.split_once(':') else {
+            continue;
+        };
+        let Some(name) = base64_decode(name_b64).and_then(|b| String::from_utf8(b).ok()) else {
+            continue;
+        };
+        out.push((name, kind == "d"));
+    }
+    Some(out)
+}
+
 /// 组装「客体 dsh CLI 转发」脚本：路径准备 → `exec dsh <args>`。
 ///
 /// `exec` 让 dsh 取代 bash，退出码与信号语义直接透传给 `wsl.exe`，宿主侧读到的
@@ -283,6 +335,34 @@ pub(crate) fn read_files(
     _distro: &str,
     _rel_paths: &[String],
 ) -> Result<Vec<(String, Option<String>)>, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 列客体 dsh home 下某目录（一次 `wsl.exe` 往返）。
+///
+/// `Ok(None)` = 目录不存在（该世界尚未初始化，调用方按"只有内置模板"处理）；
+/// `Ok(Some(entries))` = 条目清单（含点文件；顺序由 shell 通配给出，调用方自行排序）；
+/// `Err` = 客体不可达/无输出（真错误，不静默当空目录——那会让 UI 显示"没有 profile"）。
+#[cfg(windows)]
+pub(crate) fn list_dir(distro: &str, rel_dir: &str) -> Result<Option<Vec<(String, bool)>>, String> {
+    let script = list_dir_script(rel_dir);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("列 {distro} 内目录 {rel_dir} 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    Ok(parse_list_dir(&out))
+}
+
+/// 非 Windows 孪生（同 [`read_files`] 口径）。
+#[cfg(not(windows))]
+pub(crate) fn list_dir(
+    _distro: &str,
+    _rel_dir: &str,
+) -> Result<Option<Vec<(String, bool)>>, String> {
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
@@ -466,6 +546,68 @@ rc 噪音一行
         assert_eq!(parsed[1].1, None);
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 列目录脚本**实跑**验证：目录条目（含点文件与文件/目录区分）、
+    /// 目录不存在 → `None`（脚本总会输出，空目录不会被误判为「无输出」）。
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_script_runs_under_bash_and_reports_entries() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-l-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let profiles = home.join(".dsh/profiles");
+        std::fs::create_dir_all(profiles.join("web")).unwrap();
+        std::fs::create_dir_all(profiles.join("node_modules")).unwrap();
+        std::fs::create_dir_all(profiles.join(".hidden")).unwrap();
+        std::fs::write(profiles.join("stray.txt"), "x").unwrap();
+
+        let run = |rel: &str| {
+            let script = list_dir_script(rel);
+            let out = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(&script)
+                .env("HOME", &home)
+                .env_remove("DSH_HOME")
+                .output()
+                .expect("bash 应可用");
+            assert!(out.status.success(), "脚本应成功：{script}");
+            parse_list_dir(&String::from_utf8_lossy(&out.stdout))
+        };
+
+        let mut entries = run("profiles").expect("目录存在");
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                (".hidden".to_string(), true),
+                ("node_modules".to_string(), true),
+                ("stray.txt".to_string(), false),
+                ("web".to_string(), true),
+            ],
+            "点文件必须列出（与宿主 read_dir 同口径），文件/目录要可区分"
+        );
+
+        // 空目录 → Some(空表)（不是 None：世界已初始化但确实没有 profile）
+        std::fs::create_dir_all(home.join(".dsh/empty")).unwrap();
+        assert_eq!(run("empty"), Some(Vec::new()));
+
+        // 目录不存在 → None
+        assert_eq!(run("profiles/nope"), None);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 纯解析容错：杂讯行忽略、坏帧跳过、缺失哨兵优先。
+    #[test]
+    fn parse_list_dir_ignores_noise_and_marks_missing() {
+        let raw = "motd 噪音\n@@DSH_DOCK_ENTRY@@d2Vi:d\n@@DSH_DOCK_ENTRY@@bWlzc2luZ19raW5k\n";
+        assert_eq!(
+            parse_list_dir(raw),
+            Some(vec![("web".to_string(), true)]),
+            "缺 kind 段的坏帧应跳过"
+        );
+        assert_eq!(parse_list_dir("@@DSH_DOCK_LIST_MISSING@@\n"), None);
+        assert_eq!(parse_list_dir(""), Some(Vec::new()));
     }
 
     /// 写脚本**实跑**验证：base64 载荷 → 同目录临时文件 → `mv` 原子替换；

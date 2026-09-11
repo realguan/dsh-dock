@@ -177,10 +177,30 @@ profile 创建必需 dsh CLI，宿主引擎按设计在 WSL 模式永不就绪 �
       `list_all_plugins`、`check_plugin_updates`；文案 = 原因 + 替代路径（指向客体终端里的 dsh 或
       切回本地模式），禁语（"请先启动应用完成引擎引导后重试"）有单测闸门。第一批的
       `#[expect(dead_code)]` 自清理闸门已按要求删除（接线后不再触发）。
-      **接线后仍未下沉（属 P2/P3；WSL 世界经 P0 守卫诚实拒绝）**：profile 列表/详情/CRUD、
-      会话维护、控制台只读面板、插件开关与配置复制、更新检查、聚合总览。
-      **已知边界（登记待办）**：`switch_profile` 的 webUi 候选校验仍读宿主 home——控制中心在
-      WSL 模式已无 profile 列表（P0 守卫），该路径在 WSL 世界不可达；profile 列表下沉时一并改按世界择源。
+      **接线后仍未下沉（属 P2/P3；WSL 世界经 P0 守卫诚实拒绝）**：profile 生命周期**写**动作
+      （创建/复制/重命名/删除）、会话维护、控制台只读面板（凭据 / DSH 设置 / MCP / 诊断）、
+      插件配置复制（patch 例外 #4）。
+      ③ **第三批（2026-09-11，实机反馈驱动：读侧下沉提前）**：
+      实机验证 P1 时报「profile 列表暂不支持」——控制中心的**着陆页**与市场安装的
+      **目标 profile 选择器**都挂在 `list_profiles` 上，P0 守卫挡住它等于让已下沉的插件链
+      **不可达**（这是 e) 分期的一处设计疏漏：把"读"和"写"一起归进了 P2/P3）。
+      故把**读侧**从 P3 提前：
+      a) `guest.rs`：新增 `list_dir`（客体目录列举：条目 base64 帧 + 目录/文件标志 +
+         「目录不存在」哨兵；显式覆盖点文件，与宿主 `read_dir` 同口径）。
+      b) `profiles.rs`：`scan_profiles` 抽出纯装配内核 `assemble_profile_summaries`
+         （宿主 / 客体共用）、`read_profile_detail` 抽出 `assemble_profile_detail`、
+         `ensure_default_candidate` 抽出 `ensure_default_candidate_from`；客体档孪生
+         `scan_profiles_in_guest` / `read_profile_detail_in_guest` / `web_ui_profiles_in_guest` /
+         `ensure_default_candidate_in_guest`（客体列举 + 批量读清单，两次 `wsl.exe` 往返）。
+      c) `commands/profile.rs`：`list_profiles` / `get_profile_detail`（转 async + spawn_blocking）、
+         `switch_profile` 的 webUi 候选校验、`set_default_profile` 的候选校验 → 全部按世界择源
+         （**消掉了 §5-e 里登记的 `switch_profile` 边界**）。
+      d) `plugins.rs`：读侧一并补齐同一类断点——`set_plugin_disabled`（patch 读改写抽成纯内核
+         `parse_patch_entries` / `render_patch_entries` / `apply_disabled_toggle`，客体读 + 客体原子写）、
+         `check_updates_blocking_in_guest`（已装版本取自客体清单；registry 查询仍是 `updates.rs`
+         唯一网络面，§1 明示其与模式无关）、`aggregate_plugins_blocking_in_guest`（客体扫描 + 客体清单）。
+      至此 WSL 模式下控制中心的**读侧全通**：profile 列表/详情/切换/默认档、插件清单/行表/开关/
+      更新检查/聚合总览；写侧（profile CRUD / 配置复制）与会话、控制台各面板仍在 P0 守卫下诚实拒绝。
 - [ ] **P2**：profile 生命周期下沉（逐条对齐 ADR-0009 的文件不变量与写入例外册）。
 - [ ] **P3**：只读控制台下沉。
 - [ ] 文档同步：AGENTS §7 登记本次客体管理面用途；`docs/contracts/` 增子契约（客体管理面原语与不变量）；

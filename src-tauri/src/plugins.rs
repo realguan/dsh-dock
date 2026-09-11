@@ -909,6 +909,81 @@ mod op_tests {
         assert!(assemble_plugin_entries("not json", &installed).is_err());
     }
 
+    /// patch 读改写内核（宿主 / 客体共用）：禁用追加/置键、启用回收只剩 id 的条目、
+    /// 头部注释与其余条目逐字节保真。
+    #[test]
+    fn patch_toggle_kernel_is_shared_by_host_and_guest() {
+        let original = "# 用户手写注释\n# 第二行\n- id: a\n  foo: 1\n";
+        let (header, mut seq) = parse_patch_entries(original).unwrap();
+        assert_eq!(header, "# 用户手写注释\n# 第二行\n");
+        assert_eq!(seq.len(), 1);
+
+        // 禁用既有 id：只加 disabled 键
+        apply_disabled_toggle(&mut seq, "a", true);
+        let text = render_patch_entries(&header, &seq).unwrap();
+        assert!(text.starts_with("# 用户手写注释\n# 第二行\n"), "{text}");
+        assert!(text.contains("foo: 1"), "载荷字段不得丢：{text}");
+        assert_eq!(
+            parse_patch_entries(&text)
+                .unwrap()
+                .1
+                .first()
+                .and_then(|e| e.get("disabled"))
+                .and_then(|d| d.as_bool()),
+            Some(true)
+        );
+
+        // 启用回到原状，且只剩 id 的条目整条移除
+        let (header, mut seq) = parse_patch_entries(&text).unwrap();
+        apply_disabled_toggle(&mut seq, "a", false);
+        assert_eq!(render_patch_entries(&header, &seq).unwrap(), original);
+
+        let (header, mut seq) = parse_patch_entries("- id: b\n").unwrap();
+        apply_disabled_toggle(&mut seq, "b", true);
+        apply_disabled_toggle(&mut seq, "b", false);
+        assert_eq!(render_patch_entries(&header, &seq).unwrap(), "[]\n");
+
+        // 未命中且禁用 → 追加双键条目
+        let (header, mut seq) = parse_patch_entries("[]\n").unwrap();
+        apply_disabled_toggle(&mut seq, "new-id", true);
+        assert_eq!(
+            render_patch_entries(&header, &seq).unwrap(),
+            "- id: new-id\n  disabled: true\n"
+        );
+
+        // 顶层不是数组 → 拒绝（不代 dsh 改写非 patch 方言）
+        assert!(parse_patch_entries("foo: 1\n").is_err());
+    }
+
+    /// 行 id 校验（宿主 / 客体共用）：沿用宿主既有口径——路径分隔符与换行一律拒绝
+    /// （行 id 来自 dump-config，绝不来自用户输入；这里只守"不进路径/不断行"）。
+    #[test]
+    fn row_id_validation_rejects_paths_and_newlines() {
+        assert!(validate_row_id("dsh-pet").is_ok());
+        assert!(validate_row_id("include:plugin-inventory").is_ok());
+        assert!(validate_row_id("").is_err());
+        assert!(validate_row_id("a/b").is_err());
+        assert!(validate_row_id("a\nb").is_err());
+    }
+
+    /// 客体档更新检查 / 聚合在非 Windows 上给诚实错误（不静默回落宿主世界）。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_update_check_and_aggregate_are_unavailable_off_windows() {
+        let err = check_updates_blocking_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = aggregate_plugins_blocking_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
+    /// 客体档切换在非 Windows 上给诚实错误（不静默回落宿主世界）。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_toggle_is_unavailable_off_windows() {
+        let err = set_plugin_disabled_in_guest("Ubuntu", "web", "id", true).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
     /// patch 原文解析与宿主文件版同源（同一份 `patch_entry_map_text`）。
     #[test]
     fn patch_entry_map_text_is_shared_by_host_and_guest() {
@@ -1182,6 +1257,11 @@ pub fn plugin_rows_blocking(
 fn read_patch_entries(path: &Path) -> Result<(String, Vec<serde_yaml::Value>), String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+    parse_patch_entries(&text)
+}
+
+/// 纯内核（宿主读文件 / 客体读原语共用）：patch 原文 → (头部注释块, 条目序列)。
+fn parse_patch_entries(text: &str) -> Result<(String, Vec<serde_yaml::Value>), String> {
     let mut header = String::new();
     let mut body_start = 0usize;
     for (i, line) in text.lines().enumerate() {
@@ -1207,13 +1287,20 @@ fn read_patch_entries(path: &Path) -> Result<(String, Vec<serde_yaml::Value>), S
 
 /// 写 patch 文件：头部注释前置 + 条目序列化；空数组补 `[]\n`（保持单文档可解析）。
 fn write_patch_entries(path: &Path, header: &str, seq: &[serde_yaml::Value]) -> Result<(), String> {
+    let out = render_patch_entries(header, seq)?;
+    std::fs::write(path, out).map_err(|e| format!("写 {} 失败：{e}", path.display()))
+}
+
+/// 纯内核（宿主写文件 / 客体写原语共用）：头部注释前置 + 条目序列化；
+/// 空数组补 `[]\n`（保持单文档可解析）。
+fn render_patch_entries(header: &str, seq: &[serde_yaml::Value]) -> Result<String, String> {
     let mut out = header.to_string();
     if !seq.is_empty() {
         out.push_str(&serde_yaml::to_string(seq).map_err(|e| format!("序列化失败：{e}"))?);
     } else if !out.ends_with("[]\n") {
         out.push_str("[]\n");
     }
-    std::fs::write(path, out).map_err(|e| format!("写 {} 失败：{e}", path.display()))
+    Ok(out)
 }
 
 /// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组；文件头部连续注释块
@@ -1227,11 +1314,52 @@ pub fn set_plugin_disabled(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let (header, mut seq) = read_patch_entries(&patch_path)?;
+    apply_disabled_toggle(&mut seq, row_id, disabled);
+    write_patch_entries(&patch_path, &header, &seq)
+}
+
+/// **客体档孪生**（ADR-0016：让已下沉的插件中心在 WSL 世界可用——装上了却关不掉
+/// 是半截功能）：读客体 patch 原文（读原语）→ 同一份 [`apply_disabled_toggle`] →
+/// 渲染 → 客体侧原子写。语义逐项对齐宿主实现（patch 写入例外 #3，ADR-0009）。
+pub fn set_plugin_disabled_in_guest(
+    distro: &str,
+    profile: &str,
+    row_id: &str,
+    disabled: bool,
+) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, text)| text)
+        .ok_or_else(|| {
+            format!("读取 {distro}:{rel} 失败：文件不存在（三件套不完整，不代 dsh 生成）")
+        })?;
+    let (header, mut seq) = parse_patch_entries(&text)?;
+    apply_disabled_toggle(&mut seq, row_id, disabled);
+    let next = render_patch_entries(&header, &seq)?;
+    if next == text {
+        return Ok(()); // 无变化零写入（免 mtime 抖动，同 ADR-0013 纪律）
+    }
+    crate::guest::write_home_files(distro, &[(rel, next)])
+}
+
+/// 行 id 合法性（宿主 / 客体共用；行 id 来自 dump-config，不可从包名推导）。
+fn validate_row_id(row_id: &str) -> Result<(), String> {
     if row_id.is_empty() || row_id.contains(['/', '\n']) {
         return Err("行 id 非法".to_string());
     }
-    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
-    let (header, mut seq) = read_patch_entries(&patch_path)?;
+    Ok(())
+}
+
+/// 纯变换（宿主 / 客体共用）：禁用 → id 条目仅置 `disabled` 键（不存在则追加
+/// `{id, disabled}` 双键条目）；启用 → 移除 `disabled` 键，条目只剩 id 则整条移除。
+fn apply_disabled_toggle(seq: &mut Vec<serde_yaml::Value>, row_id: &str, disabled: bool) {
     let id_key = serde_yaml::Value::String("id".into());
     let disabled_key = serde_yaml::Value::String("disabled".into());
     let mut found = false;
@@ -1265,7 +1393,6 @@ pub fn set_plugin_disabled(
                 .unwrap_or(true)
         });
     }
-    write_patch_entries(&patch_path, &header, &seq)
 }
 
 #[cfg(test)]
@@ -1554,10 +1681,31 @@ pub struct PluginUpdateReport {
 /// 逐个外挂插件查 registry（阻塞、串行；按钮触发不自动跑）。current ≥ latest
 /// 的不进报告；latest 取 dist-tags（与 pnpm 默认安装语义一致，复现点 7 教训）。
 pub fn check_updates_blocking(home: &Path, profile: &str) -> Result<PluginUpdateReport, String> {
-    let deps: Vec<PluginEntry> = list_profile_plugins(home, profile)?
+    check_updates_from(updatable_deps(list_profile_plugins(home, profile)?))
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：已装版本来自**客体**清单（客体读原语），
+/// registry 查询仍是 `updates.rs` 唯一网络面——ADR-0016 §1 明示"市场 registry 拉取
+/// 与模式无关"，故这里不新增网络用途，只是比对基准换成客体世界。
+pub fn check_updates_blocking_in_guest(
+    distro: &str,
+    profile: &str,
+) -> Result<PluginUpdateReport, String> {
+    check_updates_from(updatable_deps(list_profile_plugins_in_guest(
+        distro, profile,
+    )?))
+}
+
+/// 可查更新的依赖（宿主 / 客体共用）：第三方且已装出实际版本。
+fn updatable_deps(entries: Vec<PluginEntry>) -> Vec<PluginEntry> {
+    entries
         .into_iter()
         .filter(|p| p.kind == PluginKind::Dependency && p.installed_version.is_some())
-        .collect();
+        .collect()
+}
+
+/// 更新检查内核（宿主 / 客体共用）：逐依赖查 registry 最新版，与当前版本比较。
+fn check_updates_from(deps: Vec<PluginEntry>) -> Result<PluginUpdateReport, String> {
     let mut report = PluginUpdateReport {
         updates: Vec::new(),
         checked: 0,
@@ -1622,12 +1770,30 @@ pub struct AggregateSource {
 /// 的第三方依赖按包名归组。单 profile 清单损坏 → 跳过该 profile（聚合不让
 /// 单点损坏全页失败，与列表页容忍口径一致）。
 pub fn aggregate_plugins_blocking(home: &Path) -> Vec<AggregatePlugin> {
+    let profiles = crate::profiles::scan_profiles(home);
+    aggregate_from(&profiles, |name| list_profile_plugins(home, name))
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：profile 清单与各 profile 的插件清单都
+/// 取自客体（纯读，零 dsh 子进程、零网络），归组逻辑走同一份 [`aggregate_from`]。
+pub fn aggregate_plugins_blocking_in_guest(distro: &str) -> Result<Vec<AggregatePlugin>, String> {
+    let profiles = crate::profiles::scan_profiles_in_guest(distro)?;
+    Ok(aggregate_from(&profiles, |name| {
+        list_profile_plugins_in_guest(distro, name)
+    }))
+}
+
+/// 聚合内核（宿主 / 客体共用）：`lister` 给出某 profile 的插件清单（世界由调用方定）。
+fn aggregate_from(
+    profiles: &[crate::profiles::ProfileSummary],
+    lister: impl Fn(&str) -> Result<Vec<PluginEntry>, String>,
+) -> Vec<AggregatePlugin> {
     let mut by_name: std::collections::BTreeMap<String, AggregatePlugin> = Default::default();
-    for p in crate::profiles::scan_profiles(home) {
+    for p in profiles {
         if !p.materialized {
             continue;
         }
-        let entries = match list_profile_plugins(home, &p.name) {
+        let entries = match lister(&p.name) {
             Ok(v) => v,
             Err(_) => continue,
         };
