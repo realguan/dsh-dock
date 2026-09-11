@@ -2375,12 +2375,74 @@ mod tests {\n\
         assert_eq!(args.len(), 4, "taskkill 参数个数固定为 4");
     }
 
+    /// 依赖纪律禁符表：`(模式, 是否要求后边界)`。
+    ///
+    /// **三种书写形态都必须覆盖**（2026-09-11 task-36 的教训：**只防「当时见过的那种
+    /// 写法」等于没防**）。原表只有 ①，于是 qa-verify 用 ② 形态注入后——闸门绿、
+    /// 327 测试绿、clippy 绿——一条真实的 `lifecycle → shell` 反向依赖**完整地静默形成**：
+    ///
+    /// | # | 形态 | 例子 |
+    /// | :-- | :--- | :--- |
+    /// | ① | 内联全路径（原有） | `crate::shell::parse_detected_url(t)` |
+    /// | ② | **引入形态**（原缺，且 `use` 是 rustfmt 更倾向、更自然的写法） | `use crate::shell;` |
+    /// | ③ | **裸前缀**（② 之后调用点的形态，原缺） | `shell::parse_detected_url(t)` |
+    ///
+    /// 本模块（`lifecycle`）是**被 `shell` 依赖的一方**（`shell.rs` 调 `lifecycle::spawn`），
+    /// 故上述任一形态都会形成 `lifecycle ↔ shell` 模块环，并破坏 spawn 闸门把本文件纳入
+    /// 扫描面的单向性前提（task-30 的地基 / task-29 §4 Tier 1 的静态判定前提）。
+    ///
+    /// `crate::child_cmd`（crate 根）**不在禁列**——它不构成环，且是本模块 Windows 回退
+    /// 路径的必需依赖（AGENTS §4.1 防闪窗）。
+    const FORBIDDEN_DEPS: &[(&str, bool)] = &[
+        // ① 内联全路径
+        ("crate::shell::", false),
+        ("crate::boot::", false),
+        ("crate::ui::", false),
+        // ② 引入形态（以模块名结尾 ⇒ 需要后边界，见 path_token_hit）
+        ("use crate::shell", true),
+        ("use crate::boot", true),
+        ("use crate::ui", true),
+        // ③ 裸前缀（`use` 之后调用点的自然形态）
+        ("shell::", false),
+        ("boot::", false),
+        ("ui::", false),
+    ];
+
+    /// 路径片段命中判定——**带词边界**。
+    ///
+    /// 为什么不能直接用 `contains`：
+    /// - **前边界**：裸前缀 `shell::` 不加前边界会被 `my_shell::` 误命中。误报的危害
+    ///   不是"多红一次"，而是让闸门被**合理地**削弱（有人为过闸删掉禁符）；
+    /// - **后边界**：只对**以模块名结尾**的形态（`use crate::shell`）需要，否则
+    ///   `use crate::shell_extra;` 会被误判成引入 `shell`。以 `::` 结尾的形态
+    ///   （`crate::shell::` / 裸 `shell::`）**不能**要求后边界——其后随的是被调用项名，
+    ///   本身就是标识符字符。
+    fn path_token_hit(line: &str, pat: &str, needs_trailing_boundary: bool) -> bool {
+        let b = line.as_bytes();
+        let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let mut from = 0usize;
+        while let Some(rel) = line[from..].find(pat) {
+            let i = from + rel;
+            let end = i + pat.len();
+            let lead_ok = i == 0 || !is_ident(b[i - 1]);
+            let trail_ok = !needs_trailing_boundary || end >= b.len() || !is_ident(b[end]);
+            if lead_ok && trail_ok {
+                return true;
+            }
+            from = i + 1; // 该次命中被边界否决：从下一字节继续找（重叠匹配也覆盖）
+        }
+        false
+    }
+
     /// `reap_args` 的**依赖纪律**闸门：本模块不得反向依赖 `shell`（成环）。
     ///
     /// 为什么用源码文本判据：这是**架构约束**而非行为约束——一旦有人把
     /// `crate::shell::windows_kill_args` 抄进来"消除重复"，编译**照样通过**、
     /// 测试**照样绿**，但会形成 `lifecycle ↔ shell` 环并破坏 spawn 闸门把本文件
     /// 纳入扫描面的单向性前提（task-30 的地基）。故只能从源码文本拦。
+    ///
+    /// **形态覆盖**：见 `FORBIDDEN_DEPS`——三种书写形态（内联 / `use` / 裸前缀）全查。
+    /// 2026-09-11 task-36 之前只查内联形态，`use crate::shell;` 可静默绕过（已修）。
     ///
     /// 范围说明：本条只钉**依赖方向**（E2 的硬约束）。契约 §3.1「单向语义」里
     /// 「守卫不得反向影响壳存活/重启」的完整方向哨兵属 task-29 §4 Tier 1，
@@ -2401,20 +2463,68 @@ mod tests {\n\
             .map(str::trim)
             .filter(|l| !l.starts_with("//"))
             .collect();
-        for forbidden in ["crate::shell::", "crate::boot::", "crate::ui::"] {
-            assert!(
-                !code_lines.iter().any(|l| l.contains(forbidden)),
-                "lifecycle.rs 生产代码出现 `{forbidden}`（注释除外）——本模块不得依赖\
-                 持有壳状态的兄弟模块：会与 shell → lifecycle 形成模块环，并破坏 spawn\
-                 闸门单向性证明的地基。确需共用逻辑时，把它下沉到本模块或 crate 根\
-                 （如 `crate::child_cmd`）。"
-            );
+        let mut violations: Vec<String> = Vec::new();
+        for &(pat, needs_trailing_boundary) in FORBIDDEN_DEPS {
+            for line in &code_lines {
+                if path_token_hit(line, pat, needs_trailing_boundary) {
+                    violations.push(format!("`{pat}` ← {line}"));
+                }
+            }
         }
+        assert!(
+            violations.is_empty(),
+            "lifecycle.rs 生产代码出现禁符（注释除外）——本模块不得依赖持有壳状态的\
+             兄弟模块：会与 shell → lifecycle 形成模块环，并破坏 spawn 闸门单向性证明的\
+             地基。确需共用逻辑时，把它下沉到本模块或 crate 根（如 `crate::child_cmd`）。\n\
+             命中：\n{}",
+            violations.join("\n")
+        );
         // 白名单：crate 根的 child_cmd 允许（不成环），正向钉住防被误删。
         assert!(
             code_lines.iter().any(|l| l.contains("crate::child_cmd(")),
             "reap_pid 的 Windows 回退路径应经 `crate::child_cmd`（AGENTS §4.1 防闪窗）"
         );
+    }
+
+    /// **依赖闸门匹配器自身的用例**：三种形态必须全中，两类近似写法必须不误报。
+    ///
+    /// 为什么单独测匹配器：闸门的价值全在"覆盖所有书写形态"，而边界逻辑（前后边界、
+    /// 以 `::` 结尾 vs 以模块名结尾）很容易写错——写错的后果与 task-36 的洞同类
+    /// （**看着在守、实际漏一种写法**）。此用例把它钉成纯函数断言。
+    #[test]
+    fn dependency_gate_matcher_covers_all_three_forms() {
+        let hit = |line: &str| {
+            FORBIDDEN_DEPS
+                .iter()
+                .any(|&(pat, tb)| path_token_hit(line, pat, tb))
+        };
+        // ① 内联全路径
+        assert!(hit("    let x = crate::shell::stop_dsh(c, g);"));
+        // ② 引入形态（原缺口——qa-verify 的决定性注入）
+        assert!(hit("use crate::shell;"));
+        assert!(hit("use crate::boot;"));
+        assert!(hit("use crate::ui;"));
+        // ③ 裸前缀（② 之后的调用点形态）
+        assert!(hit("    shell::parse_detected_url(t);"));
+        assert!(hit("    boot::emit_step(app, 1, \"x\", \"y\");"));
+        assert!(hit("    ui::refresh_app_menu(a, s);"));
+        // 带子项 / 别名的 use 也要中
+        assert!(hit("use crate::shell::{a, b};"));
+        assert!(hit("use crate::shell as sh;"));
+
+        // —— 不误报 ——
+        // crate 根白名单：不成环，且是 Windows 回退路径的必需依赖
+        assert!(!hit(
+            "    let mut cmd = crate::child_cmd(Path::new(\"taskkill\"));"
+        ));
+        // 本模块自引用
+        assert!(!hit("    let t = lifecycle::spawn(c, r, ctx);"));
+        // 前缀相似但**不同**模块：全靠后边界挡住
+        assert!(!hit("use crate::shell_extra;"));
+        assert!(!hit("use crate::ui_kit;"));
+        // 标识符尾部：全靠前边界挡住
+        assert!(!hit("    let x = my_shell::foo();"));
+        assert!(!hit("    let y = reboot::now();"));
     }
 
     /// 扫描器的既有语义不能因归一而丢：豁免标注（本行 / 紧邻上一行）与
