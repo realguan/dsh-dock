@@ -31,6 +31,33 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 分支推送 · ADR-0016 P1 第二批（a–e 接线）：控制中心在 WSL 模式下管到真正的世界 —— guan（AI 协作）
+
+- **变更**（分支 `feat/wsl-guest-management-plane`）：新增 `src-tauri/src/mgmt.rs`（管理面世界择源 +
+  P0 诚实兜底守卫）；`guest.rs`（读原语改「相对客体 dsh home」，新增 base64 原子写原语）；
+  `build_policy.rs`（客体侧单键写入孪生）；`plugins.rs`（三处择源，解析/装配/分类抽成两侧共用的纯函数）；
+  `commands/{plugin,profile,session,console}.rs`（入口择源 / `require_local` 守卫）；
+  `ui.rs`（`current_active_mode` 去 macOS cfg）；`frontend/src/{lib/profiles.ts,stores/profilesStore.ts}`
+  （列表失败透出后端详情，不再被固定话术盖掉）；`docs/adr/0016-*.md`（§5 进度回填）。
+- **影响**：WSL 模式下「市场插件安装/卸载/更新 + 插件清单 + 插件行表」现在打在**客体**
+  （客体 dsh CLI + 客体读原语），并补写客体 profile 的 `dangerouslyAllowAllBuilds: true`
+  （复用 ADR-0013 单键口径；客体侧 base64 载荷 → 同目录 tmp → `mv` 原子替换，父目录不存在即失败，
+  不代 dsh 生成 profile 目录）。其余未下沉动作（profile 列表/详情/CRUD/默认档、会话四命令、
+  控制台凭据·DSH 设置·MCP·诊断、插件开关、配置复制、更新检查、聚合总览）在 WSL 世界一律返回
+  「暂不支持 + 替代路径」——**不再出现「请先启动应用完成引擎引导后重试」这类与 ADR-0004 矛盾的
+  死路提示**（禁语有单测闸门）。本地（含非 Windows）路径行为零变化。
+- **待他人动作**：仅周知；本批仍是**未签名**构建，装上会覆盖现有安装（identifier 相同）。
+- **验证（如实登记边界）**：`cargo fmt --check` ✓；`cargo clippy --all-targets -- -D warnings`（宿主 Linux）✓；
+  前端 `typecheck` + `lint` + `test`（223 tests）✓。本机 WSL **缺 webkit2gtk-4.1 与 mingw 工具链**，
+  `cargo test` 与 windows 目标 clippy 在本机跑不了——用不入库的离线 harness（`rustc --test` + 最小桩件）
+  实跑了 guest 7 / mgmt 6 / build_policy 18 / plugins 31 个用例（含两处**在 bash 里真跑脚本**的用例，
+  抓到并修掉了两处测试自身的路径基址错误）；`#[cfg(windows)]` 函数体与三平台全量用例仍以 CI 为准。
+- **未做（登记动作项）**：AGENTS §7 登记本次客体管理面网络用途；`docs/contracts/` 增客体管理面子契约
+  （原语与文件不变量对账）；`docs/executor.md` 补 Windows+WSL 实机验证清单（插件装/卸/更 + 行表 +
+  错误面六态：`wsl.exe` 不可用 / 无发行版 / musl / 断网 / 客体 home 不存在 / 发行版未选定）。
+- **已知边界**：`switch_profile` 的 webUi 候选校验仍读宿主 home——控制中心在 WSL 模式已无 profile
+  列表（P0 守卫），该路径在 WSL 世界不可达；profile 列表下沉时一并改按世界择源（已登记 ADR-0016 §5）。
+
 ### 2026-09-11 补记 · `gh` token 已补 `workflow` scope（上条遗留动作项闭环）—— guan
 
 - **原委**：上一条（依赖升级处置）登记了本机 `gh` token 缺 `workflow` scope、导致
