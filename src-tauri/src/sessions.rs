@@ -1677,9 +1677,20 @@ mod tests {
     }
 
     /// 端到端复现（真实可达路径）：`$DSH_HOME/sessions/<项目目录名>` 下只要存在
-    /// 一个名为 `"信:"` 的目录，`scan_sessions` 就会在遍历时调
+    /// 一个非 ASCII 目录名，`scan_sessions` 就会在遍历时调
     /// `decode_project_dir_name`（`sessions.rs:196`）——修复前 panic，修复后
     /// 正常返回空列表（该目录下无会话日志）。
+    ///
+    /// **平台差异（2026-09-11 Windows CI 实测）**：`"信:"` / `"密钥:"` 这类
+    /// **含冒号**的目录名在 Windows 上**根本无法创建**——`:` 是 Windows 文件名
+    /// 保留字符（盘符 / NTFS ADS），`create_dir_all` 直接失败：
+    /// `Os { code: 123, kind: InvalidFilename, message: "The filename, directory
+    /// name, or volume label syntax is incorrect." }`（本用例曾因此让
+    /// `windows-latest` 的 Unit tests 红）。⇒ 冒号形态在此**构造上不可达**，
+    /// 其 panic 守卫由**跨平台纯函数用例**
+    /// `decode_project_dir_non_ascii_prefix_does_not_panic` 承担（已显式钉
+    /// `"信:"` / `"密钥:"` / `":x"`）。本用例只负责「非 ASCII 目录名可被遍历」
+    /// 这一可移植部分。
     #[test]
     fn scan_sessions_with_non_ascii_project_dir_does_not_panic() {
         let temp = std::env::temp_dir().join(format!(
@@ -1691,9 +1702,15 @@ mod tests {
                 .unwrap_or(0)
         ));
         let _ = fs::remove_dir_all(&temp);
-        // 目录名可含任意 UTF-8（用户手工创建/改名，或 dsh 之外的工具写入）。
-        fs::create_dir_all(temp.join("sessions").join("信:")).unwrap();
-        fs::create_dir_all(temp.join("sessions").join("密钥:")).unwrap();
+        // 非 ASCII 目录名不含保留字符 ⇒ 全平台合法（用户名/项目名可为 CJK）。
+        fs::create_dir_all(temp.join("sessions").join("信")).unwrap();
+        fs::create_dir_all(temp.join("sessions").join("密钥")).unwrap();
+        // 含冒号形态：仅 unix 可创建（Windows 见上方文档注释）。
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(temp.join("sessions").join("信:")).unwrap();
+            fs::create_dir_all(temp.join("sessions").join("密钥:")).unwrap();
+        }
 
         let list = scan_sessions(&temp, &temp, false).unwrap();
         assert!(list.is_empty(), "上述目录下无会话日志：{list:?}");
