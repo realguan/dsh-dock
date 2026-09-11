@@ -72,12 +72,33 @@ fn user_home_dir() -> Option<PathBuf> {
 ///
 /// 隔离后：dev 的泄漏只污染 dev 自己的 home，**爆炸半径收在开发环境内**。
 /// 用户显式设置的 `DSH_HOME` 仍然最高优先（用户主权）。
+///
+/// **2026-09-10 审核补正（测试隔离，安全方向）**：上面那条"`DSH_HOME` 最高优先"
+/// 对**生产**成立，但对**测试**是危险的——本机环境里 `DSH_HOME` 恰好被设为
+/// 用户的真实 `~/.dsh`（dsh 自身的运行环境就会导出它），于是 `cargo test` 里那些
+/// "起一个真 dsh"的用例会**直接打开用户的真实 profile**。实测后果：与正在运行的
+/// 正式包抢同一个 `web` profile，把用户的会话顶到 `等待服务响应超时` 并被 SIGKILL
+/// ——**测试污染了生产**。
+///
+/// 故测试构建**一律无视 `DSH_HOME`**，锁进独立目录：测试隔离不是用户主权问题，
+/// 是安全底线（测试不得写用户的真实 home）。
 pub fn user_dsh_home() -> PathBuf {
-    std::env::var_os("DSH_HOME")
+    // 测试：硬隔离，绝不读 `DSH_HOME`（见上方审核补正）。
+    #[cfg(test)]
+    let out = user_home_dir()
+        .map(|home| home.join(TEST_HOME_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(TEST_HOME_DIR_NAME));
+    #[cfg(not(test))]
+    let out = std::env::var_os("DSH_HOME")
         .map(PathBuf::from)
         .or_else(|| user_home_dir().map(|home| home.join(dev_home_dir_name())))
-        .unwrap_or_else(|| PathBuf::from(dev_home_dir_name()))
+        .unwrap_or_else(|| PathBuf::from(dev_home_dir_name()));
+    out
 }
+
+/// 测试专用 home 目录名：**永不**指向用户的真实 `.dsh`。
+#[cfg(test)]
+pub const TEST_HOME_DIR_NAME: &str = ".dsh-dock-test";
 
 /// 生产数据目录（`app_data_dir` 的等价物）——仅供"需真机引擎"的集成测试定位
 /// 引擎与登记表。刻意不引 Tauri 运行时：测试里没有 AppHandle。
@@ -1135,5 +1156,56 @@ sleep 60
         assert_eq!(loaded.get("0.1.0"), Some(&true));
         assert_eq!(loaded.get("0.2.0"), Some(&false));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **测试隔离闸门**（2026-09-10 审核，安全方向）：测试构建下 `user_dsh_home()`
+    /// **绝不允许**返回用户的真实 home（`~/.dsh`），也不允许被环境里的 `DSH_HOME`
+    /// 带偏。
+    ///
+    /// 背景（实测事故）：本机 `DSH_HOME` 被环境设为用户的真实 `~/.dsh`（dsh 自身
+    /// 运行环境就会导出它）。首版实现把它当"用户主权"最高优先，于是 `cargo test`
+    /// 里"起一个真 dsh"的用例**直接打开了用户的真实 profile**，与正在运行的正式包
+    /// 抢同一个 `web` profile —— 正式包的会话被顶到「等待服务响应超时」并被 SIGKILL。
+    /// **测试污染了生产**。故测试一律锁进独立目录；这条闸门防止回归。
+    #[test]
+    fn test_build_never_targets_the_real_user_home() {
+        let home = user_dsh_home();
+        let dir_name = home
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            dir_name,
+            TEST_HOME_DIR_NAME,
+            "测试必须用专用 home（{}），实际：{}",
+            TEST_HOME_DIR_NAME,
+            home.display()
+        );
+        assert_ne!(dir_name, ".dsh", "测试绝不能指向用户真实 home");
+        // 环境里的 DSH_HOME（本机 = 真实 ~/.dsh）必须被无视
+        if let Some(env_home) = std::env::var_os("DSH_HOME") {
+            assert_ne!(
+                home,
+                PathBuf::from(&env_home),
+                "测试不得继承环境里的 DSH_HOME（那会打开用户的真实 profile）"
+            );
+        }
+    }
+
+    /// 反向保证：非测试构建仍尊重 `DSH_HOME`（用户主权）——由
+    /// `dev_home_dir_name` 的取值与测试外的分支共同保证，此处钉住常量不漂移。
+    #[test]
+    fn home_dir_names_are_distinct_and_stable() {
+        assert_eq!(TEST_HOME_DIR_NAME, ".dsh-dock-test");
+        let dev_or_release = dev_home_dir_name();
+        assert!(
+            dev_or_release == ".dsh" || dev_or_release == ".dsh-dock-dev",
+            "非测试分支只应是正式 home 或 dev home，实际：{dev_or_release}"
+        );
+        assert_ne!(
+            TEST_HOME_DIR_NAME, dev_or_release,
+            "测试 home 必须与 dev/正式 home 区分开"
+        );
     }
 }

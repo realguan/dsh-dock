@@ -60,10 +60,22 @@
     **三条都确认能证伪**，故此前的绿灯不是"没测到"。
 - **影响**：仅周知。契约新增 §2.3（三态判定）与测试闸门 9–12、§7 验证纪律；
   无契约字段 / IPC / 载荷形状变更。
-- **凭据**：`cargo test --lib` 283 绿（本轮 +3）；`fmt --check` 绿；
+- **⚠️ 事故（本次审核自身造成的生产影响，必须留痕）**：审核过程中新增的"真 dsh"
+  用例**干扰了维护者正在运行的正式包**——02:05:30 正式包日志出现
+  `等待服务响应超时` → `优雅停止超时（3s），SIGKILL`，会话被打断并重启（02:06:22
+  自愈，现正常）。**根因**：本机环境导出了 `DSH_HOME=~/.dsh`（dsh 自身运行环境就会
+  导出它），而 `user_dsh_home()` 把 `DSH_HOME` 当"用户主权"最高优先 → 测试继承了它
+  → 真机用例**直接打开用户的真实 `web` profile**，与正式包抢同一 profile。
+  **这与本次事故（孤儿占锁）是同一类错误的另一面：隔离没做在"测试不得碰生产"上。**
+  已修：测试构建**一律无视 `DSH_HOME`**，锁进 `~/.dsh-dock-test`（`resolve.rs` 的
+  `cfg(test)` 分支），并加闸门 `test_build_never_targets_the_real_user_home`
+  （变异验证：改回尊重 `DSH_HOME` 即红）。用户数据未受影响（profiles/sessions 完好，
+  中断的会话由正式包自动重启恢复）。
+- **凭据**：`cargo test --lib` 285 绿（本轮 +5）；`fmt --check` 绿；
   `clippy --all-targets -D warnings` 在 macOS 与 `x86_64-pc-windows-gnu` **双平台
   0 warning**；前端 `typecheck`/`lint`/`test` 221 绿；两条真机锚（真 dsh 硬杀收口、
-  真 dsh 经守卫 spawn→就绪→收口）均绿。
+  真 dsh 经守卫 spawn→就绪→收口）在**隔离 home** 下复测绿；实测确认被 spawn 的 dsh
+  其 `DSH_HOME` 已是 `~/.dsh-dock-test`。
 
 ### 2026-09-10 fix(v110)：Windows 实测 7 项问题修复——引擎引导免符号链接 + 壳页地址 dev 门 + 控制中心建窗线程 + pnpm 落位加固 —— guan（AI 协作）
 
