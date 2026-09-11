@@ -175,8 +175,7 @@ cd src-tauri
 cargo test --lib engine_bootstrap_uses_symlink_free_layout -- --ignored --nocapture
 ```
 
-- 期望：`ok`，且过程中 `%TEMP%` 下新建的引擎目录里 `node_modules
-ode` 是**真实目录**
+- 期望：`ok`，且过程中 `%TEMP%` 下新建的引擎目录里 `node_modules\node` 是**真实目录**
   （不是 symlink），`pnpm-workspace.yaml` 含 `nodeLinker: hoisted`。
 - 旧实现（未修）在此环境会以 `Failed to create symlink … 拒绝访问 (os error 5)` 失败。
 - **注意**：该用例在缺少捆绑 pnpm 时会**硬失败**并提示 fetch 命令（刻意不静默跳过，
@@ -204,7 +203,7 @@ cd src-tauri && cargo tauri build        # ← 必须 release
 | B1 | 首启（干净数据目录） | 引导完成后健康大盘**三卡全"就绪"**；关于页 DSH 有版本号（非"未检出"） | 1.2 / 1.4 / 1.7 |
 | B2 | 从**工作台悬浮胶囊**点「控制中心」 | 1s 内出界面、**可关闭**、不卡死（托盘点同一入口本就正常） | 1.3 |
 | B3 | 切 profile / 切运行模式 / 重启 | 全程**不出现** `localhost 拒绝连接`（旧版会闪 ERR_CONNECTION_REFUSED） | 1.6 |
-| B4 | 任务管理器**强制结束**应用 → 重新启动 | 不再卡「引擎引导失败：落位 …enginesin\pnpm.exe」 | 2.0 |
+| B4 | 任务管理器**强制结束**应用 → 重新启动 | 不再卡「引擎引导失败：落位 …engines\bin\pnpm.exe」 | 2.0 |
 | B5 | 关于页 Node 行 | 未装时显示「未安装（计划 vX）」，**不得**把计划版本显示成已装 | 1.2 追问 |
 | B6 | WSL 模式引导提示 | 版本号形如 `node v24.18.0`，**不得**出现 `vv24.18.0` | 1.1a |
 | B7 | 点「查看启动详情」后 | **有收起出口**（旧版在 WSL 路径下点了就回不去） | 1.1b |
