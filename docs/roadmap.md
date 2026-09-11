@@ -1,7 +1,9 @@
 # DSH Dock 产品路线图
 
 > 状态：活文档，随阶段退出、关键数据更新、资源变化或风险暴露时重排。
-> 最后更新：2026-08-30（4.4 收口——插件总览聚合 + 从其他 profile 安装落地，
+> 最后更新：2026-09-11（时效刷新——为 Later 已落地六项补回收注（§4.5/4.6/4.7/4.11/4.12/4.13），
+> 并校正 Next 阶段状态与 IPC 口径指针；判据 = `docs/team/文档一致性巡检-2026-09-11.md`）
+> 上次更新：2026-08-30（4.4 收口——插件总览聚合 + 从其他 profile 安装落地，
 > Next 阶段核心能力扩展全部完成，后续进入 Later 排期）
 > 适用版本：v0.5.0 起
 
@@ -60,7 +62,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 
 1. **不修改 dsh 源码**：所有管理扩展通过文件读写 + `dsh` CLI 调用实现
 2. **壳运行时保持薄**：前端框架已裁定向 React 生态收敛（ADR-0008：Vite + React + TS + Tailwind + shadcn/ui），约束更新为——**运行时仍禁数据库 / IPC 总线 / 领域服务**；**管理功能不在此限**（2026-08-27 边界重定义：dsh 管理按优秀软件工程设计，可引入数据库 / 持久化）；前端框架仅限白名单（AGENTS §4.4），不引入 React 生态外框架
-3. **最小面原则**：新增 IPC 命令须三处同步（build.rs + capabilities/default.json + lib.rs）并在 AGENTS §7 登记（技术正确性要求，非边界约束）
+3. **最小面原则**：新增 IPC 命令须在 `src-tauri/src/ipc.rs::COMMANDS` 登记，并完成三处同步（`lib.rs` handler + `capabilities/default.json` 授权 + build.rs 由常量生成）与 AGENTS §7 登记（技术正确性要求，非边界约束）。命令清单的**唯一事实源 = `ipc.rs::COMMANDS`**（非本文件；2026-09-11 校正口径），一致性由 cargo test 机器闸门拦截（详见 §4「Next」的工程前置注与 AGENTS §7）
 4. **运行时无状态**：壳运行时（启动/版本/宿主解析）不持久化任何核心态。例外册：`defaultMode`（2026-08-25 登记）；**默认启动 profile**（2026-08-27 维护者批准作为第二例外，落地实现时须同步登记进 AGENTS §6 后方可合入）。**管理功能不在此限**——管理数据可按需持久化（2026-08-27 边界重定义）
 5. **增量生成**：一次会话只做一个明确意图，不做跨模块批量改动
 6. ~~WSL 实机验证是已写代码的未验证风险~~ → **已完成**（v0.4.6，WSL 哨兵文件方案验证通过，见下方「已完成」章节）
@@ -128,8 +130,12 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 
 ---
 
-### Next — 核心能力扩展（下一阶段）
+### Next — 核心能力扩展（✅ 一期全部完成）
 
+> **阶段状态（2026-09-11 补注）**：一期已全部交付——4.3 落地于 2026-08-29、4.4 落地于
+> 2026-08-29/08-30（其自身「落地记录」已载「五核心能力全齐，4.4 退出条件满足」）。
+> 本节以下保留原计划文本供追溯；后续能力延伸见 Later。
+>
 > 阶段目标：交付壳的独特价值——全局、跨 profile、离线可用的 dsh 管理能力。Profile 管理是入口，插件管理是高频操作。
 >
 > **工程前置（4.3 开工前）**：✅ 已完成（2026-08-28）——IPC 三处同步机器闸门：`src-tauri/src/ipc.rs` 为单一事实源，build.rs 经 `#[path]` 由常量生成 AppManifest（不再手写），「capabilities ↔ 常量 ↔ generate_handler」一致性由 cargo test 拦截（capability 引未知权限由 tauri-build 构建期免费拦截）；详见 `ipc.rs` 头注释与 AGENTS §7。
@@ -166,27 +172,34 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 ### Later — 体验完善与能力延伸（后续阶段）
 
 > 以下方向价值明确但优先级低于 Now/Next，或依赖 Now/Next 的产出，或用户覆盖面较窄。按主题分组，组内不严格排序——进入时根据当时的用户反馈和资源情况重排。
+>
+> **已落地项（2026-09-11 补注）**：4.5 / 4.6 / 4.7 / 4.11 / 4.12 / 4.13 六项已随 v0.9.0
+> （`b9973fd`，2026-08-31）**提前交付**——各条下已就地补「落地记录」并标注未闭合子项；
+> 原计划文本一律保留供追溯，**其余项优先级未重排**。
 
-#### 4.5 设置可视化编辑器
+#### 4.5 设置可视化编辑器 ✅（v0.9.0 起）
 
 - **目标**：可视化编辑 `settings.yaml`（LLM 提供商、默认模型、主题、语言、对话设置等）+ `.credentials.yaml`（API keys 脱敏管理 + 引用检查），利用 dsh 热重载实现修改即生效
 - **壳的独特性**：dsh 内部设置 UI 分散在各命名空间页面，壳提供统一全局视图；dsh 未启动时也能编辑
 - **依赖**：Profile 管理器（4.3）；`serde_yaml`；需要理解各命名空间的设置 schema（机制实为 **Schemastery**，vendored 于 dsh 仓库 `vendor/schemastery`，可从其 schema 或 TypeScript 类型推断）
 - **风险**：设置 schema 随 dsh 版本变化，需要保持兼容；`.credentials.yaml` 包含敏感信息，查看时必须脱敏；两文件的写入有硬约束——凭据文件须保持 `0600` 权限 / 顶层仅 `version/refs/records` 三键 / 原子写（违者 dsh 拒绝启动），settings 同样原子写（详见 §1 陷阱清单）
+- **落地记录（2026-09-11 补注）**：✅ 已落地（v0.9.0，`b9973fd` 2026-08-31）——`dsh_settings.rs`（`$DSH_HOME/settings.yaml` 读 / 原子写 / 覆写前先备份）+ `credentials.rs`（`.credentials.yaml` 脱敏摘要、`0600` 与原子写不变量）；IPC `get_dsh_settings_raw` / `save_dsh_settings_raw` / `get_credentials_raw` / `save_credentials_raw` / `get_credentials_summary` / `set_credential_key`；前端 `components/system/DshSettingsPane.tsx` / `CredentialsPane.tsx`。原文的「凭据引用检查」子项本次核对未见对应实现，**未随本次回收关闭**。
 
-#### 4.6 会话与工作区管理器
+#### 4.6 会话与工作区管理器 ✅（会话侧，v0.9.0 起）
 
 - **目标**：列出所有会话（按项目路径分组）、恢复/删除会话、工作区增删管理
 - **壳的独特性**：dsh 未启动时也能浏览会话；跨工作区全局视图
 - **依赖**：无强依赖
 - **注意**：dsh 内部已有会话列表 UI，壳的增量价值相对较小；会话默认落在 `$DSH_HOME/sessions/` 下的 zstd JSONL（压缩编码可配置关闭、另有 sqlite 变体，见 §1），壳只做元数据层面的管理，不解析会话内容本身
+- **落地记录（2026-09-11 补注）**：✅ 会话侧已落地（v0.9.0，`b9973fd` 2026-08-31）——`sessions.rs` 扫描/健康自愈/删除，按项目路径分组（`project_name` / `project_dir_raw` / `decoded_project_path`）；IPC `list_sessions` / `repair_session` / `repair_all_sessions` / `delete_session`；前端 `components/profiles/SessionManager.tsx`。原文的「工作区增删管理」子项未见对应 IPC，**未随本次回收关闭**。
 
-#### 4.7 MCP 服务器管理器
+#### 4.7 MCP 服务器管理器 ✅（增删改查，v0.9.0 起）
 
 - **目标**：管理 `cordis.patch.yml` 中的 MCP 服务器配置（增删改查），查看 MCP 工具列表和连接状态
 - **壳的独特性**：MCP 配置在 cordis.patch.yml 底层，dsh 内部可能有管理 UI 但壳提供更底层的配置编辑
 - **依赖**：Profile 管理器（4.3）；需要理解 `dsh-mcp-client` 的配置 schema
 - **注意**：已核实（2026-08-27）：每个 MCP 服务器是一条 `@deepseek-ai/dsh-mcp-client` 插件行实例，工具名带 `mcp__<serverName>__` 前缀；profile 用户层文件固定名 `cordis.patch.yml`，社区示例多为 `*.cordis.yml` overlay，二者同一 patch 方言
+- **落地记录（2026-09-11 补注）**：✅ 服务器增删改查已落地（v0.9.0，`b9973fd` 2026-08-31）——`mcp.rs`（`list_mcp_servers` / `save_mcp_server` / `delete_mcp_server`）；前端 `components/profiles/McpManager.tsx`。原文的「MCP 工具列表与连接状态查看」子项未见对应实现，**未随本次回收关闭**。
 
 #### 4.8 SSH 远程执行器
 
@@ -207,23 +220,26 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 - **依赖**：无强依赖
 - **注意**：只在 `updates.rs` 网络面加代理，其他模块不触网（AGENTS 网络面白名单纪律）；WSL 客体内的 npm 代理不注入
 
-#### 4.11 诊断与维护工具
+#### 4.11 诊断与维护工具 ✅（诊断侧，v0.9.0 起）
 
 - **目标**：环境诊断（Node/dsh 版本、DSH_HOME 路径、磁盘占用）、profile 完整性检查、重置 profile 依赖（删 node_modules 重装）、日志查看
 - **依赖**：Profile 管理器（4.3）
 - **注意**：辅助功能，价值在于降低支持成本和用户自助排障
+- **落地记录（2026-09-11 补注）**：✅ 诊断侧已落地（v0.9.0，`b9973fd` 2026-08-31）——`diagnostics.rs`（Node / dsh / pnpm / 平台 / 存储诊断）；IPC `get_system_diagnostics` / `get_app_logs`；前端 `components/system/DiagnosticsPane.tsx` / `LogViewerPane.tsx`。原文的「重置 profile 依赖（删 node_modules 重装）」子项未见对应 IPC，**未随本次回收关闭**。
 
-#### 4.12 崩溃自动恢复（可选开关）
+#### 4.12 崩溃自动恢复（可选开关）✅（v0.9.0 起）
 
 - **目标**：dsh 意外崩溃后自动重启（连续崩溃 N 次后停止并出错误卡），默认关闭
 - **依赖**：无强依赖
 - **注意**：可选开关，默认行为不变（手动重试）；符合「最小持久化例外」的扩展节奏（settings.json 新增 `auto_restart` 字段）
+- **落地记录（2026-09-11 补注）**：✅ 已落地（v0.9.0，`b9973fd` 2026-08-31）——settings 键 `autoRestart`（已登记 AGENTS §6 持久化例外册）；60 秒内连续崩溃 3 次触发熔断保护并出错误卡（`boot.rs` 守护线程）；前端开关在 `components/system/PreferencesPane.tsx`。
 
-#### 4.13 多语言 / i18n
+#### 4.13 多语言 / i18n ✅（壳 UI 侧，v0.9.0 起）
 
 - **目标**：壳自带 UI（index/mode/selector/about 四页 + 管理页面）支持中英文，优先系统语言，settings 可手动覆盖
 - **依赖**：管理页面（Next 阶段）完成后统一做 i18n 更高效
 - **注意**：轻量方案（JSON 语言包 + 前端 `t()` 函数，不引入框架）；Rust 侧错误信息也需语言包
+- **落地记录（2026-09-11 补注）**：✅ 壳 UI 侧已落地（v0.9.0，`b9973fd` 2026-08-31）——`locale` 字段已登记 AGENTS §6；语言包 `frontend/src/content/{zh-CN,en-US}.ts` + `stores/i18nStore.ts`（跟随系统 / 手动覆盖）。原文的「Rust 侧错误信息也需语言包」子项未落地（Rust 错误串仍为中文硬编码），**未随本次回收关闭**。
 
 #### 4.14 平台工程（macOS 签名公证 / Linux 桌面集成）
 
