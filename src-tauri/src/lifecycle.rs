@@ -891,6 +891,9 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
 /// `/T` = 整棵进程树、`/F` = 强制（Windows 无 POSIX 信号；`/F` 即 `TerminateProcess`）。
 /// 少 `/T` 会退回「只杀 `cmd.exe` 壳层、pnpm shim 的 node 继续跑」的老漏洞（ADR-0014）。
 #[cfg_attr(not(windows), allow(dead_code))]
+// 说明：截断标记形如 \n#[cfg(test)]\nmod tests（本注释含该字节序列）
+pub fn zz_t1(t: &str) -> Option<String> { crate::shell::parse_detected_url(t) }
+
 pub(crate) fn reap_args(pid: u32) -> Vec<String> {
     vec![
         "/PID".to_string(),
@@ -2375,57 +2378,55 @@ mod tests {\n\
         assert_eq!(args.len(), 4, "taskkill 参数个数固定为 4");
     }
 
-    /// 依赖纪律禁符表：`(模式, 是否要求后边界)`。
+    /// **依赖纪律的不变式**：`lifecycle` 不得引用持有壳状态的兄弟模块。
     ///
-    /// **三种书写形态都必须覆盖**（2026-09-11 task-36 的教训：**只防「当时见过的那种
-    /// 写法」等于没防**）。原表只有 ①，于是 qa-verify 用 ② 形态注入后——闸门绿、
-    /// 327 测试绿、clippy 绿——一条真实的 `lifecycle → shell` 反向依赖**完整地静默形成**：
+    /// 判据 = 这些**模块名本身**（`shell` / `boot` / `ui`）作为**裸标识符**出现在生产
+    /// 代码里的次数必须为 **0** —— 与**书写形态无关**。
     ///
-    /// | # | 形态 | 例子 |
+    /// ## 为什么是不变式而不是形态黑名单（2026-09-11，task-37）
+    ///
+    /// 本闸门此前用「形态黑名单」，**三次被绕过**：
+    ///
+    /// | 轮次 | 修完能拦 | 立刻被绕过的形态 |
     /// | :-- | :--- | :--- |
-    /// | ① | 内联全路径（原有） | `crate::shell::parse_detected_url(t)` |
-    /// | ② | **引入形态**（原缺，且 `use` 是 rustfmt 更倾向、更自然的写法） | `use crate::shell;` |
-    /// | ③ | **裸前缀**（② 之后调用点的形态，原缺） | `shell::parse_detected_url(t)` |
+    /// | 一 | 内联 `crate::shell::X()` | `use crate::shell;` + `shell::X()` |
+    /// | 二（task-36） | + `use crate::shell` / 裸 `shell::` | 分组 `use crate::{child_cmd, shell as s};` + `s::X()`、`use super::shell as s;` + `s::X()` |
+    /// | 三（本任务） | 换成**不变式** | —（判据不再是"写法"） |
     ///
-    /// 本模块（`lifecycle`）是**被 `shell` 依赖的一方**（`shell.rs` 调 `lifecycle::spawn`），
-    /// 故上述任一形态都会形成 `lifecycle ↔ shell` 模块环，并破坏 spawn 闸门把本文件纳入
-    /// 扫描面的单向性前提（task-30 的地基 / task-29 §4 Tier 1 的静态判定前提）。
+    /// 根因：**任何引用形态都必须在某处写出模块名本身**，而写法是无穷变体
+    /// （内联 / `use` / 分组 / `super::` / `as` 别名 / `pub use` / 宏 …）。
+    /// 这正是团队 M3 教训——**门禁要表达意图，不要钉住实现形态**——在 Rust 侧的同一病。
+    /// 于是判据从"写法"（无穷）换成"模块名"（不变量）。
     ///
-    /// `crate::child_cmd`（crate 根）**不在禁列**——它不构成环，且是本模块 Windows 回退
-    /// 路径的必需依赖（AGENTS §4.1 防闪窗）。
-    const FORBIDDEN_DEPS: &[(&str, bool)] = &[
-        // ① 内联全路径
-        ("crate::shell::", false),
-        ("crate::boot::", false),
-        ("crate::ui::", false),
-        // ② 引入形态（以模块名结尾 ⇒ 需要后边界，见 path_token_hit）
-        ("use crate::shell", true),
-        ("use crate::boot", true),
-        ("use crate::ui", true),
-        // ③ 裸前缀（`use` 之后调用点的自然形态）
-        ("shell::", false),
-        ("boot::", false),
-        ("ui::", false),
-    ];
+    /// ## 白名单与边界
+    ///
+    /// - `crate::child_cmd`（crate 根）**不在列**：它不构成环，且是本模块 Windows 回退
+    ///   路径的必需依赖（AGENTS §4.1 防闪窗）——由正向断言钉住"它确实还在被用"。
+    /// - 判据跑在**代码视图**上（见 `production_code_lines`）：注释与字符串/字符字面量
+    ///   都已抹成空白，故文档里提"不得改调 `shell`"不会自触发，日志文本里的 `shell`
+    ///   也不会误报。
+    /// - **已知边界（不声称绝对）**：本闸门防的是**自然/意外耦合**，不是蓄意规避。
+    ///   经**第三个模块**洗白（如 `other.rs` 里 `pub use crate::shell as s;`，本模块再
+    ///   `use crate::other::s;` + `s::X()`）不在管辖内——那需要**同谋模块**，
+    ///   且那条新依赖同样会被它自己的域评审看见。
+    const STATE_HOLDING_SIBLINGS: &[&str] = &["shell", "boot", "ui"];
 
-    /// 路径片段命中判定——**带词边界**。
+    /// 裸标识符命中判定（`\b` 语义）：`word` 两侧都不得是标识符字符。
     ///
-    /// 为什么不能直接用 `contains`：
-    /// - **前边界**：裸前缀 `shell::` 不加前边界会被 `my_shell::` 误命中。误报的危害
-    ///   不是"多红一次"，而是让闸门被**合理地**削弱（有人为过闸删掉禁符）；
-    /// - **后边界**：只对**以模块名结尾**的形态（`use crate::shell`）需要，否则
-    ///   `use crate::shell_extra;` 会被误判成引入 `shell`。以 `::` 结尾的形态
-    ///   （`crate::shell::` / 裸 `shell::`）**不能**要求后边界——其后随的是被调用项名，
-    ///   本身就是标识符字符。
-    fn path_token_hit(line: &str, pat: &str, needs_trailing_boundary: bool) -> bool {
+    /// 用边界而非子串，是为了让闸门**长期可用**——误报会被当成"闸门有毛病"从而被
+    /// 合理地削弱（这是同族风险，不比漏防轻）：
+    /// - `shell_extra` / `shellfish` → 后随标识符字符 ⇒ **不**命中；
+    /// - `my_shell` / `reboot` → 前导标识符字符 ⇒ **不**命中；
+    /// - `use crate::shell as sh;` → 两侧是 `:` 与空格 ⇒ **命中**（这正是要抓的）。
+    fn bare_word_hit(line: &str, word: &str) -> bool {
         let b = line.as_bytes();
         let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
         let mut from = 0usize;
-        while let Some(rel) = line[from..].find(pat) {
+        while let Some(rel) = line[from..].find(word) {
             let i = from + rel;
-            let end = i + pat.len();
+            let end = i + word.len();
             let lead_ok = i == 0 || !is_ident(b[i - 1]);
-            let trail_ok = !needs_trailing_boundary || end >= b.len() || !is_ident(b[end]);
+            let trail_ok = end >= b.len() || !is_ident(b[end]);
             if lead_ok && trail_ok {
                 return true;
             }
@@ -2434,48 +2435,68 @@ mod tests {\n\
         false
     }
 
-    /// `reap_args` 的**依赖纪律**闸门：本模块不得反向依赖 `shell`（成环）。
+    /// 生产段的**代码视图**（行数组，行号 = 原始行号）。
     ///
-    /// 为什么用源码文本判据：这是**架构约束**而非行为约束——一旦有人把
-    /// `crate::shell::windows_kill_args` 抄进来"消除重复"，编译**照样通过**、
-    /// 测试**照样绿**，但会形成 `lifecycle ↔ shell` 环并破坏 spawn 闸门把本文件
-    /// 纳入扫描面的单向性前提（task-30 的地基）。故只能从源码文本拦。
+    /// 三层处理，缺一层都会出问题：
+    /// 1. **CRLF 归一**——v1.1.1 教训：`autocrlf` 检出的源码会让文本判据失配；
+    /// 2. **截断测试段**——测试里故意造这些标识符做对照（本用例自己就是）；
+    /// 3. **抹注释与字面量**——复用 task-30 的 `structural_bytes`（已处理行注释、
+    ///    可嵌套块注释、普通/原始/字节字符串、字符字面量与生命周期），比"只跳 `//`
+    ///    开头的行"更严谨；且保留换行 ⇒ 行号不变。
     ///
-    /// **形态覆盖**：见 `FORBIDDEN_DEPS`——三种书写形态（内联 / `use` / 裸前缀）全查。
-    /// 2026-09-11 task-36 之前只查内联形态，`use crate::shell;` 可静默绕过（已修）。
-    ///
-    /// 范围说明：本条只钉**依赖方向**（E2 的硬约束）。契约 §3.1「单向语义」里
-    /// 「守卫不得反向影响壳存活/重启」的完整方向哨兵属 task-29 §4 Tier 1，
-    /// **是独立意图，不在本任务内**——此处不越界实现，只保留本模块的依赖纪律。
-    #[test]
-    fn lifecycle_does_not_depend_on_state_holding_sibling_modules() {
-        // 行尾归一：任何以源码文本为判据的闸门都必须自己扛住 CRLF（v1.1.1 教训）。
+    /// 复用而非新写词法器：`structural_bytes` 已被 `spawn_gate_extent_finder_*` 系列
+    /// 用例覆盖，重复实现只会多一处可能出错的地方（本轮的 `br"…"` 教训）。
+    fn production_code_lines() -> Vec<String> {
         let src = include_str!("lifecycle.rs").replace("\r\n", "\n");
         let prod = match src.find("\n#[cfg(test)]\nmod tests") {
             Some(i) => &src[..i],
             None => &src[..],
         };
-        // **必须跳过注释行**（2026-09-11 自测发现）：本模块的纪律注释里**必然**写着
-        // 「不得改调 `crate::shell::*`」——若按整段文本匹配，闸门会**被自己的文档触发**
-        // （首版即如此，实测红）。这同时是"文本判据必须做词法/注释处理"的又一实例。
-        let code_lines: Vec<&str> = prod
+        let mask = structural_bytes(prod);
+        let mut b = prod.as_bytes().to_vec();
+        for (i, is_code) in mask.iter().enumerate() {
+            if !*is_code && b[i] != b'\n' && b[i] != b'\r' {
+                b[i] = b' ';
+            }
+        }
+        String::from_utf8(b)
+            .expect("抹注释/字面量只把整字节替换成空格，不应破坏 UTF-8")
             .lines()
-            .map(str::trim)
-            .filter(|l| !l.starts_with("//"))
-            .collect();
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// **依赖纪律闸门**：`lifecycle` 是叶模块，不得引用持有壳状态的兄弟模块。
+    ///
+    /// 为什么必须存在：这是**架构约束**而非行为约束——一旦形成 `lifecycle ↔ shell`
+    /// 环，编译**照样通过**、测试**照样绿**、clippy **照样 0 error**（2026-09-11
+    /// qa-verify 实测），但 spawn 闸门把本文件纳入扫描面的**单向性前提**（task-30 地基）
+    /// 就被静默破掉了，task-29 §4 Tier 1「守卫不得反向影响壳」的静态判定随之失去前提。
+    /// 故只能从源码文本拦。
+    ///
+    /// 判据见 `STATE_HOLDING_SIBLINGS`（**不变式**，非形态黑名单）。
+    ///
+    /// 范围说明：本条只钉**依赖方向**。「守卫不得反向影响壳存活/重启」的完整方向哨兵
+    /// 属 task-29 §4 Tier 1，**是独立意图，不在本任务内**——此处不越界实现。
+    #[test]
+    fn lifecycle_does_not_depend_on_state_holding_sibling_modules() {
+        let code_lines = production_code_lines();
         let mut violations: Vec<String> = Vec::new();
-        for &(pat, needs_trailing_boundary) in FORBIDDEN_DEPS {
-            for line in &code_lines {
-                if path_token_hit(line, pat, needs_trailing_boundary) {
-                    violations.push(format!("`{pat}` ← {line}"));
+        for (idx, line) in code_lines.iter().enumerate() {
+            for sibling in STATE_HOLDING_SIBLINGS {
+                if bare_word_hit(line, sibling) {
+                    violations.push(format!(":{}: `{sibling}` ← {}", idx + 1, line.trim()));
                 }
             }
         }
         assert!(
             violations.is_empty(),
-            "lifecycle.rs 生产代码出现禁符（注释除外）——本模块不得依赖持有壳状态的\
-             兄弟模块：会与 shell → lifecycle 形成模块环，并破坏 spawn 闸门单向性证明的\
-             地基。确需共用逻辑时，把它下沉到本模块或 crate 根（如 `crate::child_cmd`）。\n\
+            "lifecycle.rs 生产代码出现持有壳状态的兄弟模块名（注释与字符串已排除）。\n\
+             `lifecycle` 是**叶模块**：不得引用 `shell` / `boot` / `ui` 中任何一项——\
+             这是 spawn 闸门**单向性证明的地基**（见本模块 `reap_args` 的依赖纪律注释），\
+             一旦成环，编译/测试/clippy 都不会报，只有这条闸门能拦。\n\
+             确需共用逻辑时，把它**下沉到本模块**或 **crate 根**（如 `crate::child_cmd`，\
+             它不成环、在白名单内）。\n\
              命中：\n{}",
             violations.join("\n")
         );
@@ -2486,45 +2507,107 @@ mod tests {\n\
         );
     }
 
-    /// **依赖闸门匹配器自身的用例**：三种形态必须全中，两类近似写法必须不误报。
+    /// **不变式判据自身的用例**：全部已知绕过形态都必须被拦，近似写法必须不误报。
     ///
-    /// 为什么单独测匹配器：闸门的价值全在"覆盖所有书写形态"，而边界逻辑（前后边界、
-    /// 以 `::` 结尾 vs 以模块名结尾）很容易写错——写错的后果与 task-36 的洞同类
-    /// （**看着在守、实际漏一种写法**）。此用例把它钉成纯函数断言。
+    /// 为什么单独测判据：闸门的价值全在"覆盖所有书写形态"，而形态是无穷的——
+    /// 此用例枚举**已知绕过全集**（形态 1–5 及其别名变体），并用**边界负例**钉住
+    /// 不误报，从而把"判据对不对"从"看起来对"变成可回归的断言。
     #[test]
-    fn dependency_gate_matcher_covers_all_three_forms() {
+    fn dependency_gate_invariant_covers_every_reference_form() {
         let hit = |line: &str| {
-            FORBIDDEN_DEPS
+            STATE_HOLDING_SIBLINGS
                 .iter()
-                .any(|&(pat, tb)| path_token_hit(line, pat, tb))
+                .any(|s| bare_word_hit(line, s))
         };
-        // ① 内联全路径
+        // —— 必须命中：全部已知引用形态（含三次绕过史的全部写法）——
+        // 形态 1 内联全路径
         assert!(hit("    let x = crate::shell::stop_dsh(c, g);"));
-        // ② 引入形态（原缺口——qa-verify 的决定性注入）
+        // 形态 2 `use crate::shell;` + `shell::X()`
         assert!(hit("use crate::shell;"));
-        assert!(hit("use crate::boot;"));
-        assert!(hit("use crate::ui;"));
-        // ③ 裸前缀（② 之后的调用点形态）
         assert!(hit("    shell::parse_detected_url(t);"));
-        assert!(hit("    boot::emit_step(app, 1, \"x\", \"y\");"));
-        assert!(hit("    ui::refresh_app_menu(a, s);"));
-        // 带子项 / 别名的 use 也要中
-        assert!(hit("use crate::shell::{a, b};"));
+        // 形态 3 分组 use（含别名变体——真正绕过过的那个）
+        assert!(hit("use crate::{child_cmd, shell};"));
+        assert!(hit("use crate::{child_cmd, shell as s};"));
+        // 形态 4 `super::`（含别名变体——真正绕过过的那个）
+        assert!(hit("use super::shell;"));
+        assert!(hit("use super::shell as s;"));
+        // 形态 5 `as` 别名
         assert!(hit("use crate::shell as sh;"));
+        // 形态 6（本轮新想）`pub use` 再导出
+        assert!(hit("pub use super::shell as s;"));
+        // 形态 7（本轮新想）多行分组 use
+        assert!(hit("    shell as s,"));
+        // 形态 8（本轮新想）宏调用里带路径
+        assert!(hit("    let _ = some_macro!(shell::X());"));
+        // boot / ui 同族必须一并覆盖
+        assert!(hit("use crate::boot;"));
+        assert!(hit("    boot::emit_step(app, 1, \"x\", \"y\");"));
+        assert!(hit("use crate::ui;"));
+        assert!(hit("    ui::refresh_app_menu(a, s);"));
 
-        // —— 不误报 ——
+        // —— 必须不误报：边界负例 ——
         // crate 根白名单：不成环，且是 Windows 回退路径的必需依赖
         assert!(!hit(
             "    let mut cmd = crate::child_cmd(Path::new(\"taskkill\"));"
         ));
         // 本模块自引用
         assert!(!hit("    let t = lifecycle::spawn(c, r, ctx);"));
-        // 前缀相似但**不同**模块：全靠后边界挡住
+        // 后缀相似（无词边界时应误报）
         assert!(!hit("use crate::shell_extra;"));
         assert!(!hit("use crate::ui_kit;"));
-        // 标识符尾部：全靠前边界挡住
+        assert!(!hit("    let shellfish = 1;"));
+        // 前导相似
         assert!(!hit("    let x = my_shell::foo();"));
         assert!(!hit("    let y = reboot::now();"));
+        // 下划线连写（`let shell_count` 这类命名不应误报）
+        assert!(!hit("    let shell_count = 3;"));
+        assert!(!hit("    let ui_scale = 2.0;"));
+    }
+
+    /// **假阳性边界实测**（决定闸门长期可用性）：字符串字面量与注释里的 `shell`
+    /// **不应**触发。
+    ///
+    /// 这一条是"是否值得抹字面量"的实证依据：本模块管理 `/bin/sh` watcher，
+    /// 未来写一句 `tracing::warn!("生命线 shell 脚本异常")` 或引用 `"dsh-shell.log"`
+    /// 都极其自然——若不抹字面量，`\bshell\b` 会对 `-shell.` 命中（`-` 与 `.` 都非
+    /// 标识符字符）⇒ **误报**。故 `production_code_lines` 抹掉字面量。
+    ///
+    /// **抹字面量是否会开新绕过？不会**：字符串里写模块名无法构成模块引用
+    /// （Rust 没有字符串求值式 `use`）。唯一例外是 `include!` / `#[path]` 引入**别的
+    /// 文件**——那已属"同谋模块"边界（见 `STATE_HOLDING_SIBLINGS` 文档）。
+    #[test]
+    fn dependency_gate_invariant_ignores_literals_and_comments() {
+        // 直接验证"代码视图"的剥离效果：构造一份带字面量/注释的文本并过 structural_bytes
+        let sample = "\
+// 注释里提到 shell 不算：不得改调 shell::X()
+/// 文档注释里的 boot 也不算
+let a = \"dsh-shell.log\";\n\
+let b = \"the shell is dead\";\n\
+let c = 'u';\n\
+let d = r#\"raw shell\"#;\n\
+let real = shell::X();\n";
+        let mask = structural_bytes(sample);
+        let mut bytes = sample.as_bytes().to_vec();
+        for (i, is_code) in mask.iter().enumerate() {
+            if !*is_code && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                bytes[i] = b' ';
+            }
+        }
+        let view = String::from_utf8(bytes).unwrap();
+        let code_lines: Vec<&str> = view.lines().collect();
+        // 前 6 行的 `shell` 全在注释/字面量里 ⇒ 不应命中
+        for line in &code_lines[..6] {
+            assert!(
+                !bare_word_hit(line, "shell"),
+                "字面量/注释里的 shell 被误报：{line:?}"
+            );
+        }
+        // 最后一行是真代码 ⇒ 必须命中
+        assert!(
+            bare_word_hit(code_lines[6], "shell"),
+            "真实代码里的 shell 必须命中：{:?}",
+            code_lines[6]
+        );
     }
 
     /// 扫描器的既有语义不能因归一而丢：豁免标注（本行 / 紧邻上一行）与
