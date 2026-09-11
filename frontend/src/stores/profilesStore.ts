@@ -6,6 +6,7 @@
 import { create } from "zustand"
 import { api } from "@/lib/tauri"
 import type { ProfileSummary } from "@/types/ipc"
+import { profileListError } from "@/lib/profiles"
 
 interface ProfilesState {
   list: ProfileSummary[]
@@ -38,9 +39,15 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
   load: async () => {
     if (get().loading) return
     set({ loading: true })
-    // 列表/默认值/运行中并行播种；默认值与运行中失败不阻塞列表（降级视图）
+    // 列表/默认值/运行中并行播种；默认值与运行中失败不阻塞列表（降级视图）。
+    // 列表失败的**详情必须留住**（ADR-0016 §5-e）：WSL 客体模式下后端给的是
+    // 「暂不支持 + 替代路径」这种可行动文案，丢掉它只剩误导性的固定话术。
+    let listError: unknown = null
     const [list, def, active] = await Promise.all([
-      api.listProfiles().catch(() => null as unknown as ProfileSummary[]),
+      api.listProfiles().catch((e: unknown) => {
+        listError = e
+        return null as unknown as ProfileSummary[]
+      }),
       api.getDefaultProfile().catch(() => null),
       api.getActiveProfile().catch(() => null),
     ])
@@ -48,7 +55,7 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
       set({
         loading: false,
         loaded: true,
-        loadError: "profile 列表读取失败——请确认 dsh 环境后重试",
+        loadError: profileListError(listError),
       })
       return
     }

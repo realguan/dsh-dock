@@ -184,6 +184,11 @@ pub fn collect_diagnostics(home: &Path, data_dir: &Path) -> SystemDiagnosticsRep
     }
 }
 
+/// 客体环境系统诊断数据采集（ADR-0016 P3）。
+pub fn collect_diagnostics_in_guest(distro: &str) -> Result<SystemDiagnosticsReport, String> {
+    crate::guest::collect_diagnostics_in_guest(distro)
+}
+
 /// 读取指定日志源内容（支持 tail 截取，防止超大日志卡死前端）
 pub fn read_app_logs(
     source: &str,

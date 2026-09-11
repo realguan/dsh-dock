@@ -108,6 +108,8 @@ flowchart TD
 | Node 映射包（map.json + 签名） | [../../node-map/README.md](../../node-map/README.md) | 0.0.1 | 壳 updates ↔ npm registry |
 | IPC 命令与事件 | AGENTS.md §7（登记册） | 随登记演进 | ui/\*.html ↔ src-tauri |
 | Executor 抽象 | [../executor.md](../executor.md) | local+wsl v1 | shell/lib ↔ 各执行环境 |
+| 子进程生命周期（child-lifecycle） | [child-lifecycle.md](child-lifecycle.md) | v1 | 壳全部 spawn 面 |
+| WSL 客体管理面（wsl-guest-management） | [wsl-guest-management.md](wsl-guest-management.md) | v1 | 壳全部管理面 IPC 命令 ↔ 客体执行与文件层 |
 | 客户端自更新 feed | tauri.conf updater endpoint | latest.json | 壳 updater ↔ GitHub Releases |
 | 子进程生命周期 | [child-lifecycle.md](./child-lifecycle.md) | v1 | 壳全部 spawn 面（6 模块 / 13 调用点：`lib.rs`·`shell.rs`·`executor.rs`·`engines.rs`·`profiles.rs`·`sessions.rs`·`resolve.rs`）↔ 各子进程 |
 

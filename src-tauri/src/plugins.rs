@@ -14,6 +14,7 @@
 //!   **id 空间**：entryId（`include:*` 树路径）≠ patch/配置行 id——4.4 后续
 //!   禁用写入的 id 以 `--dump-config` 行 id 为准，本模块不提供写入。
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// 清单条目：官方内置 bundle 或第三方依赖插件。
@@ -63,10 +64,62 @@ pub struct RuntimeEntry {
 /// 未物化 / 清单损坏 → Err（列表页两态由调用方把关，详情页已有同口径报错）。
 pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntry>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let manifest_path = home.join("profiles").join(profile).join("package.json");
-    let text = fs_err(&manifest_path)?;
-    let pkg: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    let dir = home.join("profiles").join(profile);
+    let text = fs_err(&dir.join("package.json"))?;
+    // 已装版本/描述：读齐各依赖的 `node_modules/<包>/package.json` 原文
+    // （符号链接农场只读穿透，不直写）；解析交给共用的纯装配函数。
+    let installed: BTreeMap<String, Option<String>> = dependency_names(&text)?
+        .into_iter()
+        .map(|name| {
+            let manifest =
+                std::fs::read_to_string(dir.join("node_modules").join(&name).join("package.json"))
+                    .ok();
+            (name, manifest)
+        })
+        .collect();
+    assemble_plugin_entries(&text, &installed)
+}
+
+/// 客体档孪生（ADR-0016 §5-c）：清单与各依赖的已装 `package.json` 经客体读原语
+/// **批量**取回（两次往返：先清单拿依赖名，再一次读齐各依赖），解析与派生走同一份
+/// [`assemble_plugin_entries`]——解析层零改动，不产生第二套实现。
+pub fn list_profile_plugins_in_guest(
+    distro: &str,
+    profile: &str,
+) -> Result<Vec<PluginEntry>, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let rel = format!("profiles/{profile}/package.json");
+    let manifest = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, text)| text)
+        .ok_or_else(|| format!("profile「{profile}」尚未初始化（客体 {distro} 内无 {rel}）"))?;
+    let names = dependency_names(&manifest)?;
+    let installed: BTreeMap<String, Option<String>> = if names.is_empty() {
+        BTreeMap::new()
+    } else {
+        let rels: Vec<String> = names
+            .iter()
+            .map(|n| format!("profiles/{profile}/node_modules/{n}/package.json"))
+            .collect();
+        let got = crate::guest::read_files(distro, &rels)?;
+        names
+            .into_iter()
+            .zip(got.into_iter().map(|(_, text)| text))
+            .collect()
+    };
+    assemble_plugin_entries(&manifest, &installed)
+}
+
+/// 纯装配（本地 / 客体共用）：manifest 原文 + 「依赖包名 → 已装 package.json 原文」
+/// → 插件清单条目。**解析与派生逻辑只有这一份**——ADR-0016 §3-A 选择"读原文"
+/// 正是为了这个收益。
+fn assemble_plugin_entries(
+    manifest_text: &str,
+    installed: &BTreeMap<String, Option<String>>,
+) -> Result<Vec<PluginEntry>, String> {
+    let pkg: serde_json::Value = serde_json::from_str(manifest_text)
+        .map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
 
     let mut out = Vec::new();
     // 官方内置 bundle：版本锚在 dsh 安装目录，不进 profile node_modules，不实读。
@@ -93,13 +146,11 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
                     spec: spec_str.map(str::to_string),
                 });
             } else {
-                let (version, description) = read_installed(
-                    &home
-                        .join("profiles")
-                        .join(profile)
-                        .join("node_modules")
-                        .join(name),
-                );
+                let (version, description) = installed
+                    .get(name)
+                    .and_then(|text| text.as_deref())
+                    .map(installed_info)
+                    .unwrap_or((None, None));
                 out.push(PluginEntry {
                     name: name.clone(),
                     kind: PluginKind::Dependency,
@@ -113,13 +164,10 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
     Ok(out)
 }
 
-/// 读已安装插件的 `(version, description)`；未安装/损坏 → (None, None)
+/// 已装包 `package.json` 原文 → `(version, description)`；缺失/损坏 → (None, None)
 /// （清单容忍半初始化，与列表页口径一致）。
-fn read_installed(pkg_dir: &Path) -> (Option<String>, Option<String>) {
-    let Ok(text) = std::fs::read_to_string(pkg_dir.join("package.json")) else {
-        return (None, None);
-    };
-    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else {
+fn installed_info(pkg_text: &str) -> (Option<String>, Option<String>) {
+    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(pkg_text) else {
         return (None, None);
     };
     (
@@ -130,6 +178,17 @@ fn read_installed(pkg_dir: &Path) -> (Option<String>, Option<String>) {
             .and_then(|v| v.as_str())
             .map(String::from),
     )
+}
+
+/// manifest 原文 → 依赖包名（字典序；缺失 `dependencies` = 空表，非法 JSON = Err）。
+fn dependency_names(manifest_text: &str) -> Result<Vec<String>, String> {
+    let pkg: serde_json::Value = serde_json::from_str(manifest_text)
+        .map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    Ok(pkg
+        .get("dependencies")
+        .and_then(|v| v.as_object())
+        .map(|d| d.keys().cloned().collect())
+        .unwrap_or_default())
 }
 
 fn fs_err(path: &Path) -> Result<String, String> {
@@ -505,43 +564,84 @@ fn is_repo_segment(s: &str) -> bool {
 
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
+///
+/// **世界择源**（ADR-0016 §5-a/c）：`world` 由 IPC 层按会话实际运行环境解析。
+/// 本地世界 = 现状路径（宿主 fs + 宿主引擎）；WSL 世界 = 客体原语
+/// （客体读 profile 清单 + 客体 dsh CLI 转发 + 客体侧单键写入），**绝不回落本地**。
 pub fn mutate_plugin_blocking(
     op: PluginOp,
     profile: &str,
     spec: &str,
     data_dir: &Path,
+    world: &crate::mgmt::World,
 ) -> Result<PluginOpOutcome, String> {
     crate::profiles::validate_profile_name(profile)?;
     // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
     validate_install_spec(spec)?;
-    let home = crate::resolve::user_dsh_home();
-    if !home
-        .join("profiles")
-        .join(profile)
-        .join("package.json")
-        .is_file()
-    {
-        return Err(format!(
-            "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
-        ));
-    }
-    // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
-    // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
-    // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
-    crate::build_policy::ensure_profile_build_policy_best_effort(profile);
-    let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir)?,
-        &[
-            "plugin".to_string(),
-            "--profile".to_string(),
-            profile.to_string(),
-            op.verb().to_string(),
-            spec.to_string(),
-        ],
-        &home,
-        &data_dir.join("plugin-op.log"),
-        data_dir,
-    )?;
+    let args = [
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        op.verb().to_string(),
+        spec.to_string(),
+    ];
+    let log_path = data_dir.join("plugin-op.log");
+    let run = match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            if !home
+                .join("profiles")
+                .join(profile)
+                .join("package.json")
+                .is_file()
+            {
+                return Err(format!(
+                    "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
+                ));
+            }
+            // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
+            // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
+            // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
+            crate::build_policy::ensure_profile_build_policy_best_effort(profile);
+            crate::profiles::run_toolchain_forward(
+                &crate::engines::resolve_toolchain(data_dir)?,
+                &args,
+                &home,
+                &log_path,
+                data_dir,
+            )?
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            // 客体 profile 存在性（读原语；宿主 home 在 WSL 模式下**不是**这个世界）
+            let rel = format!("profiles/{profile}/package.json");
+            let exists = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+                .into_iter()
+                .next()
+                .and_then(|(_, text)| text)
+                .is_some();
+            if !exists {
+                return Err(format!(
+                    "profile「{profile}」尚未初始化（客体 {distro} 内无 {rel}）——\
+                     先在该发行版里创建或首启一次再管理插件"
+                ));
+            }
+            // 客体侧单键写入（ADR-0016 §5-d）：客体 profile 由客体 dsh 物化，
+            // 宿主这份写入器从未碰过它——不补写则带构建脚本的插件必撞 pnpm 审批门。
+            crate::build_policy::ensure_profile_build_policy_in_guest_best_effort(distro, profile);
+            crate::profiles::run_dsh_cli_in_guest(distro, &args, &log_path)?
+        }
+    };
+    Ok(classify_op_outcome(op, profile, spec, &run))
+}
+
+/// 转发运行结果 → 插件操作结果（**纯函数**，本地 / 客体共用同一份分类与文案）：
+/// 退出码 0 = 成功；超时指向网络与 registry；其余取输出尾部做人读诊断。
+fn classify_op_outcome(
+    op: PluginOp,
+    profile: &str,
+    spec: &str,
+    run: &crate::profiles::ForwardRun,
+) -> PluginOpOutcome {
     let ok = !run.timed_out && run.code == Some(0);
     let detail = if ok {
         format!(
@@ -573,7 +673,7 @@ pub fn mutate_plugin_blocking(
             label = op.label()
         )
     };
-    Ok(PluginOpOutcome { ok, detail })
+    PluginOpOutcome { ok, detail }
 }
 
 #[cfg(test)]
@@ -685,13 +785,226 @@ mod op_tests {
         // 未物化：先于任何 spawn/网络拒绝
         let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
         let ghost = format!("dsh-dock-ghost-{}", std::process::id());
+        let local = crate::mgmt::World::Local;
         assert!(
-            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir)
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir, &local)
                 .unwrap_err()
                 .contains("尚未初始化")
         );
         // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
-        assert!(mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir).is_err());
+        assert!(
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir, &local).is_err()
+        );
+        // 非法 profile 名（路径遍历）：任何世界都在触达客体之前被拒
+        let wsl = crate::mgmt::World::Wsl {
+            distro: "Ubuntu".to_string(),
+        };
+        assert!(
+            mutate_plugin_blocking(PluginOp::Install, "../escape", "pkg", &data_dir, &wsl).is_err()
+        );
+    }
+
+    /// 客体档在非 Windows 上给**诚实错误**（客体只存在于 Windows），绝不静默回落
+    /// 宿主世界执行——ADR-0016 §2.6。
+    #[cfg(not(windows))]
+    #[test]
+    fn wsl_world_never_silently_falls_back_to_host_on_non_windows() {
+        let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
+        let wsl = crate::mgmt::World::Wsl {
+            distro: "Ubuntu".to_string(),
+        };
+        let err =
+            mutate_plugin_blocking(PluginOp::Install, "web", "pkg", &data_dir, &wsl).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = plugin_rows_blocking("web", &data_dir, &wsl).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = list_profile_plugins_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
+    /// 转发结果分类（纯函数，本地/客体共用）：成功 / 超时 / 退出码非零三态文案。
+    #[test]
+    fn op_outcome_classification_covers_three_terminal_states() {
+        use crate::profiles::ForwardRun;
+        let ok = classify_op_outcome(
+            PluginOp::Install,
+            "web",
+            "pkg@1.2.3",
+            &ForwardRun {
+                code: Some(0),
+                timed_out: false,
+                output: String::new(),
+            },
+        );
+        assert!(ok.ok);
+        assert!(ok.detail.contains("已安装 pkg@1.2.3"), "{}", ok.detail);
+
+        let timed_out = classify_op_outcome(
+            PluginOp::Remove,
+            "web",
+            "pkg",
+            &ForwardRun {
+                code: None,
+                timed_out: true,
+                output: String::new(),
+            },
+        );
+        assert!(!timed_out.ok);
+        assert!(timed_out.detail.contains("超时"), "{}", timed_out.detail);
+
+        let failed = classify_op_outcome(
+            PluginOp::Update,
+            "web",
+            "pkg",
+            &ForwardRun {
+                code: Some(1),
+                timed_out: false,
+                output: "l1\nl2\nERR_PNPM_IGNORED_BUILDS\n".to_string(),
+            },
+        );
+        assert!(!failed.ok);
+        assert!(failed.detail.contains("dsh 退出码 1"), "{}", failed.detail);
+        assert!(
+            failed.detail.contains("ERR_PNPM_IGNORED_BUILDS"),
+            "输出尾部必须带上：{}",
+            failed.detail
+        );
+    }
+
+    /// 纯装配：bundle / 官方内嵌（desktop-packages）/ 已装依赖 / 未装依赖四态。
+    #[test]
+    fn assemble_plugin_entries_reuses_parsers_across_worlds() {
+        let manifest = serde_json::json!({
+            "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base"] } },
+            "dependencies": {
+                "@deepseek-ai/cordis": "file:./desktop-packages/deepseek-ai-cordis-4.0.2.tgz",
+                "dsh-pet": "github:o/r#path:/p",
+                "dsh-missing": "^1.0.0"
+            }
+        })
+        .to_string();
+        let mut installed = BTreeMap::new();
+        installed.insert(
+            "dsh-pet".to_string(),
+            Some(r#"{"version":"0.3.17","description":"宠物"}"#.to_string()),
+        );
+        installed.insert("dsh-missing".to_string(), None);
+        let got = assemble_plugin_entries(&manifest, &installed).unwrap();
+        let by_name = |n: &str| got.iter().find(|e| e.name == n).cloned().unwrap();
+        assert_eq!(by_name("@deepseek-ai/dsh-base").kind, PluginKind::Bundle);
+        assert_eq!(
+            by_name("@deepseek-ai/cordis").kind,
+            PluginKind::Bundle,
+            "官方内嵌包不作为外挂插件"
+        );
+        let pet = by_name("dsh-pet");
+        assert_eq!(pet.kind, PluginKind::Dependency);
+        assert_eq!(pet.installed_version.as_deref(), Some("0.3.17"));
+        assert_eq!(pet.description.as_deref(), Some("宠物"));
+        assert_eq!(pet.spec.as_deref(), Some("github:o/r#path:/p"));
+        let ghost = by_name("dsh-missing");
+        assert_eq!(ghost.installed_version, None);
+        assert_eq!(ghost.description, None);
+        // 损坏清单 → Err（与宿主实现同口径）
+        assert!(assemble_plugin_entries("not json", &installed).is_err());
+    }
+
+    /// patch 读改写内核（宿主 / 客体共用）：禁用追加/置键、启用回收只剩 id 的条目、
+    /// **未改条目逐字节保真（含行间注释）**。
+    #[test]
+    fn patch_toggle_kernel_is_shared_by_host_and_guest() {
+        let original = "# 用户手写注释\n# 第二行\n- id: a\n  foo: 1\n";
+        let mut patch = PatchFile::from_text(original).unwrap();
+        assert_eq!(patch.entries.len(), 1);
+
+        // 禁用既有 id：只加 disabled 键
+        apply_disabled_toggle(&mut patch, "a", true);
+        let text = patch.render().unwrap();
+        assert!(text.starts_with("# 用户手写注释\n# 第二行\n"), "{text}");
+        assert!(text.contains("foo: 1"), "载荷字段不得丢：{text}");
+        assert_eq!(
+            PatchFile::from_text(&text)
+                .unwrap()
+                .entries
+                .first()
+                .and_then(|e| e.get("disabled"))
+                .and_then(|d| d.as_bool()),
+            Some(true)
+        );
+
+        // 启用回到原状，且只剩 id 的条目整条移除
+        let mut patch = PatchFile::from_text(&text).unwrap();
+        apply_disabled_toggle(&mut patch, "a", false);
+        assert_eq!(patch.render().unwrap(), original);
+
+        let mut patch = PatchFile::from_text("- id: b\n").unwrap();
+        apply_disabled_toggle(&mut patch, "b", true);
+        apply_disabled_toggle(&mut patch, "b", false);
+        assert_eq!(patch.render().unwrap(), "[]\n");
+
+        // 未命中且禁用 → 追加双键条目
+        let mut patch = PatchFile::from_text("[]\n").unwrap();
+        apply_disabled_toggle(&mut patch, "new-id", true);
+        assert_eq!(patch.render().unwrap(), "- id: new-id\n  disabled: true\n");
+
+        // 顶层不是数组 → 拒绝（不代 dsh 改写非 patch 方言）
+        assert!(PatchFile::from_text("foo: 1\n").is_err());
+    }
+
+    /// **未改条目的行间注释必须存活**（本移植的核心动机，2026-09-11 合并 PR #13）：
+    /// 分支旧内核 `render_patch_entries` 走整数组 `serde_yaml::to_string` ⇒ 除头部
+    /// 连续注释块外**全部注释丢失**，而 `cordis.patch.yml` 的注释是用户人工资产。
+    /// 本用例以"禁用 A 条目"为操作，断言**未改动的 B 条目行间注释逐字节仍在**。
+    #[test]
+    fn disabling_one_row_preserves_other_rows_inline_comments() {
+        let original = "- id: a\n  foo: 1\n- id: b\n  # 用户手写：这个键不能删\n  bar: 2\n";
+        let mut patch = PatchFile::from_text(original).unwrap();
+        apply_disabled_toggle(&mut patch, "a", true);
+        let text = patch.render().unwrap();
+        assert!(
+            text.contains("# 用户手写：这个键不能删"),
+            "未改动条目的行间注释被吃掉了：{text}"
+        );
+        assert!(text.contains("bar: 2"), "未改动条目的载荷不得丢：{text}");
+    }
+
+    /// 行 id 校验（宿主 / 客体共用）：沿用宿主既有口径——路径分隔符与换行一律拒绝
+    /// （行 id 来自 dump-config，绝不来自用户输入；这里只守"不进路径/不断行"）。
+    #[test]
+    fn row_id_validation_rejects_paths_and_newlines() {
+        assert!(validate_row_id("dsh-pet").is_ok());
+        assert!(validate_row_id("include:plugin-inventory").is_ok());
+        assert!(validate_row_id("").is_err());
+        assert!(validate_row_id("a/b").is_err());
+        assert!(validate_row_id("a\nb").is_err());
+    }
+
+    /// 客体档更新检查 / 聚合在非 Windows 上给诚实错误（不静默回落宿主世界）。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_update_check_and_aggregate_are_unavailable_off_windows() {
+        let err = check_updates_blocking_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = aggregate_plugins_blocking_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
+    /// 客体档切换在非 Windows 上给诚实错误（不静默回落宿主世界）。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_toggle_is_unavailable_off_windows() {
+        let err = set_plugin_disabled_in_guest("Ubuntu", "web", "id", true).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
+    /// patch 原文解析与宿主文件版同源（同一份 `patch_entry_map_text`）。
+    #[test]
+    fn patch_entry_map_text_is_shared_by_host_and_guest() {
+        let map = patch_entry_map_text("- id: a\n  disabled: true\n- id: a\n- id: b\n");
+        assert_eq!(map.get("a"), Some(&(true, 2)));
+        assert_eq!(map.get("b"), Some(&(false, 1)));
+        assert!(patch_entry_map_text("这不是序列").is_empty());
+        assert!(patch_entry_map_text("").is_empty());
     }
 
     #[test]
@@ -847,7 +1160,13 @@ fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (boo
     let Ok(text) = std::fs::read_to_string(patch_path) else {
         return Default::default();
     };
-    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+    patch_entry_map_text(&text)
+}
+
+/// patch **原文** → id -> (含 disabled:true, 条目数)（纯函数：本地读文件、客体读
+/// 原语共用同一份解析——ADR-0016 §3-A）。损坏/非序列 → 空表。
+fn patch_entry_map_text(text: &str) -> std::collections::BTreeMap<String, (bool, usize)> {
+    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(text) else {
         return Default::default();
     };
     let Some(seq) = v.as_sequence() else {
@@ -878,24 +1197,56 @@ fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (boo
 /// 复用创建链的 spawn 基建（同 env 注入与超时）。
 /// 2026-09-08 补丁包开关（ADR 第七次修订）：行表之外按依赖清单与 dump 段落
 /// 归属合成补丁包条目（见 [`build_row_states`]），一次 spawn 全量拿到。
-pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<PluginRowState>, String> {
+pub fn plugin_rows_blocking(
+    profile: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<Vec<PluginRowState>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let home = crate::resolve::user_dsh_home();
-    let manifest_path = home.join("profiles").join(profile).join("package.json");
-    if !manifest_path.is_file() {
-        return Err(format!("profile「{profile}」尚未初始化"));
-    }
-    let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir)?,
-        &[
-            "--profile".to_string(),
-            profile.to_string(),
-            "--dump-config".to_string(),
-        ],
-        &home,
-        &data_dir.join("plugin-rows.log"),
-        data_dir,
-    )?;
+    let args = [
+        "--profile".to_string(),
+        profile.to_string(),
+        "--dump-config".to_string(),
+    ];
+    let log_path = data_dir.join("plugin-rows.log");
+    let (run, manifest_text, patch) = match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            let dir = home.join("profiles").join(profile);
+            let manifest_path = dir.join("package.json");
+            if !manifest_path.is_file() {
+                return Err(format!("profile「{profile}」尚未初始化"));
+            }
+            let run = crate::profiles::run_toolchain_forward(
+                &crate::engines::resolve_toolchain(data_dir)?,
+                &args,
+                &home,
+                &log_path,
+                data_dir,
+            )?;
+            // 自家 patch（缺失/损坏 = 空表，同清单容忍口径）
+            let patch = patch_entry_map(&dir.join("cordis.patch.yml"));
+            (run, fs_err(&manifest_path)?, patch)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            // 客体批量读（一次往返）：清单 + 自家 patch（patch 缺失 = 空表，同宿主口径）
+            let rels = [
+                format!("profiles/{profile}/package.json"),
+                format!("profiles/{profile}/cordis.patch.yml"),
+            ];
+            let mut got = crate::guest::read_files(distro, &rels)?.into_iter();
+            let manifest = got.next().and_then(|(_, text)| text).ok_or_else(|| {
+                format!("profile「{profile}」尚未初始化（客体 {distro} 内无 package.json）")
+            })?;
+            let patch_text = got.next().and_then(|(_, text)| text);
+            let run = crate::profiles::run_dsh_cli_in_guest(distro, &args, &log_path)?;
+            (
+                run,
+                manifest,
+                patch_entry_map_text(patch_text.as_deref().unwrap_or("")),
+            )
+        }
+    };
     if run.timed_out || run.code != Some(0) {
         return Err(format!(
             "行表查询失败（dsh 退出码 {}）",
@@ -904,27 +1255,12 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
                 .unwrap_or_else(|| "未知".into())
         ));
     }
-    let patch = patch_entry_map(&home.join("profiles").join(profile).join("cordis.patch.yml"));
-    let deps = manifest_dependency_names(&manifest_path)?;
+    let deps = dependency_names(&manifest_text)?;
     Ok(build_row_states(
         &parse_dump_rows_with_section(&run.output),
         &deps,
         &patch,
     ))
-}
-
-/// 读 manifest 的 dependencies 键（BTreeMap 字典序，与清单展示一致）。
-fn manifest_dependency_names(manifest_path: &Path) -> Result<Vec<String>, String> {
-    let text = fs_err(manifest_path)?;
-    let pkg: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
-    let mut names = Vec::new();
-    if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
-        for name in deps.keys() {
-            names.push(name.clone());
-        }
-    }
-    Ok(names)
 }
 
 /// `cordis.patch.yml` 的**共享读写器**（2026-09-11，task-26）。
@@ -975,7 +1311,16 @@ impl PatchFile {
         }
     }
 
-    fn from_text(text: &str) -> Result<Self, String> {
+    /// 从**文本**构造（宿主读文件 / 客体读原语共用）。
+    ///
+    /// 这是「宿主与客体共用同一份保真语义」的入口：客体内写 `cordis.patch.yml` 走不了
+    /// [`PatchFile::read`]/[`PatchFile::write`]（那是宿主文件系统），但可以走
+    /// `读客体原文 → from_text → 变更 → render → 客体备份 + 客体原子写`。
+    /// **禁止再写第二份解析/渲染实现**——2026-09-11 合并 PR #13 时，客体档曾自带
+    /// `parse_patch_entries`/`render_patch_entries`（整数组重序列化 ⇒ 除头部连续注释块
+    /// 外**全部注释丢失**），与本结构的保真口径漂移成两套语义，与 task-26 修掉的
+    /// 那个 bug 同源。
+    pub(crate) fn from_text(text: &str) -> Result<Self, String> {
         // 头部 = 从首行起连续 `#` 行与其间空行（用户可见文档，序列化会丢）。
         let mut header = String::new();
         let mut body_start = 0usize;
@@ -1050,8 +1395,8 @@ impl PatchFile {
         }
     }
 
-    /// 写回：先备份 → 拼装（未改条目原样回填）→ 原子替换。
-    pub(crate) fn write(&self, path: &Path) -> Result<(), String> {
+    /// 渲染为文件文本（**纯函数**，不触文件系统；客体侧据此投递）。
+    pub(crate) fn render(&self) -> Result<String, String> {
         let mut out = String::with_capacity(self.header.len() + 1024);
         out.push_str(&self.header);
         if self.entries.is_empty() {
@@ -1068,7 +1413,12 @@ impl PatchFile {
                 }
             }
         }
-        // 覆写前备份：失败即中止（与 settings / credentials 同口径，fail-closed）。
+        Ok(out)
+    }
+
+    /// 写回：渲染 → 覆写前**备份**（fail-closed）→ **原子替换**。
+    pub(crate) fn write(&self, path: &Path) -> Result<(), String> {
+        let out = self.render()?;
         crate::fs_backup::backup_before_overwrite(path)?;
         atomic_replace(path, &out)
     }
@@ -1136,10 +1486,10 @@ fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组）。
+/// 禁用/启用切换（patch 写入例外 #3，读改写顶层数组；未改条目原文保真见
+/// [`PatchFile`]）。
 /// 禁用：id 条目存在则仅置 disabled 键，否则追加 `{id, disabled}` 双键条目；
 /// 启用：移除 disabled 键，条目只剩 id 则整条移除。
-/// 写入统一走 [`PatchFile`]（备份 + 原子写 + 未改条目原文保真）。
 pub fn set_plugin_disabled(
     home: &Path,
     profile: &str,
@@ -1147,28 +1497,76 @@ pub fn set_plugin_disabled(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let mut patch = PatchFile::read(&patch_path)?;
+    apply_disabled_toggle(&mut patch, row_id, disabled);
+    patch.write(&patch_path)
+}
+
+/// **客体档孪生**（ADR-0016：让已下沉的插件中心在 WSL 世界可用——装上了却关不掉
+/// 是半截功能）：读客体 patch 原文（读原语）→ 同一份 [`apply_disabled_toggle`] →
+/// 渲染 → 客体侧原子写。语义逐项对齐宿主实现（patch 写入例外 #3，ADR-0009）。
+pub fn set_plugin_disabled_in_guest(
+    distro: &str,
+    profile: &str,
+    row_id: &str,
+    disabled: bool,
+) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, text)| text)
+        .ok_or_else(|| {
+            format!("读取 {distro}:{rel} 失败：文件不存在（三件套不完整，不代 dsh 生成）")
+        })?;
+    let mut patch = PatchFile::from_text(&text)?;
+    apply_disabled_toggle(&mut patch, row_id, disabled);
+    let next = patch.render()?;
+    if next == text {
+        return Ok(()); // 无变化零写入（免 mtime 抖动，同 ADR-0013 纪律）
+    }
+    // 覆写前备份：与宿主 `PatchFile::write` 同口径（fail-closed）。
+    crate::guest::backup_file(distro, &rel)?;
+    crate::guest::write_home_files(distro, &[(rel, next)])
+}
+
+/// 行 id 合法性（宿主 / 客体共用；行 id 来自 dump-config，不可从包名推导）。
+fn validate_row_id(row_id: &str) -> Result<(), String> {
     if row_id.is_empty() || row_id.contains(['/', '\n']) {
         return Err("行 id 非法".to_string());
     }
-    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
-    let mut patch = PatchFile::read(&patch_path)?;
+    Ok(())
+}
+
+/// 纯变换（宿主 / 客体共用）：禁用 → id 条目仅置 `disabled` 键（不存在则追加
+/// `{id, disabled}` 双键条目）；启用 → 移除 `disabled` 键，条目只剩 id 则整条移除。
+fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) {
     let id_key = serde_yaml::Value::String("id".into());
     let disabled_key = serde_yaml::Value::String("disabled".into());
     let mut found = false;
+    // 走 `for_each_entry_mut`：**只有真正被改写的条目**才失去原文保真，其余条目
+    // 连同其行间注释逐字节回填（旧内核整数组重序列化 ⇒ 全文件注释丢失）。
     patch.for_each_entry_mut(|_, entry| {
         let Some(m) = entry.as_mapping_mut() else {
             return false;
         };
-        if m.get(&id_key).and_then(|v| v.as_str()) == Some(row_id) {
-            found = true;
-            if disabled {
-                m.insert(disabled_key.clone(), serde_yaml::Value::Bool(true));
-            } else {
-                m.remove(&disabled_key);
-            }
-            return true;
+        if m.get(&id_key).and_then(|v| v.as_str()) != Some(row_id) {
+            return false;
         }
-        false
+        found = true;
+        if disabled {
+            if m.get(&disabled_key) == Some(&serde_yaml::Value::Bool(true)) {
+                return false; // 已是目标态：不改写，保住本条目原文
+            }
+            m.insert(disabled_key.clone(), serde_yaml::Value::Bool(true));
+            true
+        } else {
+            m.remove(&disabled_key).is_some()
+        }
     });
     if !found && disabled {
         let mut m = serde_yaml::Mapping::new();
@@ -1179,7 +1577,10 @@ pub fn set_plugin_disabled(
         m.insert(disabled_key, serde_yaml::Value::Bool(true));
         patch.push(serde_yaml::Value::Mapping(m));
     }
-    // 启用后只剩 id 键的条目整条移除（恢复原状）
+    // 启用后只剩 `id` 键的条目整条移除（恢复原状）——**分支既有语义，必须保留**：
+    // 本函数曾因只在 `for_each_entry_mut` 里 remove 键而丢掉这一步，
+    // 被 `patch_toggle_kernel_is_shared_by_host_and_guest` 与基线
+    // `disable_appends_entry_enabling_removes_it` 双双抓住。
     if !disabled {
         patch.retain(|e| {
             e.as_mapping()
@@ -1187,7 +1588,6 @@ pub fn set_plugin_disabled(
                 .unwrap_or(true)
         });
     }
-    patch.write(&patch_path)
 }
 
 #[cfg(test)]
@@ -1257,95 +1657,6 @@ mod patch_tests {
         let text = std::fs::read_to_string(&patch).unwrap();
         assert!(text.contains("row-a") && text.contains("config:"), "{text}");
         assert!(!text.contains("disabled:"), "{text}");
-        std::fs::remove_dir_all(&home).ok();
-    }
-
-    /// 共享写入器（task-26）在**插件中心**路径上的收益：
-    /// ① **段间（行间）注释**也保住（旧实现只保头部注释块，其它位置序列化即丢）；
-    /// ② 未改动条目**逐字节原样回填**（缩进 / 键序 / 引号风格全保）；
-    /// ③ 写入前**备份**（旧实现无备份）。
-    #[test]
-    fn shared_writer_preserves_interleaved_comments_and_backs_up() {
-        let home = tmp();
-        let patch = home.join("profiles/p/cordis.patch.yml");
-        // 头部注释 + 一条带**行间注释**与自定义缩进的既有条目
-        let original = format!(
-            "{HEADER}- id: row-a\n  # 行间注释：这一行的键序与缩进都得留住\n  config:\n      k:    'v'\n"
-        );
-        std::fs::write(&patch, &original).unwrap();
-
-        set_plugin_disabled(&home, "p", "row-b", true).unwrap();
-
-        let text = std::fs::read_to_string(&patch).unwrap();
-        assert!(text.starts_with(HEADER), "头部注释保真：{text}");
-        assert!(
-            text.contains("  # 行间注释：这一行的键序与缩进都得留住"),
-            "段间（行间）注释必须保住：{text}"
-        );
-        assert!(
-            text.contains("      k:    'v'"),
-            "未改动条目必须逐字节原样回填（缩进/引号风格保真）：{text}"
-        );
-        assert!(text.contains("- id: row-b"), "新条目应写入：{text}");
-
-        let backups: Vec<String> = std::fs::read_dir(home.join("profiles/p"))
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.starts_with("cordis.patch.yml.bak-"))
-            .collect();
-        assert_eq!(backups.len(), 1, "覆写前应留一份备份：{backups:?}");
-        assert_eq!(
-            std::fs::read_to_string(home.join("profiles/p").join(&backups[0])).unwrap(),
-            original,
-            "备份内容必须是覆写前原文"
-        );
-
-        // 原子写不留临时文件
-        let leftovers: Vec<String> = std::fs::read_dir(home.join("profiles/p"))
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.contains(".tmp."))
-            .collect();
-        assert!(leftovers.is_empty(), "不得残留临时文件：{leftovers:?}");
-
-        std::fs::remove_dir_all(&home).ok();
-    }
-
-    /// 防御性回退分支：**流式（flow）顶层数组**（`[{id: a}, {id: b}]`）没有顶格
-    /// `- ` 行，行切分数（0）≠ 解析条目数（2）→ 放弃逐条保真、退回整文件重序列化。
-    /// 语义仍正确（条目一个不少），代价是该罕见形态下注释不保——**绝不错写或报错**。
-    #[test]
-    fn flow_style_array_falls_back_without_data_loss() {
-        let home = tmp();
-        let patch = home.join("profiles/p/cordis.patch.yml");
-        std::fs::write(&patch, "[]\n").unwrap();
-        let mut p = PatchFile::read(&patch).unwrap();
-        assert!(p.entries.is_empty());
-        assert!(p.raw.is_empty(), "无顶格条目 → 无原文可保");
-        p.push(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
-        p.write(&patch).unwrap();
-        // 非数组顶层（如 `{}` 映射）→ 拒绝写入，不代 dsh 生成/改写三件套
-        let bad = home.join("profiles/p/bad.yml");
-        std::fs::write(&bad, "{}\n").unwrap();
-        assert!(PatchFile::read(&bad).is_err(), "顶层非数组必须拒绝");
-
-        // 流式数组：读得进、条目数正确、回写为块式
-        let flow = home.join("profiles/p/flow.yml");
-        std::fs::write(&flow, "[{id: a}, {id: b}]\n").unwrap();
-        let q = PatchFile::read(&flow).unwrap();
-        assert_eq!(q.entries.len(), 2, "流式数组应解析出 2 条");
-        assert!(
-            q.raw.iter().all(|r| r.is_none()),
-            "行切分与解析数不一致 → 全部退回重序列化（不保原文）"
-        );
-        // 未改动也应写回完整 2 条（不丢数据）
-        q.write(&flow).unwrap();
-        let text = std::fs::read_to_string(&flow).unwrap();
-        assert!(text.contains("- id: a"), "{text}");
-        assert!(text.contains("- id: b"), "{text}");
-
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1565,10 +1876,31 @@ pub struct PluginUpdateReport {
 /// 逐个外挂插件查 registry（阻塞、串行；按钮触发不自动跑）。current ≥ latest
 /// 的不进报告；latest 取 dist-tags（与 pnpm 默认安装语义一致，复现点 7 教训）。
 pub fn check_updates_blocking(home: &Path, profile: &str) -> Result<PluginUpdateReport, String> {
-    let deps: Vec<PluginEntry> = list_profile_plugins(home, profile)?
+    check_updates_from(updatable_deps(list_profile_plugins(home, profile)?))
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：已装版本来自**客体**清单（客体读原语），
+/// registry 查询仍是 `updates.rs` 唯一网络面——ADR-0016 §1 明示"市场 registry 拉取
+/// 与模式无关"，故这里不新增网络用途，只是比对基准换成客体世界。
+pub fn check_updates_blocking_in_guest(
+    distro: &str,
+    profile: &str,
+) -> Result<PluginUpdateReport, String> {
+    check_updates_from(updatable_deps(list_profile_plugins_in_guest(
+        distro, profile,
+    )?))
+}
+
+/// 可查更新的依赖（宿主 / 客体共用）：第三方且已装出实际版本。
+fn updatable_deps(entries: Vec<PluginEntry>) -> Vec<PluginEntry> {
+    entries
         .into_iter()
         .filter(|p| p.kind == PluginKind::Dependency && p.installed_version.is_some())
-        .collect();
+        .collect()
+}
+
+/// 更新检查内核（宿主 / 客体共用）：逐依赖查 registry 最新版，与当前版本比较。
+fn check_updates_from(deps: Vec<PluginEntry>) -> Result<PluginUpdateReport, String> {
     let mut report = PluginUpdateReport {
         updates: Vec::new(),
         checked: 0,
@@ -1633,12 +1965,30 @@ pub struct AggregateSource {
 /// 的第三方依赖按包名归组。单 profile 清单损坏 → 跳过该 profile（聚合不让
 /// 单点损坏全页失败，与列表页容忍口径一致）。
 pub fn aggregate_plugins_blocking(home: &Path) -> Vec<AggregatePlugin> {
+    let profiles = crate::profiles::scan_profiles(home);
+    aggregate_from(&profiles, |name| list_profile_plugins(home, name))
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：profile 清单与各 profile 的插件清单都
+/// 取自客体（纯读，零 dsh 子进程、零网络），归组逻辑走同一份 [`aggregate_from`]。
+pub fn aggregate_plugins_blocking_in_guest(distro: &str) -> Result<Vec<AggregatePlugin>, String> {
+    let profiles = crate::profiles::scan_profiles_in_guest(distro)?;
+    Ok(aggregate_from(&profiles, |name| {
+        list_profile_plugins_in_guest(distro, name)
+    }))
+}
+
+/// 聚合内核（宿主 / 客体共用）：`lister` 给出某 profile 的插件清单（世界由调用方定）。
+fn aggregate_from(
+    profiles: &[crate::profiles::ProfileSummary],
+    lister: impl Fn(&str) -> Result<Vec<PluginEntry>, String>,
+) -> Vec<AggregatePlugin> {
     let mut by_name: std::collections::BTreeMap<String, AggregatePlugin> = Default::default();
-    for p in crate::profiles::scan_profiles(home) {
+    for p in profiles {
         if !p.materialized {
             continue;
         }
-        let entries = match list_profile_plugins(home, &p.name) {
+        let entries = match lister(&p.name) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -1721,8 +2071,9 @@ pub fn copy_plugin_config_blocking(
             ));
         }
     }
-    // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）
-    let row_id = plugin_rows_blocking(source, data_dir)?
+    // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）。
+    // 本函数为本地世界分支（WSL 客体分支见 `copy_plugin_config_in_guest`）。
+    let row_id = plugin_rows_blocking(source, data_dir, &crate::mgmt::World::Local)?
         .into_iter()
         .find(|r| r.pkg_name == package)
         .map(|r| r.id)
@@ -1730,6 +2081,53 @@ pub fn copy_plugin_config_blocking(
             format!("来源 profile「{source}」的行表中没有插件「{package}」——无可搬移的配置行")
         })?;
     copy_config_entries(home, source, target, package, &row_id)
+}
+
+/// 纯逻辑：从来源 patch 原文提取 row_id 条目并追加到目标 patch 原文（宿主/客体共用）。
+/// 返回 (CopyConfigOutcome, Option<新目标原文>)。若已存在则新目标原文为 None。
+fn apply_copy_config_entries(
+    source_text: &str,
+    target_text: &str,
+    source: &str,
+    target: &str,
+    package: &str,
+    row_id: &str,
+) -> Result<(CopyConfigOutcome, Option<String>), String> {
+    let source_patch = PatchFile::from_text(source_text)?;
+    let source_entries = entries_with_id(&source_patch.entries, row_id);
+    if source_entries.is_empty() {
+        return Err(format!(
+            "来源 profile「{source}」的 cordis.patch.yml 没有「{package}」（行 id {row_id}）的配置条目"
+        ));
+    }
+    let mut target_patch = PatchFile::from_text(target_text)?;
+    if !entries_with_id(&target_patch.entries, row_id).is_empty() {
+        return Ok((
+            CopyConfigOutcome {
+                copied: 0,
+                skipped_existing: true,
+                detail: format!(
+                    "目标 profile「{target}」已有「{package}」的配置行——为不覆盖既有配置，本次未复制"
+                ),
+            },
+            None,
+        ));
+    }
+    let copied = source_entries.len();
+    for e in source_entries {
+        target_patch.push(e);
+    }
+    let next = target_patch.render()?;
+    Ok((
+        CopyConfigOutcome {
+            copied,
+            skipped_existing: false,
+            detail: format!(
+                "已把「{package}」的 {copied} 条配置行从「{source}」原样复制到「{target}」——重启「{target}」后生效。"
+            ),
+        },
+        Some(next),
+    ))
 }
 
 /// 复制的文件层核心（行 id 已定位；与 spawn 边界分离便于单测）。
@@ -1740,39 +2138,95 @@ fn copy_config_entries(
     package: &str,
     row_id: &str,
 ) -> Result<CopyConfigOutcome, String> {
-    let source_entries = {
-        let source_patch =
-            PatchFile::read(&home.join("profiles").join(source).join("cordis.patch.yml"))?;
-        entries_with_id(&source_patch.entries, row_id)
-    };
-    if source_entries.is_empty() {
-        return Err(format!(
-            "来源 profile「{source}」的 cordis.patch.yml 没有「{package}」（行 id {row_id}）的配置条目"
-        ));
+    let src_path = home.join("profiles").join(source).join("cordis.patch.yml");
+    let tgt_path = home.join("profiles").join(target).join("cordis.patch.yml");
+    let src_text = std::fs::read_to_string(&src_path)
+        .map_err(|e| format!("读取 {} 失败：{e}", src_path.display()))?;
+    let tgt_text = std::fs::read_to_string(&tgt_path)
+        .map_err(|e| format!("读取 {} 失败：{e}", tgt_path.display()))?;
+    let (outcome, updated) =
+        apply_copy_config_entries(&src_text, &tgt_text, source, target, package, row_id)?;
+    if let Some(next) = updated {
+        // 覆写前备份（fail-closed）+ 原子替换，与 `PatchFile::write` 同口径。
+        crate::fs_backup::backup_before_overwrite(&tgt_path)?;
+        atomic_replace(&tgt_path, &next)?;
     }
-    let target_patch = home.join("profiles").join(target).join("cordis.patch.yml");
-    let mut target_file = PatchFile::read(&target_patch)?;
-    if !entries_with_id(&target_file.entries, row_id).is_empty() {
-        return Ok(CopyConfigOutcome {
-            copied: 0,
-            skipped_existing: true,
-            detail: format!(
-                "目标 profile「{target}」已有「{package}」的配置行——为不覆盖既有配置，本次未复制"
-            ),
-        });
+    Ok(outcome)
+}
+
+/// 客体档插件配置复制（P2 下沉）：在 WSL 模式下读取来源与目标 patch 原文，
+/// 通过 pure 函数追加条目并原子写回目标客体 patch 文件。
+pub fn copy_plugin_config_in_guest(
+    distro: &str,
+    source: &str,
+    target: &str,
+    package: &str,
+    data_dir: &Path,
+) -> Result<CopyConfigOutcome, String> {
+    crate::profiles::validate_profile_name(source)?;
+    crate::profiles::validate_profile_name(target)?;
+    if source == target {
+        return Err("来源与目标是同一个 profile".to_string());
     }
-    let copied = source_entries.len();
-    for e in source_entries {
-        target_file.push(e);
+    let src_pkg_rel = format!("profiles/{source}/package.json");
+    let tgt_pkg_rel = format!("profiles/{target}/package.json");
+    let src_patch_rel = format!("profiles/{source}/cordis.patch.yml");
+    let tgt_patch_rel = format!("profiles/{target}/cordis.patch.yml");
+    let files = crate::guest::read_files(
+        distro,
+        &[
+            src_pkg_rel.clone(),
+            tgt_pkg_rel.clone(),
+            src_patch_rel.clone(),
+            tgt_patch_rel.clone(),
+        ],
+    )?;
+    let mut map: std::collections::HashMap<String, Option<String>> = files.into_iter().collect();
+    if map.get(&src_pkg_rel).and_then(|o| o.as_ref()).is_none() {
+        return Err(format!("profile「{source}」尚未初始化"));
     }
-    target_file.write(&target_patch)?;
-    Ok(CopyConfigOutcome {
-        copied,
-        skipped_existing: false,
-        detail: format!(
-            "已把「{package}」的 {copied} 条配置行从「{source}」原样复制到「{target}」——重启「{target}」后生效。"
-        ),
-    })
+    if map.get(&tgt_pkg_rel).and_then(|o| o.as_ref()).is_none() {
+        return Err(format!("profile「{target}」尚未初始化"));
+    }
+    let src_patch_text = map
+        .remove(&src_patch_rel)
+        .flatten()
+        .ok_or_else(|| "来源 profile 尚无 cordis.patch.yml——无可搬移的配置层".to_string())?;
+    let tgt_patch_text = map
+        .remove(&tgt_patch_rel)
+        .flatten()
+        .ok_or_else(|| "目标 profile 尚无 cordis.patch.yml——无可搬移的配置层".to_string())?;
+
+    let row_id = plugin_rows_blocking(
+        source,
+        data_dir,
+        &crate::mgmt::World::Wsl {
+            distro: distro.to_string(),
+        },
+    )?
+    .into_iter()
+    .find(|r| r.pkg_name == package)
+    .map(|r| r.id)
+    .ok_or_else(|| {
+        format!("来源 profile「{source}」的行表中没有插件「{package}」——无可搬移的配置行")
+    })?;
+
+    let (outcome, updated) = apply_copy_config_entries(
+        &src_patch_text,
+        &tgt_patch_text,
+        source,
+        target,
+        package,
+        &row_id,
+    )?;
+    if let Some(next) = updated {
+        // 覆写前备份（fail-closed）：与 `PatchFile::write` 及另外三条客体 patch 写入
+        // 路径同口径。**否则这是唯一一条不留备份的客体 patch 覆写**（2026-09-11
+        // 合并 PR #13 时逐路径审计发现）。
+        crate::guest::backup_file(distro, &tgt_patch_rel)?;
+        crate::guest::write_home_files(distro, &[(tgt_patch_rel, next)])?;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

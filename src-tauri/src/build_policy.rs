@@ -237,6 +237,50 @@ pub fn ensure_profile_build_policy_best_effort(profile: &str) {
     }
 }
 
+// ---------- 客体档孪生（ADR-0016 P1 范围修正，2026-09-11） ----------
+
+/// **客体侧**单键写入：WSL 模式下 profile 由客体 dsh 自行物化，宿主这份写入器
+/// 从未碰过客体文件——客体内 `pnpm add` 于是会撞 pnpm 12 的构建审批门
+/// （`ERR_PNPM_IGNORED_BUILDS` / `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），带构建
+/// 脚本的插件必失败。故本孪生从 P2 提前到 P1（ADR-0016 §4 落地期范围修正）。
+///
+/// 与宿主实现**同一套纪律**（ADR-0013）：读原文（经客体读原语）→ 复用同一个纯函数
+/// [`ensure_allow_all_builds`] → **仅在有变化时**写回（客体侧临时文件 + `mv` 原子
+/// 替换）。不整体覆盖、不生成三件套内容、无变化零写入（免 mtime 抖动）。
+///
+/// 返回 true = 本次确实写了。客体不存在（非 Windows / 不可达）/ profile 未物化 → Err。
+pub fn ensure_profile_build_policy_in_guest(distro: &str, profile: &str) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let rel = format!("profiles/{profile}/pnpm-workspace.yaml");
+    let files = crate::guest::read_files(distro, std::slice::from_ref(&rel))?;
+    let raw = match files.first() {
+        Some((_, Some(text))) => text.clone(),
+        _ => {
+            return Err(format!(
+                "客体 {distro} 内「{rel}」不存在——profile「{profile}」尚未初始化，先创建或首启一次"
+            ))
+        }
+    };
+    let next = ensure_allow_all_builds(&raw)?;
+    if next == raw {
+        return Ok(false);
+    }
+    crate::guest::write_home_files(distro, &[(rel, next)])?;
+    Ok(true)
+}
+
+/// 客体档幂等前置（best effort，口径同宿主 [`ensure_profile_build_policy_best_effort`]）：
+/// 写失败只告警不阻断，客体 pnpm 的原始报错仍随 detail 上抛。
+pub fn ensure_profile_build_policy_in_guest_best_effort(distro: &str, profile: &str) {
+    match ensure_profile_build_policy_in_guest(distro, profile) {
+        Ok(true) => tracing::info!(
+            "已写入 dangerouslyAllowAllBuilds: true（客体 {distro} · profile「{profile}」，ADR-0016 P1）"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("客体构建脚本默认批准写入失败（profile「{profile}」）：{e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +402,25 @@ mod tests {
         assert!(ensure_engine_node_linker("nodeLinker:\n  x: 1\n").is_err());
         assert!(ensure_engine_node_linker("nodeLinker: {a: 1}\n").is_err());
         assert!(ensure_engine_node_linker("'nodeLinker': isolated\n").is_err());
+    }
+
+    // ---------- 客体档孪生（ADR-0016 P1） ----------
+
+    /// 非法 profile 名在**触达客体之前**即被拒（防路径遍历进客体脚本）。
+    #[test]
+    fn guest_policy_rejects_invalid_profile_name_before_touching_guest() {
+        for bad in ["../escape", "a/b", "a\\b", "", ".", "node_modules"] {
+            let err = ensure_profile_build_policy_in_guest("Ubuntu", bad).unwrap_err();
+            assert!(err.contains("非法 profile 名"), "{bad}: {err}");
+        }
+    }
+
+    /// 非 Windows：客体不存在 → 诚实错误，绝不静默按宿主路径写。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_policy_is_unavailable_off_windows() {
+        let err = ensure_profile_build_policy_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
     }
 
     /// **落盘层**：真实文件往返 + 幂等（这是引导启动时会跑的那条路径）。

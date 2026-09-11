@@ -255,3 +255,20 @@ export function summarizeBatch(results: BatchItemResult[]): BatchSummary {
     failures: results.filter((r) => !r.ok),
   }
 }
+
+/** 列表加载失败的兜底文案（后端未给详情时使用）。 */
+export const PROFILE_LIST_FALLBACK_ERROR =
+  "profile 列表读取失败——请确认 dsh 环境后重试"
+
+/**
+ * 列表加载失败文案（2026-09-11，ADR-0016 §5-e「P0 诚实错误面」）。
+ *
+ * 优先**原样呈现后端详情**：WSL 客体模式下后端返回的是「暂不支持 + 替代路径」
+ * 这类可行动文案，前端不得用自己的固定话术盖掉——旧实现把异常丢弃、只显示
+ * 「请确认 dsh 环境后重试」，在 WSL 世界里指向一个不可能成立的补救（宿主导擎
+ * 按设计永不就绪），属 ADR-0016 §4 明令禁止的死路提示。
+ */
+export function profileListError(err: unknown): string {
+  const detail = typeof err === "string" ? err.trim() : ""
+  return detail === "" ? PROFILE_LIST_FALLBACK_ERROR : detail
+}

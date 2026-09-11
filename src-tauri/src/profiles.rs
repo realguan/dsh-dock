@@ -92,9 +92,9 @@ pub struct ProfileSummary {
 /// 内置模板名（web/headless）。排序：已物化在前，各组内按名字典序。
 /// 纯函数：home 由调用方传入（IPC 层用 `resolve::user_dsh_home()`）。
 pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
-    let mut out = Vec::new();
-    if let Ok(entries) = fs::read_dir(home.join("profiles")) {
-        for entry in entries.flatten() {
+    let mut entries: Vec<(String, Option<String>)> = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(home.join("profiles")) {
+        for entry in read_dir.flatten() {
             let dir = entry.path();
             if !dir.is_dir() {
                 continue;
@@ -107,19 +107,83 @@ pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
             if name == "node_modules" {
                 continue;
             }
-            let (bundles, dependencies) = read_manifest_fields(&dir.join("package.json"));
-            // webUi 判定在本模块内做（不可复用 resolve::list_web_ui_profiles，
-            // 见模块头）：bundles 含 WEBUI_BUNDLE 即是；损坏清单 → false（无
-            // URL 可导航，不给启动入口，与详情页容忍损坏的口径一致）。
-            let web_ui = bundles.iter().any(|b| b == WEBUI_BUNDLE);
-            out.push(ProfileSummary {
-                name,
-                materialized: true,
-                bundles,
-                dependencies,
-                web_ui,
-            });
+            entries.push((name, fs::read_to_string(dir.join("package.json")).ok()));
         }
+    }
+    assemble_profile_summaries(&entries)
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉，2026-09-11 第三批）：目录列举 + 批量读
+/// 各 profile 的 `package.json`（两次 `wsl.exe` 往返），派生逻辑走同一份
+/// [`assemble_profile_summaries`]——两侧口径由构造保证一致，不产生第二套扫描。
+///
+/// 客体 `profiles/` 目录不存在 = 该世界尚未初始化（与宿主 `read_dir` 失败同口径：
+/// 列表只剩内置模板名），**不**报错——报错会让控制中心在"刚装好还没首启"时白屏。
+pub fn scan_profiles_in_guest(distro: &str) -> Result<Vec<ProfileSummary>, String> {
+    let Some(listing) = crate::guest::list_dir(distro, "profiles")? else {
+        return Ok(assemble_profile_summaries(&[]));
+    };
+    let names: Vec<String> = listing
+        .into_iter()
+        .filter(|(name, is_dir)| *is_dir && name != "node_modules")
+        .map(|(name, _)| name)
+        .collect();
+    let entries: Vec<(String, Option<String>)> = if names.is_empty() {
+        Vec::new()
+    } else {
+        let rels: Vec<String> = names
+            .iter()
+            .map(|n| format!("profiles/{n}/package.json"))
+            .collect();
+        let mut map: std::collections::HashMap<String, Option<String>> =
+            crate::guest::read_files(distro, &rels)?
+                .into_iter()
+                .collect();
+        names
+            .into_iter()
+            .map(|n| {
+                let rel = format!("profiles/{n}/package.json");
+                let text = map.remove(&rel).flatten();
+                (n, text)
+            })
+            .collect()
+    };
+    Ok(assemble_profile_summaries(&entries))
+}
+
+/// 客体档 webUi 候选名单（切换 / 默认档校验用）：恒含内置 `web`，其余取客体扫描
+/// 结果里 **bundles 含 WEBUI_BUNDLE** 的已物化 profile（`web` 不重复）。
+/// 判据与宿主 `resolve::list_web_ui_profiles` 同源（同一份 [`assemble_profile_summaries`]）。
+pub fn web_ui_profiles_in_guest(distro: &str) -> Result<Vec<String>, String> {
+    let mut out = vec!["web".to_string()];
+    for p in scan_profiles_in_guest(distro)? {
+        if p.materialized && p.name != "web" && p.web_ui {
+            out.push(p.name);
+        }
+    }
+    Ok(out)
+}
+
+/// 纯装配（宿主扫描 / 客体扫描**共用**）：`(名字, package.json 原文)` → 列表条目
+/// + 未物化的内置模板名。清单缺失/损坏 → 字段置空（半初始化目录也占名）。
+fn assemble_profile_summaries(entries: &[(String, Option<String>)]) -> Vec<ProfileSummary> {
+    let mut out = Vec::new();
+    for (name, text) in entries {
+        let (bundles, dependencies) = text
+            .as_deref()
+            .map(manifest_fields_from_text)
+            .unwrap_or_default();
+        // webUi 判定在本模块内做（不可复用 resolve::list_web_ui_profiles，
+        // 见模块头）：bundles 含 WEBUI_BUNDLE 即是；损坏清单 → false（无
+        // URL 可导航，不给启动入口，与详情页容忍损坏的口径一致）。
+        let web_ui = bundles.iter().any(|b| b == WEBUI_BUNDLE);
+        out.push(ProfileSummary {
+            name: name.clone(),
+            materialized: true,
+            bundles,
+            dependencies,
+            web_ui,
+        });
     }
     for (name, bundles) in PROFILE_TEMPLATES {
         if out.iter().any(|p| &p.name == name) {
@@ -158,10 +222,16 @@ pub fn is_desktop_internal_spec(spec: Option<&str>) -> bool {
 /// 缺失 / 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
 /// 官方桌面运行时的 desktop-packages 视为内置底座，不计入第三方 dependencies。
 pub(crate) fn read_manifest_fields(path: &Path) -> (Vec<String>, Vec<String>) {
-    let Ok(text) = fs::read_to_string(path) else {
-        return (Vec::new(), Vec::new());
-    };
-    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else {
+    match fs::read_to_string(path) {
+        Ok(text) => manifest_fields_from_text(&text),
+        Err(_) => (Vec::new(), Vec::new()),
+    }
+}
+
+/// 清单**原文** → `(bundles, dependencies)`（纯函数：宿主读文件 / 客体读原语共用）。
+/// 非法 JSON / 字段形状不符 → 空列表（列表页容忍损坏；详情页另行报错）。
+pub(crate) fn manifest_fields_from_text(text: &str) -> (Vec<String>, Vec<String>) {
+    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(text) else {
         return (Vec::new(), Vec::new());
     };
     let bundles = manifest_bundles(&pkg);
@@ -226,8 +296,39 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
     let manifest_path = dir.join("package.json");
     let text = fs::read_to_string(&manifest_path)
         .map_err(|e| format!("读取 package.json 失败（{}）：{e}", manifest_path.display()))?;
-    let pkg: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("package.json 非法 JSON（{}）：{e}", manifest_path.display()))?;
+    let patch_yaml = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)).ok();
+    assemble_profile_detail(&text, patch_yaml, &manifest_path.display().to_string())
+}
+
+/// **客体档孪生**（ADR-0016 §5 读侧下沉）：清单 + patch 一次往返读回，派生走同一份
+/// [`assemble_profile_detail`]。`label` 只用于错误文案（宿主显示路径、客体显示
+/// `<发行版>:profiles/<名>/package.json`）。
+pub fn read_profile_detail_in_guest(distro: &str, name: &str) -> Result<ProfileDetail, String> {
+    validate_profile_name(name)?;
+    let manifest_rel = format!("profiles/{name}/package.json");
+    let patch_rel = format!("profiles/{name}/{PROFILE_PATCH_FILENAME}");
+    let mut got: std::collections::HashMap<String, Option<String>> =
+        crate::guest::read_files(distro, &[manifest_rel.clone(), patch_rel.clone()])?
+            .into_iter()
+            .collect();
+    let text = got.remove(&manifest_rel).flatten().ok_or_else(|| {
+        format!(
+            "profile「{name}」尚未物化（客体 {distro} 内无 {manifest_rel}）：\
+                 内置模板名首次启动或首次 plugin add 后才有详情"
+        )
+    })?;
+    let patch_yaml = got.remove(&patch_rel).flatten();
+    assemble_profile_detail(&text, patch_yaml, &format!("{distro}:{manifest_rel}"))
+}
+
+/// 纯装配（宿主 / 客体共用）：清单原文 + patch 原文 → 详情。
+fn assemble_profile_detail(
+    pkg_json: &str,
+    patch_yaml: Option<String>,
+    label: &str,
+) -> Result<ProfileDetail, String> {
+    let pkg: serde_json::Value = serde_json::from_str(pkg_json)
+        .map_err(|e| format!("package.json 非法 JSON（{label}）：{e}"))?;
     let dependencies = pkg
         .pointer("/dependencies")
         .and_then(|v| v.as_object())
@@ -244,7 +345,6 @@ pub fn read_profile_detail(home: &Path, name: &str) -> Result<ProfileDetail, Str
                 .collect()
         })
         .unwrap_or_default();
-    let patch_yaml = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)).ok();
     Ok(ProfileDetail {
         package_name: pkg.get("name").and_then(|v| v.as_str()).map(String::from),
         bundles: manifest_bundles(&pkg),
@@ -403,6 +503,57 @@ pub fn run_toolchain_forward(
     )
 }
 
+/// 客体档孪生（ADR-0016 P1）：把同一份 dsh 转发链打进 WSL 客体。
+///
+/// 与 [`run_toolchain_forward`] 的契约**逐项对齐**——同一个运维日志（追加/轮转/
+/// 分隔头同源），因此 `current_run_output` 切片与上层 `classify_*` 分类逻辑对客体
+/// 运行同样成立；返回同一个 [`ForwardRun`]。差别只有两处：进程是 `wsl.exe`，命令在
+/// 客体 shell 内拼装（PATH 准备与引用见 `crate::guest`）；且**不注入 `DSH_HOME`**
+/// ——世界由客体自己决定（ADR-0016 §2.6：管理面必须与运行中的会话同源）。
+#[cfg(windows)]
+pub(crate) fn run_dsh_cli_in_guest(
+    distro: &str,
+    args: &[String],
+    log_path: &Path,
+) -> Result<ForwardRun, String> {
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let header = format!(
+        "\n==== {} | wsl:{} | {} ====\n",
+        format_utc(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        ),
+        distro,
+        args.join(" "),
+    );
+    let log = open_op_log(log_path, OP_LOG_ROTATE_BYTES, &header)
+        .map_err(|e| format!("打开日志 {} 失败：{e}", log_path.display()))?;
+    let script = crate::guest::dsh_cli_script(args);
+    let (code, timed_out) =
+        crate::guest::run_script_to_log(distro, &script, &log, CREATE_FORWARD_TIMEOUT)?;
+    Ok(ForwardRun {
+        code,
+        timed_out,
+        output: current_run_output(&crate::resolve::read_log_auto(log_path), &header),
+    })
+}
+
+/// 非 Windows 孪生：客体只存在于 Windows。保留同一签名是为了让调用点（插件中心的
+/// 世界择源）在**所有平台**都参与编译与 lint——否则 `#[cfg(windows)]` 之外的分支
+/// 永远不被检查（AGENTS §1「clippy 需逐目标各跑一次」的同源教训）。
+#[cfg(not(windows))]
+pub(crate) fn run_dsh_cli_in_guest(
+    _distro: &str,
+    _args: &[String],
+    _log_path: &Path,
+) -> Result<ForwardRun, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
 /// 运维日志（plugin-op.log）单文件体量上限——超过即轮转为 `<path>.1`
 /// （单代历史，再旧让位）。
 const OP_LOG_ROTATE_BYTES: u64 = 512 * 1024;
@@ -410,7 +561,11 @@ const OP_LOG_ROTATE_BYTES: u64 = 512 * 1024;
 /// 打开运维日志：**追加式**（不截断——保留历史运行，2026-09-09 裁定），
 /// 现存体量超 `cap` 先轮转，随后写入本次运行的分隔头。后续安装进度的
 /// 增量 tail 也以该文件为底座（截断式写入会弄乱读取偏移）。
-fn open_op_log(log_path: &Path, cap: u64, header: &str) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_op_log(
+    log_path: &Path,
+    cap: u64,
+    header: &str,
+) -> std::io::Result<std::fs::File> {
     if log_path.metadata().map(|m| m.len()).unwrap_or(0) > cap {
         let rotated = log_path.with_extension("log.1");
         let _ = std::fs::remove_file(&rotated);
@@ -528,7 +683,7 @@ pub fn run_dsh_forward(
 /// 分类）把历史输出当成本次结果（实测：装 dsh-ssh 却解析出上一轮 dsh-pet 的
 /// 门槛键）。按**最后一个**分隔头切分；找不到分隔头（异常）时返回全文（fail-open，
 /// 与旧行为一致，不因切片逻辑丢诊断信息）。
-fn current_run_output(full: &str, header: &str) -> String {
+pub(crate) fn current_run_output(full: &str, header: &str) -> String {
     match full.rfind(header) {
         Some(idx) => full[idx + header.len()..].to_string(),
         None => full.to_string(),
@@ -670,6 +825,76 @@ pub fn create_profile_blocking(
     ))
 }
 
+/// 客体档创建 profile（P2 生命周期下沉）：在 WSL 内执行 `dsh plugin --profile <名> install`
+/// 转发链。成功后补写 WebUI bundle 声明与 build policy。
+pub fn create_profile_in_guest(
+    distro: &str,
+    profile: &str,
+    data_dir: &Path,
+) -> Result<CreateProfileOutcome, String> {
+    creation_blocker_in_guest(distro, profile)?;
+    let args = create_command_args(profile);
+    let log_path = data_dir.join("profile-create.log");
+    let run = run_dsh_cli_in_guest(distro, &args, &log_path)?;
+    let pkg_rel = format!("profiles/{profile}/package.json");
+    let read_res = crate::guest::read_files(distro, &[pkg_rel]);
+    let materialized = match read_res {
+        Ok(files) => files
+            .into_iter()
+            .any(|(p, c)| p.ends_with("package.json") && c.is_some()),
+        Err(_) => false,
+    };
+    let webui_error = if run.code == Some(0) && materialized {
+        declare_webui_bundle_in_guest(distro, profile).err()
+    } else {
+        None
+    };
+    if materialized {
+        crate::build_policy::ensure_profile_build_policy_in_guest_best_effort(distro, profile);
+    }
+    Ok(classify_create_outcome(
+        profile,
+        &run,
+        materialized,
+        webui_error.as_deref(),
+    ))
+}
+
+/// 客体档创建前置校验（P2 生命周期下沉）。
+pub fn creation_blocker_in_guest(distro: &str, profile: &str) -> Result<(), String> {
+    validate_profile_name(profile)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if let Some(p) = existing.iter().find(|p| p.name == profile) {
+        if p.materialized && !p.bundles.is_empty() {
+            return Err(format!(
+                "profile「{profile}」已存在——创建请换名（删除属后续版本能力）"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 非模板名创建成功后在客体追加 Web 工作台声明。
+fn declare_webui_bundle_in_guest(distro: &str, profile: &str) -> Result<bool, String> {
+    if PROFILE_TEMPLATES.iter().any(|(name, _)| *name == profile) {
+        return Ok(false);
+    }
+    let pkg_path = format!("profiles/{profile}/package.json");
+    let files = crate::guest::read_files(distro, &[pkg_path])?;
+    let text = files
+        .into_iter()
+        .find_map(|(p, c)| if p.ends_with("package.json") { c } else { None })
+        .ok_or_else(|| format!("读取客体 profile「{profile}」的 package.json 失败"))?;
+    let Some(edited) = append_bundle_declaration(&text, WEBUI_BUNDLE)? else {
+        return Ok(false);
+    };
+    crate::guest::write_home_files(
+        distro,
+        &[(format!("profiles/{profile}/package.json"), edited)],
+    )?;
+    Ok(true)
+}
+
 // ---------- 生命周期：复制 / 重命名 / 删除（4.3 第四刀，2026-08-28） ----------
 //
 // 引用面全部按 Spike B（docs/spikes/0002-profile-reference-surface.md）执行：
@@ -712,8 +937,19 @@ pub fn running_conflict(active: Option<&str>, target: &str) -> Result<(), String
 /// 默认启动 profile 候选校验（set_default_profile 用）：名字合法且在扫描结果中
 /// （已物化或内置模板名均可——模板名恒可首启，web 本身就是 ADR 定死的回退值）。
 pub fn ensure_default_candidate(home: &Path, name: &str) -> Result<(), String> {
+    ensure_default_candidate_from(&scan_profiles(home), name)
+}
+
+/// 客体档孪生（世界择源）：候选来自客体扫描结果（P1 读侧下沉后默认档在 WSL 世界
+/// 也可设——启动时按**当前模式**的候选过滤，跨世界残留名字读取侧兜底，不会误启动）。
+pub fn ensure_default_candidate_in_guest(distro: &str, name: &str) -> Result<(), String> {
+    ensure_default_candidate_from(&scan_profiles_in_guest(distro)?, name)
+}
+
+/// 纯校验内核（宿主 / 客体共用）：名字合法且在给定世界的扫描结果里。
+fn ensure_default_candidate_from(list: &[ProfileSummary], name: &str) -> Result<(), String> {
     validate_profile_name(name)?;
-    if scan_profiles(home).iter().any(|p| p.name == name) {
+    if list.iter().any(|p| p.name == name) {
         Ok(())
     } else {
         Err(format!(
@@ -798,6 +1034,131 @@ pub fn delete_profile_dir(home: &Path, name: &str) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| format!("删除目录失败（{}）：{e}", dir.display()))
 }
 
+/// 客体档复制 profile（P2 生命周期下沉）：复制目录（排除 node_modules）→
+/// 改写 package.json 的 name → 检查 patch 相对路径警告。
+pub fn copy_profile_in_guest(
+    distro: &str,
+    source: &str,
+    new_name: &str,
+) -> Result<LifecycleOutcome, String> {
+    validate_profile_name(source)?;
+    validate_profile_name(new_name)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing.iter().any(|p| p.name == source && p.materialized) {
+        return Err(format!(
+            "源 profile「{source}」不存在或尚未物化——复制需要已初始化的 profile 目录"
+        ));
+    }
+    if existing.iter().any(|p| p.name == new_name) {
+        return Err(format!("目标名「{new_name}」已被占用——复制请换名"));
+    }
+    crate::guest::copy_profile_dir(distro, source, new_name)?;
+    rewrite_manifest_name_in_guest(distro, new_name)?;
+    let warnings = patch_relative_path_warnings_in_guest(distro, new_name);
+    Ok(LifecycleOutcome {
+        profile: new_name.to_string(),
+        warnings,
+    })
+}
+
+/// 客体档重命名 profile（P2 生命周期下沉）：目录 rename → 删 node_modules →
+/// 改写 package.json 的 name → 检查 patch 相对路径警告 → 同步 defaultProfile。
+pub fn rename_profile_in_guest(
+    distro: &str,
+    old_name: &str,
+    new_name: &str,
+    data_dir: &Path,
+) -> Result<LifecycleOutcome, String> {
+    validate_profile_name(old_name)?;
+    validate_profile_name(new_name)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing
+        .iter()
+        .any(|p| p.name == old_name && p.materialized)
+    {
+        return Err(format!("profile「{old_name}」不存在或尚未物化"));
+    }
+    if existing.iter().any(|p| p.name == new_name) {
+        return Err(format!("目标名「{new_name}」已被占用——重命名请换名"));
+    }
+    crate::guest::rename_profile_dir(distro, old_name, new_name)?;
+    rewrite_manifest_name_in_guest(distro, new_name)?;
+    let warnings = patch_relative_path_warnings_in_guest(distro, new_name);
+    let mut settings = crate::settings::load(data_dir);
+    if settings.default_profile.as_deref() == Some(old_name) {
+        settings.default_profile = Some(new_name.to_string());
+        crate::settings::save(data_dir, &settings)
+            .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
+    }
+    Ok(LifecycleOutcome {
+        profile: new_name.to_string(),
+        warnings,
+    })
+}
+
+/// 客体档删除 profile（P2 生命周期下沉）：整目录删除 → defaultProfile 清除。
+pub fn delete_profile_in_guest(
+    distro: &str,
+    profile: &str,
+    data_dir: &Path,
+) -> Result<DeleteOutcome, String> {
+    validate_profile_name(profile)?;
+    let existing = scan_profiles_in_guest(distro)?;
+    if !existing.iter().any(|p| p.name == profile && p.materialized) {
+        return Err(format!(
+            "profile「{profile}」不存在或尚未物化——无目录可删除"
+        ));
+    }
+    crate::guest::delete_profile_dir(distro, profile)?;
+    let mut settings = crate::settings::load(data_dir);
+    let mut default_cleared = false;
+    if settings.default_profile.as_deref() == Some(profile) {
+        settings.default_profile = None;
+        crate::settings::save(data_dir, &settings)
+            .map_err(|e| format!("清除默认 profile 失败：{e}"))?;
+        default_cleared = true;
+    }
+    Ok(DeleteOutcome {
+        profile: profile.to_string(),
+        default_cleared,
+    })
+}
+
+fn rewrite_manifest_name_in_guest(distro: &str, profile: &str) -> Result<(), String> {
+    let pkg_path = format!("profiles/{profile}/package.json");
+    let files = crate::guest::read_files(distro, &[pkg_path])?;
+    let Some(text) = files
+        .into_iter()
+        .find_map(|(p, c)| if p.ends_with("package.json") { c } else { None })
+    else {
+        return Ok(());
+    };
+    if let Some(out) = rewrite_manifest_name_text(&text, profile)? {
+        crate::guest::write_home_files(
+            distro,
+            &[(format!("profiles/{profile}/package.json"), out)],
+        )?;
+    }
+    Ok(())
+}
+
+fn patch_relative_path_warnings_in_guest(distro: &str, profile: &str) -> Vec<String> {
+    let patch_path = format!("profiles/{profile}/{PROFILE_PATCH_FILENAME}");
+    let Ok(files) = crate::guest::read_files(distro, &[patch_path]) else {
+        return Vec::new();
+    };
+    let Some(text) = files.into_iter().find_map(|(p, c)| {
+        if p.ends_with(PROFILE_PATCH_FILENAME) {
+            c
+        } else {
+            None
+        }
+    }) else {
+        return Vec::new();
+    };
+    scan_patch_relative_path_warnings(&text)
+}
+
 /// 递归复制目录，跳过名为 `node_modules` 的子树（复制与重命名的共用件；
 /// 符号农场同名的顶层目录天然被排除）。
 fn copy_tree_excluding_node_modules(src: &Path, dst: &Path) -> Result<(), String> {
@@ -818,6 +1179,23 @@ fn copy_tree_excluding_node_modules(src: &Path, dst: &Path) -> Result<(), String
     Ok(())
 }
 
+/// 纯变换（宿主 / 客体共用）：package.json `name` 改写为 `dsh-profile-<新名>`
+pub(crate) fn rewrite_manifest_name_text(
+    text: &str,
+    new_name: &str,
+) -> Result<Option<String>, String> {
+    let mut pkg: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("package.json 非法 JSON：{e}"))?;
+    if let Some(obj) = pkg.as_object_mut() {
+        obj.insert(
+            "name".to_string(),
+            serde_json::Value::String(format!("dsh-profile-{new_name}")),
+        );
+    }
+    let out = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
+    Ok(Some(out + "\n"))
+}
+
 /// package.json `name` 一致化改写为 `dsh-profile-<新名>`（dsh initProfile @ 353
 /// 写入约定；Spike B §2.2：该前缀字段无外部消费处，改写为一致性保持）。
 /// 清单缺失（半初始化）跳过；格式对齐 dsh writeProfileManifest（2 空格缩进 +
@@ -827,26 +1205,14 @@ fn rewrite_manifest_name(dir: &Path, new_name: &str) -> Result<(), String> {
     let Ok(text) = fs::read_to_string(&path) else {
         return Ok(());
     };
-    let mut pkg: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("package.json 非法 JSON（{}）：{e}", path.display()))?;
-    if let Some(obj) = pkg.as_object_mut() {
-        obj.insert(
-            "name".to_string(),
-            serde_json::Value::String(format!("dsh-profile-{new_name}")),
-        );
+    if let Some(out) = rewrite_manifest_name_text(&text, new_name)? {
+        fs::write(&path, out).map_err(|e| format!("写 package.json 失败：{e}"))?;
     }
-    let out = serde_json::to_string_pretty(&pkg).map_err(|e| e.to_string())?;
-    fs::write(&path, out + "\n").map_err(|e| format!("写 package.json 失败：{e}"))
+    Ok(())
 }
 
-/// 扫描 cordis.patch.yml 的 `../` 相对路径引用（Spike B §2.2：patch 语义不含
-/// profile 名，但相对路径在目录改名后可能断链——替用户做人工检查的机器版，
-/// ADR-0009 行动项）。纯文本逐行扫描（本刀不引 YAML 依赖）：跳过空行与
-/// `#` 注释行。
-pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
-    let Ok(text) = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)) else {
-        return Vec::new();
-    };
+/// 纯文本逐行扫描（宿主 / 客体共用）：扫描 cordis.patch.yml 的 `../` 相对路径引用
+pub(crate) fn scan_patch_relative_path_warnings(text: &str) -> Vec<String> {
     let hits = text
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
@@ -861,9 +1227,38 @@ pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
     }
 }
 
+/// 扫描 cordis.patch.yml 的 `../` 相对路径引用（Spike B §2.2：patch 语义不含
+/// profile 名，但相对路径在目录改名后可能断链——替用户做人工检查的机器版，
+/// ADR-0009 行动项）。纯文本逐行扫描（本刀不引 YAML 依赖）：跳过空行与
+/// `#` 注释行。
+pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(dir.join(PROFILE_PATCH_FILENAME)) else {
+        return Vec::new();
+    };
+    scan_patch_relative_path_warnings(&text)
+}
+
 #[cfg(test)]
 mod profiles_tests {
     use super::*;
+
+    /// **客体档读侧在非 Windows 上必须是诚实错误**（ADR-0016 §2.6：绝不静默回落
+    /// 宿主世界）——四条读路径全部由 `guest::list_dir` / `guest::read_files` 的非
+    /// Windows 孪生兜底拒绝。
+    #[cfg(not(windows))]
+    #[test]
+    fn guest_profile_reads_never_silently_fall_back_on_non_windows() {
+        let err = scan_profiles_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = web_ui_profiles_in_guest("Ubuntu").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        // 详情：profile 名先过校验（防路径遍历），合法名才打到客体
+        assert!(read_profile_detail_in_guest("Ubuntu", "../escape").is_err());
+        let err = read_profile_detail_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = ensure_default_candidate_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
 
     #[test]
     fn format_utc_known_timestamps() {

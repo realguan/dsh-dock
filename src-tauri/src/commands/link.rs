@@ -14,7 +14,7 @@ use tauri::Manager;
 /// - 若为 HTTP(S) URL：必须通过白名单校验后打开浏览器；
 /// - 若为本地路径：调用系统文件管理器（Finder / Explorer）打开该目录或文件。
 #[tauri::command]
-pub fn open_external(url: String) -> Result<(), String> {
+pub fn open_external(_app: tauri::AppHandle, url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         if !is_allowed_external_url(trimmed) {
@@ -22,9 +22,28 @@ pub fn open_external(url: String) -> Result<(), String> {
         }
         open::that_detached(trimmed).map_err(|e| format!("打开浏览器失败：{e}"))
     } else {
-        let p = std::path::Path::new(trimmed);
+        #[cfg(windows)]
+        let target_str = if trimmed.starts_with('/') {
+            if let Ok(crate::mgmt::World::Wsl { distro }) = crate::mgmt::current_world(&_app) {
+                let unc = format!(r"\\wsl$\{distro}{trimmed}");
+                let unc_path = std::path::Path::new(&unc);
+                if unc_path.exists() || unc_path.parent().map(|p| p.exists()).unwrap_or(false) {
+                    unc
+                } else {
+                    trimmed.to_string()
+                }
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            trimmed.to_string()
+        };
+        #[cfg(not(windows))]
+        let target_str = trimmed.to_string();
+
+        let p = std::path::Path::new(&target_str);
         if p.exists() {
-            open::that_detached(trimmed).map_err(|e| format!("打开文件管理器失败：{e}"))
+            open::that_detached(&target_str).map_err(|e| format!("打开文件管理器失败：{e}"))
         } else if let Some(parent) = p.parent() {
             if parent.exists() {
                 open::that_detached(parent).map_err(|e| format!("打开文件管理器失败：{e}"))

@@ -172,6 +172,132 @@
   `43f65fd2c`（首打 `2b4272a` 当日返工后移动，仅留一轮 cancelled 构建、未产出
   Release）；`AGENTS §7` IPC 清单 ↔ `ipc.rs::COMMANDS` ↔ `capabilities` 三处集合
   比对**无偏差**（闸门有效）；桌面端 `-` 与 `wsl` 相关未动。
+### 2026-09-11 单元测试修复 · 补齐客体 bash 实跑单测的 #[cfg(unix)] 门禁并静音测试 ping 杂讯 —— guan（AI 协作）
+
+- **背景与目标**：Windows CI runner 在执行 `cargo test` 时，因直接在 Windows 宿主环境（Git Bash）执行面向 WSL Linux 客体的 bash 脚本，导致 `profile_lifecycle`、`backup_file`、`diagnostics`、`session_lifecycle` 4 个 bash 实跑测试失败；同时 `shell.rs` 的测试模拟进程泄露 ping 终端输出。
+- **变更清单**：
+  1. `src-tauri/src/guest.rs`：对 4 个直接调用 `Command::new("bash")` 的客体脚本实跑单测补齐 `#[cfg(unix)]` 条件编译守卫，严格对齐既有 `read_files` / `list_dir` / `write_home_files` 的单测门禁规范（客体脚本实跑仅在 macOS/Linux unix 环境校验，Windows 宿主不具备真实 WSL 环境）；
+  2. `src-tauri/src/shell.rs`：对测试中创建的 4 处 `cmd.exe /C ping` 模拟进程重定向 `stdout(Stdio::null()).stderr(Stdio::null())`，消除 Windows 测试控制台的 ping 回显杂讯。
+- **影响**：仅周知，消除 Windows 平台 CI 单测失败与控制台杂讯。
+- **验证**：Windows 目标 MinGW clippy 0 错误 0 警告，cargo fmt 通过，前端测试全绿。
+
+### 2026-09-11 单元测试修复 · 修复 WSL 会话扫描脚本 BSD stat 与 Windows 路径反斜杠兼容性 —— guan（AI 协作）
+
+- **背景与目标**：GitHub Actions CI 在 macOS 与 Windows runner 运行 `cargo test` 时，`guest::tests::session_lifecycle_scripts_run_correctly_in_bash` 出现跨平台兼容失败。macOS 环境因缺少 BSD stat 支持导致扫描输出空，Windows 环境因宿主 tempdir 路径含反斜杠导致 bash glob 匹配异常。
+- **变更清单**：
+  1. `src-tauri/src/guest.rs`：`list_sessions_script` 补充 `stat -f '%N|%z|%m'` 兜底分支，实现 GNU find / Busybox / BSD stat 三平台全兼容；对 `$dir` 增加 `${dir//\\//}` 规范化；
+  2. `src-tauri/src/guest.rs`：`delete_session_script` 增加 `${target//\\//}` 与 `${root//\\//}` 路径规范化，支持 `sessions/*` 相对路径解析，消除反斜杠导致的 bash 转义匹配失败；
+  3. `src-tauri/src/guest.rs`：单测补充绝对路径与相对路径双重校验。
+- **影响**：仅周知，修复 CI 三平台单测闸门。
+- **验证**：Windows MinGW 静态检查 0 错误 0 警告，单测覆盖 bash 下的绝对路径与相对路径会话删除。
+
+### 2026-09-11 契约与规范同步 · ADR-0016 落地配套契约与 AGENTS 登记 —— guan（AI 协作）
+
+- **背景与目标**：随 ADR-0016 P1/P2/P3 全量下沉至 WSL 客体，完成配套模块子契约落地、AGENTS.md 登记与 ADR 状态同步。
+- **变更清单**：
+  1. `docs/contracts/wsl-guest-management.md`：建立 WSL 客体管理面契约（v1），固化跨环境原语签名、世界判定 Seam、文件系统不变量（0600 凭据权限、原子覆盖、写前备份、排除 node_modules、会话目录防逃逸保护、stdin 管道投递规避 Windows 32K 命令行溢出）；
+  2. `docs/contracts/README.md`：台账追加 `child-lifecycle` 与 `wsl-guest-management` 契约索引；
+  3. `AGENTS.md`：§7 登记 WSL 客体管理面网络与进程用途，§9 索引 ADR-0016，精简已退役条目维持全文 ≤ 250 行预算；
+  4. `docs/adr/0016-wsl-guest-management-plane.md`：标记文档同步项完成。
+- **影响**：仅周知。客体管理面原语与不变量已作为稳定公共契约锁定。
+- **验证**：`cargo clippy` 0 警告、`cargo fmt` 通过、前端类型与逻辑测试全绿。
+
+### 2026-09-11 分支推送 · ADR-0016 P2 与 P3 全量下沉：WSL 客体模式管理面全部打通 —— guan（AI 协作）
+
+- **背景与目标**：在 P1（插件链）与读侧下沉基础上，完成 ADR-0016 规划的 P2（profile 生命周期写动作与配置复制）和 P3（控制台面板与会话维护），彻底解除全部 `require_local` 阻断，让 WSL 客体模式具备与 Local 模式对等的完整管理能力。
+- **变更清单**：
+  1. **P2 Profile 生命周期写动作**（commit `ef5da8f`）：
+     - `guest.rs`：新增 `copy_profile_script`、`rename_profile_script`、`delete_profile_script` 及其执行原语，排除 `node_modules` 保持原子高效迁移；
+     - `profiles.rs`：实现 `create_profile_in_guest`、`copy_profile_in_guest`、`rename_profile_in_guest`、`delete_profile_in_guest`；纯函数抽离 `rewrite_manifest_name_text` 与 `scan_patch_relative_path_warnings`；
+     - `plugins.rs`：实现 `copy_plugin_config_in_guest`，纯函数抽离 `apply_copy_config_entries`；
+     - `commands/profile.rs` 与 `plugin.rs`：移除写路径上的 `require_local` 阻断，按 `World` 分发。
+  2. **P3a 控制台管理下沉**：
+     - `guest.rs`：`write_home_files_script` 补充 `chmod 600` 凭据权限安全保障；新增 `backup_file_script` / `backup_file` 实现写前带时间戳备份；新增 `diagnostics_script` 收集客体系统报告；
+     - `credentials.rs`：纯函数 `parse_credentials_summary` 与 `apply_set_provider_key`；实现 `get_credentials_raw_in_guest`、`get_credentials_summary_in_guest`、`save_credentials_raw_in_guest`、`set_provider_key_in_guest`；
+     - `dsh_settings.rs`：实现 `read_dsh_settings_in_guest` 与写前自动备份的 `overwrite_dsh_settings_in_guest`；
+     - `mcp.rs`：纯函数内核 `parse_mcp_servers`、`apply_save_mcp_server`、`apply_delete_mcp_server`；实现 `list_mcp_servers_in_guest`、`save_mcp_server_in_guest`、`delete_mcp_server_in_guest`；
+     - `diagnostics.rs`：实现客体诊断结果收集与报告生成；
+     - `commands/console.rs`：全部 10 个控制台命令移除 `require_local` 阻断，接入 `World` 分发。
+  3. **P3b 会话维护下沉**：
+     - `guest.rs`：新增 `list_sessions_script` / `scan_sessions_raw_in_guest` 原语扫描会话文件；新增 `delete_session_script` / `delete_session_in_guest`（带根路径与逃逸校验安全防线）；新增 `run_repair_in_guest` 经 stdin 管道传递 94 KiB `repair-session.mjs` 规避 Windows 命令行 32K 长度截断风险；
+     - `sessions.rs`：纯函数内核 `assemble_session_items`；实现 `read_archived_session_ids_in_guest`、`scan_sessions_in_guest`、`remove_session_in_guest`、`run_repair_in_guest`；
+     - `commands/session.rs`：全部 4 个会话维护命令移除 `require_local` 阻断，接入 `World` 分发。
+- **影响**：WSL 客体模式现已支持全部控制中心功能：Profile 管理（增/删/改/查/复制/切换）、插件管理（装/卸/更/配置/配置复制/开关）、控制台（凭据/DSH 设置/MCP/系统诊断）、会话维护（扫描/单会话自愈/全量自愈/删除）。宿主与客体逻辑严格保持单一解析与对等文件不变量。
+- **待他人动作**：仅周知。
+- **验证**：`cargo fmt --check` ✓、宿主 target clippy 0 警告 ✓、Windows target clippy（MinGW 桩工具链）0 警告 ✓、前端 32 组 223 个测试全绿 ✓、单元测试覆盖客体会话装配与 bash 脚本端到端执行。
+
+### 2026-09-11 分支推送 · ADR-0016 第三批（读侧下沉）：WSL 模式下控制中心恢复可用 —— guan（AI 协作）
+
+- **原委（实机反馈）**：第二批的 P0 守卫把 `list_profiles` 一并挡住，实机会话里控制中心着陆页
+  直接报「profile 列表在 WSL 客体模式下暂不支持」——而**市场安装的目标 profile 选择器**也吃这条
+  列表，等于把第二批刚打通的插件链**挡在门外**（分期设计疏漏：把"读"与"写"一起归进了 P2/P3）。
+- **变更**：`guest.rs` 新增 `list_dir`（客体目录列举：base64 条目帧 + 目录/文件标志 + 目录不存在
+  哨兵；显式覆盖点文件，与宿主 `read_dir` 同口径）；`profiles.rs` 抽出纯装配内核
+  （`assemble_profile_summaries` / `assemble_profile_detail` / `ensure_default_candidate_from`）
+  并加客体孪生（`scan_profiles_in_guest` / `read_profile_detail_in_guest` /
+  `web_ui_profiles_in_guest` / `ensure_default_candidate_in_guest`）；
+  `commands/profile.rs` 的列表、详情、切换候选、默认档校验全部按世界择源（**消掉第二批登记的
+  `switch_profile` 边界**）；`plugins.rs` 补齐同类读侧断点——禁用/启用切换
+  （patch 读改写抽成纯内核 + 客体原子写）、更新检查（已装版本取自客体清单）、总览聚合
+  （客体扫描 + 客体清单）。
+- **影响**：WSL 模式下控制中心**读侧全通**（profile 列表/详情/切换/默认档 + 插件清单/行表/开关/
+  更新检查/聚合总览）；写侧（profile 创建/复制/重命名/删除、插件配置复制）与会话、控制台面板
+  仍在 P0 诚实守卫下报「暂不支持 + 替代路径」。本地模式行为零变化。
+- **待他人动作**：仅周知；仍未签名构建（覆盖安装，identifier 同）。
+- **验证**：宿主 `cargo fmt --check` ✓ / `cargo clippy --all-targets -D warnings` ✓ /
+  **windows 目标 clippy ✓（用上次广播的桩 C 工具链法，本轮把新 `#[cfg(windows)]` 代码也验了）**；
+  离线 harness 实跑：profiles 37 · plugins+build_policy 84（仅 2 个需真引擎桩件的用例跑不了）·
+  guest 9 · mgmt 6；`cargo test` 与链接仍只能在 CI（本机缺 webkit2gtk-4.1 dev）。
+
+### 2026-09-11 补记 · Windows 目标 clippy 本地可跑（桩 C 工具链法）+ 首次 CI 红灯复盘 —— guan（AI 协作）
+
+- **红灯**：上一批（`a870d2d`）推 CI 后 `build (windows-latest)` 在 **Rust clippy gate** 红 ——
+  `src/guest.rs` 的 `write_home_files` 上限检查里 `content` 未参与诊断（只报路径），
+  Windows 目标 `-D warnings` 判「unused variable」；macOS/Ubuntu 全绿（该函数体在非 Windows 被
+  cfg 掉，宿主 clippy 看不到）。修复：`de74cd1`（改 `_` 绑定）。
+- **教训（AGENTS §1 的又一处实证）**：`#[cfg(windows)]` 函数体的 lint 只有「Windows 目标 clippy」
+  能看见；宿主 clippy 全绿**不蕴含** Windows 全绿——本批第一批的原语地基就是在 CI 上才补上这条。
+- **可复用做法（本机无 mingw，但把 windows 目标 clippy 跑起来了）**：
+  依赖里 `ring` 等 C 构建脚本要 `x86_64-w64-mingw32-gcc`，`tauri-winres` 还要 `windres`，
+  缺工具链时 cargo 在依赖阶段就失败。用**假工具链**顶掉 C 编译即可让 Rust 侧 lint 全量生效
+  （clippy 是 check-only，不链接，假 `.o`/`.a` 不影响判据）：
+  ```bash
+  # /tmp/<dir>/x86_64-w64-mingw32-{gcc,ar,windres} 皆为「解析 -o 后 touch 该文件再 exit 0」的脚本
+  PATH=/tmp/<dir>:$PATH \
+  CC_x86_64_pc_windows_gnu=/tmp/<dir>/x86_64-w64-mingw32-gcc \
+  AR_x86_64_pc_windows_gnu=/tmp/<dir>/x86_64-w64-mingw32-ar \
+  cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # → Finished（零告警）
+  ```
+  边界（如实）：只验 Rust 侧编译与 lint（含 `#[cfg(windows)]` 函数体与测试目标），
+  **二进制链接与运行仍只在 CI/真机**；桩件放 `/tmp`，不入库（AGENTS §8 不建无用 scripts/）。
+- **影响**：仅周知；后续涉 Windows 分叉的改动，推 CI 前应本地跑一次上述命令，可省一轮红灯往返。
+
+### 2026-09-11 分支推送 · ADR-0016 P1 第二批（a–e 接线）：控制中心在 WSL 模式下管到真正的世界 —— guan（AI 协作）
+
+- **变更**（分支 `feat/wsl-guest-management-plane`）：新增 `src-tauri/src/mgmt.rs`（管理面世界择源 +
+  P0 诚实兜底守卫）；`guest.rs`（读原语改「相对客体 dsh home」，新增 base64 原子写原语）；
+  `build_policy.rs`（客体侧单键写入孪生）；`plugins.rs`（三处择源，解析/装配/分类抽成两侧共用的纯函数）；
+  `commands/{plugin,profile,session,console}.rs`（入口择源 / `require_local` 守卫）；
+  `ui.rs`（`current_active_mode` 去 macOS cfg）；`frontend/src/{lib/profiles.ts,stores/profilesStore.ts}`
+  （列表失败透出后端详情，不再被固定话术盖掉）；`docs/adr/0016-*.md`（§5 进度回填）。
+- **影响**：WSL 模式下「市场插件安装/卸载/更新 + 插件清单 + 插件行表」现在打在**客体**
+  （客体 dsh CLI + 客体读原语），并补写客体 profile 的 `dangerouslyAllowAllBuilds: true`
+  （复用 ADR-0013 单键口径；客体侧 base64 载荷 → 同目录 tmp → `mv` 原子替换，父目录不存在即失败，
+  不代 dsh 生成 profile 目录）。其余未下沉动作（profile 列表/详情/CRUD/默认档、会话四命令、
+  控制台凭据·DSH 设置·MCP·诊断、插件开关、配置复制、更新检查、聚合总览）在 WSL 世界一律返回
+  「暂不支持 + 替代路径」——**不再出现「请先启动应用完成引擎引导后重试」这类与 ADR-0004 矛盾的
+  死路提示**（禁语有单测闸门）。本地（含非 Windows）路径行为零变化。
+- **待他人动作**：仅周知；本批仍是**未签名**构建，装上会覆盖现有安装（identifier 相同）。
+- **验证（如实登记边界）**：`cargo fmt --check` ✓；`cargo clippy --all-targets -- -D warnings`（宿主 Linux）✓；
+  前端 `typecheck` + `lint` + `test`（223 tests）✓。本机 WSL **缺 webkit2gtk-4.1 与 mingw 工具链**，
+  `cargo test` 与 windows 目标 clippy 在本机跑不了——用不入库的离线 harness（`rustc --test` + 最小桩件）
+  实跑了 guest 7 / mgmt 6 / build_policy 18 / plugins 31 个用例（含两处**在 bash 里真跑脚本**的用例，
+  抓到并修掉了两处测试自身的路径基址错误）；`#[cfg(windows)]` 函数体与三平台全量用例仍以 CI 为准。
+- **未做（登记动作项）**：AGENTS §7 登记本次客体管理面网络用途；`docs/contracts/` 增客体管理面子契约
+  （原语与文件不变量对账）；`docs/executor.md` 补 Windows+WSL 实机验证清单（插件装/卸/更 + 行表 +
+  错误面六态：`wsl.exe` 不可用 / 无发行版 / musl / 断网 / 客体 home 不存在 / 发行版未选定）。
+- **已知边界**：`switch_profile` 的 webUi 候选校验仍读宿主 home——控制中心在 WSL 模式已无 profile
+  列表（P0 守卫），该路径在 WSL 世界不可达；profile 列表下沉时一并改按世界择源（已登记 ADR-0016 §5）。
 
 ### 2026-09-11 补记 · `gh` token 已补 `workflow` scope（上条遗留动作项闭环）—— guan
 

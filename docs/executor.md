@@ -143,6 +143,20 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 
 - macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（285 tests，
   2026-09-10；含 ADR-0015 子进程生命周期与 v1.1.0 Windows 修复两批）。
+- **Windows 分叉的 lint 怎么在本地看见（2026-09-11 实证，无 mingw 也能跑）**：
+  宿主 clippy 全绿**不蕴含** Windows 全绿——`#[cfg(windows)]` 函数体只有 windows 目标
+  clippy 看得见（本批 `guest::write_home_files` 的未使用变量就是这样漏到 CI 才红，复盘见
+  `docs/broadcasts.md` 2026-09-11 补记）。缺 mingw 时可用**桩 C 工具链**绕过依赖的 C 编译
+  （clippy 是 check-only、不链接，假 `.o`/`.a` 不影响判据）：
+  ```bash
+  mkdir -p /tmp/fakebin   # 一个脚本：解析参数里的 -o 就 touch 该路径，然后 exit 0
+  for n in gcc ar windres; do ln -sf /tmp/fakebin/touch-out /tmp/fakebin/x86_64-w64-mingw32-$n; done
+  PATH=/tmp/fakebin:$PATH \
+  CC_x86_64_pc_windows_gnu=/tmp/fakebin/x86_64-w64-mingw32-gcc \
+  AR_x86_64_pc_windows_gnu=/tmp/fakebin/x86_64-w64-mingw32-ar \
+  cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+  ```
+  边界（如实）：只验 Rust 侧编译与 lint（含测试目标）；链接与运行仍只在 CI / 真机。
 - **Windows 实机未验**：WSL 运行时行为（`wsl -l -v` 实机输出、localhost 转发、
   stop 标志 teardown、rc source）需按 ADR-0004 的执行要求验证。
   shell.log / dsh-wsl.log 位于 `%APPDATA%\io.github.realguan.dsh-dock\`。

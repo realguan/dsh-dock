@@ -129,7 +129,7 @@
   1 MiB 上限、校验失败回退内置基线）· `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
   PID 锁登记表）· `<文件名>.bak-<unix秒>` 覆写前备份族（`fs_backup.rs`，2026-09-08 U9）·
   MCP / 插件配置对 profile `cordis.patch.yml` 的写入：**统一走 `plugins.rs::PatchFile`**
-  （未改动条目原文保真含行间注释 + 覆写前备份 + 原子替换；2026-09-11 统一，此前两套写入器）。
+  （宿主/客体同一内核：未改条目原文保真含行间注释 + 覆写前备份 + 原子替换；2026-09-11 统一）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
@@ -172,18 +172,18 @@
 - **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`src/ipc.rs` COMMANDS 登记 →
   `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
-- **唯一网络面 = `updates.rs`**（专项裁定见 §9 ADR-0006）；其余模块禁触网，新网络需求先在此
-  登记；外链域名在 `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**
+- **唯一网络面 = `updates.rs`**（ADR-0006）；其余模块禁触网，新网络需求先在此登记；
+  外链域名在 `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**
   （`plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、
   仅活跃会话、一次性快照不订阅——2026-08-29）；**工作台 Token 环回兑换**
   （`boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET、5s、redirects=0；
-  2026-09-04 落地、**2026-09-11 补登记**——原漏登，`docs/team/待裁定清册-2026-09-11.md` A1）；
-  **插件更新检查 / 市场 Registry 拉取**（`updates.rs` `npm_packument_versions` /
-  `fetch_market_registry`，镜像链与超时同 dsh 版本检查，2026-08-29 / 08-31）；
-  **客户端自更新**（`updates.rs::APP_RELEASE_FEED` + `updater.rs`，清单端点在
-  `tauri.conf` 的 `plugins.updater.endpoints`——**2026-09-11 补登记**）；**引擎引导**
-  （2026-09-03，ADR-0010）：壳内置 pnpm12 经 `runtime set node` / `pnpm add -g` 下载
-  node 与 dsh（镜像 env 注入），WSL 客体同源。~~boot 期 pnpm 补齐~~（2026-09-04 退役）。
+  2026-09-04 落地、2026-09-11 补登记——原漏登）；**插件更新检查 / 市场 Registry 拉取**
+  （`updates.rs` `npm_packument_versions` / `fetch_market_registry`，镜像链与超时同
+  dsh 版本检查）；**客户端自更新**（`updates.rs::APP_RELEASE_FEED` + `updater.rs`，
+  清单端点在 `tauri.conf` 的 `plugins.updater.endpoints`）；**引擎引导**（ADR-0010）：
+  壳内置 pnpm12 经 `runtime set node` / `pnpm add -g` 下载 node 与 dsh（镜像 env 注入），
+  WSL 客体同源；**WSL 客体管理面**（ADR-0016）：客体插件装卸/更新发生在客体
+  `dsh plugin`（客体 pnpm）子进程内，更新检查仍走 `updates.rs`，**壳不新增网络客户端**。
 
 ## 8. AI 交互约束
 
@@ -223,6 +223,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
 | [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
 | [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
+| [0016](docs/adr/0016-wsl-guest-management-plane.md) | 管理面下沉 WSL 客体：控制中心跨环境一致（读/写/原语双侧同构，按运行模式择源） |
 
 ## 10. 试验协议
 

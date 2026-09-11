@@ -2,6 +2,8 @@
 // 名字校验镜像 / 模板表形状 / 创建结果归纳。
 import { describe, expect, it } from "vitest"
 import {
+  PROFILE_LIST_FALLBACK_ERROR,
+  profileListError,
   summarizeCreateOutcome,
   TEMPLATE_BUNDLES,
   validatePluginSpec,
@@ -98,5 +100,19 @@ describe("summarizeCreateOutcome（已创建未装插件 = pending 而非 failed
   })
   it("未物化 = failed", () => {
     expect(summarizeCreateOutcome({ materialized: false, installed: false })).toBe("failed")
+  })
+})
+
+describe("profileListError（ADR-0016 §5-e 诚实错误面）", () => {
+  it("原样透出后端详情——WSL 客体模式的「暂不支持 + 替代路径」不得被盖掉", () => {
+    const detail =
+      "「profile 列表」在 WSL 客体模式下暂不支持：本版本只下沉了插件装卸与插件清单（ADR-0016 P1），当前操作世界为 Ubuntu 客体。替代路径：在该发行版的终端里直接执行 dsh 命令，或切回本地模式后再从控制中心操作。"
+    expect(profileListError(detail)).toBe(detail)
+  })
+
+  it("空/非字符串异常回退通用文案", () => {
+    expect(profileListError("   ")).toBe(PROFILE_LIST_FALLBACK_ERROR)
+    expect(profileListError(undefined)).toBe(PROFILE_LIST_FALLBACK_ERROR)
+    expect(profileListError({ code: 1 })).toBe(PROFILE_LIST_FALLBACK_ERROR)
   })
 })

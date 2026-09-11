@@ -22,10 +22,12 @@ mod dsh_settings;
 mod engines;
 mod executor;
 mod fs_backup;
+mod guest;
 pub mod ipc;
 mod lifecycle;
 mod manifest;
 mod mcp;
+mod mgmt;
 // 「唯一网络面」（AGENTS §7 / ADR-0006）的机器闸门。**只存在于测试构建**：它没有
 // 任何运行时职责，全部内容 = 源码扫描 + 豁免表 + 单测（2026-09-11，A2）。
 #[cfg(test)]
@@ -191,6 +193,7 @@ pub fn run() {
                 session: Mutex::new(None),
                 session_epoch: AtomicU64::new(0),
                 active_mode: Mutex::new(None),
+                active_wsl_distro: Mutex::new(None),
                 window: window.clone(),
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),

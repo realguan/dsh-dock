@@ -12,19 +12,46 @@ use std::sync::Arc;
 use tauri::Manager;
 
 /// Profile 管理器（4.3 只读刀）：列出全部 profile——已物化目录 + 未物化的
-/// 内置模板名（web/headless）两态合并。纯读：零写入、零 dsh 子进程；home
-/// 复用壳既有解析链（resolve::user_dsh_home），范围仅壳侧本地 home。
+/// 内置模板名（web/headless）两态合并。纯读：零写入、零 dsh 子进程。
+///
+/// **世界择源（ADR-0016 §5 读侧下沉，2026-09-11 第三批）**：WSL 模式下扫的是
+/// **客体** `~/.dsh/profiles`（客体列举 + 批量读清单），本地模式零变化。
+/// 这条链是控制中心的着陆页、也是市场安装的目标 profile 选择器数据源——它被
+/// P0 守卫挡住会让已下沉的插件链**不可达**，故从 P3 提前到本批。
+/// 客体列目录/读清单是阻塞 IO（`wsl.exe` 往返）→ 走 spawn_blocking。
 #[tauri::command]
-pub fn list_profiles() -> Result<Vec<crate::profiles::ProfileSummary>, String> {
-    Ok(crate::profiles::scan_profiles(
-        &crate::resolve::user_dsh_home(),
-    ))
+pub async fn list_profiles(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::profiles::ProfileSummary>, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => Ok(crate::profiles::scan_profiles(
+            &crate::resolve::user_dsh_home(),
+        )),
+        crate::mgmt::World::Wsl { distro } => crate::profiles::scan_profiles_in_guest(&distro),
+    })
+    .await
+    .map_err(|e| format!("profile 列表任务异常终止：{e}"))?
 }
 /// Profile 管理器（4.3 只读刀）：单个 profile 详情（package.json 关键字段 +
 /// cordis.patch.yml 原文，不解析 YAML）。名字先过 dsh 同款校验（防路径遍历）。
+/// **世界择源**同列表（ADR-0016 §5 读侧下沉）：WSL 模式读客体清单与 patch 原文。
 #[tauri::command]
-pub fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDetail, String> {
-    crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
+pub async fn get_profile_detail(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<crate::profiles::ProfileDetail, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::read_profile_detail_in_guest(&distro, &profile)
+        }
+    })
+    .await
+    .map_err(|e| format!("profile 详情任务异常终止：{e}"))?
 }
 /// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> install`
 /// 半官方转发链创建 profile——dsh 首用 initProfile 写三件套（bundles 声明
@@ -33,17 +60,33 @@ pub fn get_profile_detail(profile: String) -> Result<crate::profiles::ProfileDet
 /// 2026-08-28：创建即 webUi 候选，可设为默认启动；与出厂 web 模板同构）。
 /// 阻塞动作（系统探测 + 转发链 + 声明补写）全部在 spawn_blocking——同步命令
 /// 跑主线程会冻结 UI（setup 注释同源坑）。
+///
+/// P0 诚实兜底（ADR-0016 §5-e）：profile 创建属客体下沉的 P2（创建走客体 CLI，
+/// Profile 管理器（4.3 创建刀）：spawn `dsh plugin --profile <名> install`
+/// 半官方转发链创建 profile——dsh 首用 initProfile 写三件套（bundles 声明
+/// 内置插件 dsh-base）→ `pnpm install` 空依赖零网络毫秒级；成功后壳对非模板
+/// 名追加 web-app 单键声明（三件套写入例外 #2，ADR-0009 §4 第二次修订
+/// 2026-08-28：创建即 webUi 候选，可设为默认启动；与出厂 web 模板同构）。
+/// 阻塞动作（系统探测 + 转发链 + 声明补写）全部在 spawn_blocking——同步命令
+/// 跑主线程会冻结 UI（setup 注释同源坑）。
+///
+/// **世界择源（ADR-0016 §4 P2，2026-09-11）**：WSL 模式在客体执行
+/// `dsh plugin install` 转发链，客体写追加 web-app 声明，写单键 build policy。
 #[tauri::command]
 pub async fn create_profile(
     app: tauri::AppHandle,
     profile: String,
 ) -> Result<crate::profiles::CreateProfileOutcome, String> {
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::profiles::create_profile_blocking(&profile, &data_dir)
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => crate::profiles::create_profile_blocking(&profile, &data_dir),
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::create_profile_in_guest(&distro, &profile, &data_dir)
+        }
     })
     .await
     .map_err(|e| format!("创建任务异常终止：{e}"))?
@@ -51,23 +94,31 @@ pub async fn create_profile(
 /// Profile 管理器（4.3 生命周期刀）：复制 profile——整目录复制排除
 /// node_modules + `name` 一致化改写（Spike B §3.2，红线 3 允许的两处
 /// 三件套写入之一）。阻塞文件操作在 spawn_blocking。
+/// **世界择源（ADR-0016 §4 P2）**：WSL 模式客体复制（排除 node_modules）并改写。
 #[tauri::command]
 pub async fn copy_profile(
+    app: tauri::AppHandle,
     source: String,
     new_name: String,
 ) -> Result<crate::profiles::LifecycleOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::profiles::copy_blocker(&home, &source, &new_name)?;
-        let warnings = crate::profiles::copy_profile_tree(
-            &home.join("profiles").join(&source),
-            &home.join("profiles").join(&new_name),
-            &new_name,
-        )?;
-        Ok(crate::profiles::LifecycleOutcome {
-            profile: new_name,
-            warnings,
-        })
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::profiles::copy_blocker(&home, &source, &new_name)?;
+            let warnings = crate::profiles::copy_profile_tree(
+                &home.join("profiles").join(&source),
+                &home.join("profiles").join(&new_name),
+                &new_name,
+            )?;
+            Ok(crate::profiles::LifecycleOutcome {
+                profile: new_name,
+                warnings,
+            })
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::copy_profile_in_guest(&distro, &source, &new_name)
+        }
     })
     .await
     .map_err(|e| format!("复制任务异常终止：{e}"))?
@@ -75,33 +126,40 @@ pub async fn copy_profile(
 /// Profile 管理器（4.3 生命周期刀）：重命名——目录 rename + `name` 改写 +
 /// 删 node_modules 让 dsh 自愈（Spike B §3.1）；运行中防护；defaultProfile
 /// 引用同步旧名 → 新名（保持用户意图）。
+/// **世界择源（ADR-0016 §4 P2）**：WSL 模式客体重命名目录 + 清理 node_modules + 改写清单。
 #[tauri::command]
 pub async fn rename_profile(
     app: tauri::AppHandle,
     old_name: String,
     new_name: String,
 ) -> Result<crate::profiles::LifecycleOutcome, String> {
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let active = active_session_profile(&app);
     crate::profiles::running_conflict(active.as_deref(), &old_name)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::profiles::rename_blocker(&home, &old_name, &new_name)?;
-        let warnings = crate::profiles::rename_profile_dir(&home, &old_name, &new_name)?;
-        // defaultProfile 引用同步（load-modify-save，防抹掉其他字段）
-        let mut settings = crate::settings::load(&data_dir);
-        if settings.default_profile.as_deref() == Some(old_name.as_str()) {
-            settings.default_profile = Some(new_name.clone());
-            crate::settings::save(&data_dir, &settings)
-                .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::profiles::rename_blocker(&home, &old_name, &new_name)?;
+            let warnings = crate::profiles::rename_profile_dir(&home, &old_name, &new_name)?;
+            // defaultProfile 引用同步（load-modify-save，防抹掉其他字段）
+            let mut settings = crate::settings::load(&data_dir);
+            if settings.default_profile.as_deref() == Some(old_name.as_str()) {
+                settings.default_profile = Some(new_name.clone());
+                crate::settings::save(&data_dir, &settings)
+                    .map_err(|e| format!("同步默认 profile 失败：{e}"))?;
+            }
+            Ok(crate::profiles::LifecycleOutcome {
+                profile: new_name,
+                warnings,
+            })
         }
-        Ok(crate::profiles::LifecycleOutcome {
-            profile: new_name,
-            warnings,
-        })
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::rename_profile_in_guest(&distro, &old_name, &new_name, &data_dir)
+        }
     })
     .await
     .map_err(|e| format!("重命名任务异常终止：{e}"))?
@@ -110,11 +168,13 @@ pub async fn rename_profile(
 /// （dsh 明示）；运行中防护；defaultProfile 指向被删 profile → **删除时置 None**
 /// （「兜底 web」在消费方，见 `executor.rs` 的 `consume_default_profile` 调用；
 /// ADR-0009 §4）。node_modules 体量大，删除走 spawn_blocking。
+/// **世界择源（ADR-0016 §4 P2）**：WSL 模式客体删除目录 + 壳端清除默认 profile 引用。
 #[tauri::command]
 pub async fn delete_profile(
     app: tauri::AppHandle,
     profile: String,
 ) -> Result<crate::profiles::DeleteOutcome, String> {
+    let world = crate::mgmt::current_world(&app)?;
     let data_dir = app
         .path()
         .app_data_dir()
@@ -122,29 +182,34 @@ pub async fn delete_profile(
     crate::profiles::validate_profile_name(&profile)?;
     let active = active_session_profile(&app);
     crate::profiles::running_conflict(active.as_deref(), &profile)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        if !home.join("profiles").join(&profile).is_dir() {
-            return Err(format!(
-                "profile「{profile}」不存在或尚未物化——无目录可删除"
-            ));
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            if !home.join("profiles").join(&profile).is_dir() {
+                return Err(format!(
+                    "profile「{profile}」不存在或尚未物化——无目录可删除"
+                ));
+            }
+            crate::profiles::delete_profile_dir(&home, &profile)?;
+            // 默认启动 profile 引用检查（Spike B §3.3/ADR-0009 §4）：指向被删
+            // profile → **置 None**（不保留失效值）；「兜底 web」在消费方
+            // （executor.rs 的 consume_default_profile），不在读设置这一步。
+            let mut settings = crate::settings::load(&data_dir);
+            let mut default_cleared = false;
+            if settings.default_profile.as_deref() == Some(profile.as_str()) {
+                settings.default_profile = None;
+                crate::settings::save(&data_dir, &settings)
+                    .map_err(|e| format!("回退默认 profile 失败：{e}"))?;
+                default_cleared = true;
+            }
+            Ok(crate::profiles::DeleteOutcome {
+                profile,
+                default_cleared,
+            })
         }
-        crate::profiles::delete_profile_dir(&home, &profile)?;
-        // 默认启动 profile 引用检查（Spike B §3.3/ADR-0009 §4）：指向被删
-        // profile → **置 None**（不保留失效值）；「兜底 web」在消费方
-        // （executor.rs 的 consume_default_profile），不在读设置这一步。
-        let mut settings = crate::settings::load(&data_dir);
-        let mut default_cleared = false;
-        if settings.default_profile.as_deref() == Some(profile.as_str()) {
-            settings.default_profile = None;
-            crate::settings::save(&data_dir, &settings)
-                .map_err(|e| format!("回退默认 profile 失败：{e}"))?;
-            default_cleared = true;
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::delete_profile_in_guest(&distro, &profile, &data_dir)
         }
-        Ok(crate::profiles::DeleteOutcome {
-            profile,
-            default_cleared,
-        })
     })
     .await
     .map_err(|e| format!("删除任务异常终止：{e}"))?
@@ -152,10 +217,20 @@ pub async fn delete_profile(
 /// Profile 管理器（4.3④）：设置默认启动 profile（持久化 settings.json
 /// `defaultProfile`，第二最小面例外，AGENTS §6 已登记；**None 由消费方兜底
 /// `web`，失效值不消费＝出选择器**——本命令本身不做兜底）。
+///
+/// **世界择源**（ADR-0016 §5 读侧下沉）：候选校验按**当前世界**的 profile 列表
+/// ——WSL 模式校验客体名单。默认档仍是壳侧单一设置，启动时按当前模式的候选过滤
+/// （`consume_default_profile`），跨世界残留名字**不消费**（同上，出选择器），不会误启动。
 #[tauri::command]
 pub fn set_default_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
-    let home = crate::resolve::user_dsh_home();
-    crate::profiles::ensure_default_candidate(&home, &profile)?;
+    match crate::mgmt::current_world(&app)? {
+        crate::mgmt::World::Local => {
+            crate::profiles::ensure_default_candidate(&crate::resolve::user_dsh_home(), &profile)?
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::profiles::ensure_default_candidate_in_guest(&distro, &profile)?
+        }
+    }
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let mut settings = crate::settings::load(&data_dir);
     settings.default_profile = Some(profile);
@@ -174,6 +249,9 @@ pub fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, Stri
 /// 仅 webUi 候选（非 webUi 无工作台 URL 可导航）；bundle 快照档由 probe 内
 /// 档位守卫忽略强制目标。WSL 模式同链路（guest 脚本已参数化）。
 ///
+/// **世界择源（2026-09-11 第三批）**：webUi 候选名单按当前世界取（WSL = 客体
+/// 名单）；切换本身走 forced_profile → 客体启动脚本（已参数化），两侧同源。
+///
 /// 2026-09-10（ADR-0014）交接化重构，返回交接意图（供控制中心立即起导轨）：
 /// 1. 先领启动代际令牌——在途的旧启动线程就此作废（并发双击不再双 spawn）；
 /// 2. 建交接意图（两窗贯穿状态，`get_boot_status` 暴露给刚重载的主窗口）；
@@ -183,7 +261,15 @@ pub fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, Stri
 #[tauri::command]
 pub fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<serde_json::Value, String> {
     crate::profiles::validate_profile_name(&profile)?;
-    let candidates = crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home());
+    // 世界择源（ADR-0016 §5 读侧下沉）：候选 = **当前世界**的 webUi profile 名单。
+    // 此前这里恒读宿主 home——WSL 模式下会拿宿主名单去校验客体 profile（错世界），
+    // 是 P1 时登记在案、随本批读侧下沉消掉的边界。
+    let candidates = match crate::mgmt::current_world(&app)? {
+        crate::mgmt::World::Local => {
+            crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home())
+        }
+        crate::mgmt::World::Wsl { distro } => crate::profiles::web_ui_profiles_in_guest(&distro)?,
+    };
     ensure_switchable_profile(&profile, &candidates)?;
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

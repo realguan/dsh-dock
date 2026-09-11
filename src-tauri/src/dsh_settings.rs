@@ -39,6 +39,30 @@ pub fn overwrite_dsh_settings(home: &Path, content: &str) -> Result<(), String> 
     write_dsh_settings(home, content)
 }
 
+/// 读取客体 `$DSH_HOME/settings.yaml` 原文（不存在返回空串）
+pub fn read_dsh_settings_in_guest(distro: &str) -> Result<String, String> {
+    let files = crate::guest::read_files(distro, &["settings.yaml".to_string()])?;
+    Ok(files
+        .into_iter()
+        .find_map(|(p, c)| {
+            if p.ends_with("settings.yaml") {
+                c
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default())
+}
+
+/// 覆写客体 `$DSH_HOME/settings.yaml`（先留备份再原子写回）
+pub fn overwrite_dsh_settings_in_guest(distro: &str, content: &str) -> Result<(), String> {
+    crate::guest::backup_file(distro, "settings.yaml")?;
+    crate::guest::write_home_files(
+        distro,
+        &[("settings.yaml".to_string(), content.to_string())],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
