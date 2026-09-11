@@ -31,6 +31,17 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 契约与规范同步 · ADR-0016 落地配套契约与 AGENTS 登记 —— guan（AI 协作）
+
+- **背景与目标**：随 ADR-0016 P1/P2/P3 全量下沉至 WSL 客体，完成配套模块子契约落地、AGENTS.md 登记与 ADR 状态同步。
+- **变更清单**：
+  1. `docs/contracts/wsl-guest-management.md`：建立 WSL 客体管理面契约（v1），固化跨环境原语签名、世界判定 Seam、文件系统不变量（0600 凭据权限、原子覆盖、写前备份、排除 node_modules、会话目录防逃逸保护、stdin 管道投递规避 Windows 32K 命令行溢出）；
+  2. `docs/contracts/README.md`：台账追加 `child-lifecycle` 与 `wsl-guest-management` 契约索引；
+  3. `AGENTS.md`：§7 登记 WSL 客体管理面网络与进程用途，§9 索引 ADR-0016，精简已退役条目维持全文 ≤ 250 行预算；
+  4. `docs/adr/0016-wsl-guest-management-plane.md`：标记文档同步项完成。
+- **影响**：仅周知。客体管理面原语与不变量已作为稳定公共契约锁定。
+- **验证**：`cargo clippy` 0 警告、`cargo fmt` 通过、前端类型与逻辑测试全绿。
+
 ### 2026-09-11 分支推送 · ADR-0016 P2 与 P3 全量下沉：WSL 客体模式管理面全部打通 —— guan（AI 协作）
 
 - **背景与目标**：在 P1（插件链）与读侧下沉基础上，完成 ADR-0016 规划的 P2（profile 生命周期写动作与配置复制）和 P3（控制台面板与会话维护），彻底解除全部 `require_local` 阻断，让 WSL 客体模式具备与 Local 模式对等的完整管理能力。

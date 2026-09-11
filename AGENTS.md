@@ -150,10 +150,8 @@
   `boot_in_wsl` `choose_mode` `list_profiles` `get_profile_detail` `create_profile`
   `copy_profile` `rename_profile` `delete_profile` `set_default_profile`
   `get_default_profile` `switch_profile` `get_active_profile`
-  `list_profile_plugins` `get_plugin_runtime`。
-  `install_plugin` `remove_plugin` `update_plugin`。
-  `get_plugin_rows` `set_plugin_disabled`。
-  `check_plugin_updates` `list_plugin_versions`。
+  `list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin` `update_plugin`
+  `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates` `list_plugin_versions`。
   `list_all_plugins`（插件总览聚合，只读文件扫描）`copy_plugin_config`（patch
   配置行原样复制，写入例外 #4，ADR-0009 第五次修订 2026-08-30）。
   `list_sessions` `repair_session` `repair_all_sessions`（会话维护与自愈，2026-08-31）。
@@ -172,9 +170,7 @@
   `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
   cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
 - **唯一网络面 = `updates.rs`**；其余模块禁触网，新网络需求先在此登记；外链域名在
-  `EXTERNAL_URL_HOSTS` 登记。已登记用途：~~boot 期 pnpm 补齐（`npm i -g pnpm`，
-  2026-08-28，ADR-0009 口径 2）~~（2026-09-04 随探测层退役，由下方引擎引导接替）；
-  **插件运行态回环只读查询**（`plugins.rs`，
+  `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**（`plugins.rs`，
   `POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、仅活跃会话、
   一次性快照不订阅——2026-08-29，Spike B / 复现点 11）；**插件更新检查（外网
   registry）**：`updates.rs` `npm_packument_versions`，与 dsh 版本检查同镜像链 /
@@ -183,7 +179,9 @@
   **引擎引导**（2026-09-03，ADR-0010）：壳内置 pnpm12 经 `runtime set node` /
   `pnpm add -g` 下载 node 与 dsh（`PNPM_CONFIG_NODE_DOWNLOAD_MIRRORS` 注入
   npmmirror → 官方镜像链），updates.rs 编排的子进程网络动作；WSL 客体同源
-  （投递 musl pnpm、网络在客体进程内、镜像链同注入——客体 pnpm 属壳资产）。
+  （投递 musl pnpm、网络在客体进程内、镜像链同注入——客体 pnpm 属壳资产）；
+  **WSL 客体管理面**（2026-09-11，ADR-0016）：客体内插件装卸/更新网络发生在客体
+  `dsh plugin`（客体 pnpm）子进程内；更新检查统一走 `updates.rs`；壳不新增网络客户端。
   专项裁定见 §9 索引对应 ADR。
 
 ## 8. AI 交互约束
@@ -224,6 +222,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
 | [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
 | [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
+| [0016](docs/adr/0016-wsl-guest-management-plane.md) | 管理面下沉 WSL 客体：控制中心跨环境一致（读/写/原语双侧同构，按运行模式择源） |
 
 ## 10. 试验协议
 

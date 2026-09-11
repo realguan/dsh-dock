@@ -210,8 +210,7 @@ profile 创建必需 dsh CLI，宿主引擎按设计在 WSL 模式永不就绪 �
       - P3a 控制台管理下沉：凭据（`credentials.rs`，严格保持 0600 权限与写前时间戳备份）、DSH 引擎设置（`dsh_settings.rs`，写前 `.bak-` 时间戳备份）、MCP 服务（`mcp.rs`，纯函数内核 `parse_mcp_servers` / `apply_save_mcp_server` / `apply_delete_mcp_server`）、系统诊断（`diagnostics.rs` 与客体诊断脚本 `diagnostics_script`，透传客体 Linux 发行版、内核、网络与 DSH 环境）；
       - P3b 会话维护下沉：会话扫描（`sessions.rs` 纯函数 `assemble_session_items`，客体高效扫描提取路径、尺寸与时间戳）、单会话与全量自愈修复（`run_repair_in_guest` 经 stdin 管道传递 94 KiB `repair-session.mjs` 规避 Windows 命令行长度限制）、会话目录递归删除（`delete_session_in_guest`，带 `.dsh/sessions` 根路径与路径逃逸校验安全守卫）；
       - `commands/console.rs` 与 `commands/session.rs` 彻底移除 `require_local` 阻断，管理面命令 100% 支持 WSL 客体模式。
-- [ ] 文档同步：AGENTS §7 登记本次客体管理面用途；`docs/contracts/` 增子契约（客体管理面原语与不变量）；
-      `docs/broadcasts.md` 落档评审结论。
+- [x] 文档同步：AGENTS §7 与 §9 登记本次客体管理面用途与决策索引；`docs/contracts/` 增子契约（客体管理面原语与不变量，`docs/contracts/wsl-guest-management.md`）；`docs/broadcasts.md` 落档评审结论。
 - [ ] 验证清单（Windows+WSL 实机）：插件装/卸/更 + 插件行 + profile 创建；以及错误面——
       `wsl.exe` 不可用、无发行版、发行版为非 glibc（musl）、断网、客体 home 不存在。
 
