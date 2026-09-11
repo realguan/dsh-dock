@@ -1209,6 +1209,7 @@ rc 噪音一行
         assert_eq!(base64_decode(&base64_encode(raw)).unwrap(), raw);
     }
 
+    #[cfg(unix)]
     #[test]
     fn profile_lifecycle_scripts_run_correctly_in_bash() {
         let home = std::env::temp_dir().join(format!(
@@ -1296,6 +1297,7 @@ rc 噪音一行
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[cfg(unix)]
     #[test]
     fn backup_file_script_runs_correctly_in_bash() {
         let home = std::env::temp_dir().join(format!("dsh-dock-guest-bak-{}", std::process::id()));
@@ -1330,6 +1332,7 @@ rc 噪音一行
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[cfg(unix)]
     #[test]
     fn diagnostics_script_runs_correctly_in_bash() {
         let home = std::env::temp_dir().join(format!("dsh-dock-guest-diag-{}", std::process::id()));
@@ -1359,6 +1362,7 @@ rc 噪音一行
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[cfg(unix)]
     #[test]
     fn session_lifecycle_scripts_run_correctly_in_bash() {
         let home = std::env::temp_dir().join(format!("dsh-dock-guest-sess-{}", std::process::id()));

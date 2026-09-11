@@ -404,6 +404,8 @@ mod tests {
             // Windows 测试：用真进程保底（cmd /c ping 慢返回），但不强依赖。
             Command::new("cmd.exe")
                 .args(["/C", "ping", "-n", "3", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
         };
         let child = child.expect("spawn 模拟进程");
@@ -501,6 +503,8 @@ mod tests {
         } else {
             Command::new("cmd.exe")
                 .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
         };
         let child = child.expect("spawn 模拟进程");
@@ -551,6 +555,8 @@ mod tests {
         } else {
             Command::new("cmd.exe")
                 .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
         };
         let child = child.expect("spawn 模拟进程");
@@ -605,6 +611,8 @@ mod tests {
         } else {
             Command::new("cmd.exe")
                 .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
         };
         let child = child.expect("spawn 模拟进程");

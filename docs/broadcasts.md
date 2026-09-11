@@ -31,6 +31,15 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 单元测试修复 · 补齐客体 bash 实跑单测的 #[cfg(unix)] 门禁并静音测试 ping 杂讯 —— guan（AI 协作）
+
+- **背景与目标**：Windows CI runner 在执行 `cargo test` 时，因直接在 Windows 宿主环境（Git Bash）执行面向 WSL Linux 客体的 bash 脚本，导致 `profile_lifecycle`、`backup_file`、`diagnostics`、`session_lifecycle` 4 个 bash 实跑测试失败；同时 `shell.rs` 的测试模拟进程泄露 ping 终端输出。
+- **变更清单**：
+  1. `src-tauri/src/guest.rs`：对 4 个直接调用 `Command::new("bash")` 的客体脚本实跑单测补齐 `#[cfg(unix)]` 条件编译守卫，严格对齐既有 `read_files` / `list_dir` / `write_home_files` 的单测门禁规范（客体脚本实跑仅在 macOS/Linux unix 环境校验，Windows 宿主不具备真实 WSL 环境）；
+  2. `src-tauri/src/shell.rs`：对测试中创建的 4 处 `cmd.exe /C ping` 模拟进程重定向 `stdout(Stdio::null()).stderr(Stdio::null())`，消除 Windows 测试控制台的 ping 回显杂讯。
+- **影响**：仅周知，消除 Windows 平台 CI 单测失败与控制台杂讯。
+- **验证**：Windows 目标 MinGW clippy 0 错误 0 警告，cargo fmt 通过，前端测试全绿。
+
 ### 2026-09-11 单元测试修复 · 修复 WSL 会话扫描脚本 BSD stat 与 Windows 路径反斜杠兼容性 —— guan（AI 协作）
 
 - **背景与目标**：GitHub Actions CI 在 macOS 与 Windows runner 运行 `cargo test` 时，`guest::tests::session_lifecycle_scripts_run_correctly_in_bash` 出现跨平台兼容失败。macOS 环境因缺少 BSD stat 支持导致扫描输出空，Windows 环境因宿主 tempdir 路径含反斜杠导致 bash glob 匹配异常。
