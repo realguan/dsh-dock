@@ -2471,8 +2471,21 @@ mod tests {\n\
     ///
     /// 复用而非新写词法器：`structural_bytes` 已被 `spawn_gate_extent_finder_*` 系列
     /// 用例覆盖，重复实现只会多一处可能出错的地方（task-34 的 `br"…"` 教训）。
-    fn production_code_lines() -> Vec<String> {
-        let src = include_str!("lifecycle.rs").replace("\r\n", "\n");
+    /// 按掩码视图切出生产段（**纯函数**，接受任意源码）。
+    ///
+    /// **为什么必须是接受 `&str` 的纯函数**（2026-09-11，task-40）：原先只有
+    /// `production_code_lines()`，它内部 `include_str!` 固定读本文件 ⇒ 想让 T1 用例
+    /// 喂**合成源码**，只能**再写一份掩码逻辑**（局部复刻闭包）。于是"算法"实际有两份：
+    /// 把真实现回退成 `src.find(...)`（= 撤销 T1 修复）时，**用例验的是副本、不是真实现**
+    /// ⇒ 全套 332 测试**全绿、完全静默**（qa-verify 实测的变异 H）。
+    ///
+    /// 这是**同一形态的第三次出现**（前两次：spawn 闸门与 `network_gate.rs` 各有一份
+    /// 词法器；`br"…"` bug 正是重复实现的代价——task-34 的教训「同源就不会只错一份」）。
+    /// 故本次把算法收成**唯一一份**：`production_code_lines()` 退化为薄包装，
+    /// T1 用例直接喂合成源码调本函数 ⇒ **回退真实现必然让 T1 用例红**。
+    fn production_code_lines_of(src: &str) -> Vec<String> {
+        // 行尾归一：任何以源码文本为判据的闸门都必须自己扛住 CRLF（v1.1.1 教训）。
+        let src = src.replace("\r\n", "\n");
         // 先掩码（注释与字面量 → 空格，保留换行）。
         let mask = structural_bytes(&src);
         let mut bytes = src.as_bytes().to_vec();
@@ -2489,6 +2502,8 @@ mod tests {\n\
             "掩码视图必须与原文等长，否则截断索引无法回映射"
         );
         // 在**掩码视图**里找截断点（假标记已被抹掉）。
+        // **这一行就是 T1 修复本体**：回退成 `src.find(TEST_MOD_MARKER)` 会让
+        // 注释/字符串里的假标记提前截断，其后整段不再被扫描。
         let cut = match masked.find(TEST_MOD_MARKER) {
             Some(i) => i,
             None => panic!(
@@ -2498,6 +2513,11 @@ mod tests {\n\
             ),
         };
         masked[..cut].lines().map(str::to_string).collect()
+    }
+
+    /// 本文件的生产段代码视图（`production_code_lines_of` 的**薄包装**）。
+    fn production_code_lines() -> Vec<String> {
+        production_code_lines_of(include_str!("lifecycle.rs"))
     }
 
     /// **依赖纪律闸门**：`lifecycle` 是叶模块，不得引用持有壳状态的兄弟模块。
@@ -2644,59 +2664,54 @@ let real = shell::X();\n";
         );
     }
 
-    /// **T1 回归：截断标记伪装不得提前截断**（2026-09-11，task-39）。
+    /// **T1 回归：截断标记伪装不得提前截断**（2026-09-11，task-39 立；task-40 改为直调真实现）。
     ///
-    /// 判据 = 在**代码视图**上找截断点（见 `production_code_lines`）。本用例用同一套
-    /// 掩码逻辑验三件事：① 块注释里的假标记不截断；② 字符串字面量里的假标记不截断；
+    /// 验三件事：① 块注释里的假标记不截断；② 字符串字面量里的假标记不截断；
     /// ③ 真标记仍正确截断。
     ///
     /// 为什么必须有用例：这是**闸门自身的可绕过面**——它一旦退化，闸门会"看起来在守、
     /// 实际整段不扫"，而外观与正常绿灯**完全一样**（与 task-36/37 三次绕过同族）。
+    ///
+    /// ## ⚠️ 本用例必须直调 `production_code_lines_of`（2026-09-11，task-40）
+    ///
+    /// 首版为喂合成源码，在用例内**复刻了一份掩码逻辑**（局部闭包）。后果：算法实际有两份，
+    /// **回退真实现（`masked.find` → `src.find`）时本用例验的是副本 ⇒ 全套 332 测试全绿、
+    /// 完全静默**（qa-verify 实测的变异 H）。这是"重复实现"同一形态的**第三次**出现
+    /// （task-34 的 `br"…"` 教训：「同源就不会只错一份」）。
+    /// 现算法只有一份（`production_code_lines_of`），本用例直调它 ⇒ **回退真实现必然红**。
     #[test]
     fn truncation_marker_disguise_does_not_shorten_production_scan() {
-        // 用与 `production_code_lines` 相同的掩码手法，抽成局部闭包以便喂合成源码。
-        let cut_of = |src: &str| -> usize {
-            let mask = structural_bytes(src);
-            let mut bytes = src.as_bytes().to_vec();
-            for (i, is_code) in mask.iter().enumerate() {
-                if !*is_code && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                    bytes[i] = b' ';
-                }
-            }
-            let masked = String::from_utf8(bytes).unwrap();
-            masked.find(TEST_MOD_MARKER).unwrap_or(src.len())
-        };
         let real_marker = "\n#[cfg(test)]\nmod tests {\n}\n";
+        // 判据：被扫描到的「生产段」里**必须仍含**那条真实依赖。
+        let scanned = |src: &str| production_code_lines_of(src).join("\n");
 
         // ① 块注释伪装（qa-verify 的 T1 形态）：其后真实依赖必须仍在生产段内。
         let block = format!(
             "/*\n#[cfg(test)]\nmod tests\n*/\n\
              pub fn f() {{ let _ = crate::shell::parse_detected_url(\"\"); }}{real_marker}"
         );
-        let cut = cut_of(&block);
         assert!(
-            block[..cut].contains("crate::shell::"),
-            "块注释里的假标记造成了提前截断——其后真实依赖被漏扫（T1 未修复）"
+            scanned(&block).contains("crate::shell::"),
+            "块注释里的假标记造成了提前截断——其后真实依赖被漏扫（T1 退化）"
         );
 
-        // ② 字符串字面量伪装（真换行的原始字符串）。
+        // ② 字符串字面量伪装（真换行的原始字符串）——**方案 ① 做不到这一层**。
         let rawstr = format!(
             "let s = r#\"\n#[cfg(test)]\nmod tests\n\"#;\n\
              pub fn g() {{ let _ = crate::shell::x(); }}{real_marker}"
         );
-        let cut = cut_of(&rawstr);
         assert!(
-            rawstr[..cut].contains("crate::shell::"),
-            "字符串字面量里的假标记造成了提前截断（T1 未修复）"
+            scanned(&rawstr).contains("crate::shell::"),
+            "字符串字面量里的假标记造成了提前截断（T1 退化）"
         );
 
-        // ③ 正常文件：截断点必须落在真标记处，且生产段不含 `mod tests`。
+        // ③ 正常文件：截断必须落在真标记处——生产段只含标记之前的代码。
         let normal = format!("pub fn a() {{}}{real_marker}");
-        let cut = cut_of(&normal);
+        let lines = production_code_lines_of(&normal);
         assert_eq!(
-            &normal[..cut],
-            "pub fn a() {}",
-            "正常文件的截断点应恰好落在真标记之前"
+            lines,
+            vec!["pub fn a() {}".to_string()],
+            "正常文件应只切出标记之前的代码"
         );
     }
 
