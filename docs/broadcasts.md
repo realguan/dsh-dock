@@ -2605,3 +2605,7 @@
   subtitle / searchPlaceholder / loadingRegistry，另 MarketplaceView.tsx 头注释），
   而社区 Registry 实际 `count` 为 3408、README 亦写 3,400+。属**用户可见文案失真**
   而非本次清理范围，故未夹带。
+- **2026-09-11 补记（推送完成）**：`master` 与 `v1.1.1` 已推 origin
+  （`db46437..2b4272a`；tag → `2b4272a`，本地与远端零差异、工作区干净）。
+  **冻结期正式起**：Release notes 已落盘 → 至三平台产物验收通过为止，master 只收 fix。
+  CI 三平台构建进行中，产物验收结果待回填。
