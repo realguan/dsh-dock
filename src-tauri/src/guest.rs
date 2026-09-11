@@ -293,7 +293,9 @@ pub(crate) fn write_home_files(distro: &str, files: &[(String, String)]) -> Resu
     if files.is_empty() {
         return Ok(());
     }
-    if let Some((rel, content)) = files.iter().find(|(_, c)| c.len() > WRITE_MAX_BYTES) {
+    // 逐文件上限：只报路径，内容不参与诊断——`_` 绑定是必须的（Windows 目标的
+    // `-D warnings` 会把未使用变量判红，2026-09-11 CI 实测）
+    if let Some((rel, _)) = files.iter().find(|(_, c)| c.len() > WRITE_MAX_BYTES) {
         return Err(format!(
             "客体文件 {rel} 超出单次写入上限（{} KiB）——请在该发行版终端里手工编辑",
             WRITE_MAX_BYTES / 1024
