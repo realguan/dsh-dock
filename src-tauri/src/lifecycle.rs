@@ -328,7 +328,11 @@ mod job {
     pub fn assign(child: &std::process::Child) {
         let Some(j) = job() else { return };
         use std::os::windows::io::AsRawHandle;
-        let proc_handle = child.as_raw_handle() as *mut core::ffi::c_void;
+        // `RawHandle` 在 Windows 上**就是** `*mut c_void`，无需再转（clippy
+        // `unnecessary_cast`，2026-09-11 CI 在本目标抓到——本机 macOS 的 clippy
+        // 看不到 cfg(windows) 分支，`cargo check --target windows` 也不跑 lint，
+        // 故此类问题只有**跨目标 clippy** 能拦）。
+        let proc_handle = child.as_raw_handle();
         // SAFETY: 两个句柄都是本进程持有的合法对象。
         let ok = unsafe { AssignProcessToJobObject(j.0, proc_handle) };
         if ok == 0 {
