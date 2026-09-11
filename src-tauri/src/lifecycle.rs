@@ -1393,16 +1393,20 @@ mod tests {
         std::fs::create_dir_all(procs_dir(&dir)).unwrap();
         let path = registration_path(&dir, "left-behind");
         {
-            // 造出"上一代壳留下的文件"：加锁 → 释放（= 持有者已死）
+            // 造出"上一代壳留下的文件"：写内容 → 加锁 → 释放（= 持有者已死）。
+            //
+            // **顺序要紧**（2026-09-11，CI 在 windows-latest 抓到）：必须先写后加锁。
+            // Windows 的 `LockFileEx` 是**强制锁**——持锁期间另一个句柄（`fs::write`
+            // 会新开句柄）根本写不进去，报 os error 33 "another process has locked a
+            // portion of the file"；而 macOS 的 `flock` 是劝告锁，持锁写入照样成功。
+            // 原顺序在 macOS 绿、在 Windows 红。
+            std::fs::write(&path, r#"{"pid":999999,"role":"dsh-server"}"#).unwrap();
             let f = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
                 .read(true)
                 .write(true)
                 .open(&path)
                 .unwrap();
             f.try_lock().unwrap();
-            std::fs::write(&path, r#"{"pid":999999,"role":"dsh-server"}"#).unwrap();
             f.unlock().unwrap();
         }
         let mut reaped = Vec::new();
@@ -1420,6 +1424,57 @@ mod tests {
     }
 
     // ---------- 闸门：生产路径不得绕过 seam（契约 §3.4 / AGENTS §4.1） ----------
+
+    /// 纯函数：扫描一份源码文本，返回绕过 seam 的行（`名:行号: 内容`）。
+    ///
+    /// **行尾归一（2026-09-11，CI 在 windows-latest 抓到）**：原先模式写死
+    /// `"\n#[cfg(test)]\nmod tests"`，而仓库**没有 `.gitattributes`**——Git for
+    /// Windows 的 `autocrlf` 会把源码 checkout 成 CRLF，`include_str!` 于是拿到
+    /// `\r\n`，模式永不匹配 → 截断失效 → **测试模块里的裸 spawn 被误报成生产代码**，
+    /// 闸门在 Windows 上恒红。故先把 `\r\n` 归一到 `\n` 再匹配。
+    ///
+    /// 该失效模式值得记住：**任何以源码文本为判据的闸门都可能被行尾/编码打穿**，
+    /// 且只在非 LF 检出环境暴露（本机 macOS 永远看不到）。
+    fn scan_unguarded_spawns(name: &str, text: &str) -> Vec<String> {
+        let text = text.replace("\r\n", "\n");
+        // 测试模块之后不再扫描（测试要故意制造裸 spawn 做对照）。
+        let prod = match text.find("\n#[cfg(test)]\nmod tests") {
+            Some(i) => &text[..i],
+            None => text.as_str(),
+        };
+        let mut violations = Vec::new();
+        let mut prev_trimmed = "";
+        for (lineno, line) in prod.lines().enumerate() {
+            let t = line.trim();
+            let prev = prev_trimmed;
+            prev_trimmed = t;
+            if t.starts_with("//") {
+                continue;
+            }
+            // 覆盖**全部**会真正拉起子进程的 std 入口：`spawn()` / `output()` /
+            // `status()` / `wait_with_output()`（后两者易被漏记——2026-09-10 审核补齐）。
+            let bare = t.contains(".spawn()")
+                || t.contains(".output()")
+                || t.contains(".status()")
+                || t.contains("wait_with_output()");
+            if !bare {
+                continue;
+            }
+            // 用 lifecycle 的写法不会出现 `.spawn()` 直接挂在 Command 上的形态。
+            if t.contains("lifecycle::spawn(")
+                || t.contains("lifecycle::run(")
+                || t.contains("lifecycle::wait_with_output(")
+            {
+                continue;
+            }
+            // 豁免标注可写在本行（行尾）或**紧邻上一行**（后者更贴近 `#[allow(...)]` 惯例）。
+            if t.contains("spawn-gate: exempt(") || prev.contains("spawn-gate: exempt(") {
+                continue;
+            }
+            violations.push(format!("{}:{}: {}", name, lineno + 1, t));
+        }
+        violations
+    }
 
     /// 机器闸门：生产源码里的 `Command` spawn 必须经 `lifecycle::spawn`/`run`。
     ///
@@ -1449,47 +1504,10 @@ mod tests {
             ("src/updates.rs", include_str!("updates.rs")),
             ("src/lib.rs", include_str!("lib.rs")),
         ];
-        let mut violations = Vec::new();
-        for (name, text) in SOURCES {
-            // 去掉测试模块之后的代码（测试里允许裸 spawn 做对照）。
-            let prod = match text.find("\n#[cfg(test)]\nmod tests") {
-                Some(i) => &text[..i],
-                None => text,
-            };
-            let mut prev_trimmed = "";
-            for (lineno, line) in prod.lines().enumerate() {
-                let t = line.trim();
-                let prev = prev_trimmed;
-                prev_trimmed = t;
-                if t.starts_with("//") {
-                    continue;
-                }
-                // 覆盖**全部**会真正拉起子进程的 std 入口：`spawn()` /
-                // `output()` / `status()` / `wait_with_output()`（后两者易被漏记
-                // ——2026-09-10 审核发现闸门原先只查前两个）。
-                let bare = t.contains(".spawn()")
-                    || t.contains(".output()")
-                    || t.contains(".status()")
-                    || t.contains("wait_with_output()");
-                if !bare {
-                    continue;
-                }
-                // 用 lifecycle 的写法：`lifecycle::spawn(` / `lifecycle::run(`
-                // 不会出现 `.spawn()`/`.output()` 直接挂在 Command 上的形态。
-                if t.contains("lifecycle::spawn(")
-                    || t.contains("lifecycle::run(")
-                    || t.contains("lifecycle::wait_with_output(")
-                {
-                    continue;
-                }
-                // 豁免标注可写在本行（行尾）或**紧邻上一行**（后者更贴近
-                // `#[allow(...)]` 的惯例，且不必为一个长表达式硬塞行尾注释）。
-                if t.contains("spawn-gate: exempt(") || prev.contains("spawn-gate: exempt(") {
-                    continue;
-                }
-                violations.push(format!("{name}:{}: {}", lineno + 1, t));
-            }
-        }
+        let violations: Vec<String> = SOURCES
+            .iter()
+            .flat_map(|(name, text)| scan_unguarded_spawns(name, text))
+            .collect();
         assert!(
             violations.is_empty(),
             "以下生产代码绕过了 lifecycle 守卫 seam（子进程会成为不受清扫管辖的孤儿）：\n{}\n\
@@ -1709,5 +1727,52 @@ mod tests {
             sweep_at < dispatch_at,
             "清扫必须在派发执行器（probe/建会话）之前——否则可能与新一代探测竞争同一份 profile 目录"
         );
+    }
+
+    // ---------- 闸门的行尾健壮性（windows-latest CI 实测踩坑） ----------
+
+    /// **扫描器必须对行尾不敏感**：仓库无 `.gitattributes`，Git for Windows 的
+    /// `autocrlf` 会把源码 checkout 成 CRLF，`include_str!` 于是含 `\r\n`。
+    /// 首版模式写死 `"\n#[cfg(test)]\nmod tests"`，CRLF 下永不匹配 → 截断失效 →
+    /// 测试模块里的裸 spawn 被误报 → **闸门在 Windows 上恒红**（CI 实测）：
+    /// 它报出的"违规"全是 `src/shell.rs` 测试模块里的 `Command::new("sleep")`。
+    #[test]
+    fn spawn_gate_is_line_ending_agnostic() {
+        let lf = "fn a() {\n    cmd.spawn();\n}\n#[cfg(test)]\nmod tests {\n    fn t() {\n        Command::new(\"sleep\").spawn().unwrap();\n    }\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+
+        // 生产段的裸 spawn 两种行尾都要报
+        for (label, text) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            let v = scan_unguarded_spawns("x.rs", text);
+            assert_eq!(v.len(), 1, "{label}: 生产段应报 1 条，实际 {v:?}");
+            assert!(v[0].contains("cmd.spawn()"), "{label}: 应报生产段那条");
+        }
+        // 测试模块不得被报（这正是 CRLF 下失效的那一步）
+        for (label, text) in [("LF", lf), ("CRLF", crlf.as_str())] {
+            let v = scan_unguarded_spawns("x.rs", text);
+            assert!(
+                !v.iter().any(|x| x.contains("sleep")),
+                "{label}: 测试模块的裸 spawn 不该被报（CRLF 若未归一即会误报）"
+            );
+        }
+    }
+
+    /// 扫描器的既有语义不能因归一而丢：豁免标注（本行 / 紧邻上一行）与
+    /// lifecycle 写法仍须被识别。
+    #[test]
+    fn spawn_gate_still_honours_exemptions_and_seam() {
+        let cases = [
+            "fn a() {\n    lifecycle::spawn(&mut c, R, x)?;\n}\n",
+            "fn a() {\n    lifecycle::run(&mut c, R, x)?;\n}\n",
+            "fn a() {\n    // spawn-gate: exempt(理由)\n    cmd.output();\n}\n",
+            "fn a() {\n    cmd.output(); // spawn-gate: exempt(理由)\n}\n",
+            "fn a() {\n    // 注释里的 cmd.spawn() 不算\n}\n",
+        ];
+        for c in cases {
+            assert!(
+                scan_unguarded_spawns("x.rs", c).is_empty(),
+                "不应报违规：{c:?}"
+            );
+        }
     }
 }
