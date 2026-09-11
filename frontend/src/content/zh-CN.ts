@@ -65,7 +65,11 @@ export const t = {
   // 组件层以 t.error.actions[id] ?? id 兜底。
   error: {
     fallbackTitle: "启动失败",
-    actionFailed: "动作失败",
+    // 动作失败详情（2026-09-11 task-27）：原为组件内 `` `${t.error.actionFailed}：${msg}` ``——
+    // 组合串里的分隔符是**全角冒号**，en 用户会看到 `Action Failed：...`。
+    // 按本仓既有惯例改为组合键（同 `market.installFailed`）：分隔符随语言定义，
+    // zh 全角冒号无空格 / en 半角冒号 + 空格。原 `actionFailed` 单独标签已无消费者，一并删除。
+    actionFailedDetail: (msg: string) => `动作失败：${msg}`,
     // 剪贴板写入失败（2026-09-08，批次 0b）：绝不静默假装「已复制」
     copyFailed: "复制失败——请手动选中内容复制",
     actions: {
@@ -82,6 +86,12 @@ export const t = {
     diagHeader: "DIAG 诊断控制台",
     cardHeader: "启动中断",
     suggestionLabel: "修复建议：",
+    // 诊断日志折叠区（2026-09-11 task-27）：原为 ErrorCard 内联字面量
+    // （en 用户可见中文）。`copyLog` 与 `boot.copyDetail`（BootStep 的「复制详情」）
+    // 语义不同——这里复制的是原始诊断日志，故独立成键而非复用。
+    // 「已复制」状态复用既有 `boot.copied`（同一 boot 流程族的通用串，避免重复键）。
+    copyLog: "复制日志",
+    rawLogSummary: (n: number) => `原始诊断日志 · 尾部 ${n} 行`,
     // 分类文案（ADR-0012）：按 failure.kind 取；取不到回退后端 title/suggestion
     kinds: {
       credentials_mismatch: {
@@ -127,11 +137,13 @@ export const t = {
     preparingSub: "首启自动引导 Node 与 DSH 运行时 · 仅需一次",
     problemHeadline: "启动遇到问题",
     // profile 元数据映射：已知名给正式标题/描述，未知名回退 CUSTOM 形态
+    // 2026-09-11（task-27）：删除 `tag` 字段与 `customTag` 键——task-23 解耦后它们
+    // 已无任何消费者（唯一残留是组件里把字典值搬进回退对象的死代码，同批删除）。
+    // 这使「字典值当控制流令牌」在**结构上**不可能复发：判据无处可读。
     items: {
-      web: { title: "官方 Web 工作台", desc: "DSH 官方维护的 Web 界面", tag: "DEFAULT" },
-    } as Record<string, { title: string; desc: string; tag: string }>,
+      web: { title: "官方 Web 工作台", desc: "DSH 官方维护的 Web 界面" },
+    } as Record<string, { title: string; desc: string }>,
     customDesc: "自定义装配的 webUi 工作台",
-    customTag: "CUSTOM",
     // 顶栏版本芯片短文案
     chipDshNew: "有新版",
     chipDshOk: "已是最新",

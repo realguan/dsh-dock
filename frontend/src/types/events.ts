@@ -5,7 +5,10 @@
 // - boot:error   boot.rs emit_boot_error —— BootErrorPayload（含 failure.kind）
 // - boot:update  lib.rs emit_update（updates::UpdateStatus 原样序列化）
 // - app:update   updater.rs set_state（ClientUpdate，仅发给 main/about 窗口）
-import type { BootFailure, ClientUpdate, UpdateStatus } from "./ipc"
+// - app:settings-changed  commands/console.rs::set_shell_settings —— ShellSettings
+//   全量（含 locale / switcherShortcut 等）。2026-09-11（task-27）：该名字原分别
+//   硬编码在 App.tsx 与 QuickDshSwitcher.tsx 两处，收敛到此处。
+import type { BootFailure, ClientUpdate, ShellSettings, UpdateStatus } from "./ipc"
 
 export const EV = {
   bootStep: "boot:step",
@@ -13,6 +16,7 @@ export const EV = {
   bootError: "boot:error",
   bootUpdate: "boot:update",
   appUpdate: "app:update",
+  settingsChanged: "app:settings-changed",
 } as const
 
 export type BootStepState = "pending" | "running" | "done" | "error"
@@ -45,3 +49,6 @@ export interface BootErrorEvent {
 
 export type AppUpdateEvent = ClientUpdate
 export type VersionsSnapshot = UpdateStatus
+/// `app:settings-changed` 载荷：壳设置全量（locale / switcherShortcut / …）。
+/// 与 `ShellSettings` 同形——emit 侧直接序列化该结构（commands/console.rs）。
+export type SettingsChangedEvent = ShellSettings

@@ -14,6 +14,7 @@ import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { logger } from "@/lib/logger"
+import { EV } from "@/types/events"
 import type { ShellSettings } from "@/types/ipc"
 
 export function QuickDshSwitcher() {
@@ -39,7 +40,7 @@ export function QuickDshSwitcher() {
       .catch(() => {})
 
     let unlisten: (() => void) | undefined
-    listen<ShellSettings>("app:settings-changed", (e) => {
+    listen<ShellSettings>(EV.settingsChanged, (e) => {
       if (e.payload && e.payload.switcherShortcut) {
         setShortcutKey(e.payload.switcherShortcut)
       } else {

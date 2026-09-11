@@ -26,15 +26,10 @@ import { About } from "@/pages/About"
 import { ProfileManager } from "@/pages/ProfileManager"
 import { useI18nStore } from "@/stores/i18nStore"
 import { logger } from "@/lib/logger"
+import { EV } from "@/types/events"
 import type { ShellSettings } from "@/types/ipc"
 
 import { PulseBar } from "@/components/boot/PulseBar"
-
-/** `app:settings-changed` 的载荷是 `ShellSettings` 全量（emit 点见 Rust
- *  `commands/console.rs::set_shell_settings`）。事件名在 `types/events.ts::EV`
- *  尚无常量（该文件不在本任务写入范围），与既有消费方
- *  `components/layout/QuickDshSwitcher.tsx` 使用同一字面量。 */
-const EV_SETTINGS_CHANGED = "app:settings-changed"
 
 /** 首帧门闸上限：设置读取是本地文件读，正常毫秒级；万一 IPC 挂起也不能把界面
  *  永久挡在骨架屏（超时即放行，随后到达的解析结果仍会驱动一次重渲染）。 */
@@ -85,7 +80,7 @@ export default function App() {
 
     // ② 运行期跨窗同步：set_shell_settings 广播全量 ShellSettings（含 locale）
     let unlisten: (() => void) | undefined
-    listen<ShellSettings>(EV_SETTINGS_CHANGED, (event) => {
+    listen<ShellSettings>(EV.settingsChanged, (event) => {
       useI18nStore.getState().applySettingsLocale(event.payload ?? null)
     })
       .then((fn) => {

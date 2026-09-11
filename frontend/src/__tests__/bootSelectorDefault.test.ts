@@ -62,8 +62,11 @@ describe("resolveIsDefault：判定判据（真实数据 + 常量）", () => {
 
   it("工厂默认常量是稳定标识而非文案（值为 profile 名）", () => {
     expect(FACTORY_DEFAULT_PROFILE).toBe("web")
-    // 与字典里的任何 tag 值都不应有关联（这正是解耦要点）
-    expect(FACTORY_DEFAULT_PROFILE).not.toBe(String(zhCN.selector.items.web?.tag))
+    // 字典里**已不存在任何名为 tag 的键**（task-27 清理）——故常量不可能与它沾边。
+    // 这比 task-23 的「比较两者不相等」更强：不是"碰巧不同"，是"根本不存在"。
+    const items = zhCN.selector.items as unknown as Record<string, Record<string, unknown>>
+    expect(Object.keys(items.web)).not.toContain("tag")
+    expect(Object.keys(zhCN.selector)).not.toContain("customTag")
   })
 
   it("空串默认值按「未设置」处理需谨慎：仅 null/undefined 触发兜底", () => {
@@ -74,22 +77,25 @@ describe("resolveIsDefault：判定判据（真实数据 + 常量）", () => {
 })
 
 describe("防复发：判定不依赖可翻译文案（本任务核心）", () => {
-  it("把字典 tag 值改成中文后，判定结果**不变**", () => {
-    // 模拟「有人做翻译把 tag: "DEFAULT" 改成 "默认"」——修复前这会让 isDefault 静默失效
-    const items = zhCN.selector.items as unknown as Record<string, { tag: string }>
-    const original = items.web.tag
+  it("把字典里**仍在渲染**的文案改掉后，判定结果**不变**", () => {
+    // 2026-09-11（task-27）：原用 `items.web.tag` 作变异靶子；该键已随死代码清理删除
+    // （见下方结构门禁）。改为用**仍然活着且参与渲染**的 `items.web.title` 作靶子，
+    // 保留「行为层演示」而不依赖已删键——否则这条断言会变成 vacuous（永远通过）。
+    // （`defaultBadge` 的变异演示由下一条用例专门覆盖，两者靶子不重叠。）
+    const items = zhCN.selector.items as unknown as Record<string, { title: string }>
+    const originalTitle = items.web.title
     try {
-      items.web.tag = "默认"
+      items.web.title = "官方工作台（中文名）"
       expect(resolveIsDefault("web", null), "改文案后 web 仍应为默认").toBe(true)
       expect(resolveIsDefault("custom-a", "custom-a")).toBe(true)
       expect(resolveIsDefault("web", "custom-a"), "改文案不应让 web 冒充默认").toBe(false)
 
-      // 极端情形：把 tag 改成与工厂默认常量同值，判定也不应受影响
-      items.web.tag = FACTORY_DEFAULT_PROFILE
+      // 极端情形：把标题改成与工厂默认常量同值，判定也不应受影响
+      items.web.title = FACTORY_DEFAULT_PROFILE
       expect(resolveIsDefault("custom-a", "custom-a")).toBe(true)
       expect(resolveIsDefault("web", "custom-a")).toBe(false)
     } finally {
-      items.web.tag = original
+      items.web.title = originalTitle
     }
   })
 
@@ -142,16 +148,27 @@ describe("结构门禁：旧耦合与死字段不得回流（?raw 源码断言�
     expect(bootSelectorCode).toContain("resolveIsDefault(name, defaultProfile)")
   })
 
-  it("死字段 `tag` 已移除（它把翻译值/硬编码 `TEMPLATE`/字典值混在一处却无人消费）", () => {
-    // 实测：修复前 `tag:` 在 displayProfiles 的**返回对象**里赋值，全文件无
-    // `p.tag` / `{p.tag}` 消费点 ⇒ 计算了但从不渲染（删掉后 typecheck 仍通过，
-    // 反证其无消费者）。
+  it("死字段 `tag` 已彻底移除且**不得回流**（本断言防回流，不防「清理」）", () => {
+    // 2026-09-11（task-27）修正：本用例原先断言 `toContain("tag: t.selector.customTag")`
+    // ——那是在**钉死死代码**（要求已无消费者的字段必须存在），将来谁清理它就红，
+    // 属「测试防腐烂失败」的隐蔽反模式。现按真实意图重写：
+    //   ① 组件侧：任何 `tag:` 赋值都不得存在（含回退 meta 与返回对象）；
+    //   ② 字典侧：`customTag` 与 `items[*].tag` 已删，不得回流。
     expect(bootSelectorCode).not.toContain("TEMPLATE")
     expect(bootSelectorCode).not.toMatch(/isDefault \? t\.selector\.defaultBadge/)
-    // 剥离注释后 `tag:` 只剩「字典回退 meta」这一处数据用途（非判定、非渲染）
-    const tagAssignments = bootSelectorCode.match(/^\s*tag:/gm) ?? []
-    expect(tagAssignments, "死字段 tag 疑似回流").toHaveLength(1)
-    expect(bootSelectorCode).toContain("tag: t.selector.customTag")
+    expect(bootSelectorCode.match(/^\s*tag:/gm) ?? [], "组件内 tag: 赋值疑似回流").toEqual([])
+    expect(bootSelectorCode, "回退了字典 customTag 引用").not.toContain("t.selector.customTag")
+
+    // 字典侧同查（两语对称，防只删一侧）
+    for (const [label, dict] of [
+      ["zh-CN", zhCN],
+      ["en-US", enUS],
+    ] as const) {
+      const sel = dict.selector as unknown as Record<string, unknown>
+      expect(Object.keys(sel), `${label} 的 customTag 疑似回流`).not.toContain("customTag")
+      const items = sel.items as Record<string, Record<string, unknown>>
+      expect(Object.keys(items.web), `${label} 的 items.web.tag 疑似回流`).not.toContain("tag")
+    }
   })
 
   it("默认徽章渲染仍走字典键（解耦未改渲染文案）", () => {
@@ -160,12 +177,12 @@ describe("结构门禁：旧耦合与死字段不得回流（?raw 源码断言�
 })
 
 describe("消费点清单核对（防止「还有第三处同类」被漏掉）", () => {
-  it("字典 tag 值的全部消费点均可枚举，且无判定用途", () => {
-    const tagLineRe = /meta\.tag|items\[name\]/g
-    const occurrences = (bootSelectorCode.match(tagLineRe) ?? []).length
-    // 修复后只剩「取字典项」与「构造回退 meta」两处数据用途
-    expect(occurrences).toBeLessThanOrEqual(3)
-    // 判定函数体内不出现
+  it("组件内已无任何字典 tag 消费点（结构上不可能再耦合）", () => {
+    // task-27 清理后：`tag` 既不参与判定也不参与渲染，且连字段都不存在。
+    // 保留「取字典项」计数上界，防将来有人重新引入一条读 tag 的路径。
+    const occurrences = (bootSelectorCode.match(/meta\.tag|items\[name\]/g) ?? []).length
+    expect(occurrences, "疑似重新引入 meta.tag 消费").toBeLessThanOrEqual(2)
+    // 判定函数体内不出现 meta（判据与字典彻底隔离）
     expect(exportedFnBody(bootSelectorSrc, "resolveIsDefault")).not.toContain("meta")
   })
 

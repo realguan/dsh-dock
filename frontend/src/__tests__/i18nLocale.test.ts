@@ -209,9 +209,13 @@ describe("跨窗口初始化接线（结构门禁，?raw 源码断言）", () =>
     expect(appCode).toContain("initFromSettings()")
   })
 
-  it("App.tsx 订阅 app:settings-changed 并同步语言（红线 3：只经事件广播）", () => {
-    expect(appCode).toContain('"app:settings-changed"')
+  it("App.tsx 订阅 settings-changed 并同步语言（红线 3：只经事件广播）", () => {
+    // 2026-09-11（task-27）修正：原断言 `toContain('"app:settings-changed"')` 是在钉
+    // 「魔法字符串就写在这里」——task-27 把它收敛到 `EV.settingsChanged` 后该断言失真。
+    // 按真实意图重写：订阅必须存在，且**必须经 EV 常量**（不得再出现裸字面量）。
+    expect(appCode).toContain("EV.settingsChanged")
     expect(appCode).toContain("applySettingsLocale(")
+    expect(appCode, "魔法字符串回流（应经 EV 常量）").not.toContain('"app:settings-changed"')
     // 不得试图让 Zustand 跨窗共享（红线 3）
     expect(appCode).not.toContain("window.__DSH_I18N__")
   })

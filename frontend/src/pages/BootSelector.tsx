@@ -137,7 +137,6 @@ export function BootSelector() {
       const meta = t.selector.items[name] ?? {
         title: name,
         desc: t.selector.customDesc,
-        tag: t.selector.customTag,
       }
       const isDefault = resolveIsDefault(name, defaultProfile)
       const pluginCount = summary?.dependencies.length ?? 0

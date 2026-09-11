@@ -202,7 +202,14 @@ export interface CopyConfigOutcome {
 /// 删除结果。
 export interface DeleteOutcome {
   profile: string
-  /** 该 profile 是默认启动 profile，引用已清除（读取侧兜底 web） */
+  /**
+   * 该 profile 是默认启动 profile，删除时已把引用**置为 None**
+   * （`commands/profile.rs`：`settings.default_profile = None`）。
+   * 之后按 AGENTS §6 口径：**None 由消费方兜底 `web`**；
+   * **失效值不消费**（走常规流程＝出选择器）。
+   * 2026-09-11（task-27）措辞校正：原文「读取侧兜底 web」易被读成
+   * 「保留失效值、读时兜底」，与实现（删除即置 None）不符。
+   */
   default_cleared: boolean
 }
 

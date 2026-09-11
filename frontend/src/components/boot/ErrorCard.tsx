@@ -63,7 +63,7 @@ export function ErrorCard({
       .catch((e) => {
         setPending(null)
         const msg = String(e instanceof Error ? e.message : e)
-        setActionError(`${t.error.actionFailed}：${msg}（可返回重选）`)
+        setActionError(`${t.error.actionFailedDetail(msg)}${t.error.reselectHint}`)
       })
       .finally(() => setPending((p) => (p === id ? null : p)))
   }
@@ -175,7 +175,7 @@ export function ErrorCard({
               <div className="flex items-center gap-1.5 font-mono text-label">
                 <Terminal className="size-3 text-faint" />
                 <span>
-                  原始诊断日志 · 尾部 {payload.log.split("\n").filter(Boolean).length} 行
+                  {t.error.rawLogSummary(payload.log.split("\n").filter(Boolean).length)}
                 </span>
               </div>
               <ChevronDown className="size-3.5 text-faint transition-transform group-open:rotate-180" />
@@ -185,17 +185,17 @@ export function ErrorCard({
                 type="button"
                 onClick={handleCopyLog}
                 className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/10 px-2 py-1 font-mono text-meta text-white/80 transition-colors hover:bg-white/20"
-                title="复制日志"
+                title={t.error.copyLog}
               >
                 {copied ? (
                   <>
                     <Check className="size-3 text-term-ok" />
-                    <span>已复制</span>
+                    <span>{t.boot.copied}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="size-3" />
-                    <span>复制日志</span>
+                    <span>{t.error.copyLog}</span>
                   </>
                 )}
               </button>

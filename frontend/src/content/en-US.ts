@@ -58,7 +58,13 @@ export const enUS: AppCopy = {
   },
   error: {
     fallbackTitle: "Launch Failed",
-    actionFailed: "Action Failed",
+    // Action-failure detail (2026-09-11, task-27): was composed in the component as
+    // `${t.error.actionFailed}：${msg}` — the separator was a FULL-WIDTH CJK colon,
+    // so en users saw "Action Failed：…". Now a composed key (same shape as
+    // `market.installFailed`): zh uses the full-width colon with no space,
+    // en uses ASCII colon + space. The standalone `actionFailed` label lost its
+    // only consumer and was removed with it.
+    actionFailedDetail: (msg: string) => `Action Failed: ${msg}`,
     // Clipboard write failure (2026-09-08, batch 0b): never fake a "copied" state
     copyFailed: "Copy failed — please select the text and copy manually",
     actions: {
@@ -75,6 +81,12 @@ export const enUS: AppCopy = {
     diagHeader: "DIAG Console",
     cardHeader: "Launch Interrupted",
     suggestionLabel: "Suggested fix:",
+    // Diagnostic-log details block (2026-09-11, task-27): were inline literals in
+    // ErrorCard (Chinese, visible to en users). `copyLog` differs from
+    // `boot.copyDetail` (BootStep's "Copy details" — step telemetry, not the raw
+    // log), so it is its own key. The copied state reuses `boot.copied`.
+    copyLog: "Copy log",
+    rawLogSummary: (n: number) => `Raw diagnostic log · last ${n} lines`,
     // Per-kind copy (ADR-0012): looked up by failure.kind, falling back to the
     // backend-provided title/suggestion when the kind is unknown.
     kinds: {
@@ -120,11 +132,13 @@ export const enUS: AppCopy = {
     preparingTitle: "Preparing Engine Runtime",
     preparingSub: "Bootstrapping Node & DSH runtime for first launch · One-time setup",
     problemHeadline: "Startup Encountered an Issue",
+    // 2026-09-11 (task-27): the `tag` field and the `customTag` key were removed —
+    // after the task-23 decoupling they had no consumers left (the only remnant was
+    // dead component code copying a dictionary value into the fallback object).
     items: {
-      web: { title: "Official Web Workbench", desc: "Official Web interface maintained by DSH", tag: "DEFAULT" },
-    } as Record<string, { title: string; desc: string; tag: string }>,
+      web: { title: "Official Web Workbench", desc: "Official Web interface maintained by DSH" },
+    } as Record<string, { title: string; desc: string }>,
     customDesc: "Custom assembled webUi workbench",
-    customTag: "CUSTOM",
     chipDshNew: "Update Available",
     chipDshOk: "Up to Date",
     chipDetecting: "Detecting",

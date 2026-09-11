@@ -9,7 +9,13 @@ import type { ProfileSummary } from "@/types/ipc"
 
 interface ProfilesState {
   list: ProfileSummary[]
-  /** 默认启动 profile；null = 未设置（读取侧兜底 web） */
+  /**
+   * 默认启动 profile；`null` = 未设置（settings 里 `defaultProfile` 为 None）。
+   * AGENTS §6 口径：**None 由消费方兜底 `web`**；**失效值不消费**
+   * （不命中任何候选，走常规流程＝出选择器）。
+   * 2026-09-11（task-27）措辞校正：原文「读取侧兜底 web」未区分
+   * 「None 兜底」与「失效值不消费」两种情形。
+   */
   defaultProfile: string | null
   /** 当前会话占用的 profile；null = 无活跃会话（含切换 boot 中） */
   activeProfile: string | null
