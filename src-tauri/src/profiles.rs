@@ -403,6 +403,59 @@ pub fn run_toolchain_forward(
     )
 }
 
+/// 客体档孪生（ADR-0016 P1）：把同一份 dsh 转发链打进 WSL 客体。
+///
+/// 与 [`run_toolchain_forward`] 的契约**逐项对齐**——同一个运维日志（追加/轮转/
+/// 分隔头同源），因此 `current_run_output` 切片与上层 `classify_*` 分类逻辑对客体
+/// 运行同样成立；返回同一个 [`ForwardRun`]。差别只有两处：进程是 `wsl.exe`，命令在
+/// 客体 shell 内拼装（PATH 准备与引用见 `crate::guest`）；且**不注入 `DSH_HOME`**
+/// ——世界由客体自己决定（ADR-0016 §2.6：管理面必须与运行中的会话同源）。
+#[cfg(windows)]
+#[expect(dead_code)] // 管理面择源未接线：ADR-0016 §5 行动项剩余清单 a–e（自清理闸门）
+pub(crate) fn run_dsh_cli_in_guest(
+    distro: &str,
+    args: &[String],
+    log_path: &Path,
+) -> Result<ForwardRun, String> {
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let header = format!(
+        "\n==== {} | wsl:{} | {} ====\n",
+        format_utc(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        ),
+        distro,
+        args.join(" "),
+    );
+    let log = open_op_log(log_path, OP_LOG_ROTATE_BYTES, &header)
+        .map_err(|e| format!("打开日志 {} 失败：{e}", log_path.display()))?;
+    let script = crate::guest::dsh_cli_script(args);
+    let (code, timed_out) =
+        crate::guest::run_script_to_log(distro, &script, &log, CREATE_FORWARD_TIMEOUT)?;
+    Ok(ForwardRun {
+        code,
+        timed_out,
+        output: current_run_output(&crate::resolve::read_log_auto(log_path), &header),
+    })
+}
+
+/// 非 Windows 孪生：客体只存在于 Windows。保留同一签名是为了让调用点（插件中心的
+/// 世界择源）在**所有平台**都参与编译与 lint——否则 `#[cfg(windows)]` 之外的分支
+/// 永远不被检查（AGENTS §1「clippy 需逐目标各跑一次」的同源教训）。
+#[cfg(not(windows))]
+#[expect(dead_code)] // 同上：接线后本 expect 不再触发 → CI 报 unfulfilled 强制删除
+pub(crate) fn run_dsh_cli_in_guest(
+    _distro: &str,
+    _args: &[String],
+    _log_path: &Path,
+) -> Result<ForwardRun, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
 /// 运维日志（plugin-op.log）单文件体量上限——超过即轮转为 `<path>.1`
 /// （单代历史，再旧让位）。
 const OP_LOG_ROTATE_BYTES: u64 = 512 * 1024;
@@ -410,7 +463,11 @@ const OP_LOG_ROTATE_BYTES: u64 = 512 * 1024;
 /// 打开运维日志：**追加式**（不截断——保留历史运行，2026-09-09 裁定），
 /// 现存体量超 `cap` 先轮转，随后写入本次运行的分隔头。后续安装进度的
 /// 增量 tail 也以该文件为底座（截断式写入会弄乱读取偏移）。
-fn open_op_log(log_path: &Path, cap: u64, header: &str) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_op_log(
+    log_path: &Path,
+    cap: u64,
+    header: &str,
+) -> std::io::Result<std::fs::File> {
     if log_path.metadata().map(|m| m.len()).unwrap_or(0) > cap {
         let rotated = log_path.with_extension("log.1");
         let _ = std::fs::remove_file(&rotated);
@@ -528,7 +585,7 @@ pub fn run_dsh_forward(
 /// 分类）把历史输出当成本次结果（实测：装 dsh-ssh 却解析出上一轮 dsh-pet 的
 /// 门槛键）。按**最后一个**分隔头切分；找不到分隔头（异常）时返回全文（fail-open，
 /// 与旧行为一致，不因切片逻辑丢诊断信息）。
-fn current_run_output(full: &str, header: &str) -> String {
+pub(crate) fn current_run_output(full: &str, header: &str) -> String {
     match full.rfind(header) {
         Some(idx) => full[idx + header.len()..].to_string(),
         None => full.to_string(),

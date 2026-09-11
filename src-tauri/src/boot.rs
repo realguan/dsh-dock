@@ -133,6 +133,10 @@ pub(crate) struct ShellState {
     pub(crate) session_epoch: AtomicU64,
     /// 当前会话的运行环境（菜单勾选 / retry 重建用；None=尚未启动会话）。
     pub(crate) active_mode: Mutex<Option<settings::Mode>>,
+    /// 本次启动**实际选中**的 WSL 发行版（ADR-0016 §4）：管理面（控制中心）择源用。
+    /// 记录实际值而非管理时重新推导——否则"用哪个发行版"会有两个答案，管理面可能
+    /// 打到与运行中会话不同的客体上（ADR-0016 §2.6 世界一致性）。非 WSL / 未探测完成 = None。
+    pub(crate) active_wsl_distro: Mutex<Option<String>>,
     pub(crate) window: tauri::WebviewWindow,
     /// 选择器场景：probe 完成但尚未 spawn 的会话（用户选定 profile 后落地）。
     pub(crate) pending: Mutex<Option<Box<dyn crate::executor::Executor>>>,
@@ -656,6 +660,9 @@ pub(crate) fn launch_executor_after_probe(
         tracing::info!("probe 期间启动代际被刷新，丢弃本次探测结果");
         return;
     }
+    // 管理面世界择源（ADR-0016 §4）：probe 已定下客体发行版，落进状态供控制中心
+    // 复用——管理面与运行中的会话必须同源，不得各自推导（§2.6）。
+    *state.active_wsl_distro.lock().unwrap() = executor.target_distro().map(str::to_string);
     match probe_result {
         Err(e) => {
             tracing::error!("环境解析失败: {e}");

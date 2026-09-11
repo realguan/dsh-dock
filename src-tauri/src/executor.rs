@@ -98,6 +98,13 @@ pub trait Executor: Send {
         None
     }
 
+    /// WSL 档：本次启动**实际选中**的发行版（ADR-0016 §4 管理面世界择源）。
+    /// 本地档 / 未探测完成 = None。probe 成功后由 `launch_executor_after_probe`
+    /// 落进 `ShellState.active_wsl_distro`，控制中心据此与运行中会话同源。
+    fn target_distro(&self) -> Option<&str> {
+        None
+    }
+
     /// 补齐运行时并启动 dsh（步 2）；返回后可轮询就绪。`log_path()` 下的日志
     /// 由壳统一等待/监护（同生命周期）。
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String>;
@@ -492,8 +499,11 @@ pub fn wsl_distros() -> Result<Vec<WslDistro>, String> {
 }
 
 /// 构造 `wsl.exe` 命令（可选目标发行版）。Windows 专属。
+///
+/// `pub(crate)`：客体管理面原语（`crate::guest`）与 boot 路径共用同一构造，
+/// 避免第二处 wsl.exe 拼装（ADR-0016 §2 单源口径）。
 #[cfg(windows)]
-fn wsl_command(distro: Option<&str>) -> Command {
+pub(crate) fn wsl_command(distro: Option<&str>) -> Command {
     let mut cmd = crate::child_cmd(std::path::Path::new("wsl.exe"));
     if let Some(d) = distro {
         cmd.arg("-d").arg(d);
@@ -507,7 +517,11 @@ fn wsl_command(distro: Option<&str>) -> Command {
 /// 超时参数化：探测/teardown 用 5s；客体内 pnpm 引导（node 下载 / dsh 安装）
 /// 可能数分钟（见 `ensure_guest_engine` 各环的 120s–600s）。
 #[cfg(windows)]
-fn run_wsl_capture(distro: Option<&str>, args: &[&str], timeout: Duration) -> Option<String> {
+pub(crate) fn run_wsl_capture(
+    distro: Option<&str>,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
     let mut cmd = wsl_command(distro);
     cmd.args(args);
     let raw = crate::resolve::run_with_timeout_raw(&mut cmd, timeout)?;
@@ -529,39 +543,11 @@ const GUEST_STOP_FILE: &str = "/tmp/dsh-dock-stop";
 #[cfg(windows)]
 const GUEST_READY_FILE: &str = "/tmp/dsh-dock-ready";
 
-/// 客体内「准备好 PATH + 引擎目录」的公共前缀（固定脚本，不插值用户输入）。
-///
-/// ADR-0010 客体同构（2026-09-04 收缩）：工具链 = 壳引擎目录
-/// `~/.dsh-dock/engines`（pnpm 投递落点 + node/dsh 引擎引导均在此），
-/// 版本管理器兜底扫描随探测层退役——系统 node 不再是任何环节的来源。
-/// 仍用**交互式登录壳 `bash -lic`**（rc 非交互守卫放行，2026-08-26 实机
-/// bug 教训，见 `rc_guard_blocks_non_interactive_login_shell`）；source
-/// 三个标准 rc 后**末尾**前置引擎 bin（盖掉 rc 里的任何 PATH 设置），
-/// 并导出 PNPM_HOME（pnpm 全局 bin 目录不在 PATH = ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH）。
-///
-/// 模板为纯字符串 → 跨平台可测（macOS/Linux 测试直接以 bash 实跑验证）。
+// `guest_prep!`（客体 PATH/引擎目录准备）与 `sh_quote`（POSIX 单引号引用）
+// 已迁至 `crate::guest`（ADR-0016：客体原语单一源，管理面原语与 boot 路径
+// 共用同一份脚本片段）。此处反向引用，调用点文本不变。
 #[cfg(any(windows, test))]
-macro_rules! guest_prep {
-    () => {
-        concat!(
-            "DSH_ENGINES=\"$HOME/.dsh-dock/engines\";",
-            ". /etc/profile 2>/dev/null;",
-            ". \"$HOME/.profile\" 2>/dev/null; . \"$HOME/.bashrc\" 2>/dev/null;",
-            "if [ -d \"$DSH_ENGINES/bin\" ]; then",
-            " PNPM_HOME=\"$DSH_ENGINES\"; export PNPM_HOME;",
-            " PATH=\"$DSH_ENGINES/bin:$PATH\"; export PATH;",
-            "fi;",
-        )
-    };
-}
-
-/// POSIX shell 单引号字面量：`'` → `'\''`。profile 名虽经 `validate_profile_name`
-/// 校验，拒绝集之外仍可含空格/引号/`;`/`$`/反引号等元字符——插入 guest 脚本
-/// 必须过这里，防脚本断裂与注入面（同机自伤亦是伤）。
-#[cfg(any(windows, test))]
-fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
+use crate::guest::{guest_prep, sh_quote};
 
 /// 客体内启动 dsh 的脚本模板（4.3⑥ profile 参数化；v1 曾固定 web）。
 /// 结构：guest_prep（PATH）→ 后台起 dsh（tee 镜像到就绪哨兵）→ 起 watcher（轮询 stop
@@ -896,6 +882,11 @@ impl Executor for WslExecutor {
 
     fn active_profile(&self) -> Option<&str> {
         Some(&self.profile)
+    }
+
+    /// 本次实际选中的发行版（probe 内 `select_wsl2_distro` 定下）。
+    fn target_distro(&self) -> Option<&str> {
+        self.selected.as_deref()
     }
 
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String> {

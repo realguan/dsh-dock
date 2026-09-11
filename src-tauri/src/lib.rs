@@ -22,6 +22,7 @@ mod dsh_settings;
 mod engines;
 mod executor;
 mod fs_backup;
+mod guest;
 pub mod ipc;
 mod lifecycle;
 mod manifest;
@@ -187,6 +188,7 @@ pub fn run() {
                 session: Mutex::new(None),
                 session_epoch: AtomicU64::new(0),
                 active_mode: Mutex::new(None),
+                active_wsl_distro: Mutex::new(None),
                 window: window.clone(),
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
