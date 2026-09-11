@@ -10,8 +10,14 @@
 //!
 //! ## 设计约束（逐条对应 ADR-0016 §2）
 //!
-//! - **读原文**：`read_files` 返回「客体路径 → 文件原文」，于是 `plugins.rs` /
-//!   `profiles.rs` 既有的解析与派生纯逻辑**原样复用**，不产生第二套解析实现。
+//! - **读原文**：`read_files` 返回「相对客体 dsh home 的路径 → 文件原文」，于是
+//!   `plugins.rs` / `profiles.rs` 既有的解析与派生纯逻辑**原样复用**，不产生第二套
+//!   解析实现。路径基址在**客体侧**展开（[`HOME_EXPR`]：`${DSH_HOME:-$HOME/.dsh}`，
+//!   与客体 dsh 自身的 home 解析同源）——宿主不知道客体用户名，也不该拿宿主 home
+//!   顶替（那就是 ADR-0016 §2.6 要禁的"管错世界"）。
+//! - **写单键**：`write_home_files` 以 base64 载荷 + 同目录临时文件 + `mv` 原子替换
+//!   落位；父目录不存在即失败（壳不得代 dsh 生成 profile 目录）。唯一调用方是
+//!   ADR-0013 的单键受控写入口（`build_policy`），不生成/复刻三件套内容。
 //! - **单源脚本片段**：路径准备（`guest_prep!`）与 shell 引用（`sh_quote`）从
 //!   `executor.rs` **迁入本模块**成为唯一源，`executor` 反向引用——避免两处漂移。
 //! - **spawn 一律经 `lifecycle`**（ADR-0015 / AGENTS §6）：读走
@@ -57,6 +63,46 @@ pub(crate) fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// 客体 dsh home 的 shell 表达式（管理面读写路径的基址）。
+///
+/// `guest_prep!` 已 source 三个 rc，故这里读到的 `DSH_HOME`（若有）与客体 dsh
+/// 自己读到的是同一份环境——ADR-0016 §1.5：客体 dsh 用自己的 WSL home。宿主**不能**
+/// 硬编码 `/home/<用户>/.dsh`（用户名未知），更不该用宿主 home 顶替。
+///
+/// 注意：与 boot 路径同口径（`executor` 不导出 `DSH_HOME`），dev 构建在客体里同样
+/// 落到 `~/.dsh`——管理面必须与运行中的客体会话同源。
+#[cfg(any(windows, test))]
+pub(crate) const HOME_EXPR: &str = "${DSH_HOME:-$HOME/.dsh}";
+
+/// 标准 base64 编码（客体写载荷与 pnpm 投递兜底通道共用；不引第三方依赖，
+/// AGENTS §4.2）。2026-09-11 自 `executor.rs` 迁入：与 [`base64_decode`] 同处一源。
+#[cfg(any(windows, test))]
+pub(crate) fn base64_encode(data: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TBL[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 // ---------- 纯函数：脚本拼装与帧解析（跨平台可测） ----------
 
 /// `read_files` 的帧头。单行一条记录，内容一律 base64——
@@ -81,25 +127,74 @@ pub(crate) fn dsh_cli_script(args: &[String]) -> String {
     format!("{}exec dsh {quoted}", guest_prep!())
 }
 
-/// 组装「读客体文件原文」脚本：每条路径一行 base64 帧，缺失以 `-` 标注。
+/// 组装「读客体 dsh home 下文件原文」脚本：每条**相对路径**一行 base64 帧，
+/// 缺失以 `-` 标注。
 ///
+/// 路径基址在客体侧展开（[`HOME_EXPR`]），帧标签 = 入参相对路径原样——宿主侧
+/// 只做解码与按标签取用，不需要（也无法）知道客体绝对路径。
 /// base64 编码在**客体侧**完成（`base64 | tr -d '\n'`：GNU 与 busybox 皆有，
 /// 不用 GNU 专有的 `-w0`），宿主侧只做解码——避免 wsl.exe 的 UTF-16/缓冲
 /// 转换把内容弄坏（该坑见 `shell.rs` 的 UTF-16 解码注释）。
 #[cfg(any(windows, test))]
-pub(crate) fn read_files_script(paths: &[String]) -> String {
+pub(crate) fn read_files_script(rel_paths: &[String]) -> String {
     let mut out = String::from(guest_prep!());
-    for p in paths {
-        let q = sh_quote(p);
+    for rel in rel_paths {
+        // 标签 = 原样相对路径（帧内 base64，免疫换行/元字符）
+        let label = sh_quote(rel);
+        // 客体侧绝对路径表达式：前缀不引号整体（要展开），相对路径经 sh_quote
+        let path = format!("\"{HOME_EXPR}\"/{label}");
         // 单引号字面量直接进 printf 的 %s，无需再转义
         out.push_str(&format!(
-            "if [ -f {q} ]; then printf '{FILE_FRAME}%s:%s\\n' \
-             \"$(printf '%s' {q} | base64 | tr -d '\\n')\" \
-             \"$(base64 < {q} | tr -d '\\n')\"; \
+            "if [ -f {path} ]; then printf '{FILE_FRAME}%s:%s\\n' \
+             \"$(printf '%s' {label} | base64 | tr -d '\\n')\" \
+             \"$(base64 < {path} | tr -d '\\n')\"; \
              else printf '{FILE_FRAME}%s:-\\n' \
-             \"$(printf '%s' {q} | base64 | tr -d '\\n')\"; fi;"
+             \"$(printf '%s' {label} | base64 | tr -d '\\n')\"; fi;"
         ));
     }
+    out
+}
+
+/// 写成功哨兵：写脚本**恒 `exit 0`**，成败看哨兵行——同
+/// `GUEST_STAGE_PNPM` 的规避口径（`run_with_timeout_raw` 把非零退出折叠成
+/// "无输出"，会丢掉诊断）。
+#[cfg(any(windows, test))]
+pub(crate) const WRITE_OK: &str = "DSH_DOCK_WRITE_OK";
+/// 写失败哨兵前缀（后接相对路径，指出是哪一个文件失败）。
+#[cfg(any(windows, test))]
+pub(crate) const WRITE_FAILED: &str = "DSH_DOCK_WRITE_FAILED";
+
+/// 单次写载荷上限（base64 后约 4/3，进 wsl.exe 命令行；Windows 上限 32K 字符）。
+/// 超限拒绝而非硬塞：pnpm-workspace.yaml 这类单键补写的文件本就该是小的——
+/// 宁可不自动化，也不冒"命令行被截断后写坏用户文件"的风险（同 ADR-0013 纪律）。
+#[cfg(windows)]
+pub(crate) const WRITE_MAX_BYTES: usize = 8 * 1024;
+
+/// 组装「原子写客体 dsh home 下文件」脚本。
+///
+/// 形态：base64 载荷内嵌（单引号字面量，无展开面）→ `base64 -d` 落**同目录**
+/// 临时文件 → `mv -f` 原子替换（跨设备 mv 会退化为拷贝，但临时文件与目标同目录，
+/// 不跨设备）。**不 `mkdir -p`**：父目录不存在即失败——壳不得代 dsh 生成 profile
+/// 目录（AGENTS §6：三件套内容归 dsh 初始化）。
+#[cfg(any(windows, test))]
+pub(crate) fn write_home_files_script(files: &[(String, String)]) -> String {
+    let mut out = String::from(guest_prep!());
+    out.push_str("DSH_DOCK_FAIL=;");
+    for (rel, content) in files {
+        let label = sh_quote(rel);
+        let path = format!("\"{HOME_EXPR}\"/{label}");
+        let payload = sh_quote(&base64_encode(content.as_bytes()));
+        out.push_str(&format!(
+            "if [ -d \"$(dirname {path})\" ] && \
+             printf '%s' {payload} | base64 -d > {path}.dsh-dock.tmp && \
+             mv -f {path}.dsh-dock.tmp {path}; then :; \
+             else rm -f {path}.dsh-dock.tmp; \
+             echo '{WRITE_FAILED}:{label}'; DSH_DOCK_FAIL=1; fi;"
+        ));
+    }
+    out.push_str(&format!(
+        "if [ -z \"$DSH_DOCK_FAIL\" ]; then echo '{WRITE_OK}'; fi; exit 0"
+    ));
     out
 }
 
@@ -158,22 +253,20 @@ pub(crate) fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 // ---------- Windows 实体：真正打进客体 ----------
 
-/// 一次读多份客体文件（一次 `wsl.exe` 往返）。返回顺序与入参一致；
+/// 一次读多份客体 dsh home 下的文件（一次 `wsl.exe` 往返）。返回顺序与入参一致；
 /// 文件缺失 = `None`（不是错误——调用方按存在性分支，如清单缺失即报"未初始化"）。
 ///
-/// `expect(dead_code)`：管理面择源尚未接线（ADR-0016 §5 行动项剩余清单 a–e）。
-/// 接线后本 expect 会「不再触发」→ CI 立即报 unfulfilled，**强制删除**——
-/// 自清理闸门，防惰性死代码长期挂着。
+/// 入参为**相对客体 dsh home** 的路径（`profiles/web/package.json`），基址由
+/// [`HOME_EXPR`] 在客体侧展开。
 #[cfg(windows)]
-#[expect(dead_code)]
 pub(crate) fn read_files(
     distro: &str,
-    paths: &[String],
+    rel_paths: &[String],
 ) -> Result<Vec<(String, Option<String>)>, String> {
-    if paths.is_empty() {
+    if rel_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let script = read_files_script(paths);
+    let script = read_files_script(rel_paths);
     let out = crate::executor::run_wsl_capture(
         Some(distro),
         &["-e", "bash", "-lic", &script],
@@ -186,11 +279,53 @@ pub(crate) fn read_files(
 /// 非 Windows 孪生：客体只存在于 Windows。保留同一签名是为了让**接线后的调用点**
 /// 在所有平台都参与编译与 lint（否则 `#[cfg(windows)]` 之外的分支永不被检查）。
 #[cfg(not(windows))]
-#[expect(dead_code)]
 pub(crate) fn read_files(
     _distro: &str,
-    _paths: &[String],
+    _rel_paths: &[String],
 ) -> Result<Vec<(String, Option<String>)>, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 原子写客体 dsh home 下的文件（一次 `wsl.exe` 往返，载荷内嵌脚本）。
+/// 入参 = `(相对路径, 全文)`；任一文件失败即整体报错（列出失败路径）。
+#[cfg(windows)]
+pub(crate) fn write_home_files(distro: &str, files: &[(String, String)]) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    if let Some((rel, content)) = files.iter().find(|(_, c)| c.len() > WRITE_MAX_BYTES) {
+        return Err(format!(
+            "客体文件 {rel} 超出单次写入上限（{} KiB）——请在该发行版终端里手工编辑",
+            WRITE_MAX_BYTES / 1024
+        ));
+    }
+    let script = write_home_files_script(files);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| format!("写 {distro} 内文件失败：wsl.exe 调用失败或无输出（客体不可达？）"))?;
+    if out.contains(WRITE_OK) {
+        return Ok(());
+    }
+    let failed: Vec<&str> = out
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix(&format!("{WRITE_FAILED}:")))
+        .collect();
+    if failed.is_empty() {
+        Err(format!("写 {distro} 内文件失败：{}", out.trim()))
+    } else {
+        Err(format!(
+            "写 {distro} 内文件失败（{}）——目标 profile 可能尚未初始化，或客体磁盘不可写",
+            failed.join("、")
+        ))
+    }
+}
+
+/// 非 Windows 孪生（同 [`read_files`] 口径）。
+#[cfg(not(windows))]
+pub(crate) fn write_home_files(_distro: &str, _files: &[(String, String)]) -> Result<(), String> {
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
@@ -294,31 +429,113 @@ rc 噪音一行
     }
 
     /// 脚本**实跑**验证（同 `guest_prep` 既有做法）：在 macOS/Linux 上以 bash 跑
-    /// 真实脚本，验证帧格式、缺失标注与 base64 通道端到端成立——只测解析器会漏掉
-    /// 脚本拼装错误。
+    /// 真实脚本，验证「客体 home 相对路径 → 帧」端到端成立——只测解析器会漏掉
+    /// 脚本拼装与路径展开错误。`HOME` 指向临时目录、显式清除 `DSH_HOME`
+    /// （测试一律无视环境里的 `DSH_HOME`，AGENTS §6）。
     #[cfg(unix)]
     #[test]
     fn read_files_script_runs_under_bash_and_roundtrips() {
-        let dir = std::env::temp_dir().join(format!("dsh-dock-guest-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("pkg.json");
-        std::fs::write(&file, "{\n  \"a\": 1\n}\n").unwrap();
-        let missing = dir.join("nope.json");
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        // `HOME` = 客体用户 home；路径基址是**客体 dsh home**（`$HOME/.dsh`）
+        let profile_dir = home.join(".dsh/profiles/web");
+        std::fs::create_dir_all(&profile_dir).unwrap();
+        std::fs::write(profile_dir.join("package.json"), "{\n  \"a\": 1\n}\n").unwrap();
 
-        let paths = vec![file.display().to_string(), missing.display().to_string()];
-        let script = read_files_script(&paths);
+        let rels = vec![
+            "profiles/web/package.json".to_string(),
+            "profiles/web/nope.json".to_string(),
+        ];
+        let script = read_files_script(&rels);
         let out = std::process::Command::new("bash")
             .arg("-c")
             .arg(&script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
             .output()
             .expect("bash 应可用");
         assert!(out.status.success(), "脚本应成功：{script}");
         let parsed = parse_read_files(&String::from_utf8_lossy(&out.stdout));
         assert_eq!(parsed.len(), 2, "两条路径都应回帧：{parsed:?}");
+        // 帧标签 = 入参相对路径原样（宿主不需要知道客体绝对路径）
+        assert_eq!(parsed[0].0, "profiles/web/package.json");
         assert_eq!(parsed[0].1.as_deref(), Some("{\n  \"a\": 1\n}\n"));
+        assert_eq!(parsed[1].0, "profiles/web/nope.json");
         assert_eq!(parsed[1].1, None);
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 写脚本**实跑**验证：base64 载荷 → 同目录临时文件 → `mv` 原子替换；
+    /// 父目录缺失时给失败哨兵且**不创建目录**（壳不得代 dsh 生成 profile）。
+    /// 脚本恒 `exit 0`（成败看哨兵行）。
+    #[cfg(unix)]
+    #[test]
+    fn write_home_files_script_writes_atomically_and_reports_failure() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-guest-w-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dsh_home = home.join(".dsh");
+        std::fs::create_dir_all(dsh_home.join("profiles/web")).unwrap();
+        let rel = "profiles/web/pnpm-workspace.yaml";
+        let content = "packages:\n  - .\n\ndangerouslyAllowAllBuilds: true\n";
+
+        let script = write_home_files_script(&[(rel.to_string(), content.to_string())]);
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success());
+        assert!(stdout.contains(WRITE_OK), "{stdout}");
+        assert_eq!(
+            std::fs::read_to_string(dsh_home.join(rel)).unwrap(),
+            content,
+            "内容应逐字节落位"
+        );
+        assert!(
+            !dsh_home.join(format!("{rel}.dsh-dock.tmp")).exists(),
+            "临时文件必须已被 mv 消耗"
+        );
+
+        // 父目录不存在 → 失败哨兵 + 不创建目录
+        let ghost = "profiles/ghost/pnpm-workspace.yaml";
+        let script = write_home_files_script(&[(ghost.to_string(), content.to_string())]);
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "脚本恒 exit 0");
+        assert!(!stdout.contains(WRITE_OK), "{stdout}");
+        assert!(
+            stdout.contains(&format!("{WRITE_FAILED}:{ghost}")),
+            "{stdout}"
+        );
+        assert!(
+            !dsh_home.join("profiles/ghost").exists(),
+            "不得代 dsh 建目录"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn base64_codecs_match_rfc4648_vectors_and_roundtrip() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        // 往返（含非 ASCII 与换行）
+        let raw = "键: 值\n".as_bytes();
+        assert_eq!(base64_decode(&base64_encode(raw)).unwrap(), raw);
     }
 }

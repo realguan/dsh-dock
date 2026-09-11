@@ -14,6 +14,7 @@
 //!   **id 空间**：entryId（`include:*` 树路径）≠ patch/配置行 id——4.4 后续
 //!   禁用写入的 id 以 `--dump-config` 行 id 为准，本模块不提供写入。
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// 清单条目：官方内置 bundle 或第三方依赖插件。
@@ -63,10 +64,62 @@ pub struct RuntimeEntry {
 /// 未物化 / 清单损坏 → Err（列表页两态由调用方把关，详情页已有同口径报错）。
 pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntry>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let manifest_path = home.join("profiles").join(profile).join("package.json");
-    let text = fs_err(&manifest_path)?;
-    let pkg: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    let dir = home.join("profiles").join(profile);
+    let text = fs_err(&dir.join("package.json"))?;
+    // 已装版本/描述：读齐各依赖的 `node_modules/<包>/package.json` 原文
+    // （符号链接农场只读穿透，不直写）；解析交给共用的纯装配函数。
+    let installed: BTreeMap<String, Option<String>> = dependency_names(&text)?
+        .into_iter()
+        .map(|name| {
+            let manifest =
+                std::fs::read_to_string(dir.join("node_modules").join(&name).join("package.json"))
+                    .ok();
+            (name, manifest)
+        })
+        .collect();
+    assemble_plugin_entries(&text, &installed)
+}
+
+/// 客体档孪生（ADR-0016 §5-c）：清单与各依赖的已装 `package.json` 经客体读原语
+/// **批量**取回（两次往返：先清单拿依赖名，再一次读齐各依赖），解析与派生走同一份
+/// [`assemble_plugin_entries`]——解析层零改动，不产生第二套实现。
+pub fn list_profile_plugins_in_guest(
+    distro: &str,
+    profile: &str,
+) -> Result<Vec<PluginEntry>, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let rel = format!("profiles/{profile}/package.json");
+    let manifest = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, text)| text)
+        .ok_or_else(|| format!("profile「{profile}」尚未初始化（客体 {distro} 内无 {rel}）"))?;
+    let names = dependency_names(&manifest)?;
+    let installed: BTreeMap<String, Option<String>> = if names.is_empty() {
+        BTreeMap::new()
+    } else {
+        let rels: Vec<String> = names
+            .iter()
+            .map(|n| format!("profiles/{profile}/node_modules/{n}/package.json"))
+            .collect();
+        let got = crate::guest::read_files(distro, &rels)?;
+        names
+            .into_iter()
+            .zip(got.into_iter().map(|(_, text)| text))
+            .collect()
+    };
+    assemble_plugin_entries(&manifest, &installed)
+}
+
+/// 纯装配（本地 / 客体共用）：manifest 原文 + 「依赖包名 → 已装 package.json 原文」
+/// → 插件清单条目。**解析与派生逻辑只有这一份**——ADR-0016 §3-A 选择"读原文"
+/// 正是为了这个收益。
+fn assemble_plugin_entries(
+    manifest_text: &str,
+    installed: &BTreeMap<String, Option<String>>,
+) -> Result<Vec<PluginEntry>, String> {
+    let pkg: serde_json::Value = serde_json::from_str(manifest_text)
+        .map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
 
     let mut out = Vec::new();
     // 官方内置 bundle：版本锚在 dsh 安装目录，不进 profile node_modules，不实读。
@@ -93,13 +146,11 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
                     spec: spec_str.map(str::to_string),
                 });
             } else {
-                let (version, description) = read_installed(
-                    &home
-                        .join("profiles")
-                        .join(profile)
-                        .join("node_modules")
-                        .join(name),
-                );
+                let (version, description) = installed
+                    .get(name)
+                    .and_then(|text| text.as_deref())
+                    .map(installed_info)
+                    .unwrap_or((None, None));
                 out.push(PluginEntry {
                     name: name.clone(),
                     kind: PluginKind::Dependency,
@@ -113,13 +164,10 @@ pub fn list_profile_plugins(home: &Path, profile: &str) -> Result<Vec<PluginEntr
     Ok(out)
 }
 
-/// 读已安装插件的 `(version, description)`；未安装/损坏 → (None, None)
+/// 已装包 `package.json` 原文 → `(version, description)`；缺失/损坏 → (None, None)
 /// （清单容忍半初始化，与列表页口径一致）。
-fn read_installed(pkg_dir: &Path) -> (Option<String>, Option<String>) {
-    let Ok(text) = std::fs::read_to_string(pkg_dir.join("package.json")) else {
-        return (None, None);
-    };
-    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&text) else {
+fn installed_info(pkg_text: &str) -> (Option<String>, Option<String>) {
+    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(pkg_text) else {
         return (None, None);
     };
     (
@@ -130,6 +178,17 @@ fn read_installed(pkg_dir: &Path) -> (Option<String>, Option<String>) {
             .and_then(|v| v.as_str())
             .map(String::from),
     )
+}
+
+/// manifest 原文 → 依赖包名（字典序；缺失 `dependencies` = 空表，非法 JSON = Err）。
+fn dependency_names(manifest_text: &str) -> Result<Vec<String>, String> {
+    let pkg: serde_json::Value = serde_json::from_str(manifest_text)
+        .map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
+    Ok(pkg
+        .get("dependencies")
+        .and_then(|v| v.as_object())
+        .map(|d| d.keys().cloned().collect())
+        .unwrap_or_default())
 }
 
 fn fs_err(path: &Path) -> Result<String, String> {
@@ -505,43 +564,84 @@ fn is_repo_segment(s: &str) -> bool {
 
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
+///
+/// **世界择源**（ADR-0016 §5-a/c）：`world` 由 IPC 层按会话实际运行环境解析。
+/// 本地世界 = 现状路径（宿主 fs + 宿主引擎）；WSL 世界 = 客体原语
+/// （客体读 profile 清单 + 客体 dsh CLI 转发 + 客体侧单键写入），**绝不回落本地**。
 pub fn mutate_plugin_blocking(
     op: PluginOp,
     profile: &str,
     spec: &str,
     data_dir: &Path,
+    world: &crate::mgmt::World,
 ) -> Result<PluginOpOutcome, String> {
     crate::profiles::validate_profile_name(profile)?;
     // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
     validate_install_spec(spec)?;
-    let home = crate::resolve::user_dsh_home();
-    if !home
-        .join("profiles")
-        .join(profile)
-        .join("package.json")
-        .is_file()
-    {
-        return Err(format!(
-            "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
-        ));
-    }
-    // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
-    // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
-    // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
-    crate::build_policy::ensure_profile_build_policy_best_effort(profile);
-    let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir)?,
-        &[
-            "plugin".to_string(),
-            "--profile".to_string(),
-            profile.to_string(),
-            op.verb().to_string(),
-            spec.to_string(),
-        ],
-        &home,
-        &data_dir.join("plugin-op.log"),
-        data_dir,
-    )?;
+    let args = [
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        op.verb().to_string(),
+        spec.to_string(),
+    ];
+    let log_path = data_dir.join("plugin-op.log");
+    let run = match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            if !home
+                .join("profiles")
+                .join(profile)
+                .join("package.json")
+                .is_file()
+            {
+                return Err(format!(
+                    "profile「{profile}」尚未初始化——先创建或首启一次再管理插件"
+                ));
+            }
+            // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
+            // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
+            // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
+            crate::build_policy::ensure_profile_build_policy_best_effort(profile);
+            crate::profiles::run_toolchain_forward(
+                &crate::engines::resolve_toolchain(data_dir)?,
+                &args,
+                &home,
+                &log_path,
+                data_dir,
+            )?
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            // 客体 profile 存在性（读原语；宿主 home 在 WSL 模式下**不是**这个世界）
+            let rel = format!("profiles/{profile}/package.json");
+            let exists = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+                .into_iter()
+                .next()
+                .and_then(|(_, text)| text)
+                .is_some();
+            if !exists {
+                return Err(format!(
+                    "profile「{profile}」尚未初始化（客体 {distro} 内无 {rel}）——\
+                     先在该发行版里创建或首启一次再管理插件"
+                ));
+            }
+            // 客体侧单键写入（ADR-0016 §5-d）：客体 profile 由客体 dsh 物化，
+            // 宿主这份写入器从未碰过它——不补写则带构建脚本的插件必撞 pnpm 审批门。
+            crate::build_policy::ensure_profile_build_policy_in_guest_best_effort(distro, profile);
+            crate::profiles::run_dsh_cli_in_guest(distro, &args, &log_path)?
+        }
+    };
+    Ok(classify_op_outcome(op, profile, spec, &run))
+}
+
+/// 转发运行结果 → 插件操作结果（**纯函数**，本地 / 客体共用同一份分类与文案）：
+/// 退出码 0 = 成功；超时指向网络与 registry；其余取输出尾部做人读诊断。
+fn classify_op_outcome(
+    op: PluginOp,
+    profile: &str,
+    spec: &str,
+    run: &crate::profiles::ForwardRun,
+) -> PluginOpOutcome {
     let ok = !run.timed_out && run.code == Some(0);
     let detail = if ok {
         format!(
@@ -573,7 +673,7 @@ pub fn mutate_plugin_blocking(
             label = op.label()
         )
     };
-    Ok(PluginOpOutcome { ok, detail })
+    PluginOpOutcome { ok, detail }
 }
 
 #[cfg(test)]
@@ -685,13 +785,138 @@ mod op_tests {
         // 未物化：先于任何 spawn/网络拒绝
         let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
         let ghost = format!("dsh-dock-ghost-{}", std::process::id());
+        let local = crate::mgmt::World::Local;
         assert!(
-            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir)
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir, &local)
                 .unwrap_err()
                 .contains("尚未初始化")
         );
         // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
-        assert!(mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir).is_err());
+        assert!(
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir, &local).is_err()
+        );
+        // 非法 profile 名（路径遍历）：任何世界都在触达客体之前被拒
+        let wsl = crate::mgmt::World::Wsl {
+            distro: "Ubuntu".to_string(),
+        };
+        assert!(
+            mutate_plugin_blocking(PluginOp::Install, "../escape", "pkg", &data_dir, &wsl).is_err()
+        );
+    }
+
+    /// 客体档在非 Windows 上给**诚实错误**（客体只存在于 Windows），绝不静默回落
+    /// 宿主世界执行——ADR-0016 §2.6。
+    #[cfg(not(windows))]
+    #[test]
+    fn wsl_world_never_silently_falls_back_to_host_on_non_windows() {
+        let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
+        let wsl = crate::mgmt::World::Wsl {
+            distro: "Ubuntu".to_string(),
+        };
+        let err =
+            mutate_plugin_blocking(PluginOp::Install, "web", "pkg", &data_dir, &wsl).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = plugin_rows_blocking("web", &data_dir, &wsl).unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+        let err = list_profile_plugins_in_guest("Ubuntu", "web").unwrap_err();
+        assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
+    }
+
+    /// 转发结果分类（纯函数，本地/客体共用）：成功 / 超时 / 退出码非零三态文案。
+    #[test]
+    fn op_outcome_classification_covers_three_terminal_states() {
+        use crate::profiles::ForwardRun;
+        let ok = classify_op_outcome(
+            PluginOp::Install,
+            "web",
+            "pkg@1.2.3",
+            &ForwardRun {
+                code: Some(0),
+                timed_out: false,
+                output: String::new(),
+            },
+        );
+        assert!(ok.ok);
+        assert!(ok.detail.contains("已安装 pkg@1.2.3"), "{}", ok.detail);
+
+        let timed_out = classify_op_outcome(
+            PluginOp::Remove,
+            "web",
+            "pkg",
+            &ForwardRun {
+                code: None,
+                timed_out: true,
+                output: String::new(),
+            },
+        );
+        assert!(!timed_out.ok);
+        assert!(timed_out.detail.contains("超时"), "{}", timed_out.detail);
+
+        let failed = classify_op_outcome(
+            PluginOp::Update,
+            "web",
+            "pkg",
+            &ForwardRun {
+                code: Some(1),
+                timed_out: false,
+                output: "l1\nl2\nERR_PNPM_IGNORED_BUILDS\n".to_string(),
+            },
+        );
+        assert!(!failed.ok);
+        assert!(failed.detail.contains("dsh 退出码 1"), "{}", failed.detail);
+        assert!(
+            failed.detail.contains("ERR_PNPM_IGNORED_BUILDS"),
+            "输出尾部必须带上：{}",
+            failed.detail
+        );
+    }
+
+    /// 纯装配：bundle / 官方内嵌（desktop-packages）/ 已装依赖 / 未装依赖四态。
+    #[test]
+    fn assemble_plugin_entries_reuses_parsers_across_worlds() {
+        let manifest = serde_json::json!({
+            "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base"] } },
+            "dependencies": {
+                "@deepseek-ai/cordis": "file:./desktop-packages/deepseek-ai-cordis-4.0.2.tgz",
+                "dsh-pet": "github:o/r#path:/p",
+                "dsh-missing": "^1.0.0"
+            }
+        })
+        .to_string();
+        let mut installed = BTreeMap::new();
+        installed.insert(
+            "dsh-pet".to_string(),
+            Some(r#"{"version":"0.3.17","description":"宠物"}"#.to_string()),
+        );
+        installed.insert("dsh-missing".to_string(), None);
+        let got = assemble_plugin_entries(&manifest, &installed).unwrap();
+        let by_name = |n: &str| got.iter().find(|e| e.name == n).cloned().unwrap();
+        assert_eq!(by_name("@deepseek-ai/dsh-base").kind, PluginKind::Bundle);
+        assert_eq!(
+            by_name("@deepseek-ai/cordis").kind,
+            PluginKind::Bundle,
+            "官方内嵌包不作为外挂插件"
+        );
+        let pet = by_name("dsh-pet");
+        assert_eq!(pet.kind, PluginKind::Dependency);
+        assert_eq!(pet.installed_version.as_deref(), Some("0.3.17"));
+        assert_eq!(pet.description.as_deref(), Some("宠物"));
+        assert_eq!(pet.spec.as_deref(), Some("github:o/r#path:/p"));
+        let ghost = by_name("dsh-missing");
+        assert_eq!(ghost.installed_version, None);
+        assert_eq!(ghost.description, None);
+        // 损坏清单 → Err（与宿主实现同口径）
+        assert!(assemble_plugin_entries("not json", &installed).is_err());
+    }
+
+    /// patch 原文解析与宿主文件版同源（同一份 `patch_entry_map_text`）。
+    #[test]
+    fn patch_entry_map_text_is_shared_by_host_and_guest() {
+        let map = patch_entry_map_text("- id: a\n  disabled: true\n- id: a\n- id: b\n");
+        assert_eq!(map.get("a"), Some(&(true, 2)));
+        assert_eq!(map.get("b"), Some(&(false, 1)));
+        assert!(patch_entry_map_text("这不是序列").is_empty());
+        assert!(patch_entry_map_text("").is_empty());
     }
 
     #[test]
@@ -847,7 +1072,13 @@ fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (boo
     let Ok(text) = std::fs::read_to_string(patch_path) else {
         return Default::default();
     };
-    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+    patch_entry_map_text(&text)
+}
+
+/// patch **原文** → id -> (含 disabled:true, 条目数)（纯函数：本地读文件、客体读
+/// 原语共用同一份解析——ADR-0016 §3-A）。损坏/非序列 → 空表。
+fn patch_entry_map_text(text: &str) -> std::collections::BTreeMap<String, (bool, usize)> {
+    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(text) else {
         return Default::default();
     };
     let Some(seq) = v.as_sequence() else {
@@ -878,24 +1109,56 @@ fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (boo
 /// 复用创建链的 spawn 基建（同 env 注入与超时）。
 /// 2026-09-08 补丁包开关（ADR 第七次修订）：行表之外按依赖清单与 dump 段落
 /// 归属合成补丁包条目（见 [`build_row_states`]），一次 spawn 全量拿到。
-pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<PluginRowState>, String> {
+pub fn plugin_rows_blocking(
+    profile: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<Vec<PluginRowState>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let home = crate::resolve::user_dsh_home();
-    let manifest_path = home.join("profiles").join(profile).join("package.json");
-    if !manifest_path.is_file() {
-        return Err(format!("profile「{profile}」尚未初始化"));
-    }
-    let run = crate::profiles::run_toolchain_forward(
-        &crate::engines::resolve_toolchain(data_dir)?,
-        &[
-            "--profile".to_string(),
-            profile.to_string(),
-            "--dump-config".to_string(),
-        ],
-        &home,
-        &data_dir.join("plugin-rows.log"),
-        data_dir,
-    )?;
+    let args = [
+        "--profile".to_string(),
+        profile.to_string(),
+        "--dump-config".to_string(),
+    ];
+    let log_path = data_dir.join("plugin-rows.log");
+    let (run, manifest_text, patch) = match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            let dir = home.join("profiles").join(profile);
+            let manifest_path = dir.join("package.json");
+            if !manifest_path.is_file() {
+                return Err(format!("profile「{profile}」尚未初始化"));
+            }
+            let run = crate::profiles::run_toolchain_forward(
+                &crate::engines::resolve_toolchain(data_dir)?,
+                &args,
+                &home,
+                &log_path,
+                data_dir,
+            )?;
+            // 自家 patch（缺失/损坏 = 空表，同清单容忍口径）
+            let patch = patch_entry_map(&dir.join("cordis.patch.yml"));
+            (run, fs_err(&manifest_path)?, patch)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            // 客体批量读（一次往返）：清单 + 自家 patch（patch 缺失 = 空表，同宿主口径）
+            let rels = [
+                format!("profiles/{profile}/package.json"),
+                format!("profiles/{profile}/cordis.patch.yml"),
+            ];
+            let mut got = crate::guest::read_files(distro, &rels)?.into_iter();
+            let manifest = got.next().and_then(|(_, text)| text).ok_or_else(|| {
+                format!("profile「{profile}」尚未初始化（客体 {distro} 内无 package.json）")
+            })?;
+            let patch_text = got.next().and_then(|(_, text)| text);
+            let run = crate::profiles::run_dsh_cli_in_guest(distro, &args, &log_path)?;
+            (
+                run,
+                manifest,
+                patch_entry_map_text(patch_text.as_deref().unwrap_or("")),
+            )
+        }
+    };
     if run.timed_out || run.code != Some(0) {
         return Err(format!(
             "行表查询失败（dsh 退出码 {}）",
@@ -904,27 +1167,12 @@ pub fn plugin_rows_blocking(profile: &str, data_dir: &Path) -> Result<Vec<Plugin
                 .unwrap_or_else(|| "未知".into())
         ));
     }
-    let patch = patch_entry_map(&home.join("profiles").join(profile).join("cordis.patch.yml"));
-    let deps = manifest_dependency_names(&manifest_path)?;
+    let deps = dependency_names(&manifest_text)?;
     Ok(build_row_states(
         &parse_dump_rows_with_section(&run.output),
         &deps,
         &patch,
     ))
-}
-
-/// 读 manifest 的 dependencies 键（BTreeMap 字典序，与清单展示一致）。
-fn manifest_dependency_names(manifest_path: &Path) -> Result<Vec<String>, String> {
-    let text = fs_err(manifest_path)?;
-    let pkg: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
-    let mut names = Vec::new();
-    if let Some(deps) = pkg.get("dependencies").and_then(|v| v.as_object()) {
-        for name in deps.keys() {
-            names.push(name.clone());
-        }
-    }
-    Ok(names)
 }
 
 /// 读 patch 文件为 (头部注释块, 顶层数组条目)。头部 = 从首行起连续 `#` 行与其
@@ -1462,8 +1710,10 @@ pub fn copy_plugin_config_blocking(
             ));
         }
     }
-    // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）
-    let row_id = plugin_rows_blocking(source, data_dir)?
+    // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）。
+    // 本路径（配置复制，patch 写入例外 #4）尚未下沉客体——IPC 层在 WSL 世界
+    // 经 `mgmt::require_local` 先拒，故这里恒为本地世界（ADR-0016 §5-e）。
+    let row_id = plugin_rows_blocking(source, data_dir, &crate::mgmt::World::Local)?
         .into_iter()
         .find(|r| r.pkg_name == package)
         .map(|r| r.id)

@@ -411,7 +411,6 @@ pub fn run_toolchain_forward(
 /// 客体 shell 内拼装（PATH 准备与引用见 `crate::guest`）；且**不注入 `DSH_HOME`**
 /// ——世界由客体自己决定（ADR-0016 §2.6：管理面必须与运行中的会话同源）。
 #[cfg(windows)]
-#[expect(dead_code)] // 管理面择源未接线：ADR-0016 §5 行动项剩余清单 a–e（自清理闸门）
 pub(crate) fn run_dsh_cli_in_guest(
     distro: &str,
     args: &[String],
@@ -447,7 +446,6 @@ pub(crate) fn run_dsh_cli_in_guest(
 /// 世界择源）在**所有平台**都参与编译与 lint——否则 `#[cfg(windows)]` 之外的分支
 /// 永远不被检查（AGENTS §1「clippy 需逐目标各跑一次」的同源教训）。
 #[cfg(not(windows))]
-#[expect(dead_code)] // 同上：接线后本 expect 不再触发 → CI 报 unfulfilled 强制删除
 pub(crate) fn run_dsh_cli_in_guest(
     _distro: &str,
     _args: &[String],

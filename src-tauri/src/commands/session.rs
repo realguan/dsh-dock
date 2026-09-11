@@ -14,6 +14,7 @@ use tauri::Manager;
 pub async fn list_sessions(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::sessions::SessionItem>, String> {
+    crate::mgmt::require_local(&app, "会话列表")?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
@@ -31,6 +32,7 @@ pub async fn repair_session(
     app: tauri::AppHandle,
     session_path: String,
 ) -> Result<crate::sessions::RepairOutcome, String> {
+    crate::mgmt::require_local(&app, "单会话修复")?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
@@ -52,6 +54,7 @@ pub async fn repair_session(
 pub async fn repair_all_sessions(
     app: tauri::AppHandle,
 ) -> Result<crate::sessions::RepairOutcome, String> {
+    crate::mgmt::require_local(&app, "全量会话自愈")?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine_alive = {
         let state = app.state::<Arc<ShellState>>();
@@ -70,7 +73,8 @@ pub async fn repair_all_sessions(
 }
 /// 会话管理：删除指定会话（4.6）
 #[tauri::command]
-pub async fn delete_session(session_path: String) -> Result<(), String> {
+pub async fn delete_session(app: tauri::AppHandle, session_path: String) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "删除会话")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::sessions::remove_session(&home, &session_path)

@@ -179,9 +179,11 @@ pub(crate) fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> P
     runtime
 }
 
-/// 当前生效运行模式（托盘菜单 ✓ 用；仅非 macOS——macOS 菜单无「打开方式」）。
-/// 优先会话内 active_mode；回落已存默认；再回落 local。
-#[cfg(not(target_os = "macos"))]
+/// 当前生效运行模式。优先会话内 active_mode；回落已存默认；再回落 local。
+///
+/// 消费方：非 macOS 的托盘菜单勾选态（macOS 菜单无「打开方式」）与
+/// **全平台**的管理面世界择源（`mgmt::current_world`，ADR-0016 §5-a）——
+/// 后者是 macOS 也编译本函数的原因（不再按平台 cfg 掉）。
 pub(crate) fn current_active_mode(app: &tauri::AppHandle) -> crate::settings::Mode {
     if let Some(state) = app.try_state::<Arc<ShellState>>() {
         if let Some(m) = *state.active_mode.lock().unwrap() {

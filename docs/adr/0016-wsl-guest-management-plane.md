@@ -142,29 +142,45 @@ profile 创建必需 dsh CLI，宿主引擎按设计在 WSL 模式永不就绪 �
 ### 行动项
 
 - [ ] **P0**（不等待其余分期）：WSL 模式下管理动作的诚实错误面——文案 + 去掉死路重试；含单测。
+      **落地（2026-09-11，第二批 e）**：`mgmt::require_local` 统一守卫；禁语回归闸门见 `mgmt.rs` 单测。
 - [ ] 本 ADR 评审通过（维护者）——P1 开工前置。
 - [ ] **P1**：`guest` 原语（读 / CLI）+ 「home 源」seam + `plugins.rs` 三处调用点择源；
       测试：原语拼装与解析为纯函数（宿主可测）、模式择源单测；`#[cfg(windows)]` 分叉；
       WSL 实机清单条目补 `docs/executor.md`。
-      **落地进度（2026-09-11）**：第一批已完成——
-      ① `src-tauri/src/guest.rs`：`read_files`（一次 `wsl.exe` 读多份文件，base64 单行帧）、
-      `run_script_to_log`（经 `lifecycle::Role::DshCli`）、`dsh_cli_script`、`base64_decode`、
-      帧解析；`guest_prep!`/`sh_quote` 自 `executor.rs` 迁入成唯一源。
-      ② `executor.rs`：`wsl_command`/`run_wsl_capture` 提 `pub(crate)`；`Executor::target_distro()`
-      默认方法 + `WslExecutor` 实现。③ `profiles.rs`：`run_dsh_cli_in_guest`（与本地
-      `run_dsh_forward` 契约逐项对齐、不注入 `DSH_HOME`）+ 非 Windows 孪生。④ `boot.rs`/`lib.rs`：
-      `ShellState.active_wsl_distro`，probe 成功后记录实际选中发行版。
-      **剩余（未接线，故 `pub(crate)` 未使用项会被 `dead_code` 判红——推 CI 前必须先做完）**：
-      a) 新建 `mgmt.rs` 世界择源（`ui::current_active_mode` + `active_wsl_distro` → `Local`/`Wsl{distro}`，
-         **绝不回落 Local**）；
-      b) `commands/plugin.rs` 三个命令入口（`install_plugin`/`remove_plugin`/`update_plugin` 与
-         `get_plugin_rows`/`list_profile_plugins`）解析世界并下传；
-      c) `plugins.rs` 三处择源：`mutate_plugin_blocking`（CLI → `run_dsh_cli_in_guest`）、
-         `plugin_rows_blocking`（CLI + 客体读 `cordis.patch.yml`）、`list_profile_plugins`
-         （客体批量读 `package.json` + 各依赖 `node_modules/<pkg>/package.json`，复用既有纯解析）；
-      d) 客体侧单键写入 `dangerouslyAllowAllBuilds`（见 §4 范围修正）；
-      e) P0 诚实兜底：其余管理命令（profile CRUD / 会话 / 控制台各面板 / `set_plugin_disabled` /
-         `copy_plugin_config` / 聚合总览）在 WSL 模式统一返回「暂不支持 + 替代路径」，并去掉死路重试。
+      **落地进度（2026-09-11）**：
+      ① **第一批（原语地基，commit `655e216`，PR CI 三平台绿）**：`src-tauri/src/guest.rs`
+      （`read_files` 一次 `wsl.exe` 读多份文件、base64 单行帧；`run_script_to_log` 经
+      `lifecycle::Role::DshCli`；`dsh_cli_script`；`base64_decode`；帧解析。`guest_prep!`/`sh_quote`
+      自 `executor.rs` 迁入成唯一源）；`executor.rs` 的 `wsl_command`/`run_wsl_capture` 提
+      `pub(crate)`、`Executor::target_distro()` 默认方法 + `WslExecutor` 实现；`profiles.rs` 的
+      `run_dsh_cli_in_guest`（与本地 `run_dsh_forward` 契约逐项对齐、不注入 `DSH_HOME`）+ 非
+      Windows 孪生；`boot.rs`/`lib.rs` 的 `ShellState.active_wsl_distro`（probe 成功后记录实际选中值）。
+      ② **第二批（a–e 接线，2026-09-11）**：
+      a) `src-tauri/src/mgmt.rs`：世界择源（`ui::current_active_mode` + `active_wsl_distro` →
+      `Local`/`Wsl{distro}`，**绝不回落 Local**：模式为 WSL 而无发行版即报错）。纯内核
+      `world_from(mode, distro, windows)` + 单测；`ui::current_active_mode` 去掉 macOS `cfg`
+      （管理面全平台消费）。
+      b) `commands/plugin.rs`：`install_plugin`/`remove_plugin`/`update_plugin`/`get_plugin_rows`/
+      `list_profile_plugins` 在命令入口解析世界并下传（`List` 类命令新增 `app` 注入参数，前端无感）。
+      c) `plugins.rs` 三处择源：`mutate_plugin_blocking`、`plugin_rows_blocking`、
+      `list_profile_plugins`（客体档 = `list_profile_plugins_in_guest`：先读清单拿依赖名，再一次
+      批量读各 `node_modules/<pkg>/package.json`）。解析/装配全部抽成**两侧共用的纯函数**
+      （`assemble_plugin_entries`／`installed_info`／`dependency_names`／`patch_entry_map_text`／
+      `classify_op_outcome`），**零第二实现**。客体读路径全部相对**客体 dsh home**
+      （`guest::HOME_EXPR` = `${DSH_HOME:-$HOME/.dsh}`，与客体 dsh 自身解析同源）。
+      d) **客体侧单键写入**（§4 范围修正）：`build_policy::ensure_profile_build_policy_in_guest(_best_effort)`
+      复用同一纯函数 `ensure_allow_all_builds`；客体写原语 `guest::write_home_files`（base64 载荷内嵌
+      → 客体侧 `base64 -d` 落同目录临时文件 → `mv` 原子替换；父目录不存在即失败，**不代 dsh 生成
+      profile 目录**；单次写上限 8 KiB 超限拒绝而非截断）。
+      e) **P0 诚实兜底**：`mgmt::require_local` 覆盖 profile 列表/详情/CRUD/默认档、会话四命令、
+      控制台（凭据 · DSH 设置 · MCP · 系统诊断）、`set_plugin_disabled`、`copy_plugin_config`、
+      `list_all_plugins`、`check_plugin_updates`；文案 = 原因 + 替代路径（指向客体终端里的 dsh 或
+      切回本地模式），禁语（"请先启动应用完成引擎引导后重试"）有单测闸门。第一批的
+      `#[expect(dead_code)]` 自清理闸门已按要求删除（接线后不再触发）。
+      **接线后仍未下沉（属 P2/P3；WSL 世界经 P0 守卫诚实拒绝）**：profile 列表/详情/CRUD、
+      会话维护、控制台只读面板、插件开关与配置复制、更新检查、聚合总览。
+      **已知边界（登记待办）**：`switch_profile` 的 webUi 候选校验仍读宿主 home——控制中心在
+      WSL 模式已无 profile 列表（P0 守卫），该路径在 WSL 世界不可达；profile 列表下沉时一并改按世界择源。
 - [ ] **P2**：profile 生命周期下沉（逐条对齐 ADR-0009 的文件不变量与写入例外册）。
 - [ ] **P3**：只读控制台下沉。
 - [ ] 文档同步：AGENTS §7 登记本次客体管理面用途；`docs/contracts/` 增子契约（客体管理面原语与不变量）；

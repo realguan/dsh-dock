@@ -1053,34 +1053,6 @@ fn wsl_unc_path(distro: &str, guest_path: &str) -> String {
     format!(r"\\wsl$\{distro}{guest_path}")
 }
 
-/// 标准 base64 编码（投递兜底通道用——不为此引第三方依赖，AGENTS §4.2）。
-#[cfg(any(windows, test))]
-fn base64_encode(data: &[u8]) -> String {
-    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        out.push(TBL[(n >> 18) as usize & 63] as char);
-        out.push(TBL[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            TBL[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TBL[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
 /// 投递捆绑 pnpm 到客体内暂存路径：`\\wsl$` 文件拷贝为主通道（带体积复核），
 /// 失败转 base64 stdin 兜底（spike ④ 两通道均实测 32MB 完整）。
 #[cfg(windows)]
@@ -1133,7 +1105,7 @@ fn deliver_via_stdin(distro: &str, bundle: &Path, expect: u64) -> Result<(), Str
     .map_err(|e| format!("wsl.exe 启动失败：{e}"))?;
     {
         let mut sin = child.stdin.take().ok_or("wsl.exe stdin 不可用")?;
-        sin.write_all(base64_encode(&bytes).as_bytes())
+        sin.write_all(crate::guest::base64_encode(&bytes).as_bytes())
             .map_err(|e| format!("stdin 写入失败：{e}"))?;
     }
     let status = child.wait().map_err(|e| format!("wsl.exe 等待失败：{e}"))?;
@@ -1340,17 +1312,6 @@ Windows Subsystem for Linux Distributions:
         assert!(classify_guest_probe("").is_none());
         assert!(classify_guest_probe("bash: warning: ...\n").is_none());
         assert!(classify_guest_probe("     ").is_none());
-    }
-
-    #[test]
-    fn base64_encode_matches_rfc4648_vectors() {
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
-        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     }
 
     #[test]

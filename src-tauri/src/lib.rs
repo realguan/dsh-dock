@@ -27,6 +27,7 @@ pub mod ipc;
 mod lifecycle;
 mod manifest;
 mod mcp;
+mod mgmt;
 mod plugins;
 mod profiles;
 mod resolve;

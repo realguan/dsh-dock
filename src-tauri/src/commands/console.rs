@@ -3,6 +3,12 @@
 //! 本层只做「参数校验 + 数据目录定位 + 阻塞动作下沉 spawn_blocking」，
 //! 业务实现全在对应域模块（profiles/plugins/sessions/settings/…）。
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
+//!
+//! **世界择源（ADR-0016 §5-e）**：凡按**宿主 dsh home** 读写的面板（凭据 /
+//! DSH 设置 / MCP / 系统诊断）在 WSL 模式下操作的不是运行中的那份 home——
+//! 一律经 `mgmt::require_local` 报「暂不支持 + 替代路径」（客体读原语版属 P3）。
+//! 例外：`get_shell_settings`/`set_shell_settings`（壳自身设置，存 app_data）与
+//! `get_app_logs`（源主要是壳自己的日志）与运行世界无关，不设闸。
 
 use tauri::Manager;
 
@@ -29,6 +35,7 @@ pub fn set_shell_settings(
 pub async fn get_system_diagnostics(
     app: tauri::AppHandle,
 ) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
+    crate::mgmt::require_local(&app, "系统诊断")?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
@@ -54,7 +61,8 @@ pub async fn get_app_logs(
 }
 /// 凭据管理：读取 .credentials.yaml 原文（4.5）
 #[tauri::command]
-pub async fn get_credentials_raw() -> Result<String, String> {
+pub async fn get_credentials_raw(app: tauri::AppHandle) -> Result<String, String> {
+    crate::mgmt::require_local(&app, "凭据读取")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::credentials::read_credentials(&home)
@@ -64,7 +72,8 @@ pub async fn get_credentials_raw() -> Result<String, String> {
 }
 /// 凭据管理：保存 .credentials.yaml 原文（4.5，严格 0600 权限与原子写）
 #[tauri::command]
-pub async fn save_credentials_raw(content: String) -> Result<(), String> {
+pub async fn save_credentials_raw(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "凭据保存")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::credentials::overwrite_credentials(&home, &content)
@@ -75,7 +84,9 @@ pub async fn save_credentials_raw(content: String) -> Result<(), String> {
 /// 凭据管理：获取脱敏后的凭据摘要列表（4.5）
 #[tauri::command]
 pub async fn get_credentials_summary(
+    app: tauri::AppHandle,
 ) -> Result<Vec<crate::credentials::CredentialSummaryItem>, String> {
+    crate::mgmt::require_local(&app, "凭据摘要")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::credentials::get_credentials_summary(&home)
@@ -85,7 +96,12 @@ pub async fn get_credentials_summary(
 }
 /// 凭据管理：针对指定 Provider 设置 API Key（4.5）
 #[tauri::command]
-pub async fn set_credential_key(provider: String, key: String) -> Result<(), String> {
+pub async fn set_credential_key(
+    app: tauri::AppHandle,
+    provider: String,
+    key: String,
+) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "设置 Provider 凭据")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::credentials::set_provider_key(&home, &provider, &key)
@@ -95,7 +111,8 @@ pub async fn set_credential_key(provider: String, key: String) -> Result<(), Str
 }
 /// DSH 引擎设置：读取 settings.yaml 原文（4.5）
 #[tauri::command]
-pub async fn get_dsh_settings_raw() -> Result<String, String> {
+pub async fn get_dsh_settings_raw(app: tauri::AppHandle) -> Result<String, String> {
+    crate::mgmt::require_local(&app, "DSH 设置读取")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::dsh_settings::read_dsh_settings(&home)
@@ -105,7 +122,8 @@ pub async fn get_dsh_settings_raw() -> Result<String, String> {
 }
 /// DSH 引擎设置：保存 settings.yaml 原文（4.5）
 #[tauri::command]
-pub async fn save_dsh_settings_raw(content: String) -> Result<(), String> {
+pub async fn save_dsh_settings_raw(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "DSH 设置保存")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::dsh_settings::overwrite_dsh_settings(&home, &content)
@@ -115,7 +133,11 @@ pub async fn save_dsh_settings_raw(content: String) -> Result<(), String> {
 }
 /// MCP 管理：获取指定 profile 的 MCP 服务列表（4.7）
 #[tauri::command]
-pub async fn list_mcp_servers(profile: String) -> Result<Vec<crate::mcp::McpServerConfig>, String> {
+pub async fn list_mcp_servers(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<Vec<crate::mcp::McpServerConfig>, String> {
+    crate::mgmt::require_local(&app, "MCP 服务列表")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::mcp::list_mcp_servers(&home, &profile)
@@ -126,9 +148,11 @@ pub async fn list_mcp_servers(profile: String) -> Result<Vec<crate::mcp::McpServ
 /// MCP 管理：保存或更新单个 MCP 服务（4.7）
 #[tauri::command]
 pub async fn save_mcp_server(
+    app: tauri::AppHandle,
     profile: String,
     server: crate::mcp::McpServerConfig,
 ) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "保存 MCP 服务")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::mcp::save_mcp_server(&home, &profile, server)
@@ -138,7 +162,12 @@ pub async fn save_mcp_server(
 }
 /// MCP 管理：删除指定 MCP 服务（4.7）
 #[tauri::command]
-pub async fn delete_mcp_server(profile: String, server_name: String) -> Result<(), String> {
+pub async fn delete_mcp_server(
+    app: tauri::AppHandle,
+    profile: String,
+    server_name: String,
+) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "删除 MCP 服务")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::mcp::delete_mcp_server(&home, &profile, &server_name)

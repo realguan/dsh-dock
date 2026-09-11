@@ -11,13 +11,23 @@ use tauri::Manager;
 
 /// 插件清单（4.4①，Spike B 方案）：静态清单 = bundles（官方内置）+
 /// dependencies（第三方，含已装版本/描述）。阻塞文件操作走 spawn_blocking。
+///
+/// 世界择源（ADR-0016 §5-b/c）：本地 = 宿主 home 直读；WSL 客体 = 客体读原语
+/// 批量取原文，解析复用同一份纯装配函数。**绝不回落本地**（`current_world` 失败即报错）。
 #[tauri::command]
 pub async fn list_profile_plugins(
+    app: tauri::AppHandle,
     profile: String,
 ) -> Result<Vec<crate::plugins::PluginEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
-        crate::plugins::list_profile_plugins(&home, &profile)
+    let world = crate::mgmt::current_world(&app)?;
+    tauri::async_runtime::spawn_blocking(move || match world {
+        crate::mgmt::World::Local => {
+            let home = crate::resolve::user_dsh_home();
+            crate::plugins::list_profile_plugins(&home, &profile)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::plugins::list_profile_plugins_in_guest(&distro, &profile)
+        }
     })
     .await
     .map_err(|e| format!("清单任务异常终止：{e}"))?
@@ -63,6 +73,9 @@ pub async fn get_plugin_runtime(
 /// 安装/卸载/更新插件（4.4②）：`dsh plugin --profile <名> add/remove/update`
 /// 转发链（复用创建刀基建，pnpm 防御补齐同源）；阻塞转发走 spawn_blocking，
 /// 超时同创建 600s。ok=false 时 detail 带输出尾部，前端按警示态展示。
+///
+/// 世界择源（ADR-0016 §5-b）：本地 = 宿主引擎 + 宿主 home；WSL 客体 = 客体
+/// `dsh` CLI（同一条链路的客体孪生，网络发生在客体进程内，ADR-0004 §7）。
 #[tauri::command]
 pub async fn install_plugin(
     app: tauri::AppHandle,
@@ -73,12 +86,14 @@ pub async fn install_plugin(
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Install,
             &profile,
             &package,
             &data_dir,
+            &world,
         )
     })
     .await
@@ -94,12 +109,14 @@ pub async fn remove_plugin(
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Remove,
             &profile,
             &package,
             &data_dir,
+            &world,
         )
     })
     .await
@@ -115,12 +132,14 @@ pub async fn update_plugin(
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Update,
             &profile,
             &package,
             &data_dir,
+            &world,
         )
     })
     .await
@@ -128,7 +147,7 @@ pub async fn update_plugin(
 }
 /// 插件行表（4.4③）：`dsh --profile <名> --dump-config` 行 id↔包名配对 +
 /// 壳 patch toggle 态——行 id 不可从包名推导（ADR-0009 第四次修订），一次
-/// spawn 全量拿到。阻塞 spawn 走 spawn_blocking。
+/// spawn 全量拿到。阻塞 spawn 走 spawn_blocking。世界择源同插件清单。
 #[tauri::command]
 pub async fn get_plugin_rows(
     app: tauri::AppHandle,
@@ -138,20 +157,25 @@ pub async fn get_plugin_rows(
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::plugin_rows_blocking(&profile, &data_dir)
+        crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)
     })
     .await
     .map_err(|e| format!("行表任务异常终止：{e}"))?
 }
 /// 禁用/启用切换（4.4③）：patch 写入例外 #3（`{id, disabled}` 单键，
 /// ADR-0009 第四次修订）；运行中会话不热生效，重启承接。
+///
+/// P0 诚实兜底（ADR-0016 §5-e）：本动作尚未下沉客体（P1 只含装卸/行/清单）。
 #[tauri::command]
 pub async fn set_plugin_disabled(
+    app: tauri::AppHandle,
     profile: String,
     row_id: String,
     disabled: bool,
 ) -> Result<(), String> {
+    crate::mgmt::require_local(&app, "插件启用/禁用")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
@@ -161,10 +185,15 @@ pub async fn set_plugin_disabled(
 }
 /// 更新检查（4.4④）：逐外挂插件查 registry dist-tags.latest（外网经
 /// `updates.rs` 镜像链，§7 已登记）；串行阻塞走 spawn_blocking，按钮触发。
+///
+/// P0 诚实兜底（ADR-0016 §5-e）：本动作按**宿主** home 的已装版本比对 registry
+/// ——WSL 模式下那是错的世界，故先拒（P1 不含更新检查）。
 #[tauri::command]
 pub async fn check_plugin_updates(
+    app: tauri::AppHandle,
     profile: String,
 ) -> Result<crate::plugins::PluginUpdateReport, String> {
+    crate::mgmt::require_local(&app, "插件更新检查")?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
         crate::plugins::check_updates_blocking(&home, &profile)
@@ -173,6 +202,7 @@ pub async fn check_plugin_updates(
     .map_err(|e| format!("更新检查任务异常终止：{e}"))?
 }
 /// 版本列表（选版本更新，4.4④）：降序最新在前；外网同镜像链。
+/// 纯 registry 查询（不读任何 home）→ 与运行世界无关，无需择源。
 #[tauri::command]
 pub async fn list_plugin_versions(package: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || crate::plugins::plugin_versions_blocking(&package))
@@ -181,8 +211,14 @@ pub async fn list_plugin_versions(package: String) -> Result<Vec<String>, String
 }
 /// 插件总览聚合（4.4④ 收口，ADR-0009 第五次修订）：全部已物化 profile 的第
 /// 三方插件按包名归组。只读纯文件扫描（零 dsh 子进程、零网络），spawn_blocking。
+///
+/// P0 诚实兜底（ADR-0016 §5-e）：聚合按**宿主** home 全部 profile 扫描——WSL
+/// 模式下那是错的世界（ADR-0016 §2.6）。
 #[tauri::command]
-pub async fn list_all_plugins() -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
+pub async fn list_all_plugins(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
+    crate::mgmt::require_local(&app, "插件总览聚合")?;
     tauri::async_runtime::spawn_blocking(move || {
         Ok(crate::plugins::aggregate_plugins_blocking(
             &crate::resolve::user_dsh_home(),
@@ -195,6 +231,8 @@ pub async fn list_all_plugins() -> Result<Vec<crate::plugins::AggregatePlugin>, 
 /// 来源 patch 中该插件行 id 的全部条目 → 追加到目标 patch（只追加不覆盖，
 /// 目标已有同 id 条目则零写入 skipped）。dump-config spawn + 文件操作走
 /// spawn_blocking。
+///
+/// P0 诚实兜底（ADR-0016 §5-e）：patch 写属文件级动作，尚未下沉客体。
 #[tauri::command]
 pub async fn copy_plugin_config(
     app: tauri::AppHandle,
@@ -202,6 +240,7 @@ pub async fn copy_plugin_config(
     target: String,
     package: String,
 ) -> Result<crate::plugins::CopyConfigOutcome, String> {
+    crate::mgmt::require_local(&app, "插件配置复制")?;
     let data_dir = app
         .path()
         .app_data_dir()
