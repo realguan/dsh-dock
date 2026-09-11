@@ -141,8 +141,8 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
 
 ## 验证状态
 
-- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（241 tests，
-  2026-09-10）。
+- macOS 主机编译 + `x86_64-pc-windows-gnu` 交叉编译 + `cargo test` 全绿（285 tests，
+  2026-09-10；含 ADR-0015 子进程生命周期与 v1.1.0 Windows 修复两批）。
 - **Windows 实机未验**：WSL 运行时行为（`wsl -l -v` 实机输出、localhost 转发、
   stop 标志 teardown、rc source）需按 ADR-0004 的执行要求验证。
   shell.log / dsh-wsl.log 位于 `%APPDATA%\io.github.realguan.dsh-dock\`。
@@ -151,3 +151,77 @@ local 与 wsl 在 **Windows** 上**同等地位**（`settings.rs` + `executor_fo
   收口——重启后 `tasklist | findstr node` 不得残留旧 dsh（旧实现只杀 `cmd.exe` 壳层）；
   ③ 双击重启 / 重启与模式切换撞车，只允许一个新 dsh 起来；④ WSL 客体重启后
   `ps aux | grep dsh` 无残留。
+
+### Windows 实机验证清单 · v1.1.0 实测问题修复（2026-09-10，**待跑**）
+
+> 背景与逐项根因见 `docs/known-issues/v110-测试问题定位.md`（本地台账，不入库）。
+> 维护者只有 macOS 实机，本节是**照着粘贴即可**的 Windows 验收流程。
+> **重要**：Windows CI runner 以管理员上下文运行，符号链接特权天然可用——
+> 这条路径**只有普通权限实机能暴露**，CI 结构性覆盖不到（见 §"为什么 CI 没拦住"）。
+
+**前置（一次性）**：Rust stable + Git for Windows（提供 bash/curl）+ node。
+在仓库根用 **Git Bash** 执行：
+
+```bash
+scripts/fetch-pnpm-bundle.sh win32-x64 linux-x64   # 宿主份 + WSL 客体份
+```
+
+**A. 引擎引导免符号链接（对应实测 1.2 / 1.4 / 1.7，最关键的根因）**
+
+务必在**未开启开发者模式、非管理员**的账户下跑（这是能复现旧 bug 的唯一条件）：
+
+```bash
+cd src-tauri
+cargo test --lib engine_bootstrap_uses_symlink_free_layout -- --ignored --nocapture
+```
+
+- 期望：`ok`，且过程中 `%TEMP%` 下新建的引擎目录里 `node_modules
+ode` 是**真实目录**
+  （不是 symlink），`pnpm-workspace.yaml` 含 `nodeLinker: hoisted`。
+- 旧实现（未修）在此环境会以 `Failed to create symlink … 拒绝访问 (os error 5)` 失败。
+- **注意**：该用例在缺少捆绑 pnpm 时会**硬失败**并提示 fetch 命令（刻意不静默跳过，
+  防"绿了但什么都没测"）。
+
+**B. 真机启动（覆盖 1.3 白窗 / 1.6 死端口 / 2.0 落位——这三条只有真机能验）**
+
+```bash
+cd frontend && pnpm install --frozen-lockfile && pnpm run build && cd ..
+cd src-tauri && cargo tauri build        # ← 必须 release
+```
+
+> [!IMPORTANT]
+> **B 必须用 release 构建，不能用 `cargo build`（debug）**：debug 构建的
+> `cfg!(dev)` 为真，`shell_app_url()` 按设计返回 dev 服务器地址、`WebviewUrl::App`
+> 也指向 `devUrl`——**1.6 的修复在 debug 下根本不走那条分支**，且不启 Vite 时页面
+> 本身就是连不上的（那样"复现"到的是 dev 语义，不是 bug）。只有 release 才真正
+> 检验"正式包不得落到 dev 端口"。
+> （A 的引擎引导用例是直接函数调用，debug/release 皆可。）
+
+装好后逐项：
+
+| # | 操作 | 期望 | 覆盖 |
+|:--|:---|:---|:---|
+| B1 | 首启（干净数据目录） | 引导完成后健康大盘**三卡全"就绪"**；关于页 DSH 有版本号（非"未检出"） | 1.2 / 1.4 / 1.7 |
+| B2 | 从**工作台悬浮胶囊**点「控制中心」 | 1s 内出界面、**可关闭**、不卡死（托盘点同一入口本就正常） | 1.3 |
+| B3 | 切 profile / 切运行模式 / 重启 | 全程**不出现** `localhost 拒绝连接`（旧版会闪 ERR_CONNECTION_REFUSED） | 1.6 |
+| B4 | 任务管理器**强制结束**应用 → 重新启动 | 不再卡「引擎引导失败：落位 …enginesin\pnpm.exe」 | 2.0 |
+| B5 | 关于页 Node 行 | 未装时显示「未安装（计划 vX）」，**不得**把计划版本显示成已装 | 1.2 追问 |
+| B6 | WSL 模式引导提示 | 版本号形如 `node v24.18.0`，**不得**出现 `vv24.18.0` | 1.1a |
+| B7 | 点「查看启动详情」后 | **有收起出口**（旧版在 WSL 路径下点了就回不去） | 1.1b |
+
+**C. 孤儿收口（ADR-0015 硬杀路径，Windows 侧走 Job Object）**
+
+```bash
+# 应用运行中（dsh 已起），用任务管理器强制结束 DSH Dock
+tasklist | findstr /i "node dsh"      # 期望：无残留 dsh/node 进程
+```
+
+- 期望：壳被强杀后其 dsh **随之消失**（Job Object `KILL_ON_JOB_CLOSE`，内核保证）。
+- 若仍有残留：查 `%APPDATA%\io.github.realguan.dsh-dock\shell.log` 的
+  `AssignProcessToJobObject 失败` 警告（属 ADR-0015 §5 已登记边界，会降级为
+  启动期清扫兜底），并把日志附回。
+
+**D. 回归面**：WSL 模式按 ADR-0004 既有清单（上文）。
+
+> 跑完请把 B1–B7 的实际结果与任何 `shell.log` 异常回填到本节的表里（或广播），
+> 未跑项保持"待跑"——**不许把没跑过的写成已验证**。

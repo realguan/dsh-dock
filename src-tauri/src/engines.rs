@@ -1259,10 +1259,22 @@ mod tests {
             } else {
                 "linux-x64.tgz"
             });
-        if !bundle.is_file() {
-            eprintln!("跳过：捆绑 pnpm 不存在（{}）", bundle.display());
-            return;
-        }
+        // **不得静默跳过**（2026-09-10）：本用例是 Windows 免符号链接修复的
+        // 验收锚，而它的前置（捆绑 pnpm）是一个**明确的构建产物**——不是环境
+        // 偶然。若这里 return，验证者会看到"绿"却什么都没测（假绿），正是这次
+        // 要防的事。故硬失败并给出可行动指令。
+        assert!(
+            bundle.is_file(),
+            "缺少捆绑 pnpm：{}——请先在仓库根执行\n  \
+             scripts/fetch-pnpm-bundle.sh {} linux-x64\n\
+             （Windows 上于 Git Bash 运行；需 node + curl）",
+            bundle.display(),
+            if cfg!(windows) {
+                "win32-x64"
+            } else {
+                "darwin-arm64"
+            }
+        );
         crate::lifecycle::init(&data_dir);
         let outcome = bootstrap(
             &data_dir,
