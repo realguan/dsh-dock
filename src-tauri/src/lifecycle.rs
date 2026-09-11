@@ -885,7 +885,16 @@ fn reap_pid(pid: u32, role: Role) -> Result<(), String> {
         role.as_str()
     );
     let args: Vec<String> = vec!["/PID".into(), pid.to_string(), "/T".into(), "/F".into()];
-    let mut cmd = Command::new("taskkill");
+    // 2026-09-11 修（task-30）：原为裸 `Command::new("taskkill")`，违 AGENTS §4.1——
+    // GUI 进程裸起控制台程序**会闪黑窗**，且丢掉 `.cmd/.bat` 包装；对照 `shell.rs:246`
+    // 的**同一动作**本来就走了 `crate::child_cmd`，两处不一致。`child_cmd` 定义在
+    // crate 根（`lib.rs:68`），子模块调用**不成环**。
+    // 纪律：此处**不得**改调 `crate::shell::*`——`shell.rs:101` 已依赖本模块，
+    // 反向依赖会成模块环，并破坏「`lifecycle` 是零 `crate::` 依赖的叶模块」这一
+    // 单向性前提（该前提是 spawn 闸门把本文件纳入扫描面的地基）。
+    // 注：`/PID /T /F` 的参数构造仍留在本地，与 `shell::windows_kill_args` 的合并
+    // 属独立意图（task-29 §3.2 选项 A 已记，由 lead 另派）。
+    let mut cmd = crate::child_cmd(Path::new("taskkill"));
     cmd.args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -1425,18 +1434,361 @@ mod tests {
 
     // ---------- 闸门：生产路径不得绕过 seam（契约 §3.4 / AGENTS §4.1） ----------
 
+    /// **spawn 闸门的条目级豁免（集中表）** —— 2026-09-11（task-30）。
+    ///
+    /// 为什么是「条目级」而不是「整文件排除」：本文件**自己曾经不在闸门扫描面里**
+    /// （`SOURCES` 漏了 seam 的属主文件），于是 `reap_pid` 的裸 `Command::new("taskkill")`
+    /// 绕过 AGENTS §4.1 而**机器完全看不见**（task-29 诊断发现、task-30 修复）。
+    /// 整文件排除正是那个盲区的成因——把「这个文件可以随便来」换成
+    /// 「**这几个函数是 seam 本体，该文件其余部分一律照扫**」。
+    ///
+    /// `hits` = 摘掉本条豁免后**应当恰好报出**的违规行数。它一次钉死两件事：
+    /// - 非空 ⇒ 该条目**仍在使用**（不是腐化的空条目）；
+    /// - 恰好 ⇒ 豁免区间**没有过宽**（扩大到邻接函数会让计数变大）。
+    ///
+    /// 由 `spawn_gate_exemptions_are_live` 断言，由 `reason` / `date` 保证可解释
+    /// （`spawn_gate_exemption_entries_are_well_formed`）。
+    #[derive(Clone)]
+    struct SpawnExemption {
+        file: &'static str,
+        /// 函数名（`fn <item>`）。方法亦可（如 `Lifeline::launch` → `"launch"`）。
+        item: &'static str,
+        /// 摘掉本条后应报出的行数（精确值，见上）。
+        hits: usize,
+        /// 为什么它**必须**绕过 seam（每条都要能被「这个函数就是 seam 本体」论证）。
+        reason: &'static str,
+        date: &'static str,
+    }
+
+    const SPAWN_EXEMPTIONS: &[SpawnExemption] = &[
+        SpawnExemption {
+            file: "src/lifecycle.rs",
+            item: "spawn",
+            hits: 3,
+            reason: "seam 本体：守卫式 spawn 的唯一实现（两处降级早退 + 主路径各一）",
+            date: "2026-09-11",
+        },
+        SpawnExemption {
+            file: "src/lifecycle.rs",
+            item: "run",
+            hits: 1,
+            reason:
+                "seam 本体：`Command::output()` 的守卫版（`wait_with_output()` 是它的等待动作）",
+            date: "2026-09-11",
+        },
+        SpawnExemption {
+            file: "src/lifecycle.rs",
+            item: "launch",
+            hits: 1,
+            reason: "生命线 watcher（`Lifeline::launch`）**必须**不经 seam：它的职责正是\
+                     壳死收口子进程，若被登记/守卫，清扫会把 watcher 自己当孤儿收掉",
+            date: "2026-09-11",
+        },
+        SpawnExemption {
+            file: "src/lifecycle.rs",
+            item: "reap_pid",
+            hits: 1,
+            reason: "清扫器本体：`taskkill` 回退路径**不能**经 seam（清扫在启动早期运行，\
+                     再登记一层只会制造自指）；已改走 `crate::child_cmd` 满足 AGENTS §4.1",
+            date: "2026-09-11",
+        },
+    ];
+
+    /// 原始字符串起始判定，返回 `(井号个数, 引导字节数)`（引导含开启引号本身）。
+    ///
+    /// **识符检查必须在推进下标之前**（2026-09-11 自测发现的一个真 bug）：首版先
+    /// `p += 1`（跳过 `b`）再判 `!is_ident(b[p-1])`，于是 `br"…"` 的 `b[p-1]` 恰是
+    /// 那个 `b` 本身 → 判据恒假 → **字节原始字符串从未被识别**，其内部花括号会被
+    /// 当成结构字符，可能算错函数区间（偏大即静默漏报）。修法与 `network_gate.rs`
+    /// 同构：先看 `b[i-1]` 再决定是否推进。
+    fn raw_string_start(b: &[u8], i: usize) -> Option<(usize, usize)> {
+        let n = b.len();
+        if i > 0 && is_ident_byte(b[i - 1]) {
+            return None;
+        }
+        let mut p = i;
+        if b[p] == b'b' {
+            p += 1;
+            if p >= n || b[p] != b'r' {
+                return None;
+            }
+        } else if b[p] != b'r' {
+            return None;
+        }
+        p += 1;
+        let mut hashes = 0usize;
+        while p < n && b[p] == b'#' {
+            hashes += 1;
+            p += 1;
+        }
+        (p < n && b[p] == b'"').then_some((hashes, p - i + 1))
+    }
+
+    fn is_ident_byte(c: u8) -> bool {
+        c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+    }
+
+    /// 词法掩码：`true` = 该**字节**是参与花括号配对的代码（注释与字面量置 false）。
+    ///
+    /// 为什么需要：函数体边界靠花括号计数，而 `"}"`（字面量）与 `// }`（注释）里的
+    /// 花括号**不是结构**。被骗到的后果不对称——区间偏小 → 误报（可见红，可接受）；
+    /// 区间偏大 → **吞掉邻接函数的违规**（静默漏报，正是本缺陷的成因形态）。故按字节做词法。
+    ///
+    /// 手写状态机（不引依赖，AGENTS §5）：行注释 / **可嵌套**块注释 / 普通与字节字符串 /
+    /// 原始字符串（`r"…"`、`r#"…"#`、`br"…"`）/ 字符字面量，并区分字符字面量与生命周期
+    /// （`'a` 是代码，`'}'` 是字面量）。
+    fn structural_bytes(text: &str) -> Vec<bool> {
+        let b = text.as_bytes();
+        let n = b.len();
+        let mut m = vec![true; n];
+        let mut i = 0usize;
+        while i < n {
+            let c = b[i];
+            // 行注释
+            if c == b'/' && i + 1 < n && b[i + 1] == b'/' {
+                while i < n && b[i] != b'\n' {
+                    m[i] = false;
+                    i += 1;
+                }
+                continue;
+            }
+            // 块注释（可嵌套）
+            if c == b'/' && i + 1 < n && b[i + 1] == b'*' {
+                let mut depth = 1usize;
+                m[i] = false;
+                m[i + 1] = false;
+                i += 2;
+                while i < n && depth > 0 {
+                    if b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' {
+                        m[i] = false;
+                        m[i + 1] = false;
+                        depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
+                        m[i] = false;
+                        m[i + 1] = false;
+                        depth -= 1;
+                        i += 2;
+                        continue;
+                    }
+                    m[i] = false;
+                    i += 1;
+                }
+                continue;
+            }
+            // 原始字符串（`r"…"` / `r#…#"` / `br"…"`）
+            if let Some((hashes, lead)) = raw_string_start(b, i) {
+                for slot in m.iter_mut().take((i + lead).min(n)).skip(i) {
+                    *slot = false;
+                }
+                i += lead;
+                while i < n {
+                    m[i] = false;
+                    if b[i] == b'"' {
+                        let mut ok = i + 1 + hashes <= n;
+                        for k in 0..hashes {
+                            if i + 1 + k >= n || b[i + 1 + k] != b'#' {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if ok {
+                            for k in 0..hashes {
+                                m[i + 1 + k] = false;
+                            }
+                            i += 1 + hashes;
+                            break;
+                        }
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            // 普通字符串 / 字节字符串
+            if c == b'"' {
+                m[i] = false;
+                i += 1;
+                while i < n {
+                    m[i] = false;
+                    if b[i] == b'\\' && i + 1 < n {
+                        m[i + 1] = false;
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == b'"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            // 字符字面量 vs 生命周期
+            if c == b'\'' {
+                if let Some(len) = char_lit_len(b, i) {
+                    for slot in m.iter_mut().take((i + len).min(n)).skip(i) {
+                        *slot = false;
+                    }
+                    i += len;
+                } else {
+                    i += 1; // 生命周期标注：留在代码
+                }
+                continue;
+            }
+            i += 1;
+        }
+        m
+    }
+
+    /// 字符字面量长度（含引号）；`None` = 这是生命周期标注（`'a`），不是字面量。
+    fn char_lit_len(b: &[u8], i: usize) -> Option<usize> {
+        let n = b.len();
+        if i + 1 >= n {
+            return None;
+        }
+        if b[i + 1] == b'\\' {
+            let end = (i + 13).min(n);
+            return b[i + 2..end]
+                .iter()
+                .position(|&c| c == b'\'')
+                .map(|rel| rel + 3);
+        }
+        let first = b[i + 1];
+        if first < 0x80 {
+            return (i + 2 < n && b[i + 2] == b'\'').then_some(3);
+        }
+        let extra = match first {
+            0xF0..=0xF7 => 4,
+            0xE0..=0xEF => 3,
+            0xC0..=0xDF => 2,
+            _ => return None,
+        };
+        (i + extra < n && b[i + extra] == b'\'').then_some(extra + 2)
+    }
+
+    /// 按「函数名」定位条目区间的**字节偏移**——返回**全部**匹配，
+    /// 故 `reap_pid` 的两个 `#[cfg]` 分支都在内（`#[cfg(not(unix))]` 的那个才有命中）。
+    ///
+    /// 只认**代码**里的 `fn <ident>`（词边界，`fn spawn` 不得命中 `fn spawn_x`），
+    /// 且要求先找到函数体的首个 `{`（跳过参数表/返回类型里的圆括号与方括号，
+    /// 遇同层 `;` 视为无体声明而放弃）再配对到 `}`。
+    fn item_spans(text: &str, ident: &str) -> Vec<(usize, usize)> {
+        let b = text.as_bytes();
+        let m = structural_bytes(text);
+        let needle = format!("fn {ident}");
+        let mut out = Vec::new();
+        for (i, _) in text.match_indices(&needle) {
+            if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
+                continue;
+            }
+            let after = i + needle.len();
+            if after < b.len() && (b[after].is_ascii_alphanumeric() || b[after] == b'_') {
+                continue;
+            }
+            if !m[i] {
+                continue; // 注释 / 字面量里的伪命中
+            }
+            let mut k = after;
+            let mut pd = 0i32;
+            let body = loop {
+                if k >= b.len() {
+                    break None;
+                }
+                if m[k] {
+                    match b[k] {
+                        b'(' | b'[' => pd += 1,
+                        b')' | b']' => pd -= 1,
+                        b'{' if pd == 0 => break Some(k),
+                        b';' if pd == 0 => break None,
+                        _ => {}
+                    }
+                }
+                k += 1;
+            };
+            let Some(mut k) = body else { continue };
+            let mut depth = 0usize;
+            let mut end = None;
+            while k < b.len() {
+                if m[k] {
+                    if b[k] == b'{' {
+                        depth += 1;
+                    } else if b[k] == b'}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(k + 1);
+                            break;
+                        }
+                    }
+                }
+                k += 1;
+            }
+            if let Some(e) = end {
+                out.push((i, e));
+            }
+        }
+        out
+    }
+
+    /// 把给定字节区间抹成空白——**保留换行**，故行号恒等于原始行号。
+    fn blank_spans(text: &str, spans: &[(usize, usize)]) -> String {
+        let mut b = text.as_bytes().to_vec();
+        for &(s, e) in spans {
+            let end = e.min(b.len());
+            for byte in b.iter_mut().take(end).skip(s) {
+                if *byte != b'\n' && *byte != b'\r' {
+                    *byte = b' ';
+                }
+            }
+        }
+        String::from_utf8(b).expect("区间边界均落在 ASCII 定界符上，不应破坏 UTF-8")
+    }
+
+    /// 读一份源码（豁免表自检用；与主闸门的 `include_str!` 同一文件）。
+    fn read_source(name: &str) -> String {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("读取 {} 失败：{e}", p.display()))
+    }
+
+    /// 摘掉一条豁免后的表（用来证明该条目确实在挡东西）。
+    fn table_without(entry: &SpawnExemption) -> Vec<SpawnExemption> {
+        SPAWN_EXEMPTIONS
+            .iter()
+            .filter(|e| !(e.file == entry.file && e.item == entry.item))
+            .cloned()
+            .collect()
+    }
+
+    /// 无豁免表的扫描（合成片段用；语义与扩建前完全一致）。
+    fn scan_unguarded_spawns(name: &str, text: &str) -> Vec<String> {
+        scan_unguarded_spawns_with(name, text, &[])
+    }
+
     /// 纯函数：扫描一份源码文本，返回绕过 seam 的行（`名:行号: 内容`）。
     ///
     /// **行尾归一（2026-09-11，CI 在 windows-latest 抓到）**：原先模式写死
-    /// `"\n#[cfg(test)]\nmod tests"`，而仓库**没有 `.gitattributes`**——Git for
-    /// Windows 的 `autocrlf` 会把源码 checkout 成 CRLF，`include_str!` 于是拿到
-    /// `\r\n`，模式永不匹配 → 截断失效 → **测试模块里的裸 spawn 被误报成生产代码**，
-    /// 闸门在 Windows 上恒红。故先把 `\r\n` 归一到 `\n` 再匹配。
+    /// `"\n#[cfg(test)]\nmod tests"`，而 Git for Windows 的 `autocrlf` 会把源码
+    /// checkout 成 CRLF，`include_str!` 于是拿到 `\r\n`，模式永不匹配 → 截断失效 →
+    /// **测试模块里的裸 spawn 被误报成生产代码**，闸门在 Windows 上恒红。故先归一。
     ///
     /// 该失效模式值得记住：**任何以源码文本为判据的闸门都可能被行尾/编码打穿**，
-    /// 且只在非 LF 检出环境暴露（本机 macOS 永远看不到）。
-    fn scan_unguarded_spawns(name: &str, text: &str) -> Vec<String> {
+    /// 且只在非 LF 检出环境暴露（本机 macOS 永远看不到）。`.gitattributes` 已是第二道保险，
+    /// 但闸门自己必须扛住。
+    ///
+    /// `table` = 条目级豁免表：命中的函数区间先被抹掉（行号不变），其余一律照扫。
+    fn scan_unguarded_spawns_with(name: &str, text: &str, table: &[SpawnExemption]) -> Vec<String> {
         let text = text.replace("\r\n", "\n");
+        let spans: Vec<(usize, usize)> = table
+            .iter()
+            .filter(|e| e.file == name)
+            .flat_map(|e| item_spans(&text, e.item))
+            .collect();
+        let text = if spans.is_empty() {
+            text
+        } else {
+            blank_spans(&text, &spans)
+        };
         // 测试模块之后不再扫描（测试要故意制造裸 spawn 做对照）。
         let prod = match text.find("\n#[cfg(test)]\nmod tests") {
             Some(i) => &text[..i],
@@ -1468,6 +1820,9 @@ mod tests {
                 continue;
             }
             // 豁免标注可写在本行（行尾）或**紧邻上一行**（后者更贴近 `#[allow(...)]` 惯例）。
+            // （注：本文件自己的豁免走 `SPAWN_EXEMPTIONS` 集中表；行内标注保留给
+            //  其它文件里那些「函数级粒度太粗」「极个别」的场合，如 `updater.rs` 的
+            //  `reqwest::Error::status()`——那是读状态码，不拉起任何进程。）
             if t.contains("spawn-gate: exempt(") || prev.contains("spawn-gate: exempt(") {
                 continue;
             }
@@ -1482,11 +1837,16 @@ mod tests {
     /// 漏一处，那一处的孤儿就不受清扫管辖（契约 §3.4 原话）。而"自觉遵守"
     /// 在 19 个调用点的规模上必然腐化。此测试从源码文本判定，改回去即红。
     ///
+    /// **扫描面覆盖 seam 的属主文件（2026-09-11，task-30）**：`src/lifecycle.rs`
+    /// 原先**不在 `SOURCES` 里**，于是往本文件新加裸 spawn 对机器完全不可见——
+    /// `reap_pid` 的裸 `taskkill` 就是这么漏了两个月。现纳入扫描面，
+    /// 本文件自己的合法 spawn 走 `SPAWN_EXEMPTIONS` **条目级**豁免（不是整文件排除，
+    /// 那正是盲区成因）。
+    ///
     /// 豁免（必须是**可解释**的枚举，不是"随手加豁免"）：
-    /// - `lifecycle.rs` 自身：它就是 seam 的实现；
     /// - `#[cfg(test)]` 内的代码：测试要故意制造裸 spawn 做对照；
-    /// - 显式标注 `// spawn-gate: exempt(<理由>)` 的行：供将来出现确实不该被
-    ///   守护的进程（如 shell 内建、瞬时探测）时留痕豁免，理由必填。
+    /// - `SPAWN_EXEMPTIONS` 里逐条论证的 seam 本体函数；
+    /// - 显式标注 `// spawn-gate: exempt(<理由>)` 的行（行内标注，留给其它文件的极个别场合）。
     #[test]
     fn production_spawns_go_through_lifecycle_seam() {
         const SOURCES: &[(&str, &str)] = &[
@@ -1495,6 +1855,8 @@ mod tests {
             ("src/engines.rs", include_str!("engines.rs")),
             ("src/executor.rs", include_str!("executor.rs")),
             ("src/ipc.rs", include_str!("ipc.rs")),
+            // seam 的属主文件自身（2026-09-11 补入，此前是闸门盲区）。
+            ("src/lifecycle.rs", include_str!("lifecycle.rs")),
             ("src/plugins.rs", include_str!("plugins.rs")),
             ("src/profiles.rs", include_str!("profiles.rs")),
             ("src/resolve.rs", include_str!("resolve.rs")),
@@ -1506,13 +1868,15 @@ mod tests {
         ];
         let violations: Vec<String> = SOURCES
             .iter()
-            .flat_map(|(name, text)| scan_unguarded_spawns(name, text))
+            .flat_map(|(name, text)| scan_unguarded_spawns_with(name, text, SPAWN_EXEMPTIONS))
             .collect();
         assert!(
             violations.is_empty(),
             "以下生产代码绕过了 lifecycle 守卫 seam（子进程会成为不受清扫管辖的孤儿）：\n{}\n\
              请改用 `crate::lifecycle::spawn` / `crate::lifecycle::run`；确需豁免时\
-             在本行或紧邻上一行标注 `// spawn-gate: exempt(<理由>)`。",
+             ① 在 `SPAWN_EXEMPTIONS` 加一条**条目级**豁免（函数名 + 理由 + 日期，\
+             并写明摘掉它应报出几行），或 ② 在本行/紧邻上一行标注 \
+             `// spawn-gate: exempt(<理由>)`。",
             violations.join("\n")
         );
     }
@@ -1755,6 +2119,213 @@ mod tests {
                 "{label}: 测试模块的裸 spawn 不该被报（CRLF 若未归一即会误报）"
             );
         }
+    }
+
+    /// **豁免表自检（2026-09-11，task-30）**：每条豁免都必须**真的在挡东西**，
+    /// 且**不多不少**。
+    ///
+    /// 为什么需要：豁免表的最大腐化方式不是"漏加"，而是**过宽**——一条吞掉邻接函数的
+    /// 豁免，会把别处的裸 spawn 静默放行（正是 `lifecycle.rs` 曾长期不在扫描面里的
+    /// 同一种失效）。故此处不仅断言「非空」，还断言**精确等于登记的行数**：
+    /// 区间偏小 → 计数变大而红；区间偏大 → 计数变小而红。两侧都拦。
+    #[test]
+    fn spawn_gate_exemptions_are_live() {
+        for e in SPAWN_EXEMPTIONS {
+            let text = read_source(e.file);
+            let hits = scan_unguarded_spawns_with(e.file, &text, &table_without(e));
+            assert_eq!(
+                hits.len(),
+                e.hits,
+                "豁免条目 {} `fn {}` 摘掉后应恰好报出 {} 处（非空 = 仍在使用；\
+                 恰好 = 区间没有过宽），实际 {} 处：{hits:?}",
+                e.file,
+                e.item,
+                e.hits,
+                hits.len()
+            );
+            let with = scan_unguarded_spawns_with(e.file, &text, SPAWN_EXEMPTIONS);
+            assert!(
+                with.is_empty(),
+                "豁免条目 {} `fn {}` 未生效，仍报出 {with:?}",
+                e.file,
+                e.item
+            );
+        }
+    }
+
+    /// 豁免条目必须**可解释**（理由 + 日期），且理由要说明「为什么必须绕过 seam」。
+    #[test]
+    fn spawn_gate_exemption_entries_are_well_formed() {
+        for e in SPAWN_EXEMPTIONS {
+            assert!(
+                e.reason.len() >= 12,
+                "{} `fn {}` 的理由太短（必须能论证「这个函数就是 seam 本体」）：{:?}",
+                e.file,
+                e.item,
+                e.reason
+            );
+            assert!(
+                e.reason.contains("seam")
+                    || e.reason.contains("清理器")
+                    || e.reason.contains("清扫"),
+                "{} `fn {}` 的理由须点明它与 seam 的关系：{:?}",
+                e.file,
+                e.item,
+                e.reason
+            );
+            assert_eq!(e.date.len(), 10, "{} 的日期应为 YYYY-MM-DD", e.file);
+            assert_eq!(
+                e.date.chars().filter(|c| *c == '-').count(),
+                2,
+                "{} 的日期格式应为 YYYY-MM-DD：{:?}",
+                e.file,
+                e.date
+            );
+            assert!(e.hits > 0, "{} `fn {}` 的 hits 必须为正", e.file, e.item);
+        }
+        // 同一个 (文件, 函数) 不得重复登记（重复会掩盖「哪条在起作用」）。
+        for (i, a) in SPAWN_EXEMPTIONS.iter().enumerate() {
+            for b in SPAWN_EXEMPTIONS.iter().skip(i + 1) {
+                assert!(
+                    !(a.file == b.file && a.item == b.item),
+                    "豁免表有重复条目：{} `fn {}`",
+                    a.file,
+                    b.item
+                );
+            }
+        }
+    }
+
+    /// **条目级豁免不得泄漏到同文件的其它函数**（这正是"整文件排除"被弃用的理由）。
+    #[test]
+    fn spawn_gate_item_exemption_does_not_leak_to_rest_of_file() {
+        const SYNTHETIC: &str = "\
+fn exempt_one() { let _ = std::process::Command::new(\"x\").spawn(); }\n\
+fn not_exempt() { let _ = std::process::Command::new(\"y\").status(); }\n";
+        let table = [SpawnExemption {
+            file: "src/synthetic_exempt.rs",
+            item: "exempt_one",
+            hits: 1,
+            reason: "测试用：seam 本体论证",
+            date: "2026-09-11",
+        }];
+        let hits = scan_unguarded_spawns_with("src/synthetic_exempt.rs", SYNTHETIC, &table);
+        assert_eq!(
+            hits.len(),
+            1,
+            "条目级豁免泄漏到了整文件（会把邻接函数的违规一起放行）：{hits:?}"
+        );
+        assert!(hits[0].contains("not_exempt"), "实际：{hits:?}");
+    }
+
+    /// 区间定位器必须**不被字面量/注释里的花括号骗到**。
+    ///
+    /// 被骗到的后果不对称：区间偏小 → 误报（可见红）；区间偏大 → **吞掉邻接函数的违规**
+    /// （静默漏报）。故两侧都测：字符串 / 字符字面量 / 原始字符串 / 行注释 / 块注释里的
+    /// 花括号，都不得改变 `fn` 区间。
+    #[test]
+    fn spawn_gate_extent_finder_ignores_braces_in_literals_and_comments() {
+        const SYNTHETIC: &str = r##"
+fn exempt_one() {
+    let _json = "{\"a\":1}";
+    let _close = '}';
+    let _raw = r#"{"nested":"}"}"#;
+    // 行注释里的 } 不是结构
+    /* 块注释里的 { 与 } 也不是结构 */
+    let _ = std::process::Command::new("x").spawn();
+}
+
+fn not_exempt() { let _ = std::process::Command::new("y").status(); }
+"##;
+        let table = [SpawnExemption {
+            file: "src/synthetic_braces.rs",
+            item: "exempt_one",
+            hits: 1,
+            reason: "测试用：seam 本体论证",
+            date: "2026-09-11",
+        }];
+        let hits = scan_unguarded_spawns_with("src/synthetic_braces.rs", SYNTHETIC, &table);
+        assert_eq!(
+            hits.len(),
+            1,
+            "字面量/注释里的花括号打穿了区间定位：{hits:?}"
+        );
+        assert!(hits[0].contains("not_exempt"), "实际：{hits:?}");
+
+        // 反过来：摘掉豁免必须报出被豁免函数里的那一处（证明区间确实覆盖到它）。
+        let bare = scan_unguarded_spawns_with("src/synthetic_braces.rs", SYNTHETIC, &[]);
+        assert_eq!(bare.len(), 2, "无豁免时应报出两处：{bare:?}");
+    }
+
+    /// **单向性证明（本闸门的核心）**：给一份**形如本文件**的源码注入一处
+    /// **未豁免函数**里的裸 spawn，闸门必须红且**精确报行**。
+    ///
+    /// 这是"闸门真的会拦"的合成证明；另有对**真实文件**的变异实测（见报告），
+    /// 二者互补：本用例进默认套件（无副件、可回归），真实变异由复核者重演。
+    #[test]
+    fn spawn_gate_reports_bare_spawn_in_non_exempt_function() {
+        // 摘掉本文件的全部豁免，再把 `SPAWN_EXEMPTIONS` 认识的那个函数名换成别的，
+        // 等价于"往生命周期模块里加了一个不豁免的新函数"。
+        const SYNTHETIC: &str = "\
+fn role_from_str(s: &str) -> u8 {\n\
+    let _ = std::process::Command::new(\"evil\").spawn();\n\
+    0\n\
+}\n";
+        let hits = scan_unguarded_spawns_with("src/lifecycle.rs", SYNTHETIC, SPAWN_EXEMPTIONS);
+        assert_eq!(hits.len(), 1, "未豁免函数里的裸 spawn 必须被拦：{hits:?}");
+        assert!(
+            hits[0].starts_with("src/lifecycle.rs:2:"),
+            "必须精确报出行号：{hits:?}"
+        );
+    }
+
+    /// 字节原始字符串（`br"…"`）必须被词法器识别——**这是实现期自测抓出的真 bug**：
+    /// 首版把识符检查放在推进下标**之后**，`b[p-1]` 恰是那个 `b`，判据恒假 ⇒
+    /// `br"…"` 从未被识别，其内部花括号会被当成结构字符（区间偏大 = 静默漏报）。
+    #[test]
+    fn spawn_gate_extent_finder_handles_byte_raw_strings() {
+        const SYNTHETIC: &str = "fn exempt_one() {\n    let _ = br\"}\";\n    let _ = std::process::Command::new(\"x\").spawn();\n}\n\nfn not_exempt() { let _ = std::process::Command::new(\"y\").status(); }\n";
+        let table = [SpawnExemption {
+            file: "src/synthetic_br.rs",
+            item: "exempt_one",
+            hits: 1,
+            reason: "测试用：seam 本体论证",
+            date: "2026-09-11",
+        }];
+        // 若 `br"}"` 未被识别，其中的 `}` 会提前闭合 `exempt_one`，
+        // 于是豁免区间偏小 → 报出 2 处而非 1 处。
+        let hits = scan_unguarded_spawns_with("src/synthetic_br.rs", SYNTHETIC, &table);
+        assert_eq!(
+            hits.len(),
+            1,
+            "`br\"…\"` 未被词法器识别（花括号打穿了区间）：{hits:?}"
+        );
+        assert!(hits[0].contains("not_exempt"), "实际：{hits:?}");
+    }
+
+    /// 行尾：同一份源码 LF 与 CRLF 的判定必须**逐条相同**（Windows `autocrlf` 教训）。
+    #[test]
+    fn spawn_gate_crlf_and_lf_are_judged_identically() {
+        const LF: &str = "\
+fn a() { let _ = c.spawn(); }\n\
+\n\
+#[cfg(test)]\n\
+mod tests {\n\
+    fn t() { let _ = d.spawn(); }\n\
+}\n";
+        let crlf = LF.replace('\n', "\r\n");
+        let a = scan_unguarded_spawns("src/x.rs", LF);
+        let b = scan_unguarded_spawns("src/x.rs", &crlf);
+        assert_eq!(a.len(), 1, "LF 下应只报生产段那一条：{a:?}");
+        assert_eq!(
+            a.iter()
+                .map(|s| s.split(':').nth(1).map(str::to_string))
+                .collect::<Vec<_>>(),
+            b.iter()
+                .map(|s| s.split(':').nth(1).map(str::to_string))
+                .collect::<Vec<_>>(),
+            "CRLF 与 LF 必须报出相同行号：LF={a:?} CRLF={b:?}"
+        );
     }
 
     /// 扫描器的既有语义不能因归一而丢：豁免标注（本行 / 紧邻上一行）与
