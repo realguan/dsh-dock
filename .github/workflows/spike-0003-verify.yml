@@ -19,7 +19,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1（与 build.yml 同 pin）
       - name: pnpm12 引导链三平台复验
         shell: bash
         run: bash scripts/spike-0003-verify.sh
