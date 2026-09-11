@@ -434,8 +434,11 @@ pub(crate) fn delete_session_script(session_path: &str) -> Result<String, String
     Ok(format!(
         "{}target={path_literal}; \
          root=\"{HOME_EXPR}/sessions\"; \
+         target=\"${{target//\\\\//}}\"; \
+         root=\"${{root//\\\\//}}\"; \
          case \"$target\" in \
            \"$root\"/*) : ;; \
+           sessions/*) target=\"$root/${{target#sessions/}}\" ;; \
            *) echo 'DSH_DOCK_INVALID_SESSION_PATH'; exit 0 ;; \
          esac; \
          if [ ! -e \"$target\" ]; then \
@@ -460,14 +463,17 @@ pub(crate) const SESSIONS_EMPTY: &str = "DSH_DOCK_SESSIONS_EMPTY";
 
 /// 组装「扫描客体会话目录中文件元数据」脚本。
 /// 递归列举 `${DSH_HOME:-$HOME/.dsh}/sessions` 下 2-3 层的 session 相关文件。
+/// 兼容 GNU find (-printf)、Busybox stat (-c) 与 BSD stat (-f)。
 #[cfg(any(windows, test))]
 pub(crate) fn list_sessions_script() -> String {
     format!(
         "{}dir=\"{HOME_EXPR}/sessions\"; \
+         dir=\"${{dir//\\\\//}}\"; \
          if [ ! -d \"$dir\" ]; then echo '{SESSIONS_EMPTY}'; exit 0; fi; \
          echo '{SESSIONS_PRESENT}'; \
          find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -printf '%p|%s|%T@\\n' 2>/dev/null || \
-         find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -exec stat -c '%n|%s|%Y' {{}} + 2>/dev/null",
+         find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -exec stat -c '%n|%s|%Y' {{}} + 2>/dev/null || \
+         find \"$dir\" -mindepth 2 -maxdepth 3 -type f -name \"session*\" -exec stat -f '%N|%z|%m' {{}} + 2>/dev/null",
         guest_prep!()
     )
 }
@@ -1375,11 +1381,28 @@ rc 噪音一行
         assert!(stdout.contains(SESSIONS_PRESENT), "{stdout}");
         assert!(stdout.contains("session.jsonl.zstd"), "{stdout}");
 
-        // 2. Delete session script
-        let del_s = delete_session_script(&log_file.to_string_lossy()).unwrap();
+        // 2. Delete session script (absolute path)
+        let log_file_str = log_file.to_string_lossy();
+        let del_s = delete_session_script(&log_file_str).unwrap();
         let out = std::process::Command::new("bash")
             .arg("-c")
             .arg(&del_s)
+            .env("HOME", &home)
+            .env_remove("DSH_HOME")
+            .output()
+            .expect("bash 应可用");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains(DELETE_SESSION_OK), "{stdout}");
+        assert!(!sess_dir.exists(), "会话目录应已被递归删除");
+
+        // 3. Delete session script (relative path)
+        std::fs::create_dir_all(&sess_dir).unwrap();
+        std::fs::write(&log_file, "data").unwrap();
+        let rel_del_s =
+            delete_session_script("sessions/--proj--/session-1/session.jsonl.zstd").unwrap();
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&rel_del_s)
             .env("HOME", &home)
             .env_remove("DSH_HOME")
             .output()

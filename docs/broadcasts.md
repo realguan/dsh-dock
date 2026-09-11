@@ -31,6 +31,16 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-11 单元测试修复 · 修复 WSL 会话扫描脚本 BSD stat 与 Windows 路径反斜杠兼容性 —— guan（AI 协作）
+
+- **背景与目标**：GitHub Actions CI 在 macOS 与 Windows runner 运行 `cargo test` 时，`guest::tests::session_lifecycle_scripts_run_correctly_in_bash` 出现跨平台兼容失败。macOS 环境因缺少 BSD stat 支持导致扫描输出空，Windows 环境因宿主 tempdir 路径含反斜杠导致 bash glob 匹配异常。
+- **变更清单**：
+  1. `src-tauri/src/guest.rs`：`list_sessions_script` 补充 `stat -f '%N|%z|%m'` 兜底分支，实现 GNU find / Busybox / BSD stat 三平台全兼容；对 `$dir` 增加 `${dir//\\//}` 规范化；
+  2. `src-tauri/src/guest.rs`：`delete_session_script` 增加 `${target//\\//}` 与 `${root//\\//}` 路径规范化，支持 `sessions/*` 相对路径解析，消除反斜杠导致的 bash 转义匹配失败；
+  3. `src-tauri/src/guest.rs`：单测补充绝对路径与相对路径双重校验。
+- **影响**：仅周知，修复 CI 三平台单测闸门。
+- **验证**：Windows MinGW 静态检查 0 错误 0 警告，单测覆盖 bash 下的绝对路径与相对路径会话删除。
+
 ### 2026-09-11 契约与规范同步 · ADR-0016 落地配套契约与 AGENTS 登记 —— guan（AI 协作）
 
 - **背景与目标**：随 ADR-0016 P1/P2/P3 全量下沉至 WSL 客体，完成配套模块子契约落地、AGENTS.md 登记与 ADR 状态同步。
