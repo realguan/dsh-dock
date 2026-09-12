@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-dock"
-version = "1.2.5"
+version = "1.2.6"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
