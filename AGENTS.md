@@ -142,9 +142,8 @@
   子进程，不留孤儿（2026-09-10 扩展，ADR-0015：原口径只覆盖"父进程临死前能跑代码"的
   路径，硬杀会逃逸成持着会话写锁的孤儿——**新增 spawn 一律经 `lifecycle::spawn`/`run`**，
   有机器闸门拦裸 `Command::spawn()`）。
-- **pnpm 为环境检查硬依赖**（2026-08-28，ADR-0009 口径 2；2026-09-03 修订补齐方式，
-  ADR-0010）：pnpm 随壳内置恒在；node/pnpm/dsh 缺失一律走引擎引导补齐，WSL 客体
-  同口径（ADR-0004 §7 + ADR-0010；原 `npm i -g pnpm` / tarball 机制随探测层退役）。
+- **pnpm 为环境检查硬依赖**（ADR-0009 口径 2；补齐方式见 ADR-0010）：随壳内置恒在，node/pnpm/dsh
+  缺失走引擎引导补齐（宿主 dsh 安装形态见 ADR-0017/0018），WSL 客体同口径（ADR-0004 §7）。
 
 ## 7. IPC 与网络面（例外册，登记制）
 
@@ -224,6 +223,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
 | [0016](docs/adr/0016-wsl-guest-management-plane.md) | 管理面下沉 WSL 客体：控制中心跨环境一致（读/写/原语双侧同构，按运行模式择源） |
 | [0017](docs/adr/0017-dsh-project-local-install.md) | dsh 改为 project 内安装 + 自建 shim：结构性绕开 pnpm 全局 hash 符号链接，Windows 普通账户免提权 |
+| [0018](docs/adr/0018-dsh-module-proxy-mode-on-windows.md) | Windows 以「模块代理」模式启动 dsh：绕开 dsh 启动期建 481 个符号链接所需特权（ADR-0017 的续篇） |
 
 ## 10. 试验协议
 
