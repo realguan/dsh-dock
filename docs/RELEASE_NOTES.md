@@ -4,6 +4,25 @@
 
 ---
 
+## [v1.2.5] - 2026-09-12
+
+### 🌟 核心亮点 (Highlights)
+- **Windows 本地模式 Web 工作台可正常载入全部插件**：修复了在模块代理模式下启动后，浏览器打开 Web 工作台白屏并报错 `Failed to load plugins: client-modules: HTML did not preload @deepseek-ai/dsh-client-modules/client.js` 的问题。现在 Windows 本地模式不仅能启动，更可完整加载 52+ 前端插件与客户端模块。
+- **插件市场 NPM 镜像链加速与体积扩容**：对齐 dsh-market 分发策略，优先通过国内 NPM 镜像链（npmmirror → npmjs）拉取官方 catalog 压缩包，海量插件（3400+）秒级载入；CDN 回退上限从 3MB 扩容至 16MB。
+
+### 🐛 缺陷修复 (Bug Fixes)
+- **Windows 模块代理模式缺失浏览器端 client bundle 与 client 声明（ADR-0019）**：dsh 内部的 `ensureModuleProxy` 在生成模块代理清单时，只保留了 Node ESM 解析所需的 `targets`，丢弃了源包原本声明的 `dsh.client` 与 `exports["./client"]`。本版在 bootstrap 启动流程中引入 `dsh-client-proxies.mjs`，在调用 `runCli()` 前完成预热与增量补齐，将浏览器端 bundle（`dsh-client-bundle.js`）与元数据还原到代理目录，彻底解决前端插件预加载失败问题。
+- **严格维护 dsh 代理幂等性契约**：补齐逻辑逐字节保留 `targets` 与 `version`，不改动 `entry-N.js`，避免触发上游强制清空与重建代理目录。新旧安装与就绪启动路径均能自动落位与幂等刷新。
+- **插件市场目录突破 3MB 上限导致加载失败**：插件数量增长至 3400+ 后体积达 3.11MB，此前硬编码的 3MB 限制导致解析失败，且回退的 Pages 产物恒为 404。已切换为官方 NPM catalog 镜像链分发并扩容至 16MB。
+
+### 🔒 架构、安全与稳定性 (Security & Stability)
+- 架构决策文档见 **ADR-0019**（`docs/adr/0019-dsh-client-module-proxies-on-windows.md`）。
+- 绝不修改 dsh 上游源码（恪守 AGENTS 红线 1）。
+- 真实 dsh 启动实测（`real_dsh_boots_in_proxy_mode`）：验证 0 符号链接、1184 个代理条目、55 个客户端 bundle 自动生成，进程正常存活。
+- 全套测试（Rust 418 passed、前端 365 passed、Python 17 OK）与代码检查（clippy / fmt / oxlint / tsc）全部通过。
+
+---
+
 ## [v1.2.4] - 2026-09-12
 
 ### 🌟 核心亮点 (Highlights)
