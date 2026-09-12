@@ -169,9 +169,8 @@
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update` / `app:settings-changed`
   （仅 main/about/profiles，capability 授权）。
-- **新增 IPC 三处同步（漏一处 remote 调用即静默失败）**：`src/ipc.rs` COMMANDS 登记 →
-  `lib.rs` handler + `capabilities/default.json` 授权。build.rs 由常量生成；一致性有
-  cargo test 机器闸门（`ipc.rs` gate_tests，2026-08-28），漏处测试红。
+- **新增 IPC 三处同步**（`ipc.rs` COMMANDS → `lib.rs` handler + `capabilities/default.json`）：
+  全由机器闸门兜底（build.rs 生成 + `ipc.rs` gate_tests，漏处测试红），不必靠人记。
 - **唯一网络面 = `updates.rs`**（ADR-0006）；其余模块禁触网，新网络需求先在此登记；
   外链域名在 `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**
   （`plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、
@@ -181,8 +180,8 @@
   （`updates.rs` `npm_packument_versions` / `fetch_market_registry`，镜像链与超时同
   dsh 版本检查）；**客户端自更新**（`updates.rs::APP_RELEASE_FEED` + `updater.rs`，
   清单端点在 `tauri.conf` 的 `plugins.updater.endpoints`）；**引擎引导**（ADR-0010）：
-  壳内置 pnpm12 经 `runtime set node` / `pnpm add -g` 下载 node 与 dsh（镜像 env 注入），
-  WSL 客体同源；**WSL 客体管理面**（ADR-0016）：客体插件装卸/更新发生在客体
+  壳内置 pnpm12 经 `runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：
+  Windows 免符号链接特权，ADR-0017）下载 dsh（镜像 env 注入），WSL 客体仍同源 `add -g`；**WSL 客体管理面**（ADR-0016）：客体插件装卸/更新发生在客体
   `dsh plugin`（客体 pnpm）子进程内，更新检查仍走 `updates.rs`，**壳不新增网络客户端**。
 
 ## 8. AI 交互约束
@@ -224,6 +223,7 @@ TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 | [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
 | [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
 | [0016](docs/adr/0016-wsl-guest-management-plane.md) | 管理面下沉 WSL 客体：控制中心跨环境一致（读/写/原语双侧同构，按运行模式择源） |
+| [0017](docs/adr/0017-dsh-project-local-install.md) | dsh 改为 project 内安装 + 自建 shim：结构性绕开 pnpm 全局 hash 符号链接，Windows 普通账户免提权 |
 
 ## 10. 试验协议
 
