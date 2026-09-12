@@ -32,6 +32,41 @@
 
 ## 三、记录
 
+### 2026-09-12 发版 v1.2.2 · Windows 本地模式根因修复（ADR-0017 实施完成）· 结果回填 —— guan（AI 协作）
+
+- **性质**：承接同档「架构变更 ADR-0017」条目的**实施完成追加**（按既定「分两次写，不合并」）。
+  问题 1.1 的状态由「根因已定案并进入实施」推进为「**实施完成 + 验证通过 + 已发版**」，
+  **真机复验仍待用户执行**。
+- **版本**：`v1.2.1` → **`v1.2.2`**（patch）。发版日志 `docs/RELEASE_NOTES.md` 顶部
+  `## [v1.2.2] - 2026-09-12`；`extract-release-notes.py v1.2.2 --strict` 通过并作为 Release 正文。
+- **实施**（`0e2be2c`）：`install_dsh_global` → `install_dsh_project_local`（`<engines>/dsh-runtime/`
+  内非全局 `pnpm add`）；`ensure_dsh_runtime_layout` 幂等三件（package.json / `nodeLinker: hoisted`
+  / 壳自写 shim）；自写 `bin/dsh`（POSIX 0o755）与 `bin/dsh.cmd`（Windows，`%~dp0` 相对、CRLF、纯 ASCII）；
+  `run_engine_pnpm_streaming` 的 cwd 参数化（node 仍传 `pnpm_home`，与改前逐字等价 ⇒ 只改 dsh）；
+  WSL 客体 `executor.rs` 哈希未变（分叉面未扩大）；复用 `build_policy::ensure_engine_linker`（零新键处理）。
+- **旧布局兼容**（本改动最可能伤存量用户处）：`readiness_gaps` 签名**不含路径/布局信息**
+  ⇒ 「按布局区分」在类型层面无从表达；另有行为级守门测试（加 legacy `global/` 符号链接树前后
+  `EngineStatus` 逐字段相等）；无任何针对 `global/` 的删除逻辑。
+- **独立验证**（`docs/team/ADR0017-独立验证.md`，qa-verify）：判定**通过**；4 次变异证伪均**点名红断言**
+  （M1a `engines.rs:1793` / M1b `updates.rs:1259` / M2 `engines.rs:2095` / M3 `engines.rs:1831`）；
+  反向证明 node 路径未动；shim 经**实跑**验证（找得到 / 0o755 / 非链接 / 幂等）。
+- **闸门**（tag 前提交态实测）：版本号四处一致 ✅ · `extract --strict` ✅ · fmt `0` ·
+  clippy 宿主 `0` · **clippy win-gnu `0`** · `cargo test` **405 passed / 0 failed / 3 ignored**
+  （基线 394，+11）· 前端 typecheck `0` / lint `0` / test **45 files · 365 passed** · scripts **17 OK**。
+- **CI 结果（tag `v1.2.2`，全绿）**：`build` run **`34666441862`** **6/6**（4 build leg + `release`，
+  coverage 按设计 tag 上跳过）；`boot-smoke` run **`34666441860`** **4/4**（含
+  `engine-bootstrap (windows-latest)`）；**17 个资产**；`latest.json` **7 平台**；
+  **双 macOS 公证均 Accepted**（arm64 `21800a4d…` / Intel `0e63fcfc…`，`source=Notarized Developer ID`）。
+- **⚠️ 必须与发版同时知悉的边界**：
+  1. **Windows 真机行为待复验**（shim 的 `.cmd` 实际执行、真机 dsh 首启安装）——
+     本轮证据链为「机制级修复 + 单元/契约级验证」，**不得**把 CI 全绿当作该类验证证据。
+  2. **真机风险点已从「全局链接」转移到「原生构建脚本」**：dsh 依赖 koffi / node-pty / protobufjs /
+     @google/genai / dsh-subprocess-local 的**原生构建**；旧路径在 Windows 上**从未越过全局链接步**，
+     故这些步骤**从未在任何 Windows 机器上跑过**。**本轮修复不构成该风险的证据。**
+     定点排查脚本：`scripts/probe-windows-dsh-install-full.ps1`（零安装、只写 `%TEMP%`）。
+- **凭据**：tag `v1.2.2` → commit **`9d81393`**；实施 `0e2be2c`；落档 `b6085b1`；ADR `52b876e`；
+  CI `34666441862` / `34666441860`。
+
 ### 2026-09-11 架构变更 ADR-0017 · dsh 改为 project 内安装（含**宪法级改动**）—— guan（AI 协作）
 
 - **性质**：**宪法级改动告知**（AGENTS §10「宪法级改动须落档 broadcasts」）+ 架构决策落档。
