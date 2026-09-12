@@ -27,74 +27,25 @@ pnpm 在 Windows 上创建 `node_modules/.bin/*` 时，用的是**符号链接**
 - **若为符号链接 → `.bin` 是新的拦路虎**，需要用 `bin-links=false` 或改 `modules-dir` 规避，
   届时我据探针结果调整方案。
 
-## 2. 探针（复制整段到**普通** PowerShell 窗口运行）
+## 2. 探针（已落成脚本文件，不要在控制台粘贴）
+
+**脚本位置**：`scripts/probe-windows-engine-install.ps1`（仓库内，随 master 推送）
+
+在**普通（非管理员）** PowerShell 窗口运行：
 
 ```powershell
-$ErrorActionPreference = 'Continue'
-$App  = Join-Path $env:APPDATA 'io.github.realguan.dsh-dock'
-$Pnpm = Join-Path $App 'engines\bin\pnpm.exe'
-$Node = Join-Path $App 'engines\bin\node.exe'
-
-Write-Host "===== 0. 环境事实 =====" -ForegroundColor Cyan
-$devMode = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -ErrorAction SilentlyContinue).AllowDevelopmentWithoutDevLicense
-Write-Host "开发者模式 AllowDevelopmentWithoutDevLicense = $devMode   (1=已开, 0/空=未开)"
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-Write-Host "当前是否管理员 = $isAdmin   (应为 False；若是 True 请换普通窗口重跑)"
-Write-Host "pnpm 存在 = $(Test-Path $Pnpm)   node 存在 = $(Test-Path $Node)"
-
-Write-Host "`n===== 1. 建临时项目（仅 %TEMP%）=====" -ForegroundColor Cyan
-$Tmp = Join-Path $env:TEMP ('dsh-b-probe-' + (Get-Random))
-$Proj = Join-Path $Tmp 'proj'
-$Home2 = Join-Path $Tmp 'home'
-New-Item -ItemType Directory -Force -Path $Proj, $Home2 | Out-Null
-Set-Content -Path (Join-Path $Proj 'pnpm-workspace.yaml') -Value 'nodeLinker: hoisted' -Encoding ascii
-Write-Host "临时目录 = $Tmp"
-
-Write-Host "`n===== 2. 非全局安装一个小包（决定性步骤）=====" -ForegroundColor Cyan
-$env:PNPM_HOME = Join-Path $Tmp 'pnpmhome'
-Push-Location $Proj
-& $Pnpm add semver --registry=https://registry.npmjs.org 2>&1 | ForEach-Object { $_ }
-$code = $LASTEXITCODE
-Pop-Location
-Write-Host "pnpm add 退出码 = $code   (0=普通账户下成功 → 方案 B 可行)"
-
-Write-Host "`n===== 3. 关键判据 =====" -ForegroundColor Cyan
-Write-Host "--- 3a. global\ 是否被创建（触碰 hash link 的标志）---"
-if (Test-Path (Join-Path $env:PNPM_HOME 'global')) { Write-Host "  ⚠️ 创建了 global\ —— 仍触发了全局安装机制" -ForegroundColor Yellow }
-else { Write-Host "  ✅ 未创建 global\ —— 未触碰 hash link" -ForegroundColor Green }
-
-Write-Host "--- 3b. .bin 条目形态（垫片 vs 符号链接）---"
-$binDir = Join-Path $Proj 'node_modules\.bin'
-if (Test-Path $binDir) {
-  Get-ChildItem $binDir -Force | ForEach-Object {
-    $isLink = ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-    $t = if ($isLink) { "SYMLINK/JUNCTION" } else { "普通文件(垫片)" }
-    Write-Host ("  {0,-24} {1}" -f $_.Name, $t)
-  }
-} else { Write-Host "  （无 .bin 目录）" }
-
-Write-Host "--- 3c. 包树内是否有符号链接/联接（排除 .bin）---"
-$links = Get-ChildItem $Proj -Recurse -Force -ErrorAction SilentlyContinue |
-         Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and $_.FullName -notlike '*\.bin\*' }
-if ($links) { $links | ForEach-Object { Write-Host ("  ⚠️ " + $_.FullName) } }
-else { Write-Host "  ✅ 零链接（方案 B 需要的形态）" -ForegroundColor Green }
-
-Write-Host "`n===== 4. 自建 shim 能否跑通（模拟 engines\bin\dsh.cmd）=====" -ForegroundColor Cyan
-# 用一个有 bin 的包演示：semver 的入口
-$entry = Join-Path $Proj 'node_modules\semver\bin\semver.js'
-if (Test-Path $entry) {
-  $shim = Join-Path $Tmp 'dsh-shim.cmd'
-  # 生产里这一行会指向 dsh-runtime\node_modules\@deepseek-ai\dsh\lib\bin.js
-  Set-Content -Path $shim -Value "@echo off`r`n`"$Node`" `"$entry`" %*" -Encoding ascii
-  Write-Host "shim 文件已是普通文件 = $((Get-Item $shim).Attributes -notmatch 'ReparsePoint')"
-  & $shim --version 2>&1 | ForEach-Object { Write-Host "  semver 版本 = $_" }
-} else { Write-Host "  （未找到 semver 入口，跳过）" }
-
-Write-Host "`n===== 5. 清理 =====" -ForegroundColor Cyan
-Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
-Write-Host "已删除 $Tmp"
-Write-Host "`n请把上面全部输出（尤其第 2、3 节）贴回给 Lead。" -ForegroundColor Green
+git pull                                  # 或直接使用仓库内现有副本
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\probe-windows-engine-install.ps1
 ```
+
+为什么不让你粘贴：脚本里有跨行管道（`Get-ChildItem |` 换行接 `Where-Object`）与
+`if/else` 块，交互式粘贴按行执行容易出错；而且 Windows PowerShell 5.1 读 `.ps1`
+若无 BOM 会按 ANSI 解码。**故脚本输出已写成纯 ASCII**（实测 0 个非 ASCII 字节、
+无 BOM），任何控制台代码页都不会让它乱码。
+
+脚本是**只读**的：只在 `%TEMP%` 下建临时目录、跑完自删；不碰 `engines/`、
+不写注册表、不装全局包。若 `pnpm.exe` 尚未落位（应用没启动过引擎），它会明确
+提示并中止，不会报一堆看不懂的错。
 
 ## 3. 判读口径（看 §2 输出怎么读）
 
