@@ -2431,6 +2431,7 @@ mod tests {
     }
 
     /// 落位 client-proxies 脚本的幂等性（无变化零写入）。
+    #[cfg(unix)]
     #[test]
     fn write_dsh_client_proxies_is_idempotent() {
         let root = engine_root("adr0019-proxies-idem");
