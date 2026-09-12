@@ -160,16 +160,26 @@ pub fn terminal_action(
                 None => "正在升级官方 DSH 到最新稳定版…".to_string(),
             };
             emit_step(&handle, 2, "running", &step_detail);
-            // 升级 = 引擎私有动作（ADR-0010）：pnpm add -g 到引擎目录，
-            // 不再动用户全局安装（「根本不碰」取代「不覆盖」）。
-            let resources_dir = crate::ui::resolve_resources_dir(&handle);
-            let path_env = crate::resolve::effective_path();
-            match crate::updates::upgrade_engine_dsh(
-                &data_dir,
-                &resources_dir,
-                &path_env,
-                version.as_deref(),
-            ) {
+            // 升级：世界感知（WSL 客体 vs 宿主引擎）。
+            let world = crate::mgmt::current_world(&handle);
+            let upgrade_result = match world {
+                Ok(crate::mgmt::World::Wsl { distro }) => {
+                    crate::executor::upgrade_guest_dsh(&distro, version.as_deref())
+                        .map(crate::updates::UpgradePlan::Install)
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                }
+                _ => {
+                    let resources_dir = crate::ui::resolve_resources_dir(&handle);
+                    let path_env = crate::resolve::effective_path();
+                    crate::updates::upgrade_engine_dsh(
+                        &data_dir,
+                        &resources_dir,
+                        &path_env,
+                        version.as_deref(),
+                    )
+                }
+            };
+            match upgrade_result {
                 Ok(plan) => {
                     let (installed_version, installed) = match &plan {
                         crate::updates::UpgradePlan::Install(v) => (v, true),

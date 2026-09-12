@@ -21,6 +21,7 @@ import { useI18n, type LocaleKey } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import type { ShellSettings } from "@/types/ipc"
+import { invalidateDiagnosticsCache } from "./DiagnosticsPane"
 
 export function PreferencesPane({
   onNotice,
@@ -114,6 +115,7 @@ export function PreferencesPane({
     setSaving(true)
     try {
       setSettings(await patchShellSettings({ defaultMode: mode }))
+      invalidateDiagnosticsCache()
       onNotice(t.console.saveSuccess, "ok")
     } catch (e) {
       onNotice(`${t.console.saveFailed}: ${e}`, "warn")

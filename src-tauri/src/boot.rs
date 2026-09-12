@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::{manifest, settings, shell, ui};
 
@@ -839,6 +839,7 @@ pub(crate) fn switch_mode(
     *state.active_mode.lock().unwrap() = Some(mode);
     // 立即刷新菜单勾选（✓ 跟随当前模式）。
     ui::refresh_app_menu(&app, &state);
+    let _ = app.emit("app:settings-changed", &shell_settings);
     let app_handle = app.clone();
     std::thread::spawn(move || {
         // 菜单切换时页面可能已在工作台（remote，不渲染壳错误卡）：先回启动页，

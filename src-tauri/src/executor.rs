@@ -702,6 +702,51 @@ fn guest_install_dsh_script(version: &str, registries: &[&str], allow_flags: &st
     )
 }
 
+/// 客体内升级 DSH（复用 guest_install_dsh_script）。
+/// 用于 WSL 模式下的关于页升级和引导恢复。
+#[cfg(any(windows, test))]
+pub(crate) fn upgrade_guest_dsh(distro: &str, version: Option<&str>) -> Result<String, String> {
+    let target_version = match version {
+        Some(v) => v.to_string(),
+        None => crate::updates::latest_stable_dsh_version()
+            .map_err(|e| format!("无法确定 dsh 引导目标版本：{e}"))?,
+    };
+    let registries = crate::updates::registry_chain();
+    let allow = crate::updates::pnpm_allow_build_flags()
+        .iter()
+        .map(|f| sh_quote(f))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = guest_install_dsh_script(
+        &target_version,
+        &registries.iter().map(String::as_str).collect::<Vec<_>>(),
+        &allow,
+    );
+    #[cfg(windows)]
+    {
+        let out = run_wsl_capture(
+            Some(distro),
+            &["-e", "bash", "-c", &script],
+            Duration::from_secs(300),
+        )
+        .ok_or_else(|| format!("{distro} 内 dsh 升级失败（wsl.exe 调用失败或超时）"))?;
+        if !out.contains("DSH_OK") {
+            return Err(format!("{distro} 内 dsh 升级失败：{}", out.trim()));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (distro, &script);
+    }
+    crate::updates::invalidate_guest_probe_cache(distro);
+    Ok(target_version)
+}
+
+#[cfg(not(any(windows, test)))]
+pub(crate) fn upgrade_guest_dsh(_distro: &str, _version: Option<&str>) -> Result<String, String> {
+    Err("WSL 仅支持 Windows 平台".to_string())
+}
+
 /// WSL2 执行器（迭代 v1：WSL2 发行版内跑 dsh，零配置）。Windows 专属。
 #[cfg(windows)]
 pub struct WslExecutor {
@@ -1614,5 +1659,27 @@ mod guest_shell_tests {
             "暂存 tgz 应被模板清理（投递物不残留 /tmp）"
         );
         let _ = std::fs::remove_file(staging);
+    }
+
+    #[test]
+    fn guest_upgrade_dsh_generates_correct_version_script() {
+        let script = guest_install_dsh_script(
+            "0.1.5-rc.2",
+            &[
+                "https://registry.npmmirror.com",
+                "https://registry.npmjs.org",
+            ],
+            "--allow-build=@deepseek-ai/dsh",
+        );
+        assert!(script.contains("@deepseek-ai/dsh@0.1.5-rc.2"));
+        assert!(script.contains("pnpm add --global"));
+        assert!(script.contains("https://registry.npmmirror.com"));
+        assert!(script.contains("DSH_OK"));
+    }
+
+    #[test]
+    fn upgrade_guest_dsh_resolves_and_runs() {
+        let res = upgrade_guest_dsh("Ubuntu", Some("0.1.5-rc.2"));
+        assert_eq!(res.unwrap(), "0.1.5-rc.2");
     }
 }

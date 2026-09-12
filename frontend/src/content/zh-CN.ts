@@ -259,7 +259,7 @@ export const t = {
     upgrading: "升级中…",
     upgradeFailed: "升级失败",
     upgradeRunning: "正在全局安装（pnpm/npm），可能需要数分钟…",
-    btnCheck: "检查",
+    btnCheck: "检查更新",
     btnUpgrade: "升级",
     // 版本选择器（2026-09-09）：「有新版」只按可升级口径（稳定/rc）判定；
     // 预览版经版本列表显式选择安装，选择权交给用户。

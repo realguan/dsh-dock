@@ -849,6 +849,14 @@ fn guest_versions_cached(distro: &str) -> Result<GuestVersions, String> {
     )
 }
 
+/// 升级客体 DSH 后显式失效客体版本缓存，确保下一次探测即时反映新版本。
+#[allow(dead_code)]
+pub(crate) fn invalidate_guest_probe_cache(distro: &str) {
+    if let Ok(mut cache) = guest_probe_cache().lock() {
+        cache.remove(distro);
+    }
+}
+
 /// 关于页/托盘读取路径的世界择源入口：按 `world` 取本世界的实测版本。
 ///
 /// **不得阻塞启动**：调用方把本函数放在 `spawn_blocking` 里（客体探测会起

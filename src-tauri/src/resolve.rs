@@ -458,7 +458,8 @@ fn engine_launch_spec(
             "引擎引导完成但未定位到 dsh 启动器（引擎目录异常）——删除 engines 目录后重启应用可重建"
         )
     })?;
-    let no_open = engine_no_open_supported(dsh_version.unwrap_or(""), &launcher, data_dir);
+    let no_open =
+        engine_no_open_supported(dsh_version.unwrap_or(""), &launcher, &node_bin, data_dir);
     Ok(LaunchSpec {
         node_bin,
         dsh_entry: DshEntry::Launcher { bin: launcher },
@@ -527,14 +528,19 @@ fn save_probe_cache(
     Ok(())
 }
 
-/// 引擎档 no-open 支持性：dsh 启动器直接探测（node 经 PATH 解析），
+/// 引擎档 no-open 支持性：dsh 启动器直接探测（注入引擎 bin 与选定 node 目录），
 /// 版本 = 引导终态版本（缓存键与 system 档同机制）。
-fn engine_no_open_supported(version: &str, launcher: &Path, data_dir: &Path) -> bool {
+fn engine_no_open_supported(
+    version: &str,
+    launcher: &Path,
+    node_bin: &Path,
+    data_dir: &Path,
+) -> bool {
     let key = launcher.to_path_buf();
     no_open_supported(
         version,
         (key.clone(), key),
-        || probe_no_open_launcher(launcher, PROBE_NO_OPEN_TIMEOUT),
+        || probe_no_open_launcher(launcher, node_bin, data_dir, PROBE_NO_OPEN_TIMEOUT),
         data_dir,
     )
 }
@@ -549,7 +555,11 @@ fn no_open_supported(
 ) -> bool {
     let cache = load_probe_cache(data_dir);
     if let Some(&v) = cache.get(version) {
-        return v;
+        // 若缓存命中 true，直接放行；若为 false，可能是早期 Windows 环境下未注入
+        // 私有 node 导致探测命令找不到 node 误判写下的脏数据，不信 false 缓存，回退重探。
+        if v {
+            return true;
+        }
     }
     // 进程内缓存兜底（同一次运行多次解析命中）
     static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(PathBuf, PathBuf, bool)>>> =
@@ -563,7 +573,9 @@ fn no_open_supported(
             .map(|(_, _, v)| *v)
     };
     if let Some(v) = in_proc {
-        return v;
+        if v {
+            return true;
+        }
     }
     let v = probe();
     cache2.lock().unwrap().push((probe_key.0, probe_key.1, v));
@@ -579,9 +591,15 @@ fn no_open_supported(
 const PROBE_NO_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 引擎档探测：dsh 启动器直接执行（shebang 脚本 / .cmd shim 经 child_cmd
-/// 分发，node 经 PATH 解析），参数与 system 档探测同款。
-fn probe_no_open_launcher(launcher: &Path, timeout: std::time::Duration) -> bool {
+/// 分发，node 经 dsh_child_path 确保私有与系统 node 均可达），参数与 system 档探测同款。
+fn probe_no_open_launcher(
+    launcher: &Path,
+    node_bin: &Path,
+    data_dir: &Path,
+    timeout: std::time::Duration,
+) -> bool {
     let mut cmd = crate::child_cmd(launcher);
+    cmd.env("PATH", dsh_child_path(node_bin, data_dir));
     cmd.args(["--profile", "web", "--help"]);
     probe_no_open_cmd(cmd, timeout)
 }

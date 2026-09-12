@@ -253,7 +253,7 @@ export const enUS: AppCopy = {
     upgrading: "Upgrading…",
     upgradeFailed: "Upgrade Failed",
     upgradeRunning: "Installing globally via pnpm/npm, this may take several minutes…",
-    btnCheck: "Check",
+    btnCheck: "Check for Updates",
     btnUpgrade: "Upgrade",
     // Version picker (2026-09-09): "new version" only reflects the upgradable
     // line (stable/rc); preview builds are opt-in via the version list.

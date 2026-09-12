@@ -12,10 +12,12 @@ import {
   RefreshCw,
   Server,
 } from "lucide-react"
+import { listen } from "@tauri-apps/api/event"
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
+import { EV } from "@/types/events"
 import type { SystemDiagnosticsReport } from "@/types/ipc"
 
 function formatBytes(bytes: number): string {
@@ -29,6 +31,11 @@ function formatBytes(bytes: number): string {
 let cachedReport: SystemDiagnosticsReport | null = null
 let lastFetchedAt = 0
 const CACHE_TTL_MS = 60_000
+
+export function invalidateDiagnosticsCache() {
+  cachedReport = null
+  lastFetchedAt = 0
+}
 
 export function DiagnosticsPane({
   onNotice,
@@ -77,6 +84,22 @@ export function DiagnosticsPane({
 
   useEffect(() => {
     fetchDiagnostics(false)
+  }, [fetchDiagnostics])
+
+  useEffect(() => {
+    // 监听运行环境模式切换或启动状态更新，立即失效大屏缓存并重新拉取
+    const unlistenSettings = listen("app:settings-changed", () => {
+      invalidateDiagnosticsCache()
+      fetchDiagnostics(true)
+    })
+    const unlistenBootUpdate = listen(EV.bootUpdate, () => {
+      invalidateDiagnosticsCache()
+      fetchDiagnostics(true)
+    })
+    return () => {
+      void unlistenSettings.then((f) => f())
+      void unlistenBootUpdate.then((f) => f())
+    }
   }, [fetchDiagnostics])
 
   const copyFullReport = async () => {
