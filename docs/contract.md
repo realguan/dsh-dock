@@ -158,9 +158,14 @@ cargo tauri build     （per 平台；CI matrix 三 OS）
 Node 下载按目标平台选择官方包格式（macOS/Linux 为 `tar.gz`，Windows 为 `zip`），并使用
 内置 SHA-256 校验和；Windows 安装器同时使用在线 WebView2 bootstrapper，保持安装包轻量。
 
-pnpm 的全局目录或安装动作失败时回退 npm；因此 pnpm 是优先路径，不是桌面应用的硬依赖。
-对 npm 11 显式放行 dsh 所需的 native/helper install scripts；系统全局目录无写权限时，
-自动切换到应用数据目录下的私有 prefix，不要求管理员权限。
+pnpm 是**环境检查的硬依赖**（ADR-0009 口径 2）且**随壳内置恒在**（`resources/pnpm/`，
+各平台一份）：node 缺失经**壳内置 pnpm** 的 `runtime set node` 补齐，dsh 缺失经引擎引导补齐
+（ADR-0010）；原「`npm i -g pnpm` 补装 pnpm 自身」与 tarball 下载链**已随探测层退役**
+（ADR-0010），**npm 链不再用于安装 dsh 本体**（ADR-0005 补录，2026-08-28）。
+**dsh 本体的安装形态 = project 内安装**（`<engines>/dsh-runtime/` 内 `pnpm add`，
+**非全局 `-g`**；ADR-0017）——该形态正是为兑现下句承诺：**Windows 普通账户
+（未开开发者模式、非管理员）在无符号链接特权时仍可完成安装，不要求管理员权限**；
+native/helper install scripts 经 pnpm 的 `--allow-build` 显式放行。
 
 ## 下载运行时语义（2026-08-24 增补）
 

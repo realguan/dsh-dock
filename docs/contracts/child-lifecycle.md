@@ -205,8 +205,15 @@ Windows 的整树连坐是 ADR-0014 已接受的行为；unix 不连坐进程组
 ### 3.4 覆盖范围（必须全部登记，无例外）
 
 `spawn_dsh`（服务本体）、`executor` wsl 启动、`run_dsh_forward`（插件装卸，**用户恢复流程主路径**）、
-`dsh --dump-config`、`repair-session.mjs`、`engines` 的 **`pnpm add -g`（分钟级）**、
+`dsh --dump-config`、`repair-session.mjs`、`engines` 的 **dsh project 内安装
+（`<engines>/dsh-runtime/` 内 `pnpm add`，**非 `-g`**；ADR-0017；分钟级——仍经 `lifecycle::run`）**、
 `tar` 解包、各版本探测、`taskkill`。
+
+> **2026-09-11 描述校正（ADR-0017）**：本行原写「**`pnpm add -g`（分钟级）**」——
+> 宿主 dsh 的安装形态已改为 **project 内安装**，`add -g` 仅 **WSL 客体**保留
+> （`docs/adr/0017-dsh-project-local-install.md`）。
+> **闸门语义不变**：该动作**仍经 `lifecycle::run`**，故生产调用点数与 spawn 闸门覆盖不受影响；
+> 本次仅为**描述失真校正**。
 
 > **补录（2026-09-11）**：上列九项**全部已登记**（逐项实测），但清单**漏列**两处实测存在的面，
 > 现补入：**`session-scan.mjs`**（`sessions.rs` 的会话扫描）、
@@ -284,7 +291,7 @@ Windows 的整树连坐是 ADR-0014 已接受的行为；unix 不连坐进程组
 - [ ] macOS：`kill -9` 壳 → `ps` 无残留 dsh；被它锁住的会话可正常打开（**本次事故的直接回归项**）
 - [ ] macOS：`cargo tauri dev` 连续重编重启 5 次 → 孤儿数为 0
 - [ ] macOS：工作台内起一个长驻 dev server → 壳退出后**它仍然活着**（ADR-0015 §2.2 的负向验证）
-- [ ] 引导期：`pnpm add -g` 进行中强杀壳 → 下次引导不被 store 锁阻塞
+- [ ] 引导期：dsh 的 project 内 `pnpm add`（`<engines>/dsh-runtime/`；ADR-0017）进行中强杀壳 → 下次引导不被 store 锁阻塞
 
 **B. Windows / WSL（本机无法验证 → 指针，不在此重复承诺）**
 

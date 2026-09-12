@@ -32,6 +32,98 @@
 
 ## 三、记录
 
+### 2026-09-11 架构变更 ADR-0017 · dsh 改为 project 内安装（含**宪法级改动**）—— guan（AI 协作）
+
+- **性质**：**宪法级改动告知**（AGENTS §10「宪法级改动须落档 broadcasts」）+ 架构决策落档。
+  本条目为 `AGENTS.md`（提交 **`52b876e`**）与 **ADR-0017** 的正式知会载体。
+
+#### 一、宪法级改动（`AGENTS.md`，全文 **250** 行 = 上限，全部在预算内）
+
+| # | 位置 | 改动 | 判据 |
+|:--|:---|:---|:---|
+| 1 | **§9 索引表 `:226`** | 新增 [ADR-0017](docs/adr/0017-dsh-project-local-install.md) 行：「dsh 改为 project 内安装 + 自建 shim：结构性绕开 pnpm 全局 hash 符号链接，Windows 普通账户免提权」 | §9 是 ADR 唯一索引（§9 要求先立后改） |
+| 2 | **§7 `:172`** | 「新增 IPC 三处同步」块 **3 行 → 1 行** | 按 **§11.4「已有测试 CI 兜底」回收**：三处同步已由 build.rs 生成 + `ipc.rs` gate_tests 全机器兜底，**不必再靠人记**（细节从宪法移出，非删除约束） |
+| 3 | **§7 `:183`** | 引擎引导条：原「壳内置 pnpm12 经 `runtime set node` / `pnpm add -g` 下载 node 与 dsh」→ 校正为「经 `runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：Windows 免符号链接特权，ADR-0017）下载 dsh，**WSL 客体仍同源 `add -g`**」 | **这是"宪法里写着的安装方式变了"**——原文已随 ADR-0017 失真，不改即违 §11.3（禁双源） |
+
+**行数证据**（两种口径并列，遵循团队教训 M5「报预算类数字须同时给命令」）：
+
+```bash
+wc -l AGENTS.md                                                   # 250（= 上限 250）✓
+awk '/^## 7\./{f=1;next} /^## 8\./{f=0} f' AGENTS.md | wc -l      # 37 ← 规范口径（真实节内行数）
+awk '/^## 9\./{f=1;next} /^## 10\./{f=0} f' AGENTS.md | wc -l     # 24 ← 规范口径
+awk '/^## 7\./,/^## 8\./' AGENTS.md | wc -l                       # 39（含两端标题）；去首行 = 38
+awk '/^## 9\./,/^## 10\./' AGENTS.md | wc -l                      # 26（含两端标题）；去首行 = 25
+```
+
+⇒ 规范口径 **§7 = 37 / §9 = 24**；「含下节标题」口径得 38 / 25（差 1 行，正是 M5 记录过的口径差）。
+**两种口径均在 §11.4 上限（单节 ≤40）之内。**
+
+#### 二、ADR-0017 决策要点
+
+- **采纳方案 B**：dsh 由「pnpm 全局包」改为「**壳自管 project 依赖 + 壳自写 shim**」——
+  在 `<engines>/dsh-runtime/` 内 `pnpm add`（沿用 `nodeLinker: hoisted`），
+  壳自写 `bin/dsh`（POSIX）与 `bin/dsh.cmd`（纯文本，**不是链接**）；
+  `find_engine_tool` 既有查找序（`dsh.exe` → `dsh.cmd` → `dsh`）**无需改动**。
+- **为什么否决自动提权（方案 C）**：壳的 WebView **承载 dsh 工作台并加载用户第三方插件 JS**；
+  壳一旦提权，WebView、dsh 及其 spawn 的一切都成管理员权限 ⇒ **信任面从「装一个包」放大到
+  「整个壳 + 所有插件」**；而引擎安装**只在首启一次**需要该能力——严重不成比例。
+- **亦不采纳 A（npm 全局回退）**：ADR-0005（2026-08-28 补录）已明写装 dsh 本体**不再回退 npm**，
+  回退会引入**第二条安装路径**（双实现），且该函数已随之删除需重建。
+- **关联**：修订 ADR-0010 的**安装形态**一节（「引擎=壳资产」「首启自补齐」结论不变）；
+  不冲突 ADR-0005（对 pnpm 自身仍适用）与 ADR-0009 口径 2（仍是 pnpm）；**WSL 客体不改**。
+- **迁移（不破坏存量）**：旧 `global/v11/…` 布局**继续可用**（`readiness_gaps` 只判「在位且版本匹配」，
+  不判布局）⇒ 老用户不被强制重装；旧 `global/` **不主动删除**。
+
+#### 三、Windows 真机探针结论（方案 B 两平台均成立）
+
+**探针**：`scripts/probe-windows-engine-install.ps1`（**只读**：只在 `%TEMP%` 建临时目录、跑完自删；
+不碰 `engines/`、不写注册表、不装全局包）。**普通账户 + 开发者模式关闭**下实测：
+
+| # | 判据 | 结果 |
+|:--|:---|:---|
+| 1 | 非全局 `pnpm add` | **exit 0** |
+| 2 | 是否创建 `global\` | **未创建** —— 完全不触碰 global hash link |
+| 3 | `node_modules\.bin\{semver,semver.cmd,semver.ps1}` | **全是普通文件（cmd 垫片）**，非符号链接 |
+| 4 | `.bin` 之外 | **零链接** |
+
+配合 macOS 端到端实测（非全局 `pnpm add` 不创建 `global/`、包树零链接；自建 157 字节 shim →
+`dsh --version` → `0.1.5-rc.2` 成功）⇒ **方案 B 两平台均成立**。
+（原本唯一无法在 macOS 判定的未知 = Windows 的 `.bin` 形态，已由真机回答。）
+
+#### 四、问题 1.1 的状态变化（**如实标注推进阶段，不写"已修好"**）
+
+**「1.1 已从『只修诊断与出路』推进到『根因已定案并进入实施』，不是『已修好』。」**
+
+| 阶段 | 状态 |
+|:---|:---|
+| 根因定位 | ✅ 已证实：pnpm 12 全局安装的 global hash link 需符号链接特权；配置级穷举 7 候选均未消除（阴性结论已自证） |
+| **根因的解法** | ✅ **已定案**：ADR-0017 采纳方案 B，并经 Windows 真机探针 + macOS 端到端证实可行 |
+| 诊断与出路（v1.2.1 已交付） | ✅ 已修：错误分类「特权 vs 网络」拆开、**权限类判据优先**，错误卡给 `boot_in_wsl` / `retry` |
+| **安装能力（根因修复本体）** | 🚧 **实施中**（`task-56`）→ 独立验证（`task-57`）→ **Windows 真机待复验** |
+
+⇒ 本批为**机制级修复 + 单元/契约级验证**；**Windows 真机复验尚未完成**——
+**不得**据此写成「已修好」。实施与验证产物出来后另发一条**追加条目**（分两次写，不合并）。
+
+#### 五、随本变更校正的失真文档
+
+| 文件:行 | 原状 | 校正 |
+|:---|:---|:---|
+| `docs/contract.md:161` | 「pnpm 的全局目录或安装动作失败时**回退 npm**；因此 pnpm 是优先路径，**不是桌面应用的硬依赖**」 | 该句**在本变更之前即与既有裁定冲突**（ADR-0005 补录 2026-08-28「装 dsh 本体不再回退 npm」、AGENTS §6「pnpm 为环境检查硬依赖」）。已按对齐口径改写：pnpm = **环境检查硬依赖且随壳内置恒在**；node 经 `runtime set node` 补齐；**npm 链已随探测层退役（ADR-0010），不再用于安装 dsh 本体**；**dsh 本体 = project 内安装（ADR-0017）**，并明写该形态**正是为兑现「不要求管理员权限」** |
+| `docs/contracts/child-lifecycle.md:208`（§3.4 spawn 面清单） | `engines` 的「**`pnpm add -g`（分钟级）**」 | 改为「dsh **project 内安装**（`<engines>/dsh-runtime/`；ADR-0017）」，并注明 **WSL 客体仍 `add -g`**、**仍经 `lifecycle::run`**（**闸门语义不变**，仅描述失真） |
+| `docs/contracts/child-lifecycle.md:294`（§6 macOS 清单项） | 「引导期：**`pnpm add -g`** 进行中强杀壳」 | 同步改为 project 内 `pnpm add` |
+
+**未升 `MANIFEST_FORMAT`**：以上为**散文失真校正**，不涉 `product.manifest.json` 字段
+（`format` 仍为 3；`terminal.resolution.*.tiers` 语义未动）。§4.1「先改 contract → 升格式」
+针对**契约字段**变更，本批无字段变更，故不升版。
+
+- **影响**：仅周知。① 后续改引擎安装/升级链须以 **ADR-0017** 为准（`add -g` 仅 **WSL 客体**保留）；
+  ② Windows 真机项仍待复验（清册 **D1** 搁置中），**不得**把 CI 全绿当该类验证证据
+  （已登记 roadmap **§4.16**，该条已按本 ADR 更新为「消除一个具体成因 ≠ 消除结构性事实」）；
+  ③ 待裁定项：清册 **H1/H3/H4/H6**。
+- **凭据**：`52b876e`（AGENTS.md + ADR-0017）；`docs/adr/0017-dsh-project-local-install.md`；
+  `docs/team/V120B-Windows探针-方案B验证.md`；`scripts/probe-windows-engine-install.ps1`；
+  文档校正 diff = `docs/contract.md` + `docs/contracts/child-lifecycle.md`。
+
 ### 2026-09-11 发版 v1.2.1（Windows 实测问题修复）· 发版结果回填 —— guan（AI 协作）
 
 - **版本**：`v1.2.0` → **`v1.2.1`**（patch：全部来自实机缺陷报告，无新契约/新 IPC）。

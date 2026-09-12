@@ -273,6 +273,12 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
      `runtime set node` / `add -g` 用**符号链接**，普通账户（未开开发者模式、非管理员）
      `CreateSymbolicLink` → `ERROR_ACCESS_DENIED (os error 5)`。而 CI 的 Windows runner
      **以管理员上下文运行**，符号链接特权天然可用（`docs/known-issues/v110-测试问题定位.md` §1「为什么三平台 CI 没拦住」）。
+     > **2026-09-11 状态更新（ADR-0017）**：其中 **dsh 安装路径**的该成因已**结构性消除**——
+     > dsh 改为 project 内 `pnpm add` + 壳自写 shim，不再触碰 global hash link
+     > （`docs/adr/0017-dsh-project-local-install.md`）。**但本条陷阱不因此关闭**：
+     > ① 其它 Windows 专属路径（文件锁、WebView2、`.cmd` 垫片/`dsh.cmd` 的**实际执行**）
+     > 仍只能实机验；② ADR-0017 本身**新增**了待真机复核项（shim 在新机上的落位与执行）。
+     > 即：**消除了一个具体成因，不等于消除了"该类只能实机暴露"这个结构性事实**。
   2. **提权作业自身的失效**：`.github/workflows/boot-smoke.yml` 的 Windows 作业挂着
      `continue-on-error: true`（注释写明 runner 环境不稳定）⇒ 即便红也不挡闸门，
      **闸门存在但无约束力**。
@@ -281,10 +287,15 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 - **候选解法（择一，需评估成本）**：
   - `runas /trustlevel:0x20000` 降权跑该场景；或
   - **自托管 runner**（普通用户上下文）；或
-  - 把「本机可跑的替代验证」做足（v1.2.0 的 D1 即走这条：错误分类 + 可行动出路），
+  - **定向只读探针**（2026-09-11 新增，已被 ADR-0017 验证有效）：把"本机无法判定的
+    单个事实"做成**用户可跑、只读、不改环境**的脚本（先例 =
+    `scripts/probe-windows-engine-install.ps1`），用一次真机点验**替换**整轮实机回归。
+    代价低、可复用；**局限**：只回答被问的那一个问题，不等于整体实机验收；或
+  - 把「本机可跑的替代验证」做足（v1.2.0 的 1.1 即走这条：错误分类 + 可行动出路），
     并把**真机项**明确标注为「机制级修复 + 契约级验证，真机待复验」而不谎称已验。
 - **触发/再评条件**：① 维护者恢复 Windows 实机验证；② 再次出现「只有实机暴露」的
-  发版级缺陷；③ 引入自托管 runner。
+  发版级缺陷；③ 引入自托管 runner；④ 新增 Windows 专属路径（新 spawn / 新链接机制 /
+  新注册表或 WebView2 面）时，须判断它是否落回本条覆盖。
 - **注意**：**不得**用「CI 全绿」充当该类的验证证据——见 v110 §1 与 v120 §10.4。
 
 #### 4.17 陷阱：跑生产 shell 脚本的测试，工具夹具须落 `$HOME/.dsh-dock/engines/bin`（2026-09-11 登记）
