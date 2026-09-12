@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-09-12 fix(market)：对齐 dsh-market NPM catalog 镜像链与 CDN 扩容 —— guan（AI 起草）
+
+- **变更**：`src-tauri/src/updates.rs`，`fetch_market_registry` 升级分发链路。
+- **原因**：上游 `awesome-dsh-plugin.com/plugins.json` 插件增至 3400+、体积达 3.11MB（突破此前硬编码的 3MB 上限），回退的 `raw.githubusercontent.com` 系 Pages 构建产物恒为 404，导致控制中心插件市场目录加载失败。
+- **对齐 dsh-market 方案 B**：
+  1. 优先从 npm 镜像链（`registry_chain()`：npmmirror → npmjs）拉取官方分发包 `dsh-plugin-catalog` 的 tarball，解压 `package/plugins.json`（gzip 压缩包仅 ~800KB，国内秒级直达，抗封锁且省流）；
+  2. NPM 镜像全失效时回落官方 CDN `awesome-dsh-plugin.com`，体积上限从 3MB 提高至 16MB；
+  3. 彻底移除无效的 `raw.githubusercontent.com` 回退路径。
+- **影响**：仅周知，对外 IPC 契约 `fetch_market_registry` 接口与返回值完全兼容。
+- **凭据**：`cargo test` **416 passed**（414 → +2）· `real_fetch_market_registry` 联网实测 0.70s 通过 · `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 · 前端 `typecheck` 0 错。
+
 ### 2026-09-12 发版 v1.2.4 · 让 Windows 修复作用于已安装用户（同形缺口的第二层）—— guan（AI 协作）
 
 - **性质**：用户真机复验 v1.2.3 **仍报同一 EPERM** 后的修复与发版结果回填。

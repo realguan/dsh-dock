@@ -1213,34 +1213,124 @@ fn npm_packument_versions_with(
 
 // ---------- 社区插件市场 Registry 拉取 (dsh-market / awesome-dsh-plugin) ----------
 
-/// 市场 Registry CDN 列表（镜像链，与 packument 同模式）。
-const MARKET_REGISTRY_URLS: &[&str] = &[
-    "https://awesome-dsh-plugin.com/plugins.json",
-    "https://raw.githubusercontent.com/awesome-dsh-plugin/awesome-dsh-plugin/main/plugins.json",
-];
+/// 插件市场目录 NPM 分发包名（对齐 dsh-market / awesome-dsh-plugin#2796）。
+const MARKET_CATALOG_PACKAGE: &str = "dsh-plugin-catalog";
 
-/// Registry 最大体积上限（当前 ~650KB，预留到 3MB）。
-const MARKET_REGISTRY_MAX_BYTES: u64 = 3 * 1024 * 1024;
+/// 插件市场 tarball 压缩包大小上限（当前 ~800KB，预留到 8MB）。
+const MARKET_CATALOG_TGZ_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 官方 CDN 备用地址（GitHub Pages 静态站点）。
+const MARKET_OFFICIAL_URL: &str = "https://awesome-dsh-plugin.com/plugins.json";
+
+/// 官方 CDN Registry 最大体积上限（当前 ~3.26MB，预留到 16MB）。
+const MARKET_REGISTRY_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// 从 packument 或 metadata 中提取 tarball URL。
+fn extract_tarball_url(v: &serde_json::Value) -> Option<&str> {
+    if let Some(t) = v
+        .get("dist")
+        .and_then(|d| d.get("tarball"))
+        .and_then(|t| t.as_str())
+    {
+        return Some(t);
+    }
+    let latest = v
+        .get("dist-tags")
+        .and_then(|t| t.get("latest"))
+        .and_then(|l| l.as_str())?;
+    v.get("versions")
+        .and_then(|vs| vs.get(latest))
+        .and_then(|ver| ver.get("dist"))
+        .and_then(|d| d.get("tarball"))
+        .and_then(|t| t.as_str())
+}
+
+/// 从 npm tarball（gzip tar）中提取指定路径的文件文本。
+fn extract_tarball_file(tgz: &[u8], target_path: &str) -> Option<String> {
+    let gz = flate2::read::GzDecoder::new(tgz);
+    let mut archive = tar::Archive::new(gz);
+    for entry in archive.entries().ok()? {
+        let mut entry = entry.ok()?;
+        let path = entry
+            .path()
+            .ok()?
+            .to_string_lossy()
+            .trim_start_matches("./")
+            .to_string();
+        if path == target_path {
+            let mut text = String::new();
+            entry.read_to_string(&mut text).ok()?;
+            return Some(text);
+        }
+    }
+    None
+}
 
 /// 拉取社区插件市场目录 JSON（原样透传给前端解析）。
 pub fn fetch_market_registry() -> Result<String, String> {
-    fetch_market_registry_with(&UreqGet::new())
+    fetch_market_registry_with(&registry_chain(), &UreqGet::new())
 }
 
-/// `fetch_market_registry` 的可注入实现（离线可测镜像链回退）。
-fn fetch_market_registry_with(http: &dyn HttpGet) -> Result<String, String> {
-    let mut last_err = String::from("市场 Registry 均不可达");
-    for url in MARKET_REGISTRY_URLS {
-        tracing::info!("读取插件市场 Registry: {url}");
-        match http.get_text(url, MARKET_REGISTRY_MAX_BYTES, None) {
-            Ok(text) => return Ok(text),
-            Err(e) => {
-                last_err = format!("{url}: {e}");
+/// `fetch_market_registry` 的可注入实现（优先 npm 镜像链，回退官方 CDN）。
+fn fetch_market_registry_with(bases: &[String], http: &dyn HttpGet) -> Result<String, String> {
+    let mut last_err = String::from("插件市场 Registry 均不可达");
+
+    // 1. 优先走 NPM 镜像链分发（dsh-plugin-catalog 包含 package/plugins.json），
+    //    对齐 dsh-market 策略：国内镜像自带 CDN 且 gzip 压缩仅 ~800KB，抗封锁与弱网。
+    for base in bases {
+        let latest_url = format!("{base}/{MARKET_CATALOG_PACKAGE}/latest");
+        tracing::info!("读取插件市场 NPM 元数据: {latest_url}");
+
+        let text = match http.get_text(&latest_url, PACKUMENT_MAX_BYTES, None) {
+            Ok(t) => t,
+            Err(_) => {
+                // 兼容部分仅支持全量 packument 的 npm mirror
+                let pkg_url = format!("{base}/{MARKET_CATALOG_PACKAGE}");
+                match http.get_text(&pkg_url, PACKUMENT_MAX_BYTES, None) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        last_err = format!("{latest_url}: {e}");
+                        continue;
+                    }
+                }
+            }
+        };
+
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) else {
+            last_err = format!("{base}/{MARKET_CATALOG_PACKAGE}: 元数据 JSON 解析失败");
+            continue;
+        };
+
+        let Some(tarball_url) = extract_tarball_url(&val) else {
+            last_err = format!("{base}/{MARKET_CATALOG_PACKAGE}: 未找到 tarball 下载地址");
+            continue;
+        };
+
+        tracing::info!("下载插件市场 tarball: {tarball_url}");
+        let Ok(tgz) = http.get_bytes(tarball_url, MARKET_CATALOG_TGZ_MAX_BYTES) else {
+            last_err = format!("{tarball_url}: 下载失败或超限");
+            continue;
+        };
+
+        match extract_tarball_file(&tgz, "package/plugins.json") {
+            Some(plugins_json) => return Ok(plugins_json),
+            None => {
+                last_err = format!("{tarball_url}: 未包含 package/plugins.json");
                 continue;
             }
         }
     }
-    Err(last_err)
+
+    // 2. NPM 镜像全失效时，回落到官方 GitHub Pages 站点直连。
+    //    注：已移除必然 404 的 raw.githubusercontent.com（该文件系构建产物，未提交到 git）。
+    tracing::info!("NPM 链不可达，回退官方 CDN: {MARKET_OFFICIAL_URL}");
+    match http.get_text(MARKET_OFFICIAL_URL, MARKET_REGISTRY_MAX_BYTES, None) {
+        Ok(text) => Ok(text),
+        Err(e) => {
+            last_err = format!("{MARKET_OFFICIAL_URL}: {e} (NPM 镜像链亦不可达: {last_err})");
+            Err(last_err)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2057,33 +2147,104 @@ mod packument_tests {
         assert!(http.calls().is_empty(), "非法包名不得发起任何请求");
     }
 
-    #[test]
-    fn market_registry_falls_back_to_github_raw() {
-        let http = FakeHttp {
-            text: vec![
-                ("awesome-dsh-plugin.com", Err("CDN 502")),
-                ("raw.githubusercontent.com", Ok(r#"{"plugins":[]}"#)),
-            ],
-            ..Default::default()
-        };
-        assert_eq!(
-            fetch_market_registry_with(&http).unwrap(),
-            r#"{"plugins":[]}"#
-        );
-        assert_eq!(http.calls().len(), 2);
+    /// 造一个只含 `package/plugins.json` 的 npm tarball。
+    fn market_catalog_tgz(plugins_json: &str) -> Vec<u8> {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(&mut gz);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(plugins_json.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "package/plugins.json", plugins_json.as_bytes())
+            .unwrap();
+        drop(builder);
+        gz.finish().unwrap()
     }
 
     #[test]
-    fn market_registry_all_mirrors_fail_reports_last_error() {
+    fn market_registry_prefers_npm_package_route() {
+        let tgz = market_catalog_tgz(r#"{"plugins":[{"name":"p1"}],"categories":{}}"#);
+        let latest_meta = r#"{"name":"dsh-plugin-catalog","dist":{"tarball":"https://cdn.invalid/dsh-plugin-catalog.tgz"}}"#;
+        let http = FakeHttp {
+            text: vec![("m1.invalid/dsh-plugin-catalog/latest", Ok(latest_meta))],
+            bytes: vec![("dsh-plugin-catalog.tgz", tgz)],
+            ..Default::default()
+        };
+        let res = fetch_market_registry_with(&bases2(), &http).unwrap();
+        assert_eq!(res, r#"{"plugins":[{"name":"p1"}],"categories":{}}"#);
+        assert_eq!(
+            http.calls(),
+            vec![
+                "https://m1.invalid/dsh-plugin-catalog/latest".to_string(),
+                "https://cdn.invalid/dsh-plugin-catalog.tgz".to_string(),
+            ],
+            "NPM 镜像成功时不请求官方 CDN"
+        );
+    }
+
+    #[test]
+    fn market_registry_npm_mirror_falls_back_to_next_mirror() {
+        let tgz = market_catalog_tgz(r#"{"plugins":[],"categories":{}}"#);
+        let latest_meta = r#"{"name":"dsh-plugin-catalog","dist":{"tarball":"https://cdn.invalid/dsh-plugin-catalog.tgz"}}"#;
         let http = FakeHttp {
             text: vec![
-                ("awesome-dsh-plugin.com", Err("CDN 502")),
-                ("raw.githubusercontent.com", Err("raw 404")),
+                ("m1.invalid", Err("502")),
+                ("m2.invalid/dsh-plugin-catalog/latest", Ok(latest_meta)),
+            ],
+            bytes: vec![("dsh-plugin-catalog.tgz", tgz)],
+            ..Default::default()
+        };
+        let res = fetch_market_registry_with(&bases2(), &http).unwrap();
+        assert_eq!(res, r#"{"plugins":[],"categories":{}}"#);
+        assert!(http.calls()[0].contains("m1.invalid"));
+        assert!(http.calls().iter().any(|c| c.contains("m2.invalid")));
+    }
+
+    #[test]
+    fn market_registry_npm_fails_falls_back_to_official_cdn() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Err("502")),
+                ("m2.invalid", Err("502")),
+                (
+                    "awesome-dsh-plugin.com",
+                    Ok(r#"{"plugins":[{"name":"from-cdn"}],"categories":{}}"#),
+                ),
             ],
             ..Default::default()
         };
-        let err = fetch_market_registry_with(&http).unwrap_err();
-        assert!(err.contains("raw 404"), "实测：{err}");
+        let res = fetch_market_registry_with(&bases2(), &http).unwrap();
+        assert_eq!(res, r#"{"plugins":[{"name":"from-cdn"}],"categories":{}}"#);
+        assert!(http
+            .calls()
+            .iter()
+            .any(|c| c.contains("awesome-dsh-plugin.com")));
+    }
+
+    #[test]
+    fn market_registry_all_sources_fail_reports_error() {
+        let http = FakeHttp {
+            text: vec![
+                ("m1.invalid", Err("m1 502")),
+                ("m2.invalid", Err("m2 502")),
+                ("awesome-dsh-plugin.com", Err("cdn timeout")),
+            ],
+            ..Default::default()
+        };
+        let err = fetch_market_registry_with(&bases2(), &http).unwrap_err();
+        assert!(err.contains("cdn timeout"), "包含末错：{err}");
+        assert!(
+            err.contains("awesome-dsh-plugin.com"),
+            "包含官方源报错：{err}"
+        );
+    }
+
+    #[test]
+    #[ignore = "需联网测试真实插件市场 Registry 获取"]
+    fn real_fetch_market_registry() {
+        let registry = fetch_market_registry().expect("real fetch market registry should succeed");
+        assert!(registry.contains("\"plugins\""), "应包含 plugins 键");
     }
 
     /// 造一个只含 `package/map.json` + `package/map.json.sig` 的 npm tarball。
