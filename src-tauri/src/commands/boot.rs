@@ -35,6 +35,14 @@ pub fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), Stri
     });
     Ok(())
 }
+pub(crate) fn evaluate_needs_mode_selection(
+    is_windows: bool,
+    active_mode_is_none: bool,
+    default_mode_is_none: bool,
+) -> bool {
+    is_windows && active_mode_is_none && default_mode_is_none
+}
+
 /// 读取启动阶段缓存的状态与错误（前端挂载时补水，解决 early emit 竞态丢失事件的问题）。
 /// 2026-09-10（ADR-0014）：新增 `intent`（交接意图）——主窗口在切换/重启后是**整文档
 /// 重载**，新文档只剩这一条通道能拿到「我是被谁重启的、从什么时候开始」，
@@ -48,16 +56,32 @@ pub fn get_boot_status(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         // 经本命令补水进新文档（v1.2.0 实测 2.1）。
         let error = shell_state.boot.error();
         let steps = shell_state.boot.steps();
+        let data_dir = app.path().app_data_dir().ok();
+        let needs_mode_selection = if cfg!(windows) {
+            let active_is_none = shell_state.active_mode.lock().unwrap().is_none();
+            let default_is_none = data_dir
+                .as_deref()
+                .map(crate::settings::load)
+                .map(|s| s.default_mode.is_none())
+                .unwrap_or(true);
+            evaluate_needs_mode_selection(true, active_is_none, default_is_none)
+        } else {
+            false
+        };
         Ok(serde_json::json!({
             "steps": steps,
             "error": error,
             "intent": shell_state.handoff_json(),
+            "needs_mode_selection": needs_mode_selection,
+            "needsModeSelection": needs_mode_selection,
         }))
     } else {
         Ok(serde_json::json!({
             "steps": [],
             "error": null,
             "intent": serde_json::Value::Null,
+            "needs_mode_selection": false,
+            "needsModeSelection": false,
         }))
     }
 }
@@ -179,4 +203,29 @@ pub fn terminal_action(
         let _ = handle;
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_windows_never_needs_mode_selection() {
+        assert!(!evaluate_needs_mode_selection(false, true, true));
+        assert!(!evaluate_needs_mode_selection(false, false, true));
+        assert!(!evaluate_needs_mode_selection(false, true, false));
+        assert!(!evaluate_needs_mode_selection(false, false, false));
+    }
+
+    #[test]
+    fn windows_needs_mode_selection_only_when_unselected_and_no_default() {
+        // 首次启动且未设默认：需要模式选择
+        assert!(evaluate_needs_mode_selection(true, true, true));
+        // 已有默认模式：不需要模式选择
+        assert!(!evaluate_needs_mode_selection(true, true, false));
+        // 运行期已通过 choose_mode 选定模式（当前会话已激活）：不需要再次选择
+        assert!(!evaluate_needs_mode_selection(true, false, true));
+        // 既有默认又已激活：不需要
+        assert!(!evaluate_needs_mode_selection(true, false, false));
+    }
 }

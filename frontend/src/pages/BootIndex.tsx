@@ -5,7 +5,7 @@
 // 槽位入卡；出错时卡头转警示态、ErrorCard 就地展开。
 import { useEffect, useMemo, useRef, useState } from "react"
 import { TerminalSquare } from "lucide-react"
-import { useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n } from "@/stores/i18nStore"
@@ -43,6 +43,7 @@ declare global {
 
 export function BootIndex() {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const [params] = useSearchParams()
   const { can } = usePlatform()
   const [wslBusy, setWslBusy] = useState(false)
@@ -94,6 +95,10 @@ export function BootIndex() {
       .getBootStatus()
       .then((status) => {
         if (!alive || !status) return
+        if (status.needs_mode_selection || status.needsModeSelection) {
+          navigate("/mode", { replace: true })
+          return
+        }
         if (Array.isArray(status.steps)) {
           for (const s of status.steps) {
             const step = normalizeStep(s)

@@ -287,12 +287,26 @@ pub fn run() {
                     );
                 }
                 let settings = crate::settings::load(&boot_data);
-                let mode = settings.default_mode.unwrap_or(settings::Mode::Local);
+                // Windows 首次启动未设默认运行环境：在启动执行器和进入工作台之前，
+                // 必须先引导用户选择运行模式（/mode: 本地模式 vs WSL 模式）。
+                if cfg!(windows) && settings.default_mode.is_none() {
+                    tracing::info!("Windows 首次启动未设默认运行环境，等待用户选择模式 (/mode)");
+                    *boot_state.active_mode.lock().unwrap() = None;
+                    let _ = boot_state.window.eval(
+                        "if (typeof window.__DSH_NAVIGATE__ === 'function') { \
+                             window.__DSH_NAVIGATE__('/mode'); \
+                         } else { \
+                             location.assign('/mode'); \
+                         }",
+                    );
+                    return;
+                }
+
                 // 非 Windows：WSL 不存在（执行器编译为报错）——settings 里残留的
                 // wsl（如从 Windows 拷来的数据目录）一律按 local 启动，绝不进
                 // 环境选择页 / 不出 WSL 痕迹（2026-08-26 裁定）。
                 let mode = if cfg!(windows) {
-                    mode
+                    settings.default_mode.unwrap_or(settings::Mode::Local)
                 } else {
                     settings::Mode::Local
                 };

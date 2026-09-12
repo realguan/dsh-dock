@@ -39,6 +39,8 @@ export interface BootStatusResult {
   error: unknown | null
   /** 交接意图（ADR-0014）：主窗口整文档重载后靠它续上控制中心那条导轨与计时 */
   intent?: HandoffSnapshot | null
+  needs_mode_selection?: boolean
+  needsModeSelection?: boolean
 }
 
 export const api = {

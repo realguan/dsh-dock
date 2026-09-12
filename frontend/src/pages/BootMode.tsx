@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { useNavigate, Navigate } from "react-router-dom"
 import { motion } from "framer-motion"
-import { Laptop, TerminalSquare, ArrowRight, CheckCircle2 } from "lucide-react"
+import { Laptop, TerminalSquare, ArrowRight, CheckCircle2, Loader2, AlertCircle } from "lucide-react"
+import { api } from "@/lib/tauri"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n } from "@/stores/i18nStore"
 import { Emblem } from "@/components/layout/Emblem"
@@ -19,6 +20,8 @@ export function BootMode() {
   const navigate = useNavigate()
   const [picked, setPicked] = useState<Mode>("local")
   const [setDefault, setSetDefault] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // 非 Windows（含 dev 预览）零 WSL 感知：回启动页，壳按 local 自启
   if (!can.chooseMode) return <Navigate to="/" replace />
@@ -34,17 +37,30 @@ export function BootMode() {
       mode: "local",
       name: t.mode.local,
       desc: t.mode.localDesc,
-      badge: "推荐 · 原生极速",
+      badge: t.mode.localBadge,
       icon: Laptop,
     },
     {
       mode: "wsl",
       name: t.mode.wsl,
       desc: t.mode.wslDesc,
-      badge: "Linux 隔离环境",
+      badge: t.mode.wslBadge,
       icon: TerminalSquare,
     },
   ]
+
+  const handleStart = async () => {
+    if (!picked || submitting) return
+    setSubmitting(true)
+    setErrorMsg(null)
+    try {
+      await api.chooseMode(picked, setDefault)
+      navigate("/", { replace: true })
+    } catch (err) {
+      setSubmitting(false)
+      setErrorMsg(String(err instanceof Error ? err.message : err))
+    }
+  }
 
   return (
     <PageShell width={620}>
@@ -113,13 +129,21 @@ export function BootMode() {
               {selected && (
                 <div className="mt-4 flex items-center gap-1 text-label font-medium text-brand-deep">
                   <CheckCircle2 className="size-3.5 text-brand-deep" />
-                  <span>已选定此模式</span>
+                  <span>{t.mode.selectedNotice}</span>
                 </div>
               )}
             </motion.button>
           )
         })}
       </div>
+
+      {/* 错误提示 */}
+      {errorMsg && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+          <AlertCircle className="size-4 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* 底部：设默认 Switch 行 + 开始 CTA */}
       <div className="mt-7 flex flex-col gap-4 rounded-2xl border border-line bg-panel/80 p-4 shadow-2xs backdrop-blur-xs sm:flex-row sm:items-center sm:justify-between">
@@ -128,27 +152,31 @@ export function BootMode() {
             aria-label={t.mode.setDefault}
             checked={setDefault}
             onCheckedChange={setSetDefault}
+            disabled={submitting}
           />
           <div>
             <span className="block text-xs font-medium text-ink">{t.mode.setDefault}</span>
-            <span className="text-label text-faint">随时可在设置或托盘菜单中更改</span>
+            <span className="text-label text-faint">{t.mode.changeAnytime}</span>
           </div>
         </label>
 
         <Button
           type="button"
-          disabled={!picked}
-          onClick={() => {
-            if (!picked) return
-            navigate(
-              `/?mode=${picked}&default=${setDefault ? "1" : "0"}`,
-              { replace: true },
-            )
-          }}
+          disabled={!picked || submitting}
+          onClick={handleStart}
           className="gap-2 rounded-full px-7 shadow-xs"
         >
-          <span>{t.mode.next}</span>
-          <ArrowRight className="size-4" />
+          {submitting ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <span>{t.mode.starting}</span>
+            </>
+          ) : (
+            <>
+              <span>{t.mode.next}</span>
+              <ArrowRight className="size-4" />
+            </>
+          )}
         </Button>
       </div>
     </PageShell>

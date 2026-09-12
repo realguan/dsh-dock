@@ -32,6 +32,15 @@
 
 ## 三、记录
 
+### 2026-09-12 feat(boot): 首次启动工作台与 Windows 运行环境前置选择交互优化 —— guan（AI 协作）
+
+- **变更**：
+  - 后端：`src-tauri/src/lib.rs` 修复 Windows 首启未设默认模式时静默走本地启动的违约缺陷，改为挂起启动并导航至 `/mode`；`src-tauri/src/commands/boot.rs` 在 `get_boot_status` 注入 `needs_mode_selection` 标志与纯函数校验测试（420 passed）；
+  - 前端：`frontend/src/pages/BootMode.tsx` 重构为直接 IPC 调用 `api.chooseMode` 并包含加载与错误态，移除过时的 query 中转；`frontend/src/pages/BootSelector.tsx` 交互重塑（卡片快捷「设为默认」、进入默认工作台区分、现代 Switch 偏好设置栏）；
+  - 国际化与门禁：`zh-CN.ts` 与 `en-US.ts` 对称增补多语言文案，新增 `bootModeCopy.test.ts` 门禁守卫。
+- **影响**：Windows 首次启动明确先选本地/WSL模式并可选设为默认，非 Windows 维持零 WSL 感知极速启动；工作台选择中心设默认与启动体验更加直观。
+- **凭据**：`cargo test` 420 passed · `cargo clippy --all-targets -- -D warnings` 0 警告 · `cargo fmt --check` 干净 · 前端 vitest 46 文件 369 passed · `tsc` 0 错误 · `oxlint` 0 警告 0 错误。
+
 ### 2026-09-12 fix(engines)：为 Windows 模块代理模式补齐浏览器 client bundles 与 client 声明 (ADR-0019) —— guan（AI 协作）
 
 - **变更**：新增 `src-tauri/src/dsh-client-proxies.mjs`；更新 `src-tauri/src/engines.rs`（落位、bootstrap 预热与单测断言）；新增架构决策文档 `docs/adr/0019-dsh-client-module-proxies-on-windows.md`。

@@ -14,12 +14,14 @@ import {
   ArrowUpRight,
   ShieldCheck,
   Loader2,
+  Star,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import type { ProfileSummary } from "@/types/ipc"
 import { useBootStore } from "@/stores/bootStore"
+import { Switch } from "@/components/ui/switch"
 import { Emblem } from "@/components/layout/Emblem"
 import { PulseBar } from "@/components/boot/PulseBar"
 import { DownloadProgress } from "@/components/boot/DownloadProgress"
@@ -176,6 +178,17 @@ export function BootSelector() {
     }
   }
 
+  // 一键快捷设为默认工作台
+  const handleSetDefault = async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await api.setDefaultProfile(name)
+      setDefaultProfile(name)
+    } catch (err) {
+      logger.warn("[selector]", "保存默认工作台偏好失败", { error: err })
+    }
+  }
+
   // 键盘快捷直达：按数字键 1~9 快速启动
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -307,11 +320,21 @@ export function BootSelector() {
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {p.isDefault && (
+                        {p.isDefault ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-brand/25 bg-brand/10 px-2 py-0.5 text-meta font-medium text-brand-deep">
                             <CheckCircle2 className="size-3" />
                             {t.selector.defaultBadge}
                           </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => handleSetDefault(p.name, e)}
+                            className="inline-flex items-center gap-1 rounded-full border border-line bg-panel/80 px-2 py-0.5 text-meta text-dim transition-all hover:border-brand/40 hover:bg-wash hover:text-brand-deep"
+                            title={t.selector.setDefaultAction}
+                          >
+                            <Star className="size-3 text-faint group-hover:text-brand-deep" />
+                            <span>{t.selector.setDefaultAction}</span>
+                          </button>
                         )}
                         <span className="rounded-md border border-line bg-panel px-1.5 py-0.5 font-mono text-meta text-faint group-hover:border-brand/30 group-hover:text-ink">
                           {idx + 1}
@@ -352,7 +375,7 @@ export function BootSelector() {
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1">
-                          {t.selector.enterWorkbench}
+                          {p.isDefault ? t.selector.enterDefaultWorkbench : t.selector.enterWorkbench}
                           <ArrowUpRight className="size-3.5" />
                         </span>
                       )}
@@ -391,15 +414,17 @@ export function BootSelector() {
         )}
 
         {/* 底部偏好设置栏：记住默认选择 + 快捷提示 */}
-        <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-line/60 pt-6 text-xs text-dim sm:flex-row">
-          <label className="flex cursor-pointer items-center gap-2 select-none hover:text-ink">
-            <input
-              type="checkbox"
+        <div className="mt-10 flex flex-col items-center justify-between gap-4 rounded-2xl border border-line/60 bg-panel/70 p-4 text-xs text-dim shadow-2xs backdrop-blur-xs sm:flex-row">
+          <label className="flex cursor-pointer items-center gap-3 select-none">
+            <Switch
+              aria-label={t.selector.rememberChoice}
               checked={rememberChoice}
-              onChange={(e) => setRememberChoice(e.target.checked)}
-              className="accent-brand size-4 rounded-md"
+              onCheckedChange={setRememberChoice}
             />
-            <span>{t.selector.rememberChoice}</span>
+            <div>
+              <span className="block font-medium text-ink">{t.selector.rememberChoice}</span>
+              <span className="text-label text-faint">{t.selector.rememberChoiceSub}</span>
+            </div>
           </label>
 
           <div className="flex items-center gap-4 text-faint">
