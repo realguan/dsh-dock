@@ -431,12 +431,23 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
 /// 引擎档 LaunchSpec 构造（引导完成后）：引擎目录定位 node + dsh 启动器 +
 /// no-open 探测。独立成函数供离线单测（引导本身的网络动作归
 /// ensure_engine_bootstrapped，见其测试）。
+///
+/// **本函数是「启动器形态校正」的单一 choke point**（task-62 / ADR-0018）：
+/// 两条启动路径都收敛于此 —— 未就绪走 `resolve_launch`（引导后），
+/// **已就绪走 `resolve_launch_engine_ready`（跳过引导，存量/升级用户走这条）**。
+/// 校正必须早于下面两件事，顺序不可调换：
+/// ① [`crate::engines::engine_dsh_bin`] 定位启动器；
+/// ② [`engine_no_open_supported`] —— 它会**真的执行一次启动器**（`--profile web --help`）
+///    去探测 `--no-open`；晚于刷新就会**拿旧 shim 去探测**，得到属于旧形态的结论。
 fn engine_launch_spec(
     data_dir: &Path,
     dsh_version: Option<&str>,
     first_bootstrap: bool,
     default_profile: String,
 ) -> Result<LaunchSpec> {
+    // 幂等（内容相同零写入）且带护栏：旧全局布局（无 project 内入口）一律不动，
+    // 不会把存量用户本来能用的启动器覆盖成指向不存在的文件。
+    crate::engines::refresh_dsh_layout_if_project_local(data_dir)?;
     let node_bin = crate::engines::engine_node_bin(data_dir).ok_or_else(|| {
         anyhow::anyhow!(
             "引擎引导完成但未定位到 node（引擎目录异常）——删除 engines 目录后重启应用可重建"

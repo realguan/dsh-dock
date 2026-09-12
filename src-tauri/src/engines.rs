@@ -273,6 +273,30 @@ pub(crate) fn ensure_dsh_runtime_layout(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// **布局校正的唯一入口**（task-62）：仅当**新布局入口在位**时，把
+/// `<engines>/bin/` 的 bootstrap + shim 校正到当前形态；旧全局布局一律不动。
+///
+/// 为什么必须是独立函数而不是把 `if` 内联在两处：**引导路径与就绪路径都要调它**
+/// （见下），两份内联就是两个真相源——本会话已因"同一语义两份"付过代价（task-61）。
+///
+/// **调用点只有一处**：`resolve::engine_launch_spec` 的开头（在定位启动器与
+/// `--no-open` 探测之前）——两条启动路径（未就绪经引导 / **已就绪经
+/// `resolve_launch_engine_ready` 跳过引导**）都收敛在那里。
+/// 存量安装/升级用户走的是**就绪**那条：早期把它挂在 `bootstrap` 里 ⇒
+/// 对就绪引擎完全无效（v1.2.3 真机仍 EPERM 的根因）。
+///
+/// **护栏（关键）**：只有 `dsh-runtime/…/@deepseek-ai/dsh/lib/bin.js` 在位时才动。
+/// 旧全局布局用户（dsh 在 `global/v11/…`、`bin/dsh` 是 pnpm 全局 shim）若被覆盖成
+/// 指向**不存在**的新布局入口，就把人家本来能用的 dsh 弄坏了；且这类用户必然具备
+/// 符号链接特权 ⇒ dsh 启动期不会 EPERM ⇒ **无需修，也不得动**。
+pub fn refresh_dsh_layout_if_project_local(data_dir: &Path) -> Result<()> {
+    if dsh_entry_js(data_dir).is_file() {
+        ensure_dsh_runtime_layout(data_dir)
+    } else {
+        Ok(())
+    }
+}
+
 /// dsh CLI 执行工具链（ADR-0010）：引擎档优先，引擎未就绪回退系统探测——
 /// dsh CLI 执行工具链（ADR-0010）：引擎档唯一——探测层退役后系统安装不再
 /// 是任何 dsh 操作的来源。消费方 = 插件操作与创建链
@@ -1433,23 +1457,13 @@ mod tests {
         bin
     }
 
+    /// 造一个最小的「内置 pnpm」tgz（`package/pnpm` 脚本，回显 12.3.1）。
+    ///
+    /// 抽出来共用：此前有三处测试各写一份同样的 tar 构造（同一语义多份，
+    /// 正是本会话反复登记的形态）。
     #[cfg(unix)]
-    fn engine_root(label: &str) -> PathBuf {
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "dsh-engines-{label}-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn stage_pnpm_from_bundle_extracts_and_lands_binary() {
+    fn fake_pnpm_bundle(root: &Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let root = engine_root("stage");
         let work = root.join("bundle-src");
         std::fs::create_dir_all(work.join("package")).unwrap();
         let script = work.join("package/pnpm");
@@ -1465,6 +1479,45 @@ mod tests {
             .output()
             .unwrap();
         assert!(tared.status.success(), "fixture tar 失败");
+        bundle
+    }
+
+    /// 本平台 shim 路径（`bin/dsh` 或 `bin/dsh.cmd`）。
+    #[cfg(unix)]
+    fn platform_shim_path(data_dir: &Path) -> PathBuf {
+        engine_bin_dir(data_dir).join(if cfg!(windows) { "dsh.cmd" } else { "dsh" })
+    }
+
+    /// 本平台 shim 的**当前形态**（与 `write_dsh_shim` 同源的两个纯函数）。
+    #[cfg(unix)]
+    fn expected_shim_content(data_dir: &Path) -> String {
+        if cfg!(windows) {
+            dsh_shim_windows()
+        } else {
+            dsh_shim_posix(
+                &engine_bin_dir(data_dir).join("node"),
+                &dsh_entry_js(data_dir),
+            )
+        }
+    }
+
+    #[cfg(unix)]
+    fn engine_root(label: &str) -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-engines-{label}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_pnpm_from_bundle_extracts_and_lands_binary() {
+        let root = engine_root("stage");
+        let bundle = fake_pnpm_bundle(&root);
 
         let data_dir = root.join("data");
         let landed = stage_pnpm_from_bundle(&bundle, &data_dir).unwrap();
@@ -1507,21 +1560,7 @@ mod tests {
         fake_tool(&engine_bin_dir(&data_dir), "node", "v24.18.0");
         fake_tool(&engine_bin_dir(&data_dir), "dsh", "0.1.1");
 
-        let work = root.join("bundle-src");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(work.join("package")).unwrap();
-        let script = work.join("package/pnpm");
-        std::fs::write(&script, "#!/bin/sh\necho 12.3.1\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let bundle = root.join("pnpm-bundle.tgz");
-        crate::child_cmd(Path::new("tar"))
-            .arg("-czf")
-            .arg(&bundle)
-            .arg("-C")
-            .arg(&work)
-            .arg("package/pnpm")
-            .output()
-            .unwrap();
+        let bundle = fake_pnpm_bundle(&root);
 
         let mut dsh_called = false;
         let outcome = bootstrap(
@@ -1555,21 +1594,7 @@ mod tests {
         fake_tool(&engine_bin_dir(&data_dir), "pnpm", "12.3.1");
         fake_tool(&engine_bin_dir(&data_dir), "node", "v24.18.0");
         fake_tool(&engine_bin_dir(&data_dir), "dsh", "0.1.1");
-        let work = root.join("bundle-src");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(work.join("package")).unwrap();
-        let script = work.join("package/pnpm");
-        std::fs::write(&script, "#!/bin/sh\necho 12.3.1\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let bundle = root.join("pnpm-bundle.tgz");
-        crate::child_cmd(Path::new("tar"))
-            .arg("-czf")
-            .arg(&bundle)
-            .arg("-C")
-            .arg(&work)
-            .arg("package/pnpm")
-            .output()
-            .unwrap();
+        let bundle = fake_pnpm_bundle(&root);
 
         let outcome = bootstrap(
             &data_dir,
@@ -2570,5 +2595,180 @@ mod tests {
     fn windows_shim_target_parser_follows_the_name() {
         let fake = "@echo off\r\n\"%~dp0node.exe\" \"%~dp0totally-other.mjs\" %*\r\n";
         assert_eq!(windows_shim_target_name(fake), "totally-other.mjs");
+    }
+
+    // ---------- task-62：升级路径刷新（走 resolve 真 seam）+ 旧布局护栏 ----------
+
+    /// 造一个「引擎已就绪」的引擎目录：node/dsh 两件在位的假工具。
+    ///
+    /// `with_new_layout_entry` 决定是「project 内新布局」（`dsh-runtime/…/lib/bin.js` 在位）
+    /// 还是「旧全局布局」（只有 `bin/dsh`）。
+    /// `stale_shim` 写成**能回显版本、且 `--help` 输出含 `--no-open`** 的旧形态启动器：
+    /// ① 能 `--version` 成功 ⇒ `probe_engine_if_ready` 判就绪；
+    /// ② `--help` 含 `--no-open` ⇒ 若 `--no-open` 探测**发生在刷新之前**，结果会是
+    ///    `true`（旧 shim 的特征），从而让「顺序」可判（见 ordering 用例）。
+    #[cfg(unix)]
+    fn ready_engine_fixture(root: &Path, with_new_layout_entry: bool) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        fake_tool(&engine_bin_dir(&data_dir), "pnpm", "12.3.1");
+        fake_tool(&engine_bin_dir(&data_dir), "node", "v24.18.0");
+        if with_new_layout_entry {
+            let entry = dsh_entry_js(&data_dir);
+            std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+            std::fs::write(&entry, "// dsh entry (fake)\n").unwrap();
+        }
+        let shim = platform_shim_path(&data_dir);
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\n# legacy v1.2.2 launcher (direct entry, no bootstrap)\n\
+             case \"$*\" in *--version*) echo 0.1.5-rc.2 ;; *) echo \"usage: --no-open\" ;; esac\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (data_dir, shim)
+    }
+
+    /// **T4（task-62 验收核心）**：走**真实启动路径** `resolve::resolve_launch_engine_ready`
+    /// （= 引擎已就绪时 `executor::probe` 走的那条，**不经过 `bootstrap`**）必须把
+    /// 存量旧 shim 校正到当前形态。
+    ///
+    /// 这正是 v1.2.3 真机翻车的那条路径：修在 `bootstrap` 里对它完全无效。
+    #[cfg(unix)]
+    #[test]
+    fn ready_launch_path_refreshes_stale_shim() {
+        let root = engine_root("t62-t4");
+        let (data_dir, shim) = ready_engine_fixture(&root, true);
+        let stale = std::fs::read_to_string(&shim).unwrap();
+        assert!(
+            stale.contains("legacy v1.2.2"),
+            "夹具前提：起始 shim 应为旧形态"
+        );
+
+        // 前置：引擎确实被判「就绪」（即真实启动链会走 ready 快速路径）
+        assert!(
+            crate::engines::probe_engine_if_ready(&data_dir, "").is_some(),
+            "夹具前提：引擎应判就绪（否则真实链不会走 ready 路径）；status={:?}",
+            crate::engines::probe_engine(&data_dir, "")
+        );
+
+        let spec = crate::resolve::resolve_launch_engine_ready(
+            &data_dir,
+            "web".to_string(),
+            Some("0.1.5-rc.2"),
+        )
+        .expect("就绪路径应能构造 LaunchSpec");
+
+        let after = std::fs::read_to_string(&shim).unwrap();
+        assert_ne!(
+            after, stale,
+            "就绪启动路径未刷新 shim —— 存量/升级用户的启动器永远停在旧形态，\
+             ADR-0018 的修复对其无效（v1.2.3 真机 EPERM 的根因）"
+        );
+        assert_eq!(
+            after,
+            expected_shim_content(&data_dir),
+            "刷新后应为当前形态（本平台由 dsh_shim_posix/dsh_shim_windows 决定）"
+        );
+        // 启动器确实被定位到（且是新形态）
+        match spec.dsh_entry {
+            crate::resolve::DshEntry::Launcher { bin } => assert_eq!(bin, shim),
+            other => panic!("引擎档应为 Launcher 形态，实际 {other:?}"),
+        }
+        assert!(
+            engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME).is_file(),
+            "就绪路径也必须落位 bootstrap（Windows shim 指向它）"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **顺序断言（Lead 核出的坑）**：校正必须早于 `--no-open` 探测——后者会
+    /// **真的执行一次启动器**。若顺序反了，探测到的是**旧 shim** 的输出。
+    ///
+    /// 判据设计：旧 shim 的 `--help` 输出含 `--no-open`（⇒ 旧 shim 探测结果 = true），
+    /// 而刷新后的当前 shim 经 `bin/node` 执行、输出只有版本号（⇒ 结果 = false）。
+    /// 故 `spec.no_open == false` 证明**探测看到的是新 shim**。
+    #[cfg(unix)]
+    #[test]
+    fn layout_refresh_happens_before_no_open_probe() {
+        let root = engine_root("t62-order");
+        let (data_dir, _shim) = ready_engine_fixture(&root, true);
+        let spec = crate::resolve::resolve_launch_engine_ready(
+            &data_dir,
+            "web".to_string(),
+            Some("0.1.5-rc.2"),
+        )
+        .unwrap();
+        assert!(
+            !spec.no_open,
+            "`--no-open` 探测看到的是**旧 shim**（其 --help 含 --no-open）⇒ \
+             校正发生在探测之后（顺序反了：晚于刷新就会拿旧 shim 去探测）"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **T2（护栏）**：旧全局布局（无 project 内入口）时**一律不动 shim**。
+    ///
+    /// 覆盖成指向不存在的 `dsh-runtime/…/bin.js` 会把人家本来能用的 dsh 弄坏；
+    /// 且旧全局布局用户必然具备符号链接特权 ⇒ 启动期不会 EPERM，无需修。
+    #[cfg(unix)]
+    #[test]
+    fn legacy_global_layout_shim_is_left_untouched() {
+        let root = engine_root("t62-guard");
+        let (data_dir, shim) = ready_engine_fixture(&root, false);
+        let before = std::fs::read(&shim).unwrap();
+
+        let spec = crate::resolve::resolve_launch_engine_ready(
+            &data_dir,
+            "web".to_string(),
+            Some("0.1.5-rc.2"),
+        )
+        .expect("旧布局也应能构造 LaunchSpec（启动器仍在）");
+
+        assert_eq!(
+            std::fs::read(&shim).unwrap(),
+            before,
+            "旧全局布局（无 dsh-runtime 入口）的启动器**必须逐字未变**——\
+             覆盖它会让存量用户本来能用的 dsh 指向不存在的文件"
+        );
+        match spec.dsh_entry {
+            crate::resolve::DshEntry::Launcher { bin } => assert_eq!(bin, shim, "仍用原启动器"),
+            other => panic!("应仍为 Launcher，实际 {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **T3**：就绪路径的校正**幂等**——第二次构造 LaunchSpec 零写入（mtime 不变）。
+    #[cfg(unix)]
+    #[test]
+    fn ready_launch_path_refresh_is_idempotent() {
+        let root = engine_root("t62-idem");
+        let (data_dir, shim) = ready_engine_fixture(&root, true);
+        let run = || {
+            crate::resolve::resolve_launch_engine_ready(
+                &data_dir,
+                "web".to_string(),
+                Some("0.1.5-rc.2"),
+            )
+            .unwrap()
+        };
+        run();
+        let boot = engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME);
+        let stamps = [
+            std::fs::metadata(&shim).unwrap().modified().unwrap(),
+            std::fs::metadata(&boot).unwrap().modified().unwrap(),
+        ];
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        run();
+        for (p, before) in [&shim, &boot].iter().zip(stamps) {
+            assert_eq!(
+                std::fs::metadata(p).unwrap().modified().unwrap(),
+                before,
+                "第二次构造不得重写 {}（内容无变化应零写入）",
+                p.display()
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 }
