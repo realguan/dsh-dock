@@ -7,8 +7,10 @@
 //!     alpha 等预览版只进版本列表（`list_dsh_versions`），经用户显式选择安装。
 //!   - node 兜底：用户无 node 时优先从 npmmirror、再从 nodejs.org 下载到**私有缓存**
 //!     （不替用户全局装 node，Q2b 推论 5），充当执行器。
-//!   - dsh 全局安装：优先使用用户已有 pnpm，失败后用执行器自带的 npm-cli；两者都按
-//!     npmmirror → npmjs 顺序尝试（dsh 进用户全局，命令行也可用）。
+//!   - dsh 安装（ADR-0017，2026-09-11 修订）：引擎内 **project 内安装**（非全局，
+//!     Windows 普通账户免符号链接特权），经引擎内置 pnpm 按 npmmirror → npmjs 顺序
+//!     尝试。（原「全局安装」与「npm-cli 兜底」两条描述均已退役——后者随探测层退役，
+//!     见 AGENTS §6。）
 //!
 //! 不做的事（v1 边界，写死）：用户 dsh 已存在但低于下限 → 不自动覆盖，返回可行动
 //! 文案由用户确认（H：「提示+经确认」的确认环节尚无 UI，宁可不动）。
@@ -26,7 +28,7 @@ const NODE_VERSION: &str = "v24.18.0";
 /// 元数据请求整体超时（秒）：registry 拉包清单等小响应，整体限时合理。
 const NET_TIMEOUT_SECS: u64 = 60;
 /// 下载进度阶段（ui `boot:progress` 的 kind 字段）：Node = `runtime set`
-/// 的下载字节；Dsh = `add -g` 的包计数（downloaded / resolved）。
+/// 的下载字节；Dsh = dsh 安装（ADR-0017：project 内 `add`）的包计数（downloaded / resolved）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressStage {
     Node,
@@ -90,7 +92,7 @@ pub(crate) fn parse_chain(spec: &str, defaults: &[&str]) -> Vec<String> {
 
 /// 随壳捆绑的 pnpm 版本（ADR-0010：resources/pnpm/<platform>.tgz 经
 /// scripts/fetch-pnpm-bundle.sh 打包期取得，该脚本从本常量推导版本，防两处
-/// 漂移）。升级必过 ADR-0010 升级清单（runtime set / add -g / spawnSync
+/// 漂移）。升级必过 ADR-0010 升级清单（runtime set / dsh project 内安装 / spawnSync
 /// 可达 / 三平台 boot 冒烟）。
 /// Rust 侧无运行时消费（bundle 落地只解包不关版本）——唯一消费者是打包期
 /// 脚本，dead_code 豁免即此契约。
@@ -935,7 +937,7 @@ pub fn check_now(data_dir: &Path) -> UpdateStatus {
 }
 
 /// 升级执行计划（纯函数 `plan_explicit` / `plan_default` 产出）：Skip = 目标
-/// 与已装一致，短路跳过安装；Install = 实际执行 `add -g`。
+/// 与已装一致，短路跳过安装；Install = 实际执行 dsh 的 project 内安装（ADR-0017）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradePlan {
     Skip(String),
@@ -944,7 +946,7 @@ pub enum UpgradePlan {
 
 /// 显式指定的安装目标版本形状校验（纯函数，供测试）。只做形状闸（semver-ish
 /// 字符集 + 长度上限），**不按通道过滤**——alpha 经版本列表显式选择是合法目标。
-/// fail-closed 防注入：版本号会拼进 `pnpm add -g pkg@<version>` 的同一 argv，
+/// fail-closed 防注入：版本号会拼进 `pnpm add pkg@<version>` 的同一 argv，
 /// 虽有 `pkg@` 前缀兜底，仍拒绝 `-` 开头与越界字符（flag 注入反例见测试）。
 pub fn is_valid_dsh_version_spec(v: &str) -> bool {
     !v.is_empty()
@@ -1004,7 +1006,7 @@ pub fn upgrade_engine_dsh(
     tracing::info!(
         data_dir = %data_dir.display(),
         target = %version,
-        "dsh 升级开始（引擎内 add -g，不触用户全局）"
+        "dsh 升级开始（引擎内 project 内安装，不触用户全局；ADR-0017）"
     );
     if !crate::engines::engine_pnpm_bin(data_dir).exists() {
         tracing::info!("引擎 pnpm 缺位，先从捆绑包重铺");
@@ -1012,18 +1014,24 @@ pub fn upgrade_engine_dsh(
             .context("引擎 pnpm 重铺失败")?;
     }
     // 升级入口有自己的 busy 呈现（更新按钮），不消费 boot 进度卡——空回调。
-    crate::engines::install_dsh_global(data_dir, &version, path_env, &mut |_, _, _| {})?;
+    crate::engines::install_dsh_project_local(data_dir, &version, path_env, &mut |_, _, _| {})?;
     tracing::info!(version = %version, "dsh 升级完成");
     Ok(plan)
 }
 
-// ---------- dsh 全局安装（pnpm 引擎内通道） ----------
+// ---------- dsh 的 project 内安装（pnpm 引擎内通道，ADR-0017） ----------
 
+/// dsh 的 **project 内**安装实参（ADR-0017）：`pnpm add`（**无 `--global`**）。
+///
+/// **为什么不再 `-g`**：pnpm 12 的全局安装建 `global/v11/<hash>` 符号链接，Windows
+/// 普通账户无 `SeCreateSymbolicLinkPrivilege` ⇒ `os error 5`，且无配置可绕（ADR-0017 §1）。
+/// 安装目标目录由调用方经 `run_engine_pnpm_streaming` 的 `cwd` 指定
+/// （`<engines>/dsh-runtime/`），故实参里不需要路径。
+///
 /// pnpm 10 只识别 `--allow-build=<package>` 形式，必须显式拼在同一个参数中。
-pub(crate) fn pnpm_install_args(registry: &str, spec: &str) -> Vec<String> {
+pub(crate) fn pnpm_project_install_args(registry: &str, spec: &str) -> Vec<String> {
     let mut args = vec![
         "add".to_string(),
-        "--global".to_string(),
         "--registry".to_string(),
         registry.to_string(),
     ];
@@ -1065,7 +1073,7 @@ pub fn guest_pnpm_bundle(resources_dir: &Path) -> PathBuf {
 }
 
 /// dsh 引导的 allow-build 放行旗标（pnpm v10 起构建脚本需显式放行；
-/// host `pnpm_install_args` 与 WSL 客体脚本单源共用）。
+/// host `pnpm_project_install_args` 与 WSL 客体脚本单源共用）。
 pub(crate) fn pnpm_allow_build_flags() -> Vec<String> {
     PNPM_BUILD_PACKAGES
         .iter()
@@ -1237,6 +1245,32 @@ fn fetch_market_registry_with(http: &dyn HttpGet) -> Result<String, String> {
 
 #[cfg(test)]
 mod world_probe_tests {
+
+    /// **ADR-0017**：dsh 安装实参**不得含全局标志**——这是"project 内安装"的
+    /// 实参级判据（与 `engines.rs` 的源码闸门互补：那条管生产段不出现旧构造，
+    /// 这条管新构造本身确实非全局）。
+    #[test]
+    fn project_install_args_are_not_global() {
+        let args =
+            pnpm_project_install_args("https://registry.npmjs.org/", "@deepseek-ai/dsh@0.1.5-rc.2");
+        assert_eq!(args[0], "add", "首个实参必须是 add");
+        for forbidden in ["--global", "-g", "--location=global"] {
+            assert!(
+                !args.iter().any(|a| a == forbidden),
+                "project 内安装不得出现全局标志 `{forbidden}`：{args:?}"
+            );
+        }
+        // registry 与 spec 必须在（复用既有镜像链语义）
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--registry", "https://registry.npmjs.org/"]));
+        assert_eq!(args.last().unwrap(), "@deepseek-ai/dsh@0.1.5-rc.2");
+        // allow-build 放行口径不变（ADR-0013）
+        assert!(
+            args.iter().any(|a| a.starts_with("--allow-build=")),
+            "allow-build 放行口径必须保留：{args:?}"
+        );
+    }
     use super::*;
 
     fn base_host_status() -> UpdateStatus {

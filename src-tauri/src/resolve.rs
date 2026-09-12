@@ -24,8 +24,8 @@ use crate::manifest::{FallbackSpec, ProductManifest, TierKind};
 pub enum DshEntry {
     /// node 前缀执行包入口 lib/bin.js（system / download / 快照档）。
     NodeScript { bin_js: PathBuf },
-    /// 引擎 dsh 启动器直接执行（pnpm 全局 shim：Unix shebang 脚本 / Windows
-    /// .cmd，child_cmd 吸收差异；node/pnpm 经 PATH 解析）。
+    /// 引擎 dsh 启动器直接执行（**壳自写 shim**，ADR-0017：Unix shebang 脚本 /
+    /// Windows `.cmd`，`child_cmd` 吸收差异；不再是 pnpm 的全局 shim）。
     Launcher { bin: PathBuf },
 }
 

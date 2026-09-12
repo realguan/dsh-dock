@@ -25,7 +25,8 @@ pub fn pnpm_home(data_dir: &Path) -> PathBuf {
     crate::resolve::engines_dir(data_dir)
 }
 
-/// 引擎 bin 目录：捆绑 pnpm、node shim、`add -g` 的全局命令 shim 都在这里。
+/// 引擎 bin 目录：捆绑 pnpm、node shim、以及**壳自写的 dsh shim**都在这里
+///（ADR-0017：dsh 不再是 pnpm 全局包，其启动器由壳生成）。
 pub fn engine_bin_dir(data_dir: &Path) -> PathBuf {
     pnpm_home(data_dir).join("bin")
 }
@@ -40,10 +41,154 @@ pub fn engine_node_bin(data_dir: &Path) -> Option<PathBuf> {
     find_engine_tool(data_dir, "node")
 }
 
-/// 引擎 dsh 启动器（`pnpm add -g` 全局 shim：Unix shebang 脚本 / Windows .cmd，
-/// 可直接执行，node 经 PATH 解析——不必再深挖 pnpm 全局树取 lib/bin.js）。
+/// 引擎 dsh 启动器：**壳自写 shim**（ADR-0017）：Unix shebang 脚本 / Windows `.cmd`
+/// ——**不是链接**，也不再是 pnpm 的全局 shim（`pnpm add -g` 会在 Windows 普通账户
+/// 因 global hash link 需要符号链接特权而失败，见 ADR-0017 §1）。
+/// 形态差异由 `crate::child_cmd` 吸收（Windows 对 `.cmd` 包一层 `cmd.exe /C`）。
 pub fn engine_dsh_bin(data_dir: &Path) -> Option<PathBuf> {
     find_engine_tool(data_dir, "dsh")
+}
+
+// ---------- dsh 的 project 内安装布局 + 壳自写 shim（ADR-0017） ----------
+
+/// dsh 的 **project 内安装目录**：`<engines>/dsh-runtime/`。
+///
+/// 为什么单独一个目录（而不是直接把 dsh 装进 `<engines>/`）：`<engines>/` 同时是
+/// **PNPM_HOME**（node 运行时 / store / 旧 `global/` 共存）；把 dsh 的 project 安装
+/// 隔离出去，才能既不碰全局安装机制、也不打扰既有 node 布局（ADR-0017 §4.1）。
+pub fn dsh_runtime_dir(data_dir: &Path) -> PathBuf {
+    pnpm_home(data_dir).join("dsh-runtime")
+}
+
+/// dsh 包入口（其 `bin` 字段为 `{"dsh": "lib/bin.js"}`，已核实）。
+fn dsh_entry_js(data_dir: &Path) -> PathBuf {
+    dsh_runtime_dir(data_dir)
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh")
+        .join("lib")
+        .join("bin.js")
+}
+
+/// `dsh-runtime/package.json` 的最小内容（pnpm project 前提）。
+///
+/// **只在缺失/为空时写入**：依赖条目归 pnpm 管（`pnpm add` 会往里写 `dependencies`），
+/// 壳无权覆写——见 `ensure_dsh_runtime_layout`。
+pub(crate) fn dsh_runtime_package_json() -> &'static str {
+    "{\n  \"name\": \"dsh-runtime\",\n  \"private\": true,\n  \"version\": \"0.0.0\"\n}\n"
+}
+
+/// POSIX shim 内容（**纯函数**，供单测钉住形态）。
+///
+/// `exec` 直接替换进程（不留一层 shell）；node 用**绝对路径**，不经 PATH——
+/// 引擎目录是壳资产，不依赖用户 PATH 是否前置了 `engines/bin`。
+pub(crate) fn dsh_shim_posix(node_bin: &Path, entry_js: &Path) -> String {
+    format!(
+        "#!/bin/sh\n\
+         # DSH Dock engine launcher (ADR-0017: shell-owned shim, not the pnpm global shim).\n\
+         exec \"{}\" \"{}\" \"$@\"\n",
+        node_bin.display(),
+        entry_js.display()
+    )
+}
+
+/// Windows shim 内容（**纯函数**）。`%~dp0` = 本 `.cmd` 所在目录（自带尾反斜杠），
+/// 故整条 shim 是**相对**的——引擎目录整体搬迁后仍可用。
+///
+/// CRLF 行尾：`.cmd` 的约定行尾，避免某些解析器把 `@echo off` 与后续行粘连。
+/// 纯 ASCII：Windows 控制台代码页不一，shim 内不放非 ASCII 字节。
+pub(crate) fn dsh_shim_windows() -> &'static str {
+    "@echo off\r\n\
+     rem DSH Dock engine launcher (ADR-0017: shell-owned shim, not the pnpm global shim).\r\n\
+     \"%~dp0node.exe\" \"%~dp0..\\dsh-runtime\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\" %*\r\n"
+}
+
+/// 幂等写文件：内容（含可执行位）一致则**零写入**，否则临时文件 + 原子替换。
+///
+/// 返回 true = 本次确实写了。沿用仓库既有纪律（无变化不触碰文件）。
+fn write_if_changed(path: &Path, content: &[u8], exec: bool) -> Result<bool> {
+    // 非 unix 无「可执行位」概念 ⇒ 该参数在 windows 目标上不被读取。显式消费之，
+    // 否则 `cargo clippy --target x86_64-pc-windows-gnu -- -D warnings` 报 unused
+    // （宿主 clippy 看不见这条：AGENTS §1「clippy 需逐目标各跑一次」）。
+    #[cfg(not(unix))]
+    let _ = exec;
+    let same = std::fs::read(path)
+        .map(|cur| cur == content)
+        .unwrap_or(false);
+    #[cfg(unix)]
+    let mode_ok = !exec
+        || std::fs::metadata(path)
+            .map(|m| {
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().mode() & 0o111 != 0
+            })
+            .unwrap_or(false);
+    #[cfg(not(unix))]
+    let mode_ok = true;
+    if same && mode_ok {
+        return Ok(false);
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("创建目录 {} 失败", parent.display()))?;
+    let tmp = path.with_extension("dsh-write.tmp");
+    std::fs::write(&tmp, content).with_context(|| format!("写临时文件 {} 失败", tmp.display()))?;
+    #[cfg(unix)]
+    if exec {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("设置 {} 可执行位失败", tmp.display()))?;
+    }
+    // Windows 的 rename 不覆盖既有文件 ⇒ 先删目标（同 `land_binary` 的既有做法）。
+    let _ = std::fs::remove_file(path);
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow!("替换 {} 失败：{e}", path.display())
+    })?;
+    Ok(true)
+}
+
+/// 写壳自写的 dsh shim（ADR-0017 §4.1）：POSIX 落 `bin/dsh`、Windows 落 `bin/dsh.cmd`
+/// ——**两者都在 `find_engine_tool` 既有查找序（`dsh.exe` → `dsh.cmd` → `dsh`）覆盖
+/// 的位置内，故查找序无需改动**。
+pub(crate) fn write_dsh_shim(data_dir: &Path) -> Result<PathBuf> {
+    let bin = engine_bin_dir(data_dir);
+    if cfg!(windows) {
+        let path = bin.join("dsh.cmd");
+        write_if_changed(&path, dsh_shim_windows().as_bytes(), false)?;
+        Ok(path)
+    } else {
+        let node = bin.join("node");
+        let path = bin.join("dsh");
+        write_if_changed(
+            &path,
+            dsh_shim_posix(&node, &dsh_entry_js(data_dir)).as_bytes(),
+            true,
+        )?;
+        Ok(path)
+    }
+}
+
+/// 落位 dsh 的 project 安装**前置布局**（ADR-0017），三件都幂等：
+/// ① `dsh-runtime/package.json`（pnpm project 前提；存在即不动）；
+/// ② `dsh-runtime/pnpm-workspace.yaml` 的 `nodeLinker: hoisted`
+///    ——**复用 `build_policy` 的 upsert 单键唯一实现**，不另写键处理；
+/// ③ `<engines>/bin/dsh[.cmd]` 壳自写 shim。
+pub(crate) fn ensure_dsh_runtime_layout(data_dir: &Path) -> Result<()> {
+    let rt = dsh_runtime_dir(data_dir);
+    std::fs::create_dir_all(&rt).with_context(|| format!("创建 {} 失败", rt.display()))?;
+    let pkg = rt.join("package.json");
+    let missing_or_blank = std::fs::read_to_string(&pkg)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    if missing_or_blank {
+        write_if_changed(&pkg, dsh_runtime_package_json().as_bytes(), false)?;
+    }
+    // 复用既有唯一实现（`<dir>/pnpm-workspace.yaml` 的 `nodeLinker` 单键 upsert）。
+    crate::build_policy::ensure_engine_linker(&rt)
+        .map_err(|e| anyhow!("dsh-runtime nodeLinker 写入失败：{e}"))?;
+    write_dsh_shim(data_dir)?;
+    Ok(())
 }
 
 /// dsh CLI 执行工具链（ADR-0010）：引擎档优先，引擎未就绪回退系统探测——
@@ -188,7 +333,7 @@ fn parse_size(text: &str) -> Option<u64> {
     Some((value * multiplier) as u64)
 }
 
-/// 解析 pnpm 非 TTY 安装进度行（`add -g` 的 default reporter），如
+/// 解析 pnpm 非 TTY 安装进度行（project 内 `add` 的 default reporter），如
 /// `Progress: resolved 53, reused 48, downloaded 4, added 3`；实测（2026-09-07，
 /// pnpm 12.3.1）行首可带安装目录标签前缀
 /// `.../global/v11/<hash>   | Progress: resolved 2, …`——按 `Progress:`
@@ -481,13 +626,16 @@ fn run_engine_pnpm(
 fn run_engine_pnpm_streaming(
     data_dir: &Path,
     path_env: &str,
+    cwd: &Path,
     args: &[String],
     extra_env: &[(String, String)],
     on_line: &mut dyn FnMut(&str),
 ) -> Result<()> {
     let mut cmd = crate::child_cmd(&engine_pnpm_bin(data_dir));
+    // `cwd` 决定 pnpm 把哪个目录当 project：`runtime set node` 用 PNPM_HOME 本身，
+    // dsh 的 project 内安装用 `dsh-runtime/`（ADR-0017）。
     cmd.args(args)
-        .current_dir(pnpm_home(data_dir))
+        .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (k, v) in pnpm_process_env(data_dir, path_env) {
@@ -496,7 +644,8 @@ fn run_engine_pnpm_streaming(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    // 守卫式 spawn（ADR-0015）：`runtime set node` / `add -g` 是**分钟级**动作，
+    // 守卫式 spawn（ADR-0015）：`runtime set node` / dsh 的 project 内安装是
+    // **分钟级**动作，
     // 壳在中途被硬杀会留下占着 pnpm store 的孤儿，令下次引导失败。
     let mut child = crate::lifecycle::spawn(
         &mut cmd,
@@ -573,6 +722,7 @@ pub fn runtime_set_node(
         let result = run_engine_pnpm_streaming(
             data_dir,
             path_env,
+            &pnpm_home(data_dir),
             &[
                 "runtime".to_string(),
                 "set".to_string(),
@@ -680,7 +830,7 @@ pub fn find_runtime_node_bin(data_dir: &Path) -> Option<PathBuf> {
 
 /// 固化实际 Node 二进制到 `PNPM_HOME/bin/node`。
 /// 原因：pnpm v12 的 `pnpm shim add node` 生成的是带有上下文检查的 shim dispatcher，
-/// 全局安装（pnpm add -g）执行 postinstall 脚本（如 protobufjs/koffi）时，
+/// dsh 安装执行 postinstall 脚本（如 protobufjs/koffi）时，
 /// 因子目录 package.json 无 devEngines 声明而报 ERR_PNPM_SHIM_NO_TARGET 退出 1。
 /// 直接将真实的 Node 二进制链接/复制到 `bin/node`，确保生命周期脚本透明直接执行。
 pub fn link_real_node_binary(data_dir: &Path) -> Result<()> {
@@ -789,34 +939,58 @@ pub(crate) fn install_failure_message(errors: &[String]) -> String {
     }
 }
 
-/// `pnpm add -g @deepseek-ai/dsh@<version>`：registry 镜像链逐个尝试
+/// **project 内安装** dsh（ADR-0017）：`<engines>/dsh-runtime/` 里 `pnpm add
+/// @deepseek-ai/dsh@<version>`（**非全局**），registry 镜像链逐个尝试
 ///（allow-build 放行沿 ADR-0009/0005 同一口径）。非 TTY 安装进度行
-///（`Progress: resolved N, … downloaded M`）经回调上抛（阶段 = Dsh，
-/// 包计数）。
-pub fn install_dsh_global(
+///（`Progress: resolved N, … downloaded M`）经回调上抛（阶段 = Dsh，包计数）。
+///
+/// **为什么不再 `add -g`**（ADR-0017 §1，Windows 实机证实）：pnpm 12 的全局安装会建
+/// `global/v11/<hash>` **符号链接**（global package hash link），Windows 普通账户没有
+/// `SeCreateSymbolicLinkPrivilege` ⇒ `os error 5 / 拒绝访问`，且**该机制无配置可绕**
+/// （本机穷举 7 个候选均未消除，阴性结论已自证）。project 内安装 + `nodeLinker: hoisted`
+/// **结构性地**不触碰该机制。
+///
+/// 版本切换/回滚语义不变：仍是「镜像链逐个尝试 → 全部失败才 Err」，错误分类沿用
+/// `install_failure_message`（网络类 vs 特权类）。
+pub fn install_dsh_project_local(
     data_dir: &Path,
     version: &str,
     path_env: &str,
     progress: &mut dyn FnMut(crate::updates::ProgressStage, u64, Option<u64>),
 ) -> Result<()> {
     let _ = link_real_node_binary(data_dir);
+    // 前置布局（幂等）：package.json + hoisted + 壳自写 shim。放在安装**之前**，
+    // 使安装中途失败时布局已就位（重试/手工排查都从同一形态出发）。
+    ensure_dsh_runtime_layout(data_dir)?;
     let mut errors = Vec::new();
     for registry in crate::updates::registry_chain() {
-        let args =
-            crate::updates::pnpm_install_args(&registry, &format!("@deepseek-ai/dsh@{version}"));
-        tracing::info!("pnpm add -g @deepseek-ai/dsh@{version}（registry {registry}）…");
+        let args = crate::updates::pnpm_project_install_args(
+            &registry,
+            &format!("@deepseek-ai/dsh@{version}"),
+        );
+        tracing::info!(
+            "pnpm add @deepseek-ai/dsh@{version}（project 内：{}；registry {registry}）…",
+            dsh_runtime_dir(data_dir).display()
+        );
         let mut progress_lines = 0usize;
         let mut last: Option<(u64, u64)> = None;
-        let result = run_engine_pnpm_streaming(data_dir, path_env, &args, &[], &mut |line| {
-            if let Some((done, total)) = parse_package_progress(line) {
-                if progress_lines == 0 {
-                    tracing::info!("dsh 包下载中（进度经 boot:progress 实时推进）");
+        let result = run_engine_pnpm_streaming(
+            data_dir,
+            path_env,
+            &dsh_runtime_dir(data_dir),
+            &args,
+            &[],
+            &mut |line| {
+                if let Some((done, total)) = parse_package_progress(line) {
+                    if progress_lines == 0 {
+                        tracing::info!("dsh 包下载中（进度经 boot:progress 实时推进）");
+                    }
+                    progress_lines += 1;
+                    last = Some((done, total));
+                    progress(crate::updates::ProgressStage::Dsh, done, Some(total));
                 }
-                progress_lines += 1;
-                last = Some((done, total));
-                progress(crate::updates::ProgressStage::Dsh, done, Some(total));
-            }
-        });
+            },
+        );
         match result {
             Ok(()) => {
                 tracing::info!(
@@ -828,6 +1002,9 @@ pub fn install_dsh_global(
                 if let Some((_, total)) = last {
                     progress(crate::updates::ProgressStage::Dsh, total, Some(total));
                 }
+                // 安装成功后**复断言 shim**（幂等、无变化零写入）：防 pnpm 在
+                // dsh-runtime 内建 `.bin/` 时把 `<engines>/bin/dsh` 一并改写/覆盖。
+                write_dsh_shim(data_dir)?;
                 return Ok(());
             }
             Err(e) => {
@@ -935,8 +1112,8 @@ pub fn bootstrap(
         tracing::info!("dsh 缺失，解析目标版本（registry dist-tags）…");
         let dsh_version =
             dsh_resolve().map_err(|e| anyhow!("dsh 引导失败（缺失）：目标版本解析失败：{e}"))?;
-        tracing::info!("dsh 目标版本：{dsh_version}，开始全局安装…");
-        install_dsh_global(data_dir, &dsh_version, path_env, progress)?;
+        tracing::info!("dsh 目标版本：{dsh_version}，开始 project 内安装…");
+        install_dsh_project_local(data_dir, &dsh_version, path_env, progress)?;
         dsh_installed = true;
         status = probe_engine(data_dir, path_env);
     }
@@ -1577,6 +1754,354 @@ mod tests {
             find_versioned_fallback(&bin, "pnpm").as_deref(),
             Some(landed2.as_path())
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ---------- ADR-0017：project 内安装 + 壳自写 shim（T-B1，2026-09-11） ----------
+
+    /// `engines.rs` 的**生产段**源码（`#[cfg(test)] mod tests` 之前）——源码闸门只在
+    /// 生产段上判，避免测试里的字样自己把自己"通过"（task-36/39 的教训）。
+    fn production_section() -> String {
+        let src = include_str!("engines.rs").replace("\r\n", "\n");
+        let marker = "\n#[cfg(test)]\nmod tests";
+        let cut = src
+            .find(marker)
+            .expect("engines.rs 应有 `#[cfg(test)] mod tests` 标记");
+        src[..cut].to_string()
+    }
+
+    /// **源码闸门（复现先行，ADR-0017 §6）**：生产段不得再出现 dsh 的**全局安装实参**。
+    ///
+    /// 这是防"改回去"的机器判据——任何人重新引入 `pnpm add -g`（无论写 `--global`
+    /// 还是 `-g`，或改回旧实参构造函数）都会让本断言红。
+    /// 缺陷史：Windows 普通账户下 pnpm 全局安装要建 `global/v11/<hash>` 符号链接，
+    /// 无 `SeCreateSymbolicLinkPrivilege` ⇒ `os error 5`（ADR-0017 §1）。
+    #[test]
+    fn dsh_install_never_uses_global_args() {
+        let prod = production_section();
+        for pat in [
+            "\"--global\"",
+            "\"-g\"",
+            // 旧实参构造函数（含 `--global`）——新口径是 pnpm_project_install_args
+            "pnpm_install_args",
+        ] {
+            assert!(
+                !prod.contains(pat),
+                "engines.rs 生产段出现 dsh 全局安装残迹 `{pat}`——ADR-0017 已改为 \
+                 project 内安装（Windows 免符号链接特权），回归会让 Windows 首启再次必败"
+            );
+        }
+    }
+
+    /// 正向判据：安装必须落在 `<engines>/dsh-runtime/` 且经 project 实参构造。
+    /// （只判"没有全局残迹"会被"删掉安装调用"蒙混过关。）
+    #[test]
+    fn dsh_install_uses_project_local_path() {
+        let prod = production_section();
+        assert!(
+            prod.contains("pnpm_project_install_args"),
+            "dsh 安装必须走 project 内实参构造（ADR-0017）"
+        );
+        assert!(
+            prod.contains("dsh-runtime"),
+            "dsh 安装必须落在 <engines>/dsh-runtime/（ADR-0017 §4.1）"
+        );
+    }
+
+    /// **旧布局兼容守门（ADR-0017 §5.1，硬要求）**：已装好的老用户
+    /// （`global/v11/…` + pnpm 生成的 `bin/dsh`）必须**继续被判就绪**。
+    ///
+    /// 判据形态：就绪判定**只吃「三件在位 + 版本匹配」**，与布局无关——故在同一个
+    /// 引擎目录上，「有 legacy `global/` 树」与「没有」两态的就绪结论必须**完全一致**。
+    /// 这条断言在改动前后都必须绿（它是**守门**而非复现锚）；其判别力由变异证伪证明
+    /// （把就绪判定改成依赖布局 ⇒ 红）。
+    #[cfg(unix)]
+    #[test]
+    fn legacy_global_layout_still_counts_as_ready() {
+        let root = engine_root("legacy-layout");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        fake_tool(&engine_bin_dir(&data_dir), "pnpm", "12.3.1");
+        fake_tool(&engine_bin_dir(&data_dir), "node", "v24.18.0");
+        fake_tool(&engine_bin_dir(&data_dir), "dsh", "0.1.5-rc.2");
+
+        let before = probe_engine(&data_dir, "");
+        assert!(
+            readiness_gaps(&before, "24.18.0").is_empty(),
+            "基线引擎目录应判就绪"
+        );
+
+        // 模拟存量用户：pnpm 全局安装留下的 `global/v11/<64hex> -> <real>` 链接树
+        let legacy = pnpm_home(&data_dir).join("global").join("v11");
+        std::fs::create_dir_all(legacy.join("cfb2-18d426bbc0aba9e8-0").join("node_modules"))
+            .unwrap();
+        std::os::unix::fs::symlink(
+            "cfb2-18d426bbc0aba9e8-0",
+            legacy.join("4daac8d21495ae25ce2a440f439031ec8bd56f6a56dd5c8d07881223417c7547"),
+        )
+        .unwrap();
+
+        let after = probe_engine(&data_dir, "");
+        assert_eq!(
+            format!("{before:?}"),
+            format!("{after:?}"),
+            "就绪判定不得受 legacy global/ 是否存在影响（布局无关）"
+        );
+        assert!(
+            readiness_gaps(&after, "24.18.0").is_empty(),
+            "旧布局必须继续判就绪——否则存量用户被强制重装"
+        );
+        assert!(
+            probe_engine_if_ready(&data_dir, "").is_some(),
+            "旧布局的引擎必须仍可直接进入就绪快路径"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ---------- ADR-0017：shim 形态 / 布局 / 幂等 ----------
+
+    /// **POSIX shim 形态**（ADR-0017 §4.1）：`exec` 直接替换进程、node 用绝对路径、
+    /// 入口指向 `dsh-runtime/.../lib/bin.js`、透传 `"$@"`。
+    #[test]
+    fn posix_shim_shape_is_exact() {
+        let node = Path::new("/tmp/eng/bin/node");
+        let entry =
+            Path::new("/tmp/eng/bin/../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js");
+        let shim = dsh_shim_posix(node, entry);
+        assert!(shim.starts_with("#!/bin/sh\n"), "必须有 shebang：{shim}");
+        assert!(shim.contains("exec "), "必须 exec（不留 shell 层）：{shim}");
+        assert!(
+            shim.contains("\"/tmp/eng/bin/node\""),
+            "node 必须绝对路径且加引号（路径可含空格）：{shim}"
+        );
+        assert!(
+            shim.contains(
+                "\"/tmp/eng/bin/../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js\""
+            ),
+            "入口必须指向 dsh-runtime 的 lib/bin.js：{shim}"
+        );
+        assert!(shim.contains("\"$@\""), "必须透传参数：{shim}");
+        // 不得经 PATH 解析 node（引擎目录是壳资产，不依赖用户 PATH）
+        assert!(
+            !shim.contains("exec node "),
+            "node 不得裸名经 PATH 解析：{shim}"
+        );
+    }
+
+    /// **Windows shim 形态**（ADR-0017 §4.1）：ASCII + CRLF、`%~dp0` 相对定位、
+    /// 目标 `dsh-runtime\node_modules\@deepseek-ai\dsh\lib\bin.js`、`%*` 透传。
+    #[test]
+    fn windows_shim_shape_is_exact() {
+        let shim = dsh_shim_windows();
+        assert!(
+            shim.starts_with("@echo off\r\n"),
+            "首行必须是 @echo off：{shim:?}"
+        );
+        assert!(shim.ends_with("%*\r\n"), "必须以 %* 透传参数结尾：{shim:?}");
+        assert!(
+            shim.contains("\"%~dp0node.exe\""),
+            "node 必须相对本 .cmd 所在目录：{shim:?}"
+        );
+        assert!(
+            shim.contains("\"%~dp0..\\dsh-runtime\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\""),
+            "入口必须指向 dsh-runtime 的 lib/bin.js（Windows 分隔符）：{shim:?}"
+        );
+        assert!(
+            !shim.contains('\n') || !shim.replace("\r\n", "").contains('\n'),
+            "必须全部 CRLF：{shim:?}"
+        );
+        assert!(
+            shim.is_ascii(),
+            "shim 必须纯 ASCII（控制台代码页）：{shim:?}"
+        );
+    }
+
+    /// **双平台 shim 指向同一入口**：两平台去掉各自的目录前缀后，目标相对路径必须一致
+    /// （防一侧改了包名/入口而另一侧漏改）。
+    #[test]
+    fn both_platform_shims_target_the_same_relative_entry() {
+        let posix = dsh_shim_posix(
+            Path::new("/x/bin/node"),
+            Path::new("/x/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"),
+        );
+        let win = dsh_shim_windows();
+        for shim in [&posix, win] {
+            assert!(
+                shim.contains("dsh-runtime") && shim.contains("bin.js"),
+                "两平台都必须指向 dsh-runtime 的 bin.js：{shim}"
+            );
+        }
+        // **带分隔符的完整相对路径**（独立字面量）：只查裸段 `dsh` 会被
+        // `dsh-wrong` 这类错误名蒙混过关（变异证伪实测：裸段检查确实没红）。
+        for expect in [
+            "dsh-runtime",
+            "dsh@PLACEHOLDER",
+            "@deepseek-ai/dsh/lib/bin.js",
+        ] {
+            let expect = expect.replace("@PLACEHOLDER", "");
+            assert!(posix.contains(&expect), "POSIX shim 缺 `{expect}`：{posix}");
+            let win_expect = expect.replace('/', "\\");
+            assert!(
+                win.contains(&win_expect),
+                "Windows shim 缺 `{win_expect}`：{win}"
+            );
+        }
+    }
+
+    /// **布局落位 + 幂等**（ADR-0017 §4.1 / 仓库"无变化零写入"纪律）：
+    /// 首次落位写三件（`dsh-runtime/package.json`、`pnpm-workspace.yaml`、`bin/dsh`），
+    /// 再次调用必须**零写入**（mtime 不变）。
+    #[cfg(unix)]
+    #[test]
+    fn runtime_layout_is_laid_down_and_idempotent() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = engine_root("adr0017-layout");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+
+        let rt = dsh_runtime_dir(&data_dir);
+        assert!(rt.is_dir(), "必须创建 dsh-runtime/");
+        let pkg = rt.join("package.json");
+        assert!(pkg.is_file(), "必须有 package.json（pnpm project 前提）");
+        assert!(
+            std::fs::read_to_string(&pkg)
+                .unwrap()
+                .contains("\"private\": true"),
+            "package.json 应为最小私有包声明"
+        );
+        // ② nodeLinker 走 build_policy 的既有 upsert（内容应为单键）
+        let ws = rt.join("pnpm-workspace.yaml");
+        assert!(ws.is_file(), "必须有 pnpm-workspace.yaml");
+        assert!(
+            std::fs::read_to_string(&ws).unwrap().contains("hoisted"),
+            "必须写入 nodeLinker: hoisted"
+        );
+        // ③ shim 可执行
+        let shim = engine_bin_dir(&data_dir).join("dsh");
+        assert!(shim.is_file(), "必须有壳自写 shim");
+        let mode = std::fs::metadata(&shim).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o111,
+            0o111,
+            "shim 必须可执行（0o755），实际 {mode:o}"
+        );
+        assert_eq!(
+            find_engine_tool(&data_dir, "dsh").as_deref(),
+            Some(shim.as_path()),
+            "既有查找序必须能发现 shim（不得改查找序）"
+        );
+
+        // 幂等：marker 时间戳不变 = 零写入
+        let stamps: Vec<_> = [&pkg, &ws, &shim]
+            .iter()
+            .map(|p| std::fs::metadata(p).unwrap().modified().unwrap())
+            .collect();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+        for (p, before) in [&pkg, &ws, &shim].iter().zip(stamps) {
+            assert_eq!(
+                std::fs::metadata(p).unwrap().modified().unwrap(),
+                before,
+                "二次调用不得重写 {}（内容无变化应零写入）",
+                p.display()
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **package.json 不夺权**：pnpm 会把依赖条目写进 `dsh-runtime/package.json`，
+    /// 壳**不得**覆写它（否则每次安装都抹掉依赖声明，逼 pnpm 重解析）。
+    #[cfg(unix)]
+    #[test]
+    fn runtime_layout_does_not_clobber_pnpm_managed_package_json() {
+        let root = engine_root("adr0017-pkgjson");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+
+        let pkg = dsh_runtime_dir(&data_dir).join("package.json");
+        let pnpm_managed = "{\n  \"name\": \"dsh-runtime\",\n  \"private\": true,\n  \"version\": \"0.0.0\",\n  \"dependencies\": {\n    \"@deepseek-ai/dsh\": \"0.1.5-rc.2\"\n  }\n}\n";
+        std::fs::write(&pkg, pnpm_managed).unwrap();
+
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&pkg).unwrap(),
+            pnpm_managed,
+            "壳不得覆写 pnpm 维护的 package.json（依赖条目归 pnpm）"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **空/损坏 package.json 自愈**：内容为空（或缺失）时补最小声明——
+    /// 否则 pnpm project 前提不成立、安装直接失败。
+    #[cfg(unix)]
+    #[test]
+    fn runtime_layout_repairs_blank_package_json() {
+        let root = engine_root("adr0017-blank");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(dsh_runtime_dir(&data_dir)).unwrap();
+        let pkg = dsh_runtime_dir(&data_dir).join("package.json");
+        std::fs::write(&pkg, "   \n").unwrap();
+
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&pkg).unwrap(),
+            dsh_runtime_package_json(),
+            "空白 package.json 应被补成最小声明"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **端到端（离线、hermetic）**：用**生产函数** `write_dsh_shim` 生成的 shim
+    /// 真的能被执行，并把 `bin/node` 与 `dsh-runtime` 入口以**正确顺序**接起来、
+    /// 原样透传参数（含带空格的参数）。
+    ///
+    /// 判据形态：把 `bin/node` 换成会回显参数的假 node——于是断言就落在
+    /// 「shim → node → 入口 JS → 参数」这条真实链路上，不依赖真实 Node 二进制。
+    #[cfg(unix)]
+    #[test]
+    fn generated_shim_executes_and_forwards_args() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = engine_root("adr0017-exec");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+
+        // 假 node：回显「被调用的入口 + 透传参数」
+        let node = engine_bin_dir(&data_dir).join("node");
+        std::fs::write(
+            &node,
+            "#!/bin/sh\nfor a in \"$@\"; do printf '<%s>' \"$a\"; done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let shim = write_dsh_shim(&data_dir).unwrap();
+        let out = crate::child_cmd(&shim)
+            .arg("--version")
+            .arg("arg with space")
+            .output()
+            .expect("shim 应可执行");
+        assert!(out.status.success(), "shim 执行失败：{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        // 期望用**独立字面量**（不经 `dsh_entry_js`）——否则断言与生产实现同源自洽，
+        // 改坏实现也照样绿（qa-verify「两态等价」教训：测试必须先证明自己会鉴别）。
+        const EXPECT_TAIL: &str = "dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js";
+        assert!(
+            text.starts_with(&format!("<{}>", dsh_entry_js(&data_dir).display())),
+            "shim 必须把 dsh-runtime 入口作为 node 的第一个参数，实际：{text}"
+        );
+        assert!(
+            text.contains(&format!("<{}>", dsh_entry_js(&data_dir).display()))
+                && dsh_entry_js(&data_dir)
+                    .to_string_lossy()
+                    .ends_with(EXPECT_TAIL),
+            "入口实测路径必须以 `{EXPECT_TAIL}` 结尾（独立字面量判据），实际：{text}"
+        );
+        // 其余参数原样透传（含空格不被拆）
+        assert!(text.contains("<--version>"), "参数未透传：{text}");
+        assert!(text.contains("<arg with space>"), "含空格参数被拆：{text}");
         std::fs::remove_dir_all(&root).ok();
     }
 }
