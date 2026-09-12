@@ -32,6 +32,17 @@
 
 ## 三、记录
 
+### 2026-09-12 fix(engines)：为 Windows 模块代理模式补齐浏览器 client bundles 与 client 声明 (ADR-0019) —— guan（AI 协作）
+
+- **变更**：新增 `src-tauri/src/dsh-client-proxies.mjs`；更新 `src-tauri/src/engines.rs`（落位、bootstrap 预热与单测断言）；新增架构决策文档 `docs/adr/0019-dsh-client-module-proxies-on-windows.md`。
+- **原因**：ADR-0018 启用模块代理（proxy mode）规避 Windows 符号链接特权后，dsh 后端可启动，但浏览器打开 Web 工作台时报错 `Failed to load plugins: client-modules: HTML did not preload @deepseek-ai/dsh-client-modules/client.js` 导致白屏。根因为 dsh 的 `ensureModuleProxy` 丢弃了包原本的 `dsh.client` 与 `exports["./client"]`，纯 Node 模式下前端扫描不到客户端模块声明。
+- **方案**：
+  1. 编写独立 Node 模块 `dsh-client-proxies.mjs`，在 bootstrap 执行 `runCli()` 前调用 `augmentClientProxies`，将各包导出的浏览器 bundle（`dsh-client-bundle.js` 及 `.map`）复制到 proxy 目录，并增量写回 `exports["./client"]` 与 `dsh.client`；
+  2. 严格维护 dsh 契约不变量（逐字节保留 `targets` 与 `version`，防止触发上游强制重建）；
+  3. `write_dsh_client_proxies` 保证无变化零写入，并在全新安装与就绪启动路径（`refresh_dsh_layout_if_project_local`）中自动刷新。
+- **影响**：仅周知，POSIX 侧维持符号链接原样，Windows 侧 Web 工作台恢复完整加载 52+ 前端插件。
+- **凭据**：浏览器 CDP 实测复现红/绿闭环 · 真实 dsh 启动实测（`real_dsh_boots_in_proxy_mode`：0 软链 / 1184 entry 代理 / 55 client-bundle，进程存活） · `cargo test` **418 passed**（416 → +2） · `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 · `node --check` 干净。
+
 ### 2026-09-12 fix(market)：对齐 dsh-market NPM catalog 镜像链与 CDN 扩容 —— guan（AI 起草）
 
 - **变更**：`src-tauri/src/updates.rs`，`fetch_market_registry` 升级分发链路。

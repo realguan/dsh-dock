@@ -100,6 +100,9 @@ pub(crate) fn dsh_shim_posix(node_bin: &Path, entry_js: &Path) -> String {
 /// ⇒ 改名会让 Windows shim 指向不存在的文件而**全套测试静默**（qa-verify 变异 M4）。
 pub(crate) const DSH_BOOTSTRAP_NAME: &str = "dsh-boot.mjs";
 
+/// 壳自写模块代理增强脚本的文件名（落在 `<engines>/bin/` 下，ADR-0019）。
+pub(crate) const DSH_CLIENT_PROXIES_NAME: &str = "dsh-client-proxies.mjs";
+
 /// Windows shim 内容（**纯函数**）。`%~dp0` = 本 `.cmd` 所在目录（自带尾反斜杠），
 /// 故整条 shim 是**相对**的——引擎目录整体搬迁后仍可用。
 ///
@@ -122,29 +125,39 @@ pub(crate) fn dsh_shim_windows() -> String {
     )
 }
 
-/// 壳自写 bootstrap 内容（**纯函数**，供单测钉住 ADR-0018 §4.1 的三步与绊线）。
+/// 壳自写 bootstrap 内容（**纯函数**，供单测钉住 ADR-0018 §4.1 的三步与绊线，及 ADR-0019 客户端增强）。
 ///
-/// 三步（全部只是**选择 dsh 自带的模式**，不含任何业务逻辑）：
+/// 核心步骤：
 /// 1. `process.pkg ??= { dshDock: true }` ⇒ dsh 的 `isPackagedExecutable()` 为真
 ///    （其判据即 `process.pkg !== undefined`，`dsh-app-boot/lib/index.js:485`），
 ///    于是选中 `kind: "proxy"`（目录代理）而非 `kind: "symlink"`（`:612-619`）；
 /// 2. `await import(入口)` —— 入口**相对本 bootstrap 自身**解析（`import.meta.url`），
 ///    不硬编码绝对路径（引擎目录可整体搬迁）；
-/// 3. `await mod.runCli()` —— **必须显式调用**：被 import 时 `import.meta.main` 为假，
+/// 3. ADR-0019 客户端代理增强：在执行 `runCli()` 前，先通过 `healProfilesModuleFallback`
+///    落位模块代理目录结构，再由 `augmentClientProxies` 将各包导出的浏览器 bundle（`dsh-client-bundle.js`）
+///    与 `dsh.client` 声明补入代理目录中，防止 Web 工作台因缺失插件客户端 bundle 报错；
+/// 4. `await mod.runCli()` —— **必须显式调用**：被 import 时 `import.meta.main` 为假，
 ///    dsh 自己的 `if (import.meta.main) await runCli()`（`lib/bin.js:168`）不会执行，
 ///    **只 import 不调用 = 什么都不发生**。
 ///
 /// 绊线（ADR-0018 §6「失败要响亮」）：我们依赖的是 dsh 的**未公开内部判据**；若上游
 /// 改了它，此处必须给出可行动的错误，而不是一条看不懂的 EPERM。
 pub(crate) fn dsh_bootstrap_mjs() -> &'static str {
-    r#"// DSH Dock engine bootstrap (ADR-0018).
+    r#"// DSH Dock engine bootstrap (ADR-0018 / ADR-0019).
 //
 // On Windows a normal account lacks SeCreateSymbolicLinkPrivilege, so dsh's default
 // module-fallback mode (fs.symlinkSync) fails with `EPERM: symlink` at startup.
 // Setting `process.pkg` makes dsh's isPackagedExecutable() true, which selects its
 // built-in module-proxy mode (real directories + entry-N.js re-exports, zero symlinks).
-// This file only *selects* that mode; it contains no business logic and patches nothing.
+// ADR-0019: restore browser client bundles and declarations into dsh's module-proxy
+// fallback tree so the Web workbench loads plugins without preloading failure.
 process.pkg ??= { dshDock: true };
+
+import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const entry = new URL(
   "../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
@@ -152,6 +165,32 @@ const entry = new URL(
 );
 
 try {
+  const isVersionQuery = process.argv.slice(2).some(
+    (arg) => arg === "-V" || arg === "--version",
+  );
+  if (!isVersionQuery) {
+    try {
+      const dshPkg = new URL("../package.json", entry);
+      const installAnchor = realpathSync(fileURLToPath(dshPkg));
+      const req = createRequire(installAnchor);
+      const appBootFile = req.resolve("@deepseek-ai/dsh-app-boot");
+      const { healProfilesModuleFallback } = await import(pathToFileURL(appBootFile).href);
+      const proxiesHelper = new URL("./dsh-client-proxies.mjs", import.meta.url);
+      const { augmentClientProxies } = await import(proxiesHelper.href);
+      const home = process.env.DSH_HOME || join(homedir(), ".dsh");
+      await healProfilesModuleFallback({ installAnchor, home });
+      const stats = augmentClientProxies(join(home, "profiles", "node_modules"));
+      if (stats.failures.length > 0) {
+        console.warn("[dsh-dock] augmentClientProxies warnings:", stats.failures);
+      }
+    } catch (augmentErr) {
+      if (augmentErr?.code === "EPERM" && augmentErr?.syscall === "symlink") {
+        throw augmentErr;
+      }
+      console.warn("[dsh-dock] 模块代理预热/增强未完全生效：", augmentErr);
+    }
+  }
+
   // Import, then call runCli() explicitly: when this file imports the entry,
   // `import.meta.main` is false, so the entry's own
   // `if (import.meta.main) await runCli()` never fires.
@@ -172,10 +211,22 @@ try {
 "#
 }
 
+/// 壳自写模块代理增强脚本内容（ADR-0019）。
+pub(crate) fn dsh_client_proxies_mjs() -> &'static str {
+    include_str!("dsh-client-proxies.mjs")
+}
+
 /// 落位 bootstrap（幂等；无变化零写入）。
 pub(crate) fn write_dsh_bootstrap(data_dir: &Path) -> Result<PathBuf> {
     let path = engine_bin_dir(data_dir).join(DSH_BOOTSTRAP_NAME);
     write_if_changed(&path, dsh_bootstrap_mjs().as_bytes(), false)?;
+    Ok(path)
+}
+
+/// 落位模块代理增强脚本（幂等；无变化零写入，ADR-0019）。
+pub(crate) fn write_dsh_client_proxies(data_dir: &Path) -> Result<PathBuf> {
+    let path = engine_bin_dir(data_dir).join(DSH_CLIENT_PROXIES_NAME);
+    write_if_changed(&path, dsh_client_proxies_mjs().as_bytes(), false)?;
     Ok(path)
 }
 
@@ -270,6 +321,8 @@ pub(crate) fn ensure_dsh_runtime_layout(data_dir: &Path) -> Result<()> {
     // ② 两平台一致落位使落位逻辑无平台分支、可被本机单测覆盖（否则 macOS 上
     //    该函数无调用者 ⇒ dead_code 撞 `-D warnings`）。
     write_dsh_bootstrap(data_dir)?;
+    // client-proxies（ADR-0019）：bootstrap 预热模块代理并补齐浏览器 client bundles 与声明。
+    write_dsh_client_proxies(data_dir)?;
     Ok(())
 }
 
@@ -2110,14 +2163,22 @@ mod tests {
         let boot = engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME);
         assert!(boot.is_file(), "必须落位 bootstrap：{}", boot.display());
 
+        // ⑤ client-proxies 也必须落位（ADR-0019）
+        let proxies = engine_bin_dir(&data_dir).join(DSH_CLIENT_PROXIES_NAME);
+        assert!(
+            proxies.is_file(),
+            "必须落位 client-proxies：{}",
+            proxies.display()
+        );
+
         // 幂等：marker 时间戳不变 = 零写入
-        let stamps: Vec<_> = [&pkg, &ws, &shim, &boot]
+        let stamps: Vec<_> = [&pkg, &ws, &shim, &boot, &proxies]
             .iter()
             .map(|p| std::fs::metadata(p).unwrap().modified().unwrap())
             .collect();
         std::thread::sleep(std::time::Duration::from_millis(20));
         ensure_dsh_runtime_layout(&data_dir).unwrap();
-        for (p, before) in [&pkg, &ws, &shim, &boot].iter().zip(stamps) {
+        for (p, before) in [&pkg, &ws, &shim, &boot, &proxies].iter().zip(stamps) {
             assert_eq!(
                 std::fs::metadata(p).unwrap().modified().unwrap(),
                 before,
@@ -2279,7 +2340,7 @@ mod tests {
         out
     }
 
-    /// **bootstrap 三步齐备 + 入口相对解析 + 绊线**（ADR-0018 §4.1 / §6）。
+    /// **bootstrap 核心步齐备 + 入口相对解析 + 代理增强 + 绊线**（ADR-0018 / ADR-0019）。
     /// 全部断言落在**去掉注释后的代码**上（见 `js_code_only` 的理由）。
     #[test]
     fn bootstrap_has_three_steps_relative_entry_and_tripwire() {
@@ -2304,7 +2365,20 @@ mod tests {
                 "bootstrap 不得硬编码绝对路径 `{abs}`（引擎目录可搬迁）：{code}"
             );
         }
-        // ③ 显式调用 runCli（断言**调用语句**；注释里的同名字样不算）
+        // ③ ADR-0019：在 runCli 之前预热并增强模块代理中的浏览器端 client bundle
+        assert!(
+            code.contains("healProfilesModuleFallback"),
+            "必须在启动前通过 healProfilesModuleFallback 铺设模块代理：{code}"
+        );
+        assert!(
+            code.contains(DSH_CLIENT_PROXIES_NAME) && code.contains("augmentClientProxies"),
+            "必须引入并执行 augmentClientProxies 补齐浏览器端 client bundle（ADR-0019）：{code}"
+        );
+        assert!(
+            code.contains("isVersionQuery"),
+            "版本查询（-V/--version）必须绕过代理增强以保极速返回：{code}"
+        );
+        // ④ 显式调用 runCli（断言**调用语句**；注释里的同名字样不算）
         assert!(
             code.contains("await mod.runCli();"),
             "必须实际 `await mod.runCli();`——被 import 时 import.meta.main 为假，\
@@ -2319,6 +2393,63 @@ mod tests {
             code.contains("process.exit(1)") && code.contains("throw err"),
             "绊线必须非零退出、其余错误上抛（不得静默吞掉）：{code}"
         );
+    }
+
+    /// **ADR-0019 纯契约断言**：`dsh-client-proxies.mjs` 的关键函数与不变量必须在位。
+    #[test]
+    fn client_proxies_mjs_contains_contract_invariants() {
+        let code = dsh_client_proxies_mjs();
+        // ① 必须导出 augmentClientProxies 和 CLIENT_BUNDLE_NAME
+        assert!(
+            code.contains("export function augmentClientProxies("),
+            "必须导出 augmentClientProxies 函数：{code}"
+        );
+        assert!(
+            code.contains("export const CLIENT_BUNDLE_NAME = \"dsh-client-bundle.js\";"),
+            "必须导出特定命名空间的 CLIENT_BUNDLE_NAME（防止与 entry-N.js 冲突）：{code}"
+        );
+        // ② 契约不变量：必须保护 moduleFallback.targets 与 version 不被破坏
+        assert!(
+            code.contains("moduleFallback?.targets"),
+            "必须以 moduleFallback.targets 判定 proxy 目录：{code}"
+        );
+        assert!(
+            code.contains(
+                "exports: { ...manifest.exports, \"./client\": `./${CLIENT_BUNDLE_NAME}` }"
+            ),
+            "必须在 exports 中增量导出 ./client：{code}"
+        );
+        assert!(
+            code.contains("dsh: { ...manifest.dsh, client: declaration }"),
+            "必须在 dsh 字段增量写回 client 声明：{code}"
+        );
+        // ③ 幂等性：copyIfChanged 与 writeFileSync 条件检查
+        assert!(
+            code.contains("copyIfChanged("),
+            "文件复制必须使用 copyIfChanged 保证幂等：{code}"
+        );
+    }
+
+    /// 落位 client-proxies 脚本的幂等性（无变化零写入）。
+    #[test]
+    fn write_dsh_client_proxies_is_idempotent() {
+        let root = engine_root("adr0019-proxies-idem");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        let path = write_dsh_client_proxies(&data_dir).expect("初次写入应成功");
+        assert!(path.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            dsh_client_proxies_mjs()
+        );
+
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let path2 = write_dsh_client_proxies(&data_dir).expect("二次写入应成功");
+        assert_eq!(path, path2);
+        let after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(before, after, "二次写入无变化必须零写入（保持 mtime 不变）");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// **分叉面守门（ADR-0018 §4.2）**：POSIX shim **逐字冻结**——那里建软链无特权问题，
@@ -2428,9 +2559,11 @@ mod tests {
         std::fs::create_dir_all(&rt_pkg).unwrap();
         std::os::unix::fs::symlink(&real_dsh, rt_pkg.join("dsh")).unwrap();
 
-        // 用**生产函数**落位 bootstrap（不是手抄副本）
+        // 用**生产函数**落位 bootstrap 与 client-proxies（不是手抄副本）
         let boot = write_dsh_bootstrap(&data_dir).unwrap();
         assert!(boot.is_file());
+        let proxies_file = write_dsh_client_proxies(&data_dir).unwrap();
+        assert!(proxies_file.is_file());
 
         let home = root.join("dshhome");
         std::fs::create_dir_all(&home).unwrap();
@@ -2482,11 +2615,13 @@ mod tests {
             .map(|e| e.path())
             .collect();
         let proxies = count_files_named(&nm, "entry-");
+        let client_bundles = count_files_named(&nm, "dsh-client-bundle.js");
         eprintln!(
-            "真实 dsh boot：软链={} 顶层条目={} 代理 entry-*.js={} 进程存活={alive}",
+            "真实 dsh boot：软链={} 顶层条目={} 代理 entry-*.js={} 客户端 bundle={} 进程存活={alive}",
             links.len(),
             entries,
-            proxies
+            proxies,
+            client_bundles
         );
         assert!(
             links.is_empty(),
@@ -2497,6 +2632,10 @@ mod tests {
         assert!(
             proxies > 0,
             "未发现目录代理 entry-*.js ⇒ 选的不是 proxy 分支（ADR-0018 未生效）"
+        );
+        assert!(
+            client_bundles > 0,
+            "未发现客户端 bundle dsh-client-bundle.js ⇒ 模块代理未成功补齐客户端模块（ADR-0019 未生效）"
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2680,6 +2819,12 @@ mod tests {
             engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME).is_file(),
             "就绪路径也必须落位 bootstrap（Windows shim 指向它）"
         );
+        assert!(
+            engine_bin_dir(&data_dir)
+                .join(DSH_CLIENT_PROXIES_NAME)
+                .is_file(),
+            "就绪路径也必须落位 client-proxies（Windows 模块代理模式依赖它）"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -2755,13 +2900,15 @@ mod tests {
         };
         run();
         let boot = engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME);
+        let proxies = engine_bin_dir(&data_dir).join(DSH_CLIENT_PROXIES_NAME);
         let stamps = [
             std::fs::metadata(&shim).unwrap().modified().unwrap(),
             std::fs::metadata(&boot).unwrap().modified().unwrap(),
+            std::fs::metadata(&proxies).unwrap().modified().unwrap(),
         ];
         std::thread::sleep(std::time::Duration::from_millis(20));
         run();
-        for (p, before) in [&shim, &boot].iter().zip(stamps) {
+        for (p, before) in [&shim, &boot, &proxies].iter().zip(stamps) {
             assert_eq!(
                 std::fs::metadata(p).unwrap().modified().unwrap(),
                 before,
