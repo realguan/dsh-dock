@@ -32,6 +32,54 @@
 
 ## 三、记录
 
+### 2026-09-12 发版 v1.2.4 · 让 Windows 修复作用于已安装用户（同形缺口的第二层）—— guan（AI 协作）
+
+- **性质**：用户真机复验 v1.2.3 **仍报同一 EPERM** 后的修复与发版结果回填。
+- **决定性证据（定位本次缺口）**：用户栈为 `…/@deepseek-ai/dsh/lib/bin.js:168:23` ——
+  那是普通 node 直跑的顶层 `if (import.meta.main) await runCli()`；**经 bootstrap 时该行不执行**
+  且栈中会出现 `dsh-boot.mjs` ⇒ **现场跑的不是新 shim**。
+- **两层同形缺口**（都是「**修复没落在真正会走的那条路径上**」）：
+  1. `ensure_dsh_runtime_layout`（写 bootstrap + 重写 shim）**只**挂在
+     `install_dsh_project_local` ⇒ dsh 已就绪（= **所有升级用户**）从不刷新 ⇒
+     **ADR-0018 的修复只对全新安装生效、对存量安装完全无效**（Lead 定位）；
+  2. 本地模式有**就绪快速路径根本不进 `bootstrap()`**
+     （`executor.rs:248 probe_engine_if_ready` → `:256 resolve_launch_engine_ready`）⇒
+     在 bootstrap 内加刷新**对用户机器依然无效**（**rust-core 发现并主动报为未完成**，
+     而非交付一个"测试全绿但到不了用户路径"的改动）。
+- **修法（单点收口，Lead 裁定方案 B）**：`resolve.rs::engine_launch_spec` 开头调用新增的
+  `engines::refresh_dsh_layout_if_project_local`。**两条启动路径**
+  （`resolve_launch:377` 与 `resolve_launch_engine_ready:479`）**都收敛于此** ⇒ 一处覆盖两条；
+  bootstrap 内的重复实现（④′）已删除，**无第二份实现**。
+  - **顺序不可调换**：校正位于 `engine_dsh_bin()` 与 `engine_no_open_supported()` 之前 ——
+    后者会**真的执行一次启动器**探测 `--no-open`，晚于刷新就会用旧 shim 探测。
+  - **护栏**：仅当 `dsh_entry_js(...).is_file()` 才刷新；旧全局布局用户（dsh 在
+    `global/v11/…`、`bin/dsh` 是 pnpm shim）的启动器**逐字不变**，不会被指向不存在的文件。
+- **回归测试（全部走 resolve 真 seam，不走 bootstrap；+4 用例、零删除）**：
+  T4 `ready_launch_path_refreshes_stale_shim`（走 `resolve_launch_engine_ready`，
+  **前置断言 `probe_engine_if_ready(...).is_some()`**）；T-order 把「**顺序**」钉成独立一维；
+  T2 护栏；T3 幂等。
+- **独立验证**（`docs/team/ADR0018-独立验证-升级路径.md`，qa-verify）：判定**通过**。
+  ① 单点确为单点（1 定义 + 1 调用点，④′ 无残留）；② **顺序独立**——把校正移到探测之后 ⇒
+  **只有 T-order 红而 T4 仍绿**；③ T4 确走用户真实就绪路径且前置断言就绪态；
+  ④ 护栏**反向变异后必红**（有牙齿）。另：其裁定的「T1 与 T4 关系」比作者自述更强 ——
+  **T1 的 Windows 专属意图并未被取代而是保留**，T4 承接的是平台无关部分
+  （建议措辞改为「承接 + 保留」，已采纳）。
+- **闸门**：版本号四处一致 ✅ · `extract --strict` ✅ · cargo fmt `0` · clippy 宿主 `0` ·
+  **clippy win-gnu `0`** · `cargo test` **414 passed / 0 failed / 4 ignored** ·
+  前端 typecheck `0` / lint `0` / test **45 files · 365 passed** · scripts **17 OK**。
+- **CI 结果（tag `v1.2.4`，全绿）**：`build` run **`34677405713`** **6/6**（4 build leg +
+  `release`）；`boot-smoke` run **`34677405698`** **4/4**（含 `engine-bootstrap (windows-latest)`）；
+  **17 个资产**。
+- **结构性结论（本轮两次翻车的公共形状，建议列为通用检查项）**：
+  **「修复必须落在真正会走的那条路径上」**；并附一条实现纪律 ——
+  **校正类逻辑必须既挂在创建点、也挂在每次使用点**（`ensure_profile_build_policy_*` 的
+  **双点**是正确范式；只挂创建点 ⇒ 修复对存量无效）。它与已登记的
+  「判据必须与所判之物解耦」（测试纪律）并列，构成"本轮两次翻车"的两条同源教训。
+- **⚠️ 边界**：**Windows 真机仍待复验**；macOS 只能证明「校正发生在就绪路径上 + 平台形态
+  函数正确」，**不能证明「Windows 不再 EPERM」这一因果**；真实升级流程未端到端跑（用夹具）；
+  「中间态」（`dsh-runtime` 存在但入口损坏）未构造验证。
+- **凭据**：tag `v1.2.4` → commit **`bca9817`**；修复 `09e7a59`；CI `34677405713` / `34677405698`。
+
 ### 2026-09-12 发版 v1.2.3 · Windows 本地模式启动修复（ADR-0018）· 结果回填 —— guan（AI 协作）
 
 - **性质**：ADR-0018 的实施完成 + 发版结果回填（承接同档「架构变更 ADR-0017」与
