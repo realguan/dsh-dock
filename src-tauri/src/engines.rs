@@ -92,15 +92,91 @@ pub(crate) fn dsh_shim_posix(node_bin: &Path, entry_js: &Path) -> String {
     )
 }
 
+/// 壳自写 bootstrap 的文件名（落在 `<engines>/bin/` 下）。
+///
+/// **单一事实源**（task-61）：既是 `write_dsh_bootstrap` 写出的文件名，也是
+/// Windows shim 指向的目标名（由 `dsh_shim_windows` 经 `format!` 取用）。
+/// 这两个值过去各写一份（常量 + shim 里的字面量），改一个不会让任何测试红
+/// ⇒ 改名会让 Windows shim 指向不存在的文件而**全套测试静默**（qa-verify 变异 M4）。
+pub(crate) const DSH_BOOTSTRAP_NAME: &str = "dsh-boot.mjs";
+
 /// Windows shim 内容（**纯函数**）。`%~dp0` = 本 `.cmd` 所在目录（自带尾反斜杠），
 /// 故整条 shim 是**相对**的——引擎目录整体搬迁后仍可用。
 ///
+/// **Windows 指向 bootstrap 而非 dsh 入口**（ADR-0018）：bootstrap 置 `process.pkg`
+/// 使 dsh 走自带的「模块代理」分支，从而**不建符号链接**——Windows 普通账户没有
+/// `SeCreateSymbolicLinkPrivilege`，dsh 默认的 `fs.symlinkSync` 会在启动期
+/// `EPERM: symlink` 失败（这就是 ADR-0017 之后暴露的第二道坎）。
+///
+/// **目标名由 [`DSH_BOOTSTRAP_NAME`] 生成，不并列字面量**（task-61）：这样
+/// 「shim 指向的文件」与「壳实际写出的文件」在**构造上不可能不一致**，
+/// 而不是靠一条断言事后发现。
+///
 /// CRLF 行尾：`.cmd` 的约定行尾，避免某些解析器把 `@echo off` 与后续行粘连。
 /// 纯 ASCII：Windows 控制台代码页不一，shim 内不放非 ASCII 字节。
-pub(crate) fn dsh_shim_windows() -> &'static str {
-    "@echo off\r\n\
-     rem DSH Dock engine launcher (ADR-0017: shell-owned shim, not the pnpm global shim).\r\n\
-     \"%~dp0node.exe\" \"%~dp0..\\dsh-runtime\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\" %*\r\n"
+pub(crate) fn dsh_shim_windows() -> String {
+    format!(
+        "@echo off\r\n\
+         rem DSH Dock engine launcher (ADR-0018: bootstrap selects dsh's module-proxy mode).\r\n\
+         \"%~dp0node.exe\" \"%~dp0{DSH_BOOTSTRAP_NAME}\" %*\r\n"
+    )
+}
+
+/// 壳自写 bootstrap 内容（**纯函数**，供单测钉住 ADR-0018 §4.1 的三步与绊线）。
+///
+/// 三步（全部只是**选择 dsh 自带的模式**，不含任何业务逻辑）：
+/// 1. `process.pkg ??= { dshDock: true }` ⇒ dsh 的 `isPackagedExecutable()` 为真
+///    （其判据即 `process.pkg !== undefined`，`dsh-app-boot/lib/index.js:485`），
+///    于是选中 `kind: "proxy"`（目录代理）而非 `kind: "symlink"`（`:612-619`）；
+/// 2. `await import(入口)` —— 入口**相对本 bootstrap 自身**解析（`import.meta.url`），
+///    不硬编码绝对路径（引擎目录可整体搬迁）；
+/// 3. `await mod.runCli()` —— **必须显式调用**：被 import 时 `import.meta.main` 为假，
+///    dsh 自己的 `if (import.meta.main) await runCli()`（`lib/bin.js:168`）不会执行，
+///    **只 import 不调用 = 什么都不发生**。
+///
+/// 绊线（ADR-0018 §6「失败要响亮」）：我们依赖的是 dsh 的**未公开内部判据**；若上游
+/// 改了它，此处必须给出可行动的错误，而不是一条看不懂的 EPERM。
+pub(crate) fn dsh_bootstrap_mjs() -> &'static str {
+    r#"// DSH Dock engine bootstrap (ADR-0018).
+//
+// On Windows a normal account lacks SeCreateSymbolicLinkPrivilege, so dsh's default
+// module-fallback mode (fs.symlinkSync) fails with `EPERM: symlink` at startup.
+// Setting `process.pkg` makes dsh's isPackagedExecutable() true, which selects its
+// built-in module-proxy mode (real directories + entry-N.js re-exports, zero symlinks).
+// This file only *selects* that mode; it contains no business logic and patches nothing.
+process.pkg ??= { dshDock: true };
+
+const entry = new URL(
+  "../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  import.meta.url,
+);
+
+try {
+  // Import, then call runCli() explicitly: when this file imports the entry,
+  // `import.meta.main` is false, so the entry's own
+  // `if (import.meta.main) await runCli()` never fires.
+  const mod = await import(entry.href);
+  await mod.runCli();
+} catch (err) {
+  if (err?.code === "EPERM" && err?.syscall === "symlink") {
+    console.error(
+      "[dsh-dock] dsh 启动时仍在创建符号链接（EPERM / symlink）。\n" +
+        "本 bootstrap 已选中 dsh 的「模块代理」模式，说明 dsh 判断打包体的内部依据\n" +
+        "（process.pkg）可能已变更——见 ADR-0018 §5「依赖 dsh 的内部判据」。\n" +
+        "请反馈此错误：启动方式需要按新版 dsh 重新评估。",
+    );
+    process.exit(1);
+  }
+  throw err;
+}
+"#
+}
+
+/// 落位 bootstrap（幂等；无变化零写入）。
+pub(crate) fn write_dsh_bootstrap(data_dir: &Path) -> Result<PathBuf> {
+    let path = engine_bin_dir(data_dir).join(DSH_BOOTSTRAP_NAME);
+    write_if_changed(&path, dsh_bootstrap_mjs().as_bytes(), false)?;
+    Ok(path)
 }
 
 /// 幂等写文件：内容（含可执行位）一致则**零写入**，否则临时文件 + 原子替换。
@@ -188,6 +264,12 @@ pub(crate) fn ensure_dsh_runtime_layout(data_dir: &Path) -> Result<()> {
     crate::build_policy::ensure_engine_linker(&rt)
         .map_err(|e| anyhow!("dsh-runtime nodeLinker 写入失败：{e}"))?;
     write_dsh_shim(data_dir)?;
+    // bootstrap（ADR-0018）：Windows 的 `dsh.cmd` 指向它。**两平台都落位**——
+    // ① POSIX 侧无消费者，但它只是一份惰性文本（POSIX `bin/dsh` 仍直连入口，
+    //    dsh 在 POSIX 走默认符号链接模式，分叉面未扩大）；
+    // ② 两平台一致落位使落位逻辑无平台分支、可被本机单测覆盖（否则 macOS 上
+    //    该函数无调用者 ⇒ dead_code 撞 `-D warnings`）。
+    write_dsh_bootstrap(data_dir)?;
     Ok(())
 }
 
@@ -1888,8 +1970,11 @@ mod tests {
         );
     }
 
-    /// **Windows shim 形态**（ADR-0017 §4.1）：ASCII + CRLF、`%~dp0` 相对定位、
-    /// 目标 `dsh-runtime\node_modules\@deepseek-ai\dsh\lib\bin.js`、`%*` 透传。
+    /// **Windows shim 形态**：ASCII + CRLF、`%~dp0` 相对定位、`%*` 透传。
+    ///
+    /// **目标在 ADR-0018 后改动**：由「直连 dsh 入口」改为「指向 bootstrap」
+    /// （bootstrap 再选 dsh 的模块代理模式）。本断言随契约更新，但**保留**原意图中
+    /// 仍然成立的部分（CRLF / 纯 ASCII / `%~dp0` 相对 / `%*` 透传）。
     #[test]
     fn windows_shim_shape_is_exact() {
         let shim = dsh_shim_windows();
@@ -1903,8 +1988,8 @@ mod tests {
             "node 必须相对本 .cmd 所在目录：{shim:?}"
         );
         assert!(
-            shim.contains("\"%~dp0..\\dsh-runtime\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\""),
-            "入口必须指向 dsh-runtime 的 lib/bin.js（Windows 分隔符）：{shim:?}"
+            shim.contains("\"%~dp0dsh-boot.mjs\""),
+            "目标必须是 bootstrap（ADR-0018）：{shim:?}"
         );
         assert!(
             !shim.contains('\n') || !shim.replace("\r\n", "").contains('\n'),
@@ -1916,21 +2001,27 @@ mod tests {
         );
     }
 
-    /// **双平台 shim 指向同一入口**：两平台去掉各自的目录前缀后，目标相对路径必须一致
-    /// （防一侧改了包名/入口而另一侧漏改）。
+    /// **两平台最终指向同一入口**（原意图在 ADR-0018 后的新形态）：POSIX shim 直连
+    /// dsh 入口；Windows shim 经 bootstrap 到达**同一个**入口。防一侧改了包名/入口
+    /// 而另一侧漏改。
     #[test]
-    fn both_platform_shims_target_the_same_relative_entry() {
+    fn both_platform_paths_target_the_same_relative_entry() {
         let posix = dsh_shim_posix(
             Path::new("/x/bin/node"),
             Path::new("/x/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"),
         );
-        let win = dsh_shim_windows();
-        for shim in [&posix, win] {
+        let boot = dsh_bootstrap_mjs();
+        // POSIX：直连入口；Windows：经 boot（第 3 条断言保证 boot 指向入口）
+        for target in [&posix, &boot.to_string()] {
             assert!(
-                shim.contains("dsh-runtime") && shim.contains("bin.js"),
-                "两平台都必须指向 dsh-runtime 的 bin.js：{shim}"
+                target.contains("dsh-runtime") && target.contains("bin.js"),
+                "两平台路径都必须到达 dsh-runtime 的 bin.js：{target}"
             );
         }
+        assert!(
+            dsh_shim_windows().contains("dsh-boot.mjs"),
+            "Windows 侧应经 bootstrap 到达入口"
+        );
         // **带分隔符的完整相对路径**（独立字面量）：只查裸段 `dsh` 会被
         // `dsh-wrong` 这类错误名蒙混过关（变异证伪实测：裸段检查确实没红）。
         for expect in [
@@ -1940,11 +2031,8 @@ mod tests {
         ] {
             let expect = expect.replace("@PLACEHOLDER", "");
             assert!(posix.contains(&expect), "POSIX shim 缺 `{expect}`：{posix}");
-            let win_expect = expect.replace('/', "\\");
-            assert!(
-                win.contains(&win_expect),
-                "Windows shim 缺 `{win_expect}`：{win}"
-            );
+            // Windows 侧经 bootstrap；bootstrap 用 **URL 路径**（正斜杠），故同形断言。
+            assert!(boot.contains(&expect), "bootstrap 缺 `{expect}`：{boot}");
         }
     }
 
@@ -1993,14 +2081,18 @@ mod tests {
             "既有查找序必须能发现 shim（不得改查找序）"
         );
 
+        // ④ bootstrap 也必须落位（ADR-0018）
+        let boot = engine_bin_dir(&data_dir).join(DSH_BOOTSTRAP_NAME);
+        assert!(boot.is_file(), "必须落位 bootstrap：{}", boot.display());
+
         // 幂等：marker 时间戳不变 = 零写入
-        let stamps: Vec<_> = [&pkg, &ws, &shim]
+        let stamps: Vec<_> = [&pkg, &ws, &shim, &boot]
             .iter()
             .map(|p| std::fs::metadata(p).unwrap().modified().unwrap())
             .collect();
         std::thread::sleep(std::time::Duration::from_millis(20));
         ensure_dsh_runtime_layout(&data_dir).unwrap();
-        for (p, before) in [&pkg, &ws, &shim].iter().zip(stamps) {
+        for (p, before) in [&pkg, &ws, &shim, &boot].iter().zip(stamps) {
             assert_eq!(
                 std::fs::metadata(p).unwrap().modified().unwrap(),
                 before,
@@ -2103,5 +2195,380 @@ mod tests {
         assert!(text.contains("<--version>"), "参数未透传：{text}");
         assert!(text.contains("<arg with space>"), "含空格参数被拆：{text}");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ---------- ADR-0018：Windows 以 proxy 模式启动（T-B4，2026-09-12） ----------
+
+    /// **复现锚（ADR-0018）**：Windows shim 必须指向 **bootstrap**，而不是 dsh 入口。
+    ///
+    /// 缺陷：ADR-0017 让 dsh **装上了**，但 dsh **启动时**在
+    /// `$DSH_HOME/profiles/node_modules` 建符号链接（本机实测 481 个）⇒ Windows
+    /// 普通账户 `EPERM: symlink`。bootstrap 置 `process.pkg` 使 dsh 走自带的
+    /// 「模块代理」分支（本机实测 **0 软链 / 1184 代理**）。
+    #[test]
+    fn windows_shim_points_at_bootstrap_not_entry() {
+        let shim = dsh_shim_windows();
+        assert!(
+            shim.contains("dsh-boot.mjs"),
+            "Windows shim 必须指向 bootstrap（ADR-0018）：{shim:?}"
+        );
+        assert!(
+            !shim.contains("lib\\bin.js"),
+            "Windows shim 不得再直连 dsh 入口（那会走符号链接模式 ⇒ EPERM）：{shim:?}"
+        );
+        assert!(
+            shim.contains("\"%~dp0node.exe\"") && shim.ends_with("%*\r\n"),
+            "node 相对定位与 %* 透传必须保持：{shim:?}"
+        );
+    }
+
+    /// 抹掉 JS 注释（行注释 + 块注释），保留换行。
+    ///
+    /// **为什么必须**：bootstrap 的注释里天然会写 `process.pkg` / `runCli()` /
+    /// `EPERM` 等字样（解释"为什么这么做"）。直接 `contains` 会被注释满足——
+    /// 变异证伪实测：删掉 `await mod.runCli()` 后断言**仍然绿**，闸门形同虚设。
+    /// 与 `lifecycle.rs` spawn 闸门「只在生产代码上判」同一条纪律。
+    fn js_code_only(src: &str) -> String {
+        let mut out = String::with_capacity(src.len());
+        let b = src.as_bytes();
+        let mut i = 0usize;
+        while i < b.len() {
+            if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'/' {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            } else if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    if b[i] == b'\n' {
+                        out.push('\n');
+                    }
+                    i += 1;
+                }
+                i += 2;
+            } else {
+                out.push(b[i] as char);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// **bootstrap 三步齐备 + 入口相对解析 + 绊线**（ADR-0018 §4.1 / §6）。
+    /// 全部断言落在**去掉注释后的代码**上（见 `js_code_only` 的理由）。
+    #[test]
+    fn bootstrap_has_three_steps_relative_entry_and_tripwire() {
+        let code = js_code_only(dsh_bootstrap_mjs());
+        // ① 选择打包体分支（断言赋值语句，不是注释里的键名）
+        assert!(
+            code.contains("process.pkg ??="),
+            "必须实际赋值 process.pkg（dsh 的 isPackagedExecutable 判据）：{code}"
+        );
+        // ② 相对解析（不硬编码绝对路径）
+        assert!(
+            code.contains("new URL(") && code.contains("import.meta.url"),
+            "入口必须相对 bootstrap 自身解析：{code}"
+        );
+        assert!(
+            code.contains("\"../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js\""),
+            "入口相对路径必须精确指向 dsh 入口：{code}"
+        );
+        for abs in ["/Users/", "C:\\", "file:///"] {
+            assert!(
+                !code.contains(abs),
+                "bootstrap 不得硬编码绝对路径 `{abs}`（引擎目录可搬迁）：{code}"
+            );
+        }
+        // ③ 显式调用 runCli（断言**调用语句**；注释里的同名字样不算）
+        assert!(
+            code.contains("await mod.runCli();"),
+            "必须实际 `await mod.runCli();`——被 import 时 import.meta.main 为假，\
+             dsh 自己的 `if (import.meta.main) await runCli()` 不会执行：{code}"
+        );
+        // 绊线：EPERM + symlink ⇒ 可行动错误
+        assert!(
+            code.contains("=== \"EPERM\"") && code.contains("=== \"symlink\""),
+            "必须实际判定 EPERM/symlink 并改写为可行动错误（ADR-0018 §6）：{code}"
+        );
+        assert!(
+            code.contains("process.exit(1)") && code.contains("throw err"),
+            "绊线必须非零退出、其余错误上抛（不得静默吞掉）：{code}"
+        );
+    }
+
+    /// **分叉面守门（ADR-0018 §4.2）**：POSIX shim **逐字冻结**——那里建软链无特权问题，
+    /// 改它只会白 churn 481 个链接并偏离上游默认。
+    ///
+    /// 本断言在改动前后都绿（**守门**而非复现锚）；判别力由变异证伪证明。
+    #[test]
+    fn posix_shim_is_frozen_byte_for_byte() {
+        const FROZEN: &str = concat!(
+            "#!/bin/sh\n",
+            "# DSH Dock engine launcher (ADR-0017: shell-owned shim, not the pnpm global shim).\n",
+            "exec \"/x/bin/node\" \"/x/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js\" \"$@\"\n",
+        );
+        assert_eq!(
+            dsh_shim_posix(
+                Path::new("/x/bin/node"),
+                Path::new("/x/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js")
+            ),
+            FROZEN,
+            "POSIX shim 被改动了——ADR-0018 §4.2 要求它一律不动（无特权问题）"
+        );
+    }
+
+    // ---------- ADR-0018 核心判据：真实 dsh 以 bootstrap 启动 ⇒ profiles/node_modules 零软链 ----------
+
+    /// 本机可能的引擎目录（只**读**，用于真机判据定位真实 dsh 包与 node）。
+    ///
+    /// 不碰用户 `~/.dsh`（DSH_HOME）：这里找的是**引擎资产目录**，boot 本身仍锁在
+    /// 临时 `DSH_HOME`（AGENTS §6 的约束针对 home/会话锁，不是引擎包）。
+    #[cfg(unix)]
+    fn real_engine_roots() -> Vec<PathBuf> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let mut roots = Vec::new();
+        if let Ok(explicit) = std::env::var("DSH_DOCK_ENGINES") {
+            roots.push(PathBuf::from(explicit));
+        }
+        roots.push(PathBuf::from(&home).join(".dsh-dock-test").join("engines"));
+        // macOS：app_data 的 bundle identifier
+        roots.push(
+            PathBuf::from(&home)
+                .join("Library/Application Support/io.github.realguan.dsh-dock/engines"),
+        );
+        roots
+    }
+
+    /// 本机真实 dsh 包目录（含 `lib/bin.js`）：新布局或旧 `global/` 布局均可。
+    #[cfg(unix)]
+    fn real_dsh_package() -> Option<PathBuf> {
+        for engines in real_engine_roots() {
+            let direct = engines.join("dsh-runtime/node_modules/@deepseek-ai/dsh");
+            if direct.join("lib/bin.js").is_file() {
+                return Some(direct);
+            }
+            if let Ok(rd) = std::fs::read_dir(engines.join("global/v11")) {
+                for e in rd.flatten() {
+                    let p = e.path().join("node_modules/@deepseek-ai/dsh");
+                    if p.join("lib/bin.js").is_file() {
+                        return Some(std::fs::canonicalize(&p).unwrap_or(p));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// 本机引擎 node（真机判据用）。
+    #[cfg(unix)]
+    fn real_engine_node() -> Option<PathBuf> {
+        real_engine_roots()
+            .into_iter()
+            .map(|e| e.join("bin/node"))
+            .find(|p| p.is_file())
+    }
+
+    /// **ADR-0018 §6 核心判据（实现无关的结果判据，比内容断言更强）**：
+    /// 用**真实 dsh** 在**临时 DSH_HOME** 里以 bootstrap 方式 boot，断言
+    /// `profiles/node_modules` **零符号链接**且 dsh 能起。
+    ///
+    /// `#[ignore]`：需要本机已装引擎（真实 dsh），与
+    /// `lifecycle::tests::real_dsh_is_reaped_when_shell_is_sigkilled` 同一口径。
+    /// 运行：`cargo test --lib -- --ignored real_dsh_boots_in_proxy_mode --nocapture`。
+    ///
+    /// **安全**：一律锁进临时 `DSH_HOME` + 临时引擎目录，**不碰用户真实 `~/.dsh`**（AGENTS §6）。
+    #[cfg(unix)]
+    #[ignore = "需要本机已装引擎（真实 dsh 包）"]
+    #[test]
+    fn real_dsh_boots_in_proxy_mode() {
+        let Some(real_dsh) = real_dsh_package() else {
+            eprintln!("跳过：本机未找到真实 dsh 包（新布局或旧 global 布局）");
+            return;
+        };
+        let root = engine_root("adr0018-real");
+        let data_dir = root.join("data");
+        let bin = engine_bin_dir(&data_dir);
+        std::fs::create_dir_all(&bin).unwrap();
+
+        let Some(node_src) = real_engine_node() else {
+            eprintln!("跳过：未找到引擎 node");
+            return;
+        };
+        std::os::unix::fs::symlink(&node_src, bin.join("node")).unwrap();
+
+        // 临时 dsh-runtime：把真实包挂进来（bootstrap 按相对路径解析到它）
+        let rt_pkg = dsh_runtime_dir(&data_dir)
+            .join("node_modules")
+            .join("@deepseek-ai");
+        std::fs::create_dir_all(&rt_pkg).unwrap();
+        std::os::unix::fs::symlink(&real_dsh, rt_pkg.join("dsh")).unwrap();
+
+        // 用**生产函数**落位 bootstrap（不是手抄副本）
+        let boot = write_dsh_bootstrap(&data_dir).unwrap();
+        assert!(boot.is_file());
+
+        let home = root.join("dshhome");
+        std::fs::create_dir_all(&home).unwrap();
+        let mut cmd = crate::child_cmd(&bin.join("node"));
+        cmd.arg(&boot)
+            .arg("web")
+            .arg("--no-open")
+            .env("DSH_HOME", &home)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = crate::lifecycle::spawn(
+            &mut cmd,
+            crate::lifecycle::Role::Probe,
+            crate::lifecycle::GuardCtx::of("dsh-boot", None),
+        )
+        .expect("应能启动 bootstrap");
+
+        // 轮询等待 dsh 铺设完成（最多 ~20s）
+        // 等**铺设稳定**（不再是「首个非空采样」——那可能只铺到一半，断言会偏弱）
+        let nm = home.join("profiles").join("node_modules");
+        let mut entries = 0usize;
+        let mut stable = 0;
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let now = nm.read_dir().map(|d| d.count()).unwrap_or(0);
+            if now > 0 && now == entries {
+                stable += 1;
+                if stable >= 2 {
+                    break;
+                }
+            } else {
+                stable = 0;
+            }
+            entries = now;
+        }
+        let alive = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(
+            nm.is_dir(),
+            "dsh 未铺设 profiles/node_modules（boot 失败？）"
+        );
+        assert!(entries > 0, "profiles/node_modules 为空（boot 未完成铺设）");
+        let links: Vec<PathBuf> = std::fs::read_dir(&nm)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_symlink()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        let proxies = count_files_named(&nm, "entry-");
+        eprintln!(
+            "真实 dsh boot：软链={} 顶层条目={} 代理 entry-*.js={} 进程存活={alive}",
+            links.len(),
+            entries,
+            proxies
+        );
+        assert!(
+            links.is_empty(),
+            "bootstrap 模式下仍出现 {} 个符号链接（前 3：{:?}）——proxy 模式未被选中",
+            links.len(),
+            links.iter().take(3).collect::<Vec<_>>()
+        );
+        assert!(
+            proxies > 0,
+            "未发现目录代理 entry-*.js ⇒ 选的不是 proxy 分支（ADR-0018 未生效）"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 递归数出以 `prefix` 开头的文件（用于数 `entry-*.js` 代理）。
+    #[cfg(unix)]
+    fn count_files_named(dir: &Path, prefix: &str) -> usize {
+        let mut n = 0usize;
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            match e.file_type() {
+                Ok(t) if t.is_dir() => n += count_files_named(&p, prefix),
+                Ok(t)
+                    if t.is_file()
+                        && p.file_name()
+                            .and_then(|s| s.to_str())
+                            .is_some_and(|s| s.starts_with(prefix)) =>
+                {
+                    n += 1
+                }
+                _ => {}
+            }
+        }
+        n
+    }
+
+    /// 从 Windows shim 文本里**解析**出 `%~dp0` 之后的目标文件名（不经常量）。
+    ///
+    /// 刻意用「解析 shim 文本」而不是「读常量」：这样断言的是**shim 真正指向的东西**，
+    /// 而不是我们以为它指向的东西——若将来有人把字面量写回 shim，解析出的名字就会
+    /// 与落盘文件名不符，测试即红。
+    fn windows_shim_target_name(shim: &str) -> String {
+        // shim 形如 `"%~dp0node.exe" "%~dp0<NAME>" %*`：取**第 2 个** `%~dp0` 之后
+        // 到下一个 `"` 之间的内容。
+        let mut rest = shim;
+        for _ in 0..2 {
+            let i = rest
+                .find("%~dp0")
+                .unwrap_or_else(|| panic!("shim 应含第 2 个 %~dp0：{shim:?}"));
+            rest = &rest[i + "%~dp0".len()..];
+        }
+        rest.split('"')
+            .next()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| panic!("shim 的 %~dp0 之后应紧跟目标名：{shim:?}"))
+            .to_string()
+    }
+
+    /// **task-61 / qa-verify 变异 M4**：Windows shim 指向的文件名，必须**就是**
+    /// `write_dsh_bootstrap` 实际写出的那个文件。
+    ///
+    /// 缺陷史：`DSH_BOOTSTRAP_NAME`（写文件用）与 shim 里的硬编码字面量 `dsh-boot.mjs`
+    /// **没有任何绑定** ⇒ 只改常量名，**408 条测试全绿**，而 Windows 上 `dsh.cmd` 会指向
+    /// 不存在的文件、启动失败（静默、且只在 Windows 爆）。
+    ///
+    /// 本断言取**最强形态**：① 名字经常量在**构造上**生成（见 `dsh_shim_windows`）；
+    /// ② 再从 shim **文本里解析**出目标名，断言该名对应的文件确实被落位。
+    /// 两层都不是"改红了就删"——原有意图（CRLF / ASCII / `%~dp0node.exe` / `%*`）全保留。
+    #[cfg(unix)]
+    #[test]
+    fn windows_shim_target_is_the_file_we_actually_write() {
+        let shim = dsh_shim_windows();
+
+        // ① 构造上单一来源：目标名 = 常量
+        assert!(
+            shim.contains(&format!("\"%~dp0{DSH_BOOTSTRAP_NAME}\"")),
+            "shim 目标必须由 DSH_BOOTSTRAP_NAME 生成：{shim:?}"
+        );
+
+        // ② 端到端：从 shim 文本解析出目标名 → 该名的文件必须真的被落位
+        let target = windows_shim_target_name(&shim);
+        assert_eq!(
+            target, DSH_BOOTSTRAP_NAME,
+            "shim 解析出的目标名与落盘常量不一致——正是 M4 那个静默失效"
+        );
+        let root = engine_root("adr0018-binding");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(engine_bin_dir(&data_dir)).unwrap();
+        ensure_dsh_runtime_layout(&data_dir).unwrap();
+        let on_disk = engine_bin_dir(&data_dir).join(&target);
+        assert!(
+            on_disk.is_file(),
+            "Windows shim 指向 `{target}`，但该文件并未被落位（实际落盘：{:?}）\
+             ——改名常量就会触发这条，正是 M4",
+            std::fs::read_dir(engine_bin_dir(&data_dir))
+                .map(|rd| rd.flatten().map(|e| e.file_name()).collect::<Vec<_>>())
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 解析器自检：换一个名字也必须解析得对（防"解析器只认写死的一个名字"）。
+    #[test]
+    fn windows_shim_target_parser_follows_the_name() {
+        let fake = "@echo off\r\n\"%~dp0node.exe\" \"%~dp0totally-other.mjs\" %*\r\n";
+        assert_eq!(windows_shim_target_name(fake), "totally-other.mjs");
     }
 }
