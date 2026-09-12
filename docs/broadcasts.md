@@ -32,6 +32,50 @@
 
 ## 三、记录
 
+### 2026-09-12 发版 v1.2.3 · Windows 本地模式启动修复（ADR-0018）· 结果回填 —— guan（AI 协作）
+
+- **性质**：ADR-0018 的实施完成 + 发版结果回填（承接同档「架构变更 ADR-0017」与
+  「v1.2.2 结果」两条）。
+- **真机驱动的第二段**：用户实测证明 **ADR-0017 成功**（报错路径已到
+  `engines\dsh-runtime\node_modules\@deepseek-ai\dsh` ⇒ 引擎已装上），但紧接着暴露
+  **同一根因的第二处显形**：dsh **启动时**在 `$DSH_HOME/profiles/node_modules`
+  建约 481 个符号链接 ⇒ 普通账户 `EPERM: symlink` 退出。
+- **定位（Lead + rust-core 各自实测）**：dsh 用 `isPackagedExecutable()`（判据 =
+  `process.pkg !== undefined`，全文件**仅 1 处调用**）选 fallback 链接方式 ——
+  普通 node ⇒ `ensureSymlink`（软链）；打包体 ⇒ `ensureModuleProxy`（**目录代理，零软链**）。
+  **无任何 env/config 开关；上游两源最新仍为 0.1.5-rc.2**。
+- **决策（ADR-0018）**：Windows 由壳自写 bootstrap `<engines>/bin/dsh-boot.mjs`
+  （置 `process.pkg` → import 入口 → **显式 `await mod.runCli()`**）选中 dsh 自带的
+  代理分支；**POSIX shim 逐字不动**（那里无特权问题）。否决「预建 junction」（需复刻
+  dsh 依赖闭包 = 重复实现）。**仍拒绝自动提权**（理由同 ADR-0017）。
+- **核心判据（实现无关，本机实测两次）**：同一真实 dsh、各自独立临时 `DSH_HOME`、
+  唯一变量 = `process.pkg` ⇒ 普通 node **481 软链 / 0 代理**；代理模式 **0 软链 /
+  1184 代理**；两者均可 boot。已落成 `#[ignore]` 测试（用**生产函数**落位）防回归。
+- **独立验证**（`docs/team/ADR0018-独立验证.md`，qa-verify）：判定**通过**；核心判据由其
+  **独立双路径重做**（跑作者的 ignored 测试 + 自建手工 spike，并核过不是「跳过式通过」）；
+  **绊线经 3 回合构造场景实测**（含两个对照：`EACCES` 不吞错、`EPERM+open` 不误触发）；
+  POSIX 分叉面 sha256 **逐字未变**；并**证实「注释满足断言」那个坑已堵住**。
+  **隔离达标**：用户真实 `~/.dsh/profiles/node_modules` mtime 与条目数验证前后未变。
+- **qa-verify 自创变异 M4 → 收口一轮（task-61）**：`DSH_BOOTSTRAP_NAME` 与 Windows shim 里
+  硬编码字面量**无任何绑定** ⇒ 只改常量名时 **408 条测试全绿**，而 Windows 会指向不存在的
+  文件且**静默**。修法取**构造上单一来源**（shim 由常量生成，非退化为断言绑定），并新增
+  两条**端到端**断言（从 shim 文本解析目标名 → 核对文件确实落位；失败打印实际落盘列表）。
+  **Lead 独立复现**确认抓得住（红于 `engines.rs:2542`）。
+- **闸门**：版本号四处一致 ✅ · `extract --strict` ✅ · cargo fmt `0` · clippy 宿主 `0` ·
+  **clippy win-gnu `0`** · `cargo test` **410 passed / 0 failed / 4 ignored**（基线 405）·
+  前端 typecheck `0` / lint `0` / test **45 files · 365 passed** · scripts **17 OK**。
+- **CI 结果（tag `v1.2.3`，全绿）**：`build` run **`34673689775`** **6/6**（4 build leg +
+  `release`）；`boot-smoke` run **`34673689810`** **4/4**（含 `engine-bootstrap (windows-latest)`）；
+  **17 个资产**；`latest.json` **7 平台**；**双 macOS 公证 Accepted ×2**。
+- **⚠️ 必须同时知悉的边界**：
+  1. **Windows 真机仍待复验**（本轮证据为机制级修复 + 单元/契约级验证）；
+  2. **平台机制不同**：macOS 的「0 软链」只证明「代理模式确实零软链」这一**结果**，
+     **不能替代** Windows「不再 EPERM」这一**因果**（qa-verify 明确写入报告）；
+  3. **依赖 dsh 未公开内部判据 `process.pkg`** —— 已登记技术债，配「失效即响亮报错」的
+     绊线（仅覆盖本启动路径），并已备上游缺陷报告 `docs/team/ADR0018-上游缺陷报告草稿.md`。
+- **凭据**：tag `v1.2.3` → commit **`a0d7001`**；实施 `c38ab2c`；ADR `a70e5c4`；
+  前段 `0e2be2c`（ADR-0017）/ `9d81393`（v1.2.2）；CI `34673689775` / `34673689810`。
+
 ### 2026-09-12 发版 v1.2.2 · Windows 本地模式根因修复（ADR-0017 实施完成）· 结果回填 —— guan（AI 协作）
 
 - **性质**：承接同档「架构变更 ADR-0017」条目的**实施完成追加**（按既定「分两次写，不合并」）。
