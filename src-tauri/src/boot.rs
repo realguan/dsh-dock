@@ -144,6 +144,19 @@ pub(crate) struct ShellState {
     pub(crate) update_status: Mutex<Option<crate::updates::UpdateStatus>>,
     /// 当前工作台地址（dsh 就绪导航时记录；「在浏览器中打开」入口用）。
     pub(crate) workbench_url: Mutex<Option<tauri::Url>>,
+    /// 当前工作台的 **`/api` 会话 Cookie**（`name=value`，2026-09-15 新增）。
+    ///
+    /// 为什么需要：dsh 0.1.6-alpha.1 的 `/api` 有**两道**栅栏——
+    /// `isTrustedApiRequest`（Host 回环/可信，失败 403）之后还有
+    /// `browserAuth.isAuthenticated`（失败 **401**，`rpc-host.ts:97-99`）。
+    /// 后者要的是**签名且与 authority 绑定**的 Cookie（`browser-auth.ts:285-300`），
+    /// 而 Cookie 此前只被注入 WebView 的 jar —— **Rust 侧 `ureq` 取不到**，于是
+    /// 所有壳侧回环调用恒 401。本字段把启动期兑换到的那份 Cookie 留在壳内，
+    /// 供回环调用附 `Cookie` 头。
+    ///
+    /// **只在内存**：不落盘、不写日志（AGENTS §4.3 绝不打密钥）。每次启动
+    /// `authenticate_workbench_session` 都会重新兑换，无需持久化。
+    pub(crate) workbench_cookie: Mutex<Option<String>>,
     /// 强制启动目标（4.3⑥ 管理器切换写入；错误卡重试经注入延续同一目标；
     /// 模式切换清空重走常规解析）。probe 内按档位消费——bundle 快照档忽略。
     /// 与 `active_session_profile`（会话槽真相：删除/重命名防护、
@@ -384,8 +397,7 @@ pub(crate) fn run_executor_session(
                         *state.workbench_url.lock().unwrap() = Some(url.clone());
                         emit_step(&app, 3, "done", &format!("DSH 已就绪，地址：{url}"));
                         emit_step(&app, 4, "running", "正在打开工作台界面");
-                        let navigate_url = match authenticate_workbench_session(&state.window, &url)
-                        {
+                        let navigate_url = match authenticate_workbench_session(&state, &url) {
                             Ok(Some(clean_url)) => clean_url,
                             Ok(None) => url.clone(),
                             Err(e) => {
@@ -419,7 +431,7 @@ pub(crate) fn run_executor_session(
 /// 从而规避 WebKit 跨域导航（tauri://localhost → 127.0.0.1）在 303 重定向时
 /// 丢弃 SameSite=Strict Cookie 导致的 401（dsh web authentication required）。
 pub(crate) fn authenticate_workbench_session(
-    window: &tauri::WebviewWindow,
+    state: &ShellState,
     url: &tauri::Url,
 ) -> anyhow::Result<Option<tauri::Url>> {
     if !url.query().unwrap_or("").contains("token=") {
@@ -453,7 +465,16 @@ pub(crate) fn authenticate_workbench_session(
     parsed.set_path("/");
     parsed.set_same_site(tauri::webview::cookie::SameSite::Lax);
 
-    window
+    // 2026-09-15：同一份 Cookie 另留一份在壳内存里，供 Rust 侧回环调用附头。
+    // 理由：dsh 0.1.6-alpha.1 的 `/api` 在 Host 栅栏之后还有一道
+    // `browserAuth.isAuthenticated`（失败 401），要的正是这份签名 Cookie；
+    // 而 Cookie 注入的是 WebView 的 jar，`ureq` 取不到——不另留一份，
+    // 壳侧所有回环调用恒 401（详见 `ShellState.workbench_cookie` 注释）。
+    // 只取 `name=value`，不携带属性段；不落盘、不打日志（AGENTS §4.3）。
+    *state.workbench_cookie.lock().unwrap() = Some(format!("{}={}", parsed.name(), parsed.value()));
+
+    state
+        .window
         .set_cookie(parsed)
         .map_err(|e| anyhow::anyhow!("注入 WebView Cookie 失败: {e}"))?;
 

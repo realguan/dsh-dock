@@ -6,7 +6,7 @@
 //! 创建：spawn `dsh plugin --profile <名> install` 半官方转发链（ADR-0009 方案 A
 //! 执行细则两次修订，2026-08-28）——三件套由 dsh `initProfile` 写出；install
 //! 成功后壳对非模板名追加 web-app 单键声明（三件套写入例外 #2，dsh 自认该状态
-//! user-owned，见 `declare_webui_bundle` 与 ADR 第二次修订注）；spawn 前做 pnpm
+//! user-owned，见 `declare_app_bundle` 与 ADR 第二次修订注）；spawn 前做 pnpm
 //! 防御检测。创建语义 = 基础 + Web 工作台声明（与出厂 web 模板同构，零网络、
 //! 毫秒级，创建即 webUi 候选可设为默认启动）；外挂插件由 `dsh plugin add` 按需安装。
 //!
@@ -382,7 +382,7 @@ const CREATE_FORWARD_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// - `reconcilePlugins` 对模板内置 bundle 零动作（In-box bundles are
 ///   not dependencies and are never touched），install 后 bundles 保持
 ///   dsh 初始化写入的原始列表；web-app 声明由壳随后追加（第二次修订，
-///   见 `declare_webui_bundle`——终态 = 基础 + Web 工作台，与出厂 web 模板同构）。
+///   见 `declare_app_bundle`——终态 = 基础 + Web 工作台，与出厂 web 模板同构）。
 ///
 /// profile 名作为单个 argv 元素传递（不经 shell 拼接，空格/Unicode 名安全；
 /// 合法性由 creation_blocker 先行把关）。
@@ -399,6 +399,25 @@ pub fn create_command_args(profile: &str) -> Vec<String> {
 /// 与列表 webUi 判定（4.3⑥ 切换）共用同一权威常量（对齐 dsh web 模板第二项，
 /// `PROFILE_TEMPLATES` @ 323）。
 const WEBUI_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
+
+/// SSH 远程工作区 profile 的 app bundle（2026-09-15，ADR-0023 §1.3）。
+///
+/// **刻意不是** [`WEBUI_BUNDLE`]：Web 工作台的视图假定**宿主本地文件系统**，上游明写
+/// "replacing providers alone does **not** make those views remote-aware"
+/// （`docs/subsystems/ssh.md`；ADR-0023 §1.3 原文）。给 SSH profile 声明 web-app
+/// 等于承诺一个 ADR-0023 §3 方案 C **已否决**的形态（"透明进入远程开发模式"）。
+/// 上游把该家族的范围限定为 **POSIX headless 与自建 profile**，
+/// `@deepseek-ai/dsh-headless` 正是"无 Host / HTTP / 浏览器层"的那个组合
+/// （其 `dsh.bundle.patch` 头部原文）。
+const SSH_APP_BUNDLE: &str = "@deepseek-ai/dsh-headless";
+
+/// [`SSH_APP_BUNDLE`] 的公开取值（2026-09-15，ADR-0023 §1.3）。
+///
+/// 由 `ssh_profile.rs` 传给 [`create_profile_with_app_bundle_blocking`]：让"用哪个
+/// bundle"这一决定**只有一处字面量**，而不是调用方各自写字符串。
+pub fn ssh_app_bundle() -> &'static str {
+    SSH_APP_BUNDLE
+}
 
 /// 向 manifest 文本的 `dsh.profile.bundles` 追加一条声明（纯函数，幂等——
 /// 已存在返回 None）。JSON 往返后 2 空格缩进 + 尾换行，与 dsh initProfile 的
@@ -433,14 +452,19 @@ fn append_bundle_declaration(text: &str, bundle: &str) -> Result<Option<String>,
 /// 由 `resolveBundleDir` 双锚点从 dsh 安装目录解析，零下载），创建即 webUi
 /// 候选、可设为默认启动。模板名跳过：dsh 拥有模板元组，headless 语义即无
 /// webUi。返回是否发生写入。
-fn declare_webui_bundle(home: &Path, profile: &str) -> Result<bool, String> {
+/// 追加**指定** app bundle 的声明（2026-09-15，ADR-0023 §1.3）。
+///
+/// 与 Web 路径同一实现：第二个 bundle 取值出现后若再复制一份
+/// "读 manifest → 查重 → push → 序列化"的逻辑，两处会各自漂移，而漂移只在其中
+/// 一条路径上暴露。
+fn declare_app_bundle(home: &Path, profile: &str, bundle: &str) -> Result<bool, String> {
     if PROFILE_TEMPLATES.iter().any(|(name, _)| *name == profile) {
         return Ok(false);
     }
     let path = home.join("profiles").join(profile).join("package.json");
     let text =
         fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
-    let Some(edited) = append_bundle_declaration(&text, WEBUI_BUNDLE)? else {
+    let Some(edited) = append_bundle_declaration(&text, bundle)? else {
         return Ok(false);
     };
     fs::write(&path, edited).map_err(|e| format!("写 {} 失败：{e}", path.display()))?;
@@ -788,6 +812,23 @@ pub fn create_profile_blocking(
     profile: &str,
     data_dir: &Path,
 ) -> Result<CreateProfileOutcome, String> {
+    create_profile_with_app_bundle_blocking(profile, data_dir, WEBUI_BUNDLE)
+}
+
+/// 创建 profile 并声明**指定** app bundle（2026-09-15，ADR-0023 §1.3）。
+///
+/// 与 [`create_profile_blocking`] 唯一差别是 bundle 取值：Web 管理器路径用
+/// [`WEBUI_BUNDLE`]，SSH 远程工作区用 [`SSH_APP_BUNDLE`]。抽出参数而非复制函数体
+/// ——后半段（物化判定 / build policy / 结果分类）是**同一套生命周期逻辑**，
+/// 复制一份就多一处会与 dsh 侧漂移的影子实现。
+///
+/// `bundle` 传空串表示**不声明** app bundle（当前无调用方；保留是为了让"自定义
+/// profile"这一 ADR-0023 §1.3 明列的范围有落点，而不是让调用方去 hack）。
+pub fn create_profile_with_app_bundle_blocking(
+    profile: &str,
+    data_dir: &Path,
+    bundle: &str,
+) -> Result<CreateProfileOutcome, String> {
     let home = crate::resolve::user_dsh_home();
     creation_blocker(&home, profile)?;
     let toolchain = crate::engines::resolve_toolchain(data_dir)?;
@@ -807,8 +848,8 @@ pub fn create_profile_blocking(
     // 4.3 第二次修订（ADR-0009 §4，2026-08-28）：非模板名 install 成功后补写
     // Web 工作台声明（幂等）——创建即 webUi 候选，可设为默认启动。失败降级
     // pending 态（重试幂等补写），不静默吞掉。
-    let webui_error = if run.code == Some(0) && materialized {
-        declare_webui_bundle(&home, profile).err()
+    let webui_error = if run.code == Some(0) && materialized && !bundle.is_empty() {
+        declare_app_bundle(&home, profile, bundle).err()
     } else {
         None
     };
@@ -1730,18 +1771,18 @@ mod profiles_tests {
         // 文件级：非模板名落盘 + 幂等 + 模板名跳过（dsh 拥有模板元组）
         let home = tmp();
         materialize(&home, "clean", base);
-        assert!(declare_webui_bundle(&home, "clean").unwrap());
+        assert!(declare_app_bundle(&home, "clean", WEBUI_BUNDLE).unwrap());
         let (bundles, dependencies) =
             read_manifest_fields(&home.join("profiles").join("clean").join("package.json"));
         assert_eq!(bundles.len(), 2);
         assert!(dependencies.is_empty());
         assert!(
-            !declare_webui_bundle(&home, "clean").unwrap(),
+            !declare_app_bundle(&home, "clean", WEBUI_BUNDLE).unwrap(),
             "再次调用幂等"
         );
         materialize(&home, "web", base);
         assert!(
-            !declare_webui_bundle(&home, "web").unwrap(),
+            !declare_app_bundle(&home, "web", WEBUI_BUNDLE).unwrap(),
             "模板名归 dsh 跳过"
         );
         let (web_bundles, _) =

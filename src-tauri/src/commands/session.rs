@@ -103,3 +103,50 @@ pub async fn delete_session(app: tauri::AppHandle, session_path: String) -> Resu
     .await
     .map_err(|e| format!("删除会话任务异常终止：{e}"))?
 }
+/// 会话管理：取消归档（2026-09-15，ADR-0021 **路线 A**）——经 Host RPC
+/// `workspace/unarchiveSession`，**不触碰** `$DSH_HOME/storages/workspace.json`
+/// （理由见 `sessions::request_unarchive`：该文件是内存状态的投影，
+/// 运行中 Host 会整体覆盖外部写入）。
+///
+/// **世界无关**：归档状态由**当前活跃 Host** 持有，其工作台地址在 Local 与 WSL
+/// 两种模式下都记在 `ShellState.workbench_url`（`boot.rs:384` 就绪时写入），
+/// 故本命令**不按 `World` 分支**——路线 A 没有文件路径参与，也就不存在宿主/客体
+/// 分派问题（这是相对 ADR-0021 行动项"world 分派"的一处**有意简化**，已回报）。
+/// 无活跃 Host（`workbench_url` 为空）时如实报错，**不降级改文件**（ADR-0021 §4）。
+#[tauri::command]
+pub async fn unarchive_session(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<Vec<String>, String> {
+    // 2026-09-15：回环调用必须带启动期兑换的 `/api` 会话 Cookie——dsh 0.1.6-alpha.1
+    // 的 `/api` 在 Host 栅栏之后还有一道 `browserAuth`（失败 401），无 Cookie 恒 401。
+    // Cookie 只在内存，不落盘不打日志（AGENTS §4.3）。
+    let (origin, cookie) = {
+        let state = app.state::<Arc<ShellState>>().inner().clone();
+        let origin = {
+            let guard = state.workbench_url.lock().unwrap();
+            guard.as_ref().map(|u| {
+                format!(
+                    "{}://{}{}",
+                    u.scheme(),
+                    u.host_str().unwrap_or("127.0.0.1"),
+                    u.port().map(|p| format!(":{p}")).unwrap_or_default()
+                )
+            })
+        };
+        let cookie = state.workbench_cookie.lock().unwrap().clone();
+        (origin, cookie)
+    };
+    let Some(origin) = origin else {
+        return Err(
+            "工作台尚未就绪，无法取消归档：该操作需 DSH 运行时在线（壳不直接改磁盘状态）。\
+             请先启动 DSH 后重试。"
+                .to_string(),
+        );
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::sessions::request_unarchive(&origin, cookie.as_deref(), &session_id)
+    })
+    .await
+    .map_err(|e| format!("取消归档任务异常终止：{e}"))?
+}

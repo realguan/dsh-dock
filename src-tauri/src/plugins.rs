@@ -181,7 +181,8 @@ fn installed_info(pkg_text: &str) -> (Option<String>, Option<String>) {
 }
 
 /// manifest 原文 → 依赖包名（字典序；缺失 `dependencies` = 空表，非法 JSON = Err）。
-fn dependency_names(manifest_text: &str) -> Result<Vec<String>, String> {
+/// `pub(crate)`：官方策展目录的已装态采集复用（2026-09-15）。
+pub(crate) fn dependency_names(manifest_text: &str) -> Result<Vec<String>, String> {
     let pkg: serde_json::Value = serde_json::from_str(manifest_text)
         .map_err(|e| format!("package.json 不是合法 JSON：{e}"))?;
     Ok(pkg
@@ -195,9 +196,18 @@ fn fs_err(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))
 }
 
-/// 构造 pluginInventory/list 请求体（纯函数，信封形状见模块头；rpcId 只需
-/// 会话内唯一，纳秒时间戳足够）。
-pub fn runtime_request_body(method: &str) -> String {
+/// 构造 typert 回环请求信封（纯函数）：`{type, rpcId, method, payload:{args}}`。
+///
+/// 信封形状由 Connection RPC 定义（`packages/client/connection/src/rpc-schema.ts`
+/// 的 `clientRequestSchema`：`{type:'client-request', rpcId, method, payload}`；
+/// `payload` 形状归端点自己校验）。2026-09-15 抽出自 `runtime_request_body`，
+/// 使回环信封在壳内**只有一处**构造，避免第二处调用点自行拼形状而漂移。
+///
+/// `args` 的键必须与 typert 生成的 wire 键**逐一相等**——gateway 侧
+/// `assertExactArguments` 对多键/缺键一律拒绝（`packages/api/gateway/src/index.ts:1107-1128`）。
+///
+/// `rpcId` 只需会话内唯一，纳秒时间戳足够。
+pub fn loopback_request_body(method: &str, args: serde_json::Value) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -206,9 +216,14 @@ pub fn runtime_request_body(method: &str) -> String {
         "type": "client-request",
         "rpcId": format!("dsh-dock-{nanos}"),
         "method": method,
-        "payload": { "args": {} },
+        "payload": { "args": args },
     })
     .to_string()
+}
+
+/// 构造 pluginInventory/list 请求体（无参调用；纯函数，信封形状见模块头）。
+pub fn runtime_request_body(method: &str) -> String {
+    loopback_request_body(method, serde_json::json!({}))
 }
 
 /// 解析 pluginInventory/list 响应体（纯函数）：信封 + result.ok 二层。
@@ -255,14 +270,27 @@ pub fn parse_runtime_response(text: &str) -> Result<Vec<RuntimeEntry>, String> {
 /// 拉取运行态快照（唯一新增网络用途：127.0.0.1 回环只读查询，AGENTS §7
 /// 已登记 2026-08-29；复现点 11）。base_origin 形如 `http://127.0.0.1:PORT`；
 /// 2s 超时——就绪但未响应的工作台按不可用处理，不拖详情页。
-pub fn fetch_runtime_snapshot(base_origin: &str) -> Result<Vec<RuntimeEntry>, String> {
+///
+/// **`cookie` 非可选装饰（2026-09-15 实机修正）**：dsh 0.1.6-alpha.1 的 `/api`
+/// 在 Host 栅栏之后还有 `browserAuth.isAuthenticated`（失败 **401**，
+/// `rpc-host.ts:97-99`），要启动期兑换的签名 Cookie；本函数自 2026-08-29 落地起
+/// **一直没带**，故对 0.1.6 恒 401（复现点 11 原记的"回环无鉴权门"已过时，
+/// 2026-09-15 实测更正）。传 `None` 仅用于旧版/无栅栏场景。
+pub fn fetch_runtime_snapshot(
+    base_origin: &str,
+    cookie: Option<&str>,
+) -> Result<Vec<RuntimeEntry>, String> {
     let url = format!(
         "{}/api/pluginInventory/list",
         base_origin.trim_end_matches('/')
     );
-    let resp = ureq::post(&url)
+    let mut req = ureq::post(&url)
         .timeout(std::time::Duration::from_secs(2))
-        .set("content-type", "application/json")
+        .set("content-type", "application/json");
+    if let Some(cookie) = cookie {
+        req = req.set("cookie", cookie);
+    }
+    let resp = req
         .send_string(&runtime_request_body("pluginInventory/list"))
         .map_err(|e| format!("回环调用失败：{e}"))?;
     let text = resp
@@ -384,6 +412,146 @@ mod tests {
         // Spike B：payload 必须恰一个 plain-object args 字段，否则 internal 错
         assert!(v["payload"]["args"].is_object());
         assert_eq!(v["payload"].as_object().unwrap().len(), 1);
+    }
+
+    /// 2026-09-15 抽出 `loopback_request_body` 的回归护栏：无参封装必须仍产出
+    /// **空** `args`（既有 pluginInventory 调用点行为不得变化），而带参封装
+    /// 必须原样承载参数对象。
+    #[test]
+    fn loopback_body_carries_args_without_changing_the_no_arg_form() {
+        let no_arg: serde_json::Value =
+            serde_json::from_str(&runtime_request_body("pluginInventory/list")).unwrap();
+        assert_eq!(no_arg["payload"]["args"].as_object().unwrap().len(), 0);
+
+        let with_arg = loopback_request_body(
+            "workspace/unarchiveSession",
+            serde_json::json!({ "request": { "sessionId": "s1" } }),
+        );
+        let v: serde_json::Value = serde_json::from_str(&with_arg).unwrap();
+        assert_eq!(v["method"], "workspace/unarchiveSession");
+        assert_eq!(v["payload"]["args"]["request"]["sessionId"], "s1");
+    }
+
+    /// 策展挂载行的写入：首写建条目、再写**幂等零改动**、且**不写 `config`**
+    /// （挂载只需 `{id, name}`；`config` 是整体替换语义，须走"先读后写"配置流）。
+    #[test]
+    fn ensure_catalog_insert_row_creates_then_is_idempotent() {
+        let home = tmp();
+        // dsh initProfile 的模板形态：头部注释 + 空数组。
+        write(
+            &home.join("profiles/p/cordis.patch.yml"),
+            "# 我的注释\n[]\n",
+        );
+
+        let changed = ensure_catalog_insert_row(
+            &home,
+            "p",
+            "dsh-dock-hello",
+            "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+        )
+        .unwrap();
+        assert!(changed, "首次应写入");
+
+        let path = home.join("profiles/p/cordis.patch.yml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# 我的注释"), "头部注释必须保住：{text}");
+        assert!(text.contains("dsh-dock-hello"), "缺行 id：{text}");
+        assert!(
+            text.contains("@deepseek-ai/dsh-experimental-browser-use-playwright-mcp"),
+            "缺包名：{text}"
+        );
+        assert!(!text.contains("config"), "挂载行不得写 config：{text}");
+
+        // 幂等：同 id 再写 → 零改动且文本逐字节不变。
+        let again = ensure_catalog_insert_row(&home, "p", "dsh-dock-hello", "@whatever/x").unwrap();
+        assert!(!again, "同 id 重复写必须零改动");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text,
+            "幂等重写不得改动文件"
+        );
+    }
+
+    /// 已有 `- insert:` 数组时应**并入**该数组（而非新建第二个 insert 条目），
+    /// 且既有行逐字节保真。
+    ///
+    /// 这条同时钉住 `for_each_entry_mut` 的使用：若直接改 `entries`，`render()`
+    /// 会原样回填**旧文本**——本测会因"找不到新行"而红，正是要拦的静默失败。
+    #[test]
+    fn ensure_catalog_insert_row_joins_existing_insert_array() {
+        let home = tmp();
+        write(
+            &home.join("profiles/p/cordis.patch.yml"),
+            "# 头部\n- insert:\n    - id: existing\n      name: vendor-pkg\n",
+        );
+
+        let changed =
+            ensure_catalog_insert_row(&home, "p", "dsh-dock-new", "@deepseek-ai/new-pkg").unwrap();
+        assert!(changed);
+
+        let text = std::fs::read_to_string(home.join("profiles/p/cordis.patch.yml")).unwrap();
+        assert!(text.contains("id: existing"), "既有行必须保住：{text}");
+        assert!(
+            text.contains("dsh-dock-new") && text.contains("@deepseek-ai/new-pkg"),
+            "新行未落入文件（若 render 回填旧文本即会红）：{text}"
+        );
+        assert_eq!(text.matches("insert").count(), 1, "应并入既有数组：{text}");
+
+        // 结构回读：两个 id 必须同在一个 insert 序列里。
+        let parsed = PatchFile::from_text(&text).unwrap();
+        let insert_key = serde_yaml::Value::String("insert".into());
+        let rows = parsed
+            .entries
+            .iter()
+            .find_map(|e| {
+                e.as_mapping()
+                    .and_then(|m| m.get(&insert_key))
+                    .and_then(|v| v.as_sequence())
+            })
+            .expect("应存在 insert 序列");
+        assert_eq!(rows.len(), 2, "既有 1 行 + 新增 1 行");
+    }
+
+    /// 写后复核（防 B1 静默失效）：
+    /// 命中 → 过；缺失 → 必须报错且**点明"文件已写入但未生效"**（否则用户会以为没写）；
+    /// 命中但包名不符 → 必须报错（半对状态）。
+    #[test]
+    fn verify_catalog_row_distinguishes_present_missing_and_mismatch() {
+        let rows = vec![
+            PluginRowState {
+                id: "dsh-dock-hello".to_string(),
+                pkg_name: "@deepseek-ai/hello".to_string(),
+                shell_disabled: false,
+                patch_entries: 0,
+                contributed_ids: Vec::new(),
+            },
+            PluginRowState {
+                id: "other".to_string(),
+                pkg_name: "@deepseek-ai/other".to_string(),
+                shell_disabled: false,
+                patch_entries: 0,
+                contributed_ids: Vec::new(),
+            },
+        ];
+
+        // ① 命中且包名一致 → 通过。
+        assert!(verify_catalog_row(&rows, "dsh-dock-hello", "@deepseek-ai/hello").is_ok());
+
+        // ② 缺失（模拟 patch 写法被 DSH 静默丢弃）→ 报错，且须说清"已写入但未生效"。
+        let missing = verify_catalog_row(&rows, "dsh-dock-absent", "@deepseek-ai/hello")
+            .expect_err("缺失必须报错");
+        assert!(
+            missing.contains("dsh-dock-absent") && missing.contains("未生效"),
+            "错误文案须点出行 id 与真实后果：{missing}"
+        );
+
+        // ③ 行在但指向别的包 → 报错（不得当成成功）。
+        let mismatch = verify_catalog_row(&rows, "dsh-dock-hello", "@deepseek-ai/different")
+            .expect_err("包名不符必须报错");
+        assert!(
+            mismatch.contains("@deepseek-ai/hello") && mismatch.contains("@deepseek-ai/different"),
+            "错误文案须同时给出实际与期望：{mismatch}"
+        );
     }
 
     #[test]
@@ -1535,6 +1703,147 @@ pub fn set_plugin_disabled_in_guest(
 }
 
 /// 行 id 合法性（宿主 / 客体共用；行 id 来自 dump-config，不可从包名推导）。
+/// 为策展条目写入**挂载行** `- insert: [{id, name}]`（2026-09-15，ADR-0020 §3.1.4）。
+///
+/// **只在 `Activation::InsertRow` 时调用**：声明了 `dsh.bundle` 的包由
+/// `dsh plugin add` 自行激活，再写一条 `insert` 会**重复挂载**（行身份是 `id`）。
+/// 调用方据此分支，不得对 bundle 类包调用本函数。
+///
+/// 口径（对齐真实 schema 与既有惯例）：
+/// - 优先把新行并入**已存在的第一个 `insert` 数组**（同一条目内多行是合法形态）；
+///   没有任何 `insert` 条目时才 `push` 一条新的 `- insert: [...]`；
+/// - **幂等**：任意 `insert` 行里已有同 `id` 即命中，**零写入**返回 `false`
+///   （重复点按不得产生第二份实例）；
+/// - **不写 `config`**：挂载只需 `{id, name}`；`config` 键是整体替换语义
+///   （`docs/roadmap.md:31`），须由"先读后写"的配置流单独处理；
+/// - `name` 取**包名**（策展条目全来自 registry，不是本地路径）；
+/// - 一切写入经 [`PatchFile`]（覆写前备份 + 原子替换 + 未改条目原文保真）。
+///
+/// 返回 `true` = 实际改动了文件。
+pub fn ensure_catalog_insert_row(
+    home: &Path,
+    profile: &str,
+    row_id: &str,
+    package: &str,
+) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let mut patch = PatchFile::read(&patch_path)?;
+    let changed = apply_catalog_insert_row(&mut patch, row_id, package);
+    if changed {
+        patch.write(&patch_path)?;
+    }
+    Ok(changed)
+}
+
+/// 纯变换（宿主 / 客体孪生共用）：把挂载行并入 patch 结构，返回是否改动。
+fn apply_catalog_insert_row(patch: &mut PatchFile, row_id: &str, package: &str) -> bool {
+    let insert_key = serde_yaml::Value::String("insert".into());
+    let id_key = serde_yaml::Value::String("id".into());
+
+    // —— 只读预扫：幂等命中 + 目标 `insert` 条目下标 ——
+    let mut already = false;
+    let mut target: Option<usize> = None;
+    for (idx, entry) in patch.entries.iter().enumerate() {
+        let Some(seq) = entry
+            .as_mapping()
+            .and_then(|m| m.get(&insert_key))
+            .and_then(|v| v.as_sequence())
+        else {
+            continue;
+        };
+        if target.is_none() {
+            target = Some(idx);
+        }
+        if seq.iter().any(|row| {
+            row.as_mapping()
+                .and_then(|r| r.get(&id_key))
+                .and_then(|v| v.as_str())
+                == Some(row_id)
+        }) {
+            already = true;
+        }
+    }
+    if already {
+        return false;
+    }
+
+    let mut row = serde_yaml::Mapping::new();
+    row.insert(id_key, serde_yaml::Value::String(row_id.to_string()));
+    row.insert(
+        serde_yaml::Value::String("name".into()),
+        serde_yaml::Value::String(package.to_string()),
+    );
+
+    match target {
+        Some(idx) => {
+            // **必须**走 `for_each_entry_mut`：它负责把该条目的原文片段置 `None`。
+            // 直接改 `entries` 会让 `render()` 原样回填**旧文本** —— 静默不生效，
+            // 正是本仓库最忌讳的一类失败（测试也可能照绿）。
+            let mut handled = false;
+            let new_row = serde_yaml::Value::Mapping(row);
+            patch.for_each_entry_mut(|i, entry| {
+                if i != idx {
+                    return false;
+                }
+                let Some(seq) = entry
+                    .as_mapping_mut()
+                    .and_then(|m| m.get_mut(&insert_key))
+                    .and_then(|v| v.as_sequence_mut())
+                else {
+                    return false;
+                };
+                seq.push(new_row.clone());
+                handled = true;
+                true
+            });
+            handled
+        }
+        None => {
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                insert_key,
+                serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(row)]),
+            );
+            patch.push(serde_yaml::Value::Mapping(m));
+            true
+        }
+    }
+}
+
+/// 写后自证（2026-09-15，ADR-0020）：在 dump-config 行表里确认策展挂载行**真的在
+/// 组合树中**。
+///
+/// **为什么必须有这一步**：v1 方案最危险的失败形态是**静默失效**——patch 写法不对时
+/// DSH **退出码 0**、条目被丢弃、插件永不加载（本机实测：`- name:` 行只往 stderr 打
+/// 一行 `patch: id is required for non-insert patches` 就丢弃）。只校验"文件写成功"
+/// **抓不到**它；只有**回读组合树**才算数。
+///
+/// 判据两条**同时**成立：
+/// ① 行表里存在 `id == row_id`；
+/// ② 该行的 `pkg_name` 命中目标包名（防"行在、但指向别的包"这种半对状态）。
+pub fn verify_catalog_row(
+    rows: &[PluginRowState],
+    row_id: &str,
+    package: &str,
+) -> Result<(), String> {
+    match rows.iter().find(|r| r.id == row_id) {
+        None => Err(format!(
+            "写入后复核未通过：dump-config 组合树里找不到行 id「{row_id}」。\
+             该 patch 行未被 DSH 采纳（典型成因：写成非 `insert` 形态或缺 `id`——\
+             DSH 会**退出码 0 地静默丢弃**条目）。**文件已写入但未生效**，\
+             请人工核对该 profile 的 cordis.patch.yml。"
+        )),
+        Some(row) if row.pkg_name == package => Ok(()),
+        Some(row) => Err(format!(
+            "写入后复核未通过：行 id「{row_id}」在组合树中指向「{}」而非期望的「{package}」\
+             ——行在、但落到了别的包上。**文件已写入**，请人工核对。",
+            row.pkg_name
+        )),
+    }
+}
+
 fn validate_row_id(row_id: &str) -> Result<(), String> {
     if row_id.is_empty() || row_id.contains(['/', '\n']) {
         return Err("行 id 非法".to_string());

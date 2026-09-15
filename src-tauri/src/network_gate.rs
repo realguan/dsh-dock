@@ -179,11 +179,57 @@ const EXEMPTIONS: &[NetworkEntry] = &[
         date: "2026-09-11",
     },
     NetworkEntry {
+        file: "src/sessions.rs",
+        // 2026-09-15（ADR-0021 路线 A）：sessions.rs 生产段**仅**这一处原语
+        // （`request_unarchive` 内的 `ureq::post`）。刻意条目级而非整文件——
+        // 该文件主体是纯文件扫描/自愈逻辑，整文件豁免会让会话域后续的触网
+        // 偷跑不被拦下（正是 plugins.rs 那次收窄的同一理由）。
+        item: Some("request_unarchive"),
+        kind: Kind::Exempt,
+        reason: "取消归档回环写（AGENTS §7 2026-09-15）：POST 127.0.0.1 /api/workspace/unarchiveSession，2s；不走文件改写",
+        date: "2026-09-15",
+    },
+    NetworkEntry {
+        file: "src/mcp_probe.rs",
+        // 2026-09-15（ADR-0022 stdio 分支）：本文件**不得**出现进程内网络客户端
+        // ——探测走子进程（`lifecycle` seam），网络发生在被 spawn 的 MCP 服务器内。
+        // 该 `Registered` 行**反向绑定**这一点：将来有人在此加 HTTP 客户端，
+        // `registered_entries_have_no_in_process_primitives` 会当场红。
+        // 2026-09-15（R3 落地 streamable-http 后**仍然保留**）：它现在的含义是
+        // "**除下面那条 `post_rpc` 豁免覆盖的范围外**，本文件不得再有进程内原语"。
+        // 两条并存才是完整的：下面那条授权"恰好一处"，这一条封住"第二处"。
+        item: None,
+        kind: Kind::Registered,
+        reason: "MCP 能力探测（AGENTS §7 2026-09-15）：stdio 分支，网络在被 spawn 的 MCP 服务器子进程内",
+        date: "2026-09-15",
+    },
+    NetworkEntry {
+        file: "src/mcp_probe.rs",
+        // 2026-09-15（ADR-0022 §3.3 另一条路径，R3）：streamable-http 分支需**进程内**
+        // HTTP，按**条目**授权——刻意不用整文件豁免（ADR-0022 §3.3 方案 C 否决）：
+        // 整文件豁免会让"将来新增 facilities（如 resources/read 预览）"的触网
+        // 预先获得通行证。`ureq` 因此只允许以全限定路径写在 `fn post_rpc` 体内。
+        item: Some("post_rpc"),
+        kind: Kind::Exempt,
+        reason: "MCP 能力探测 streamable-http 分支（AGENTS §7 2026-09-15）：POST 用户配置的 url，整轮 15s、redirects=0、只读一次性快照",
+        date: "2026-09-15",
+    },
+    NetworkEntry {
         file: "src/engines.rs",
         item: None,
         kind: Kind::Registered,
         reason: "引擎引导（AGENTS §7）：网络在 pnpm 子进程内（runtime set node / add -g），本文件无 in-process 原语",
         date: "2026-09-11",
+    },
+    NetworkEntry {
+        file: "src/ssh_remote.rs",
+        // 2026-09-15（ADR-0023 §2.5）：非交互预检用系统 `ssh` —— 网络在**子进程内**，
+        // 本文件不得出现 in-process 客户端。`(item: None)` 整文件登记是刻意的：
+        // 这个文件将来若长出第二个触网入口（例如端口隧道探测），仍然必须是子进程。
+        item: None,
+        kind: Kind::Registered,
+        reason: "SSH 预检（AGENTS §7 2026-09-15）：`ssh -o BatchMode=yes` 子进程，网络在 ssh 进程内；整轮 30s、redirects 面无关（ssh 自带）",
+        date: "2026-09-15",
     },
     NetworkEntry {
         file: "src/executor.rs",

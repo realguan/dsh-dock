@@ -27,7 +27,9 @@ pub mod ipc;
 mod lifecycle;
 mod manifest;
 mod mcp;
+mod mcp_probe;
 mod mgmt;
+mod official_catalog;
 // 「唯一网络面」（AGENTS §7 / ADR-0006）的机器闸门。**只存在于测试构建**：它没有
 // 任何运行时职责，全部内容 = 源码扫描 + 豁免表 + 单测（2026-09-11，A2）。
 #[cfg(test)]
@@ -38,6 +40,9 @@ mod resolve;
 mod sessions;
 mod settings;
 mod shell;
+mod ssh_config;
+mod ssh_profile;
+mod ssh_remote;
 mod ui;
 mod updater;
 mod updates;
@@ -198,6 +203,8 @@ pub fn run() {
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
                 workbench_url: Mutex::new(None),
+                // 2026-09-15：/api 会话 Cookie 的壳内存副本（回环调用用；不落盘）。
+                workbench_cookie: Mutex::new(None),
                 forced_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
                 crash_timestamps: Mutex::new(Vec::new()),
@@ -404,6 +411,8 @@ pub fn run() {
             commands::plugin::list_plugin_versions,
             commands::plugin::get_plugin_runtime,
             commands::plugin::list_all_plugins,
+            commands::plugin::list_official_plugins,
+            commands::plugin::apply_official_patch_row,
             commands::plugin::copy_plugin_config,
             commands::session::list_sessions,
             commands::session::repair_session,
@@ -421,7 +430,12 @@ pub fn run() {
             commands::console::list_mcp_servers,
             commands::console::save_mcp_server,
             commands::console::delete_mcp_server,
+            commands::console::probe_mcp_server,
             commands::session::delete_session,
+            commands::session::unarchive_session,
+            commands::ssh::list_ssh_hosts,
+            commands::ssh::probe_ssh_target,
+            commands::ssh::generate_ssh_profile,
             commands::market::fetch_market_registry,
             commands::window::open_profiles_window,
             commands::window::focus_main_window,

@@ -25,6 +25,26 @@ pub struct McpServerConfig {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub disabled: bool,
+    /// 传输方式（2026-09-15，ADR-0022 前置）：上游 `@deepseek-ai/dsh-mcp-client`
+    /// 只支持 `stdio` 与 `streamable-http` 两种（无 `sse` 字面量）。
+    /// 缺省视为 `stdio`——兼容既有条目形状，**不改动 stdio 的既有写法**。
+    #[serde(default)]
+    pub transport: McpTransport,
+    /// `streamable-http` 的 MCP 端点 URL（`stdio` 恒空）。
+    #[serde(default)]
+    pub url: String,
+    /// `streamable-http` 的附加请求头（`stdio` 恒空）。
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+/// MCP 传输方式。字面量与上游 union 一致（kebab-case：`stdio` / `streamable-http`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpTransport {
+    #[default]
+    Stdio,
+    StreamableHttp,
 }
 
 /// 从 cordis.patch.yml 文本中解析 MCP 服务器配置列表（纯函数，宿主/客体共用）
@@ -42,11 +62,6 @@ pub fn parse_mcp_servers(content: &str) -> Result<Vec<McpServerConfig>, String> 
             if let Some(config) = entry.get("config") {
                 if let Some(servers) = config.get("mcpServers").and_then(|s| s.as_object()) {
                     for (name, srv_val) in servers {
-                        let cmd = srv_val
-                            .get("command")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or("npx")
-                            .to_string();
                         let args = srv_val
                             .get("args")
                             .and_then(|a| a.as_array())
@@ -69,12 +84,51 @@ pub fn parse_mcp_servers(content: &str) -> Result<Vec<McpServerConfig>, String> 
                             .and_then(|d| d.as_bool())
                             .unwrap_or(false);
 
+                        // 传输方式：缺省 stdio（兼容既有形状）。**必须**先判 transport，
+                        // 否则 `streamable-http` 服务器（无 command）会被上面的
+                        // `unwrap_or("npx")` 兜底**误读成 npx stdio**——静默错误配置。
+                        let transport = match srv_val
+                            .get("transport")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("stdio")
+                        {
+                            "streamable-http" => McpTransport::StreamableHttp,
+                            // 未知值按 stdio 处理：不猜新传输，宁可保守。
+                            _ => McpTransport::Stdio,
+                        };
+                        let cmd = if transport == McpTransport::StreamableHttp {
+                            // http 传输没有 command，**不要**塞 npx 兜底。
+                            String::new()
+                        } else {
+                            srv_val
+                                .get("command")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("npx")
+                                .to_string()
+                        };
+                        let url = srv_val
+                            .get("url")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let mut headers = BTreeMap::new();
+                        if let Some(h) = srv_val.get("headers").and_then(|h| h.as_object()) {
+                            for (k, v) in h {
+                                if let Some(vs) = v.as_str() {
+                                    headers.insert(k.clone(), vs.to_string());
+                                }
+                            }
+                        }
+
                         result.push(McpServerConfig {
                             name: name.clone(),
                             command: cmd,
                             args,
                             env: env_map,
                             disabled,
+                            transport,
+                            url,
+                            headers,
                         });
                     }
                 }
@@ -119,6 +173,35 @@ fn validate_server_name(name: &str) -> Result<(), String> {
 /// （旧实现经 `serde_json::Value` 的中转，键序被字典序打乱、缩进被重排）。
 fn server_to_yaml(server: McpServerConfig) -> (String, serde_yaml::Value) {
     let mut m = serde_yaml::Mapping::new();
+    if server.transport == McpTransport::StreamableHttp {
+        // http 传输（2026-09-15，ADR-0022 前置）：写 `transport`/`url`/`headers`，
+        // **不写** `command`/`args`——上游该分支没有这两个字段。
+        m.insert(
+            serde_yaml::Value::String("transport".into()),
+            serde_yaml::Value::String("streamable-http".into()),
+        );
+        m.insert(
+            serde_yaml::Value::String("url".into()),
+            serde_yaml::Value::String(server.url),
+        );
+        if !server.headers.is_empty() {
+            let mut headers = serde_yaml::Mapping::new();
+            for (k, v) in server.headers {
+                headers.insert(serde_yaml::Value::String(k), serde_yaml::Value::String(v));
+            }
+            m.insert(
+                serde_yaml::Value::String("headers".into()),
+                serde_yaml::Value::Mapping(headers),
+            );
+        }
+        if server.disabled {
+            m.insert(
+                serde_yaml::Value::String("disabled".into()),
+                serde_yaml::Value::Bool(true),
+            );
+        }
+        return (server.name, serde_yaml::Value::Mapping(m));
+    }
     m.insert(
         serde_yaml::Value::String("command".into()),
         serde_yaml::Value::String(server.command),
@@ -407,6 +490,9 @@ mod tests {
             ],
             env,
             disabled: false,
+            transport: McpTransport::Stdio,
+            url: String::new(),
+            headers: BTreeMap::new(),
         };
         save_mcp_server(&tmp, "testprof", srv.clone()).unwrap();
 
@@ -427,6 +513,9 @@ mod tests {
             ],
             env: BTreeMap::new(),
             disabled: true,
+            transport: McpTransport::Stdio,
+            url: String::new(),
+            headers: BTreeMap::new(),
         };
         save_mcp_server(&tmp, "testprof", srv2).unwrap();
 
@@ -466,6 +555,9 @@ mod tests {
             args: vec!["-y".to_string(), "server-fs".to_string()],
             env: BTreeMap::new(),
             disabled: false,
+            transport: McpTransport::Stdio,
+            url: String::new(),
+            headers: BTreeMap::new(),
         };
         save_mcp_server(&tmp, "testprof", srv).unwrap();
 
@@ -483,6 +575,9 @@ mod tests {
             args: vec!["mcp-fs".to_string()],
             env: BTreeMap::new(),
             disabled: true,
+            transport: McpTransport::Stdio,
+            url: String::new(),
+            headers: BTreeMap::new(),
         };
         save_mcp_server(&tmp, "testprof", srv_updated).unwrap();
 
@@ -524,6 +619,49 @@ mod tests {
         (tmp, prof_dir)
     }
 
+    /// ADR-0022 前置（2026-09-15）：`streamable-http` 服务器**没有 `command`**，
+    /// 旧实现会把它兜底成 `npx` —— **静默错误配置**。这里钉住两件事：
+    /// ① 解析后 `transport` 为 StreamableHttp 且 `command` **保持为空**；
+    /// ② 写回是 `transport`/`url`/`headers` 三键，**不含** `command`/`args`。
+    #[test]
+    fn streamable_http_transport_is_not_misread_as_npx_stdio() {
+        let content = r#"
+- package: '@deepseek-ai/dsh-mcp-client'
+  config:
+    mcpServers:
+      remote:
+        transport: streamable-http
+        url: https://example.test/mcp
+        headers:
+          authorization: Bearer abc
+"#;
+        let parsed = parse_mcp_servers(content).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let srv = &parsed[0];
+        assert_eq!(srv.transport, McpTransport::StreamableHttp);
+        assert_eq!(srv.url, "https://example.test/mcp");
+        assert_eq!(
+            srv.headers.get("authorization").map(String::as_str),
+            Some("Bearer abc")
+        );
+        assert!(
+            srv.command.is_empty(),
+            "http 传输不得兜底成 npx：得到 {:?}",
+            srv.command
+        );
+
+        // 写回：三键，且不得出现 command/args（上游该分支没有这两个字段）。
+        let (name, value) = server_to_yaml(srv.clone());
+        assert_eq!(name, "remote");
+        let m = value.as_mapping().unwrap();
+        let has = |k: &str| m.contains_key(serde_yaml::Value::String(k.into()));
+        assert!(has("transport") && has("url") && has("headers"), "缺键");
+        assert!(
+            !has("command") && !has("args"),
+            "http 分支不得写 command/args"
+        );
+    }
+
     fn server(name: &str, command: &str) -> McpServerConfig {
         McpServerConfig {
             name: name.to_string(),
@@ -531,6 +669,9 @@ mod tests {
             args: vec!["-y".to_string(), format!("server-{name}")],
             env: BTreeMap::new(),
             disabled: false,
+            transport: McpTransport::Stdio,
+            url: String::new(),
+            headers: BTreeMap::new(),
         }
     }
 
