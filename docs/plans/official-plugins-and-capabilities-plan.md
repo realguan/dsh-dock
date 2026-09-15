@@ -688,10 +688,11 @@ gantt
 | **R4b** ✅ | **五键校验 ＋ `BatchMode` 非交互预检**（2026-09-15 已落地） | R4a | 是（1 条） | 🟠 中高 | **已完成**：`ssh_remote.rs`——与上游 **运行时** zod 同口径的三重校验（host 正则 / 绝对 POSIX 路径 / 小写 64 位 SHA-256，纯函数 + 反例，一次报全部问题）；ssh 参数锁死 `BatchMode=yes`/`ForwardAgent=no`/`StrictHostKeyChecking=yes`/`ConnectTimeout=10`（**刻意不传 `-F`**）；单次往返的体检脚本 + 纯函数输出解析；路径经 `guest::sh_quote` 单引号进参（**解除其 cfg 门控复用，不复刻第二份注入面收口**）；17 项测试 |
 | **R4c** ✅ | **生成 SSH profile**（四包 `insert` + 稳定 `id` + 五键 `config`） | R4b | 是（1 条） | 🟠 中高 | **已完成**：`ssh_profile.rs`——四包齐注册且 **`dsh-ssh` 必须最前**（其余三个都 inject 它）；只有 `dsh-ssh` 带 `config`；每行稳定 `id`；**写后自证**（含反向断言"其余三行不得带 config"）；app bundle 取 **headless 而非 web-app**（ADR-0023 §1.3/§2.8，写入例外已登记 AGENTS §6）；四包安装**钉运行期版本**且放在写行之前；9 项测试 |
 | **R4d** ✅ | **向导 UI**（`SshWorkspaceWizard`，入口在 ProfileManager 次级按钮） | R4c | 无 | 🟡 中 | **已完成**：主机下拉（含降级说明）+ 五键表单 + 预检逐项红/绿（带实际观测值）；**Windows 宿主显式不可用且禁用按钮**；**范围说明常显**（明写 Web 视图不会远端感知）；结构闸门 `sshWizardGate.test.ts`（11 项） |
-| **R5** | **收尾提交**（§8.5 第三件事） | R1a–R4d | 无 | 🟢 低 | 按组提交：① ADR+计划+登记册 ② I1 ③ I2+回环鉴权 ④ I3 ⑤ R2 队列 ⑥ R4 SSH ⑦ 其余；每条附测试凭据 |
+| **R5** ✅ | **收尾提交**（§8.5 第三件事，2026-09-15 已落地） | R1a–R4d | 无 | 🟢 低 | **已完成**（分支 `feat/capabilities-and-ssh-workspace`，4 条提交，**未推送/未合 master**——AGENTS.md 属宪法级文件，须 PR + review）。**分组口径与原计划不同**：由"按功能六组"改为"**按层三组**"+广播，理由是 IPC 四处同步与 `network_gate.rs` 登记表让功能间文件集交叠，硬切会让每个 commit 契约半同步（用 `git add -p` 凑六组属形式合规） |
 
-> **执行状态（2026-09-15 收口 R4 时更新）**：**R1a、R1b、R2、R3 已收口**
-> （见下方 R4 段）——计划内剩余序位只有 **R5**（收尾分组提交）。
+> **执行状态（2026-09-15 收口 R5 时更新）**：**R1a、R1b、R2、R3、R4a–R4d、R5 全部收口**
+> ——本计划内**无剩余序位**。提交在分支 `feat/capabilities-and-ssh-workspace`（4 条），
+> **未推送、未合 master**（宪法级文件须 PR + review）。
 >
 > **R4 于同日拆为四刀并全部收口（2026-09-15）**：**R4a–R4d 已全部完成**，
 > 下一步序位 = **R5**（收尾分组提交）。IPC 实际为 **3 条**
