@@ -361,3 +361,41 @@ cd src-tauri && cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D 
 > 跑完请把 B1–B7 的实际结果与任何 `shell.log` 异常回填到本节的表里（或广播），
 > 未跑项保持"待跑"——**不许把没跑过的写成已验证**。
 > **C2 / D 同理**：跑了才勾，未跑保持「待跑 / 未决」。
+
+### MCP 能力探测实机验证清单（2026-09-15，§7 R3 落地时补写，**待跑**）
+
+> 依据 ADR-0022 §5 行动项：Rust 单测按仓库口径**不起真实 HTTP 服务**
+> （AGENTS §5「真实网络与 WSL 走验证清单」），故 HTTP 分支的端到端行为只能在此清单验证。
+> 未跑项保持「待跑」——**不许把没跑过的写成已验证**。
+
+| # | 项 | 操作 | 通过判据 |
+|:--|:--|:--|:--|
+| F1 | stdio 服务器可探测 | 加一个 stdio MCP 服务器（如 `npx -y @modelcontextprotocol/server-everything`），点「探测」 | 卡片表头出现 `工具 n · 资源 n · 资源模板 n`；展开可读 tool 名与描述；快照时间恒显 |
+| F2 | streamable-http 服务器可探测 | 加一个 `transport: streamable-http` 的服务器（填 `url` + 必要的 `headers`），点「探测」 | 同 F1；**且**若服务端回 SSE（`content-type: text/event-stream`）仍须成功——判成"连不上"即为假失败 |
+| F3 | 不可达时不卡 UI、不拖长 | 把 `url` 改成不可达地址（如 `http://127.0.0.1:9/mcp`），点「探测」 | 15s 内返回明确错误；期间界面不冻结（可切 Tab）；按钮转圈结束 |
+| F4 | 跳转不跟随 | 指一个会 302 的 URL | 错误里出现「该地址返回跳转且本探测器不跟随跳转」，**不是**跟着跳转后报成功 |
+| F5 | `-32601` 降级而非整单失败 | 用一个**只声明 tools**的服务器 | 探测成功、工具列表正常、`notes` 给出两条降级说明；**不得**报"连不上" |
+| F6 | 缺能力时 UI 不撒谎 | 一个连 `tools/list` 都不支持的服务器 | 探测**失败**并原样显示后端错误（tools 是必备能力，"没这能力"与"连不上"必须区分） |
+| F7 | 配置变更即失效 | 探测成功后编辑该服务器（改 command/url）并保存 | 卡片立即消失（不得拿旧清单描述新配置）；换 profile 同理整批消失 |
+| F8 | WSL 客体档口径 | 切到 WSL 客体档后点「探测」 | 报「暂不支持 WSL 客体档…请在本地档使用」，**不静默回落宿主本地** |
+| F9 | 会话 Cookie 无关性 | 在 Host **未运行**时探测 stdio 服务器 | 探测仍成功（本探测不经 `/api`，不依赖 `workbench_cookie`）——反证与回环面确实分离 |
+
+### SSH 远程工作区实机清单（2026-09-15，§7 R4 落地时补写，**待跑**）
+
+> 依据 ADR-0023 §2.10："无上游范本"⇒ 正确性**完全依赖本清单**，不能靠"照抄模板"的确定性。
+> 两端须 Linux/macOS（上游 `ssh/src/index.ts:75` 的硬错）。未跑项保持「待跑」。
+
+| # | 项 | 操作 | 通过判据 |
+|:--|:--|:--|:--|
+| G1 | 主机枚举 | 在 `~/.ssh/config` 里写 2 个 alias（其中一个带 `HostName`/`User`/`Port`），打开向导 | 下拉列出两个 alias，显示 `alias → user@host:port` 形态 |
+| G2 | 降级如实告知 | 配置里加 `Include ~/.ssh/config.d/*` 与一个 `Match` 段 | 向导显示"未跟随 Include"与"忽略 Match"两条说明；**不得**静默少列主机 |
+| G3 | 非交互预检成功 | 对一个真可达的 Linux/macOS 主机填齐五键（helper 已部署、摘要正确） | 五项全绿；`node`/`helperHash` 显示**实际观测值** |
+| G4 | 摘要不符被拒 | 把 `helperHash` 改成全 `0`（64 位） | 该项转红并同时显示远端与配置的两个摘要；**生成按钮不出现** |
+| G5 | 不可达不生成 | 填一个不可达 alias（或错的 node 路径） | 预检报错带 ssh 的 stderr（`Permission denied` / `Connection refused` 等原样透出）；**不得**创建 profile |
+| G6 | Windows 宿主不可用 | 在 Windows 上打开向导 | 显示"POSIX 客户端"提示；预检按钮禁用；**不得**尝试起 ssh |
+| G7 | 生成结果 | 预检全绿后点「生成并安装」 | 等分钟级完成；`profiles/<名>/package.json` 的 `dsh.profile.bundles` 含 `@deepseek-ai/dsh-headless`（**不含** web-app）；`cordis.patch.yml` 出现四条 `insert` 行，行 id 为 `dsh-dock-ssh`/`-fs-ssh`/`-subprocess-ssh`/`-sandbox-ssh`，**只有第一行带 `config` 且恰五键** |
+| G8 | 版本钉住 | 生成后看 profile `package.json` 的 dependencies | 四个 ssh 包版本 = 运行期 dsh 版本（**不是** registry `latest`） |
+| G9 | 幂等重跑 | 再点一次「生成并安装」 | 报"复用已有 profile"且"挂载行本就齐全，未改动文件"；`cordis.patch.yml` 的 mtime 不变 |
+| G10 | 用户 patch 保真 | 先往 `cordis.patch.yml` 写一条带行间注释的用户条目，再生成 | 用户条目与其注释**原文保真**，未被序列化重排 |
+| G11 | 远端真生效 | `dsh --profile <名> --dump-config` | 四条 ssh 行都在，`dsh-ssh` 的 config 五键与向导输入一致 |
+| G12 | 反向：Web 视图**不**远端感知 | 用生成的 profile 起 Web 工作台（若另行声明 web-app） | 文件树显示的仍是**宿主**文件系统——这正是本向导**不**声明 web-app 的原因；若观察到远端感知，说明上游 §1.3 的范围限定已变，须按 ADR-0023 §6 重开复审 |

@@ -32,6 +32,566 @@
 
 ## 三、记录
 
+### 2026-09-15 feat(ssh) · R4 收口：SSH 远程工作区向导（R4b/R4c/R4d 三刀，含一处关键判据修正与一处 AGENTS 写入例外登记）—— guan（AI 协作）
+
+- **R4b — 五键校验 ＋ `BatchMode` 非交互预检**（`ssh_remote.rs` 新增，17 项测试）：
+  - 校验与上游**运行时** zod **同口径**（比 cordis/schemastery 那层更严）：
+    `host` 正则 `/^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$/`、`node`/`helper`/`workspace`
+    `startsWith('/')`、`helperHash` `/^[0-9a-f]{64}$/`（**只认小写**）。一次报**全部**问题
+    ——向导要一次标完表单，逐个报错会让用户来回五轮。
+  - ssh 参数锁死四项：`BatchMode=yes`（壳没有终端，弹提示即挂死）、`ForwardAgent=no`
+    （**不依赖**用户配置恰好没开）、`StrictHostKeyChecking=yes`、`ConnectTimeout=10`。
+    **刻意不传 `-F`**：别名从用户默认配置读出，连接也必须读同一份（否则两个真相源）。
+  - 一次往返的远端体检脚本 + **纯函数输出解析**（忽略 banner/motd 噪声行）；
+    `sha256sum` 与 `shasum` 都试——Linux 有前者、macOS 只有后者，而两端都可能是 macOS。
+  - 路径经 `guest::sh_quote` 单引号进参：`ssh` 把远端 argv **按空格拼接**下发，
+    不自己 quote 的话带空格的路径会在远端被重新切分。**为此解除 `sh_quote` 的
+    `cfg(any(windows, test))` 门控以复用，而不是复刻第二份**——那个函数的全部价值
+    就是注入面收口，它已有两条反例/实证测试，复制一份等于把保护范围砍一半。
+- **R4c — 生成 SSH profile**（`ssh_profile.rs` 新增，9 项测试）：
+  - 四包齐注册且 **`dsh-ssh` 必须最前**（其余三个都 `inject ['ssh']`；顺序即语义，
+    有单测钉住）；只有 `dsh-ssh` 带 `config`；每行**稳定 `id`**（缺 id 的行会被 loader
+    自动生成 id，**此后永远无法被 patch 命中**）。
+  - **写后自证**：回读 patch 逐行确认 id/name/五键取值，并含**反向断言**"其余三行
+    不得带 `config`"。`config` 是整体替换语义，没有深合并兜底——只凭"写入返回 Ok"
+    下结论就是过度声称（`PatchFile` 出过"改了 entries 却回填旧文本"的静默失败）。
+  - 四包安装**放在写行之前**且**钉运行期版本**：反过来一旦安装失败就留下指向未安装包
+    的**幽灵挂载行**（dsh 启动即加载失败），比"装了没挂上"（可重试、无害）糟得多；
+    而裸包名按 `latest` 解析，`@deepseek-ai/*` 的 latest 已实测会落后于运行时。
+    代价诚实记档：这是一次**可能数分钟且无逐包进度**的调用，向导给明确进行中文案。
+- **R4d — 向导 UI**（`SshWorkspaceWizard.tsx` 新增；入口挂在 ProfileManager **次级按钮**，
+  刻意不与「新建」争主位）；结构闸门 `sshWizardGate.test.ts` 11 项，钉住三条会实质伤人的
+  决策：① 非 POSIX 宿主**拦住**（提示 + 真的禁用按钮）；② **范围说明常显**且中英都明写
+  "Web 视图**不会**因此远端感知"；③ 生成只允许在**预检通过之后**发起（反之会造出一份
+  注定连不上的 profile，用户会以为是 dsh 的问题）。
+- **关键决定 1：app bundle 取 `headless` 而非 web-app**。ADR-0023 §4 只说"生成一个自建
+  profile"，未指定 bundle；实施时发现既有的 `create_profile_blocking` 会**自动**追加
+  `@deepseek-ai/dsh-web-app`——而那**恰是** §3 方案 C 否决的形态（贴上"Web 工作台"标签
+  ⇒ 用户以为文件树指向远端）。改为把 bundle 作为参数传入，SSH 路径取
+  `@deepseek-ai/dsh-headless`（上游自述"无 Host / HTTP / 浏览器层"，正对 §1.3 的
+  "POSIX headless and custom profiles"范围）。**该写入已在 `AGENTS.md` §6 按例外 #2 的
+  同一机制/同一代码路径登记**（唯一差别是 bundle 取值）。
+- **关键决定 2：IPC 是 3 条不是 2 条**（`list_ssh_hosts` / `probe_ssh_target` /
+  `generate_ssh_profile`，登记册 60 → **62**）。ADR-0023 行动项本就以"如…"列了三个；
+  预检单独成命令是为了让"不可达"有自己的错误面——并进生成命令会让"生成"按钮暗中先做
+  一次网络往返。计划原判据写"2 条"，已更正。
+- 台账新增**复现点 19**（四包服务映射 / 五键与运行时校验 / 非交互约束 / 平台硬错 /
+  范围限定 / 无上游范本）；`docs/executor.md` 新增 **G1–G12** SSH 实机清单（**待跑**）；
+  roadmap §4.8 追加落地记录并**显式留白三项未落地**（放开 `Mode::parse("ssh")`、
+  **会话级 capability 收敛仍未设计**、SSH 配置持久化面板）。
+- 影响：**仅周知**（新增 3 条 IPC、1 处 AGENTS 写入例外登记；无契约改动）。**§7 R4 收口**，
+  计划内只剩 **R5 收尾提交**。
+- 凭据：Rust `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 ·
+  `cargo test` **505 passed** / 0 failed / 5 ignored；前端 `tsc` 0 错误 · `oxlint`
+  0 warning（152 文件）· `vitest` **407 passed / 50 文件**。
+
+
+### 2026-09-15 feat(ssh) · R4a：`~/.ssh/config` 解析器 ＋ `list_ssh_hosts`（新读取域登记）—— guan（AI 协作）
+
+- **变更**（依 §7 的 R4，**拆出的第一刀**：ADR-0023 §3 方案 D 否决了"前端解析"，
+  §2.6 要求解析固定在 Rust 后端，故这一刀先落地"数据源"）：
+  - 新增 `src-tauri/src/ssh_config.rs`：`parse_ssh_config` 纯函数 + `load_ssh_hosts`
+    （**唯一 IO 点**）。语义与真 ssh 对齐：`#` 只在行首是注释、单值关键字只取首参、
+    **首个取值优先且全局段优先**、通配段填充未设字段、`!` 取反排除、`Match` 段不参与、
+    `Include` **不跟随**、双引号/续行/`Keyword=Value` 全部支持。
+  - 新增 `src-tauri/src/commands/ssh.rs::list_ssh_hosts`；IPC 四处同步
+    （`COMMANDS` 60 条 → handler → `allow-list-ssh-hosts` → `tauri.ts`，由 `ipc::gate_tests` 兜底）。
+  - `resolve.rs` 补 `pub fn user_home()`：读 `~/.ssh/config` 要解析 `~`，而
+    Windows/USERPROFILE 的分支**只能有一处**（两处各写一遍＝两套口径，差异只在平台上暴露）。
+  - 前端只加类型与封装（`SshHost` / `SshHosts` / `listSshHosts`），**向导 UI 属 R4d**。
+- **新读取域已登记**：登记册新增 **§三「壳的文件系统读取域登记」**（此前只有 IPC 与网络
+  两册）。边界写死：只读这一个文件、不跟随 `Include`、1 MiB 上限、只取非机密字段
+  （alias / HostName / User / Port / ProxyJump / IdentityFile **路径**）——**结构体里没有
+  能承载私钥的字段**。本节同时说明"读取面没有机器闸门（`network_gate.rs` 只拦网络原语），
+  纪律只能靠人守"。
+- **台账新增复现点 18**（锚 **OpenSSH** 行为，同复现点 15 锚 OS 行为的先例）：七项全部以
+  `ssh -F <file> -G <alias>` **实测回读**锚定。**开发期实测当场抓住一个真 bug**：
+  初版把 `Match` 段的关键字落进"全局段"，于是 `Match` 里的 `HostName` **泄漏给所有主机**
+  ——由反例单测 `match_block_does_not_leak_into_previous_host` 拦下。
+  另一处是**我自己的测试写错了**：我以为行中 `#` 会被当数据留进值里，实测 `ssh -G` 显示
+  单值关键字只取首参；已按实测改正断言，并把"行中 `#` 会变成额外主机名"这一反直觉结论
+  改成**如实保留 + 另出 `notes` 解释**（否则用户看到下拉里有个 `#` 会以为壳解析错了）。
+- **测试**（Rust **456 → 479**，+23，全部为 `ssh_config`）：正例（全字段/大小写/`=` 形式/
+  多别名逗号分隔/首个取值优先/全局段优先/通配填充/取反/引号内空白/续行/CRLF）＋
+  **畸形反例**（`Host` 无参、非法与越界端口、未闭合引号、纯注释/垃圾输入、通配与取反
+  不得成为可选 alias）。
+- **顺带修一处我上轮引入的结构错误**：登记册 §二 里 `引擎引导` / `WSL 客体投递` 两行
+  在 R3 时被排到了「进程内触网」标题之下（应属「子进程内触网」）；本轮重排，并核对
+  每行都落在正确标题下。§三 首次落位时也曾排在 §二 之前，已调为 一 → 二 → 三。
+- 影响：**仅周知**（新增 1 条 IPC；无契约改动）。§7 R4 **未收口**——R4b（`BatchMode`
+  预检 + 五键校验）、R4c（生成 profile：四包 `insert` + 稳定 `id` + 五键 `config`）、
+  R4d（向导 UI + Windows 宿主排除）待做。
+- 凭据：Rust `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 ·
+  `cargo test` **479 passed** / 0 failed / 5 ignored；前端 `tsc` 0 错误 · `oxlint`
+  0 warning（150 文件）· `vitest` **396 passed / 49 文件**。
+
+
+### 2026-09-15 feat(mcp) · R3：`streamable-http` 探测分支（含两条登记并存的关键裁定）—— guan（AI 协作）
+
+- **变更**（依 §7 的 R3）：
+  - `mcp_probe.rs` 新增 [`probe_http`] 与 [`post_rpc`]：进程内 HTTP 走完
+    `initialize` → `notifications/initialized` → 三次枚举。**托底口径与 stdio 一致**：
+    整轮 15s（5 次往返**共享一个 deadline**，不是每请求 15s）、只读、一次性快照。
+  - `rpc_payloads`（纯函数）认**四种**响应形态：单条 JSON、JSON-RPC **批量**数组、
+    NDJSON、**SSE**。SSE 按规范把同一事件的多行 `data:` 用 `\n` 拼接——**按行切会把
+    多行 JSON 截成解析不了的碎片**，把合规服务端判成"连不上"（假失败比不报更糟）。
+  - 抽出 `assemble_probe`：**两分支共用同一降级口径**（tools 失败=整单失败；
+    `resources`/`templates` 遇 `-32601` 降级为"空 + notes"）。两分支各写一份
+    必然分叉，且分叉只在某一种 transport 上暴露，最难发现。
+  - `post_rpc` **非 2xx 不短路**：MCP 服务端常以 `HTTP 400 + -32601` 回未知方法，
+    在传输层按状态码短路会让降级永远走不到。判定集中在 `pick_result` 一处。
+  - `redirects=0`：① 探测语义是"这个 URL 通不通"，跟随跳转等于换了端点还报成功；
+    ② 用户配置的鉴权头会随跳转泄漏到另一个 host。跳转如实报错。
+  - `commands/console.rs` 按 `transport` 分派；`McpManager` 的 `ProbeCard` 零改动复用
+    （R1b 的展示层本就与 IO 无关）。
+  - **UI 补上 ADR 明确要求的一项**：`ProbeCard` 表头恒显快照时间（ADR-0022 §5
+    「UI **必须**标注快照时间」）——R1b 首版漏了，本轮补上并把不变量写进结构闸门。
+- **关键裁定：两条网络登记并存，而非"改为"**。计划 §7 原写"`Registered` 行**改为**
+  条目级 `Exempt`"，实施判为**不可依此执行**：`network_gate.rs` 该行自带注释与登记册
+  §二原文均写"**不得**只改那一行豁免"。正确动作 = **保留**整文件 `Registered`
+  （含义收窄为"除豁免条目外本文件不得再有进程内原语"）**＋ 新增** `item: Some("post_rpc")`
+  的 `Exempt`（授权"恰好一处"）。两条并存严格强于二者取一。计划判据已同步更正。
+  `mcp_probe.rs` 的模块注释同时写死"`ureq` 只能以全限定路径出现在 `fn post_rpc` 内，
+  模块顶部 `use ureq::…` 会让闸门当场红"。
+- **补登台账复现点 17**：ADR-0022 §5 早已要求登记"transport 取值集合 / `*/list` 方法名 /
+  'DSH 无 MCP RPC'"，但 stdio 分支落地时**只登记了网络面、漏回写 `dsh-behavior-ledger`**
+  （红线 1 的"锚定源码位置 + 日期"因此有缺口）。本轮**在本机逐条重验**后补上，
+  并新增 ④ SDK 客户端行为（`accept: application/json, text/event-stream`、
+  SSE 媒体类型分支、`mcp-session-id` 头名）——自实现 HTTP 客户端必须与这三条逐字对齐。
+- **ADR-0022 新增 §5.1 实施补注**（append-only，不改正文），记录三处偏差：
+  ① 文件名 `mcp.rs` → 实为配置模型、探测在新模块 `mcp_probe.rs`；② 两条登记并存；
+  ③ 超时 2s → 15s（2s 会把"慢"误报成"连不上"，而误报正是本功能要消灭的东西）。
+- **`docs/executor.md` 新增 F1–F9 实机清单（待跑）**：stdio/http 可探测、不可达不卡 UI、
+  跳转不跟随、`-32601` 降级、缺能力不撒谎、配置变更即失效、WSL 明确报错、与回环面无关性。
+  **未跑项保持"待跑"**。
+- **测试**（Rust **447 → 456**，+9）：SSE 多行拼接不切碎、心跳/注释零负载、
+  非 2xx 取信封、批量/NDJSON 跳过通知行、301 报状态+片段+不跟随、两分支降级同形、
+  SSE 端到端装配、tools 缺失即失败、缺 `url`/非 http(s) 拒绝（不发请求）。
+- 影响：**仅周知**（无新 IPC、无契约改动；网络面登记已同步两处）。§7 R3 收口；
+  下一步序位 = **R4**（SSH 向导，含 2 条新 IPC 与文件系统范围登记）。
+- 凭据：Rust `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 ·
+  `cargo test` **456 passed** / 0 failed / 5 ignored；前端 `tsc` 0 错误 · `oxlint`
+  0 warning（150 文件）· `vitest` **396 passed / 49 文件**。
+
+
+### 2026-09-15 feat(mcp) · R1b 收口：探测结果落成行内折叠卡（R1 完结）—— guan（AI 协作）
+
+- **变更**（依 §7 的 R1b，即 R1 的收口刀）：
+  - `McpManager.tsx` 新增模块级 `ProbeCard` / `ProbeList` 两个展示组件：
+    **成功 → 可折叠**（表头给 `Tools n · Resources n · Templates n` 计数，收起时也
+    看得见；展开才是清单，含 `McpNamed.detail`＝tool 描述 / resource uri / template
+    uriTemplate）＋ `notes` 降级说明；**失败 → 恒展开**，`mcpProbeFailed` 原样显示。
+  - **探测结果不再只经通知**：R1a 的 `onNotice` 路径移除（通知瞬时、一次一条，承载
+    不了"对照着看哪个 server 有哪些 tool"）。这是 R1b 的收口判据，有测试钉住。
+  - **旧结果失效**（新增 `forgetProbe`）：保存配置、删除 server 各丢弃该项；换
+    `profileName` 整批清空。理由不是"整洁"——继续展示等于**拿旧清单描述新配置**，
+    那是给出错误事实（同名 server 在不同 profile 配置不同是常态）。
+  - i18n 五键中英对称：`mcpProbeToggle` / `mcpProbeProtocol` / `mcpProbeTools` /
+    `mcpProbeResources` / `mcpProbeTemplates`。
+- **新增结构闸门** `__tests__/mcpProbeCard.test.ts`（6 项）：本仓库不引 RTL/jsdom
+  （AGENTS §4.4），组件渲染没有断言通道，故用**窗口切片式源码断言**钉住两条**会被
+  无意破坏**的落档决策——① 错误不得被折叠（`\bopen\b` 不得出现在失败分支）；
+  ② 配置变更即失效（`forgetProbe` 恰两处调用 + 换 profile 清空）。
+  **闸门已做反证**：临时把 `open` 注入失败分支 → ① 立即转红，随后回滚（`grep -c
+  FALSIFY-TEMP` = 0）。不能证伪的闸门不如没有。
+- **顺带修一处门禁判红**：`shapeTokens.test.ts` 抓到我在计数徽章上写了裸 `rounded`
+  （Tailwind 默认 4px＝@theme 之外的第四档），已改 `rounded-md`——机器闸门按设计
+  拦住了作者本人。
+- 影响：**仅周知**（纯前端增量；无 IPC/Rust/契约改动）。**§7 R1 至此收口**；
+  下一步序位 = R3（`streamable-http` 分支）。
+- 凭据：前端 `tsc -b` 0 错误 · `oxlint` 0 warning 0 error（150 文件）·
+  `vitest` **393 passed / 49 文件**。Rust 本轮未改动（沿用 447 passed）。
+
+### 2026-09-15 feat(frontend) · R2：安装队列可 await ＋ 官方目录安装/卸载接入「下载管理」—— guan（AI 协作）
+
+- **变更**（依 `docs/plans/official-plugins-and-capabilities-plan.md` §7 的 R2）：
+  - `lib/queue.ts`：`kind` 增 `"remove"`；新增纯函数 `outcomeOf(item) → QueueOutcome`
+    ——**可 await 契约的判据落在这个纯函数上**（`done` → `ok:true`；**未终结项一律
+    `ok:false`**，防止调用方在终结前把"还没跑完"当成"成功"而继续下发）。
+  - `stores/queueStore.ts`：新增 **`enqueueAndWait(input) → Promise<QueueOutcome>`**。
+    实现是模块私有的 id→resolve 发令枪（`waiters`，不进 state）；pump 在终态时
+    **先摘除再 resolve**，保证重试不会二次解析同一个 Promise。pump 按 `kind` 分派
+    （`remove` → `remove_plugin`，其余 → `install_plugin`）。
+  - `lib/officialCatalog.ts`：**删掉原「已知偏离」记档并真正收敛**——`install`/`remove`
+    都改接队列（此前是直接调 `install_plugin`/`remove_plugin`）。IO 面 `install`
+    签名补 `pkg`（队列面板的展示名；只用 spec 会显示 `host-layer@1.0.0` 这类来源串）。
+  - `QueuePanel.tsx`：卸载项复用 done 相位（成功=绿）但文案改「**已卸载**」。
+  - i18n 四键中英对称：`queueRemoveQueued` / `queueRemoveDone` /
+    `queueStatusRemoved` / `queueRemoveFailedNotice`——**卸载不借安装文案**（对用户
+    说"已安装"/"安装失败"是错的陈述，不是措辞偏好）。
+- **两条有意保留的边界**（写进 `lib/officialCatalog.ts` 生产绑定注释）：
+  ① `writeRow`（写 patch 挂载行）**不入队**——它是一次配置文件原子写，不是包操作；
+  把配置写塞进队列会让面板「重试」按钮的含义分叉。② 队列「重试」只重跑**该项**，
+  **不续跑** `runPlan` 的后续步骤（编排进度在调用方栈上，队列不持有）；自动续跑
+  需要队列持有调用方上下文，那会让「下载管理」变成「工作流引擎」。该边界有测试钉住。
+- **测试**（+11：**376 → 387**，48 文件）：新增 `__tests__/queueStore.test.ts`（6 项，
+  mock `@/lib/tauri` 边界、跑真实 store 与真实文案）——成功/软失败/IPC 抛错三态都不
+  reject；`remove` 走 `remove_plugin`；**串行证伪**（用 deferred Promise 钉住"前一项
+  终结前后一项不得发起 IPC"——这正是"先移除同族 provider 再装新的"的语义）；重试边界。
+  `queue.test.ts` +4（`outcomeOf` 四态，含未终结项不算成功）；`officialCatalog.test.ts` +1
+  （包名单列传给 IO）。同步修正该文件假 IO 的 `install` 签名。
+- 影响：**仅周知**（纯前端增量；无 IPC/Rust/契约改动。§7 R2 收口，R1b/R3/R4/R5 待做）。
+- **UX 观察（未改，留给维护者）**：目录条目逐步走队列后，一次 3 步安装会多出
+  6 条队列 toast（入队+完成 ×3）＋ 原有 1 条计划级 toast。逐条都真实且对应面板角标，
+  故**没有**加抑制机制——抑制需要自己的设计（否则角标弹了却无解释）。若嫌吵，
+  这是一次独立的、可用 ADR 裁定的取舍。
+- 凭据：前端 `tsc -b` 0 错误 · `oxlint` 0 warning 0 error（149 文件）·
+  `vitest` **387 passed / 48 文件**。Rust 本轮未改动（沿用 447 passed）。
+  工作区未提交（R5 分组提交负责）。
+
+### 2026-09-15 feat(mcp) · R1 第一刀：MCP 能力探测接入 UI —— guan（AI 协作）
+
+- **变更**（依 §7 执行计划的 R1，**最小可验证一刀**）：
+  - `McpManager.tsx`：MCP 服务器行新增「**探测**」按钮（`Wrench` 图标、探测中转圈）＋
+    `handleProbe` 处理函数——调既有 `api.probeMcpServer`（ADR-0022 stdio 分支），
+    结果经**既有通知通道**呈现（`Tools n · Resources n · Templates n`），
+    `probe.notes` 的降级说明一并拼出。
+  - **失败原样透出**（这是本轮的重点）：`streamable-http` 分支未实现 / WSL 客体档 /
+    该 profile 未配置此服务器——三类错误后端各有明确文案，**吞掉会让用户误以为
+    "这个服务器没能力"**，而其实是"没探测成"，两者处置完全不同。
+  - i18n：`mcpProbeBtn` / `mcpProbeResult` / `mcpProbeFailed`，中英对称。
+- **本刀刻意不碰 JSX 结构**（不动行内折叠卡片）：那需要重排 620 行组件的行容器，
+  在没有完整验证余量的情况下做属于"改到一半"。**故 R1 尚未收口**——`§7 R1` 的
+  「行内折叠卡片（Tools/Resources/Templates 列表）」仍是待办；当前能力数据已可获取，
+  只是经通知呈现而非列表展开。
+- **影响**：**周知**。用户首次能在「MCP 工作台」对已配置服务器**主动探测能力**并看到
+  结果或**明确原因**；后端探测能力由此变为用户可用。
+- **凭据**：前端 `tsc` 0 错误 · `oxlint` **0 警告 0 错误**（148 文件）· `vitest`
+  **376 passed**（47 文件）。Rust 未改动（沿用 447 passed 绿态）。
+
+### 2026-09-15 docs(agents) · §7 两张登记册迁出至 `docs/contracts/`（解除预算阻塞）—— guan（AI 协作）
+
+- **变更**（宪法级文件改动，依 AGENTS §10 预告与归档；工作区未提交）：
+  - 新建 `docs/contracts/ipc-and-network-register.md`：承接 **IPC 命令登记（59 条，
+    逐字迁移，含各自落地日期与边界）** ＋ **网络面用途登记**（回环三条 / 子进程内触网三条 /
+    直接触网三条，改为表格式，边界信息一字未丢）。
+  - `AGENTS.md` §7 只保留**规则**与指针：新增 IPC 的登记义务 + 三处同步由闸门兜底、
+    唯一网络面 + "新网络需求先登记"、**回环必须附 `/api` 会话 Cookie**（含
+    `ShellState.workbench_cookie` 仅内存不打日志）、前端消费与事件清单。
+  - **`AGENTS.md` 249 → 213 行**（腾出 36 行）；**§7 由 54 → 18 行**（回到单节 ≤40 内）。
+- **为什么现在做**：迁出前 `AGENTS.md` 已 **249/250**——**再加一条 IPC 或网络用途登记
+  就必然越界**。这与 §9 当时"补一行 ADR 索引即越界"是**同一个结构性病**：登记册随功能
+  线性增长，而 §11.4 给的是固定预算。这次把**两张都**迁走，不是只挪一张——
+  否则下一次撞墙只是时间问题（§6 的持久化例外册同理，**下次撞墙时的候选**）。
+- **一致性校验（可复查）**：`ipc.rs::COMMANDS` 的 **59 个命令名全部**在新册中逐条命中；
+  `AGENTS.md` 中命令名残留 **0 处**（禁双源，§11.3）；§7 仍完整保留全部**规则**语义。
+- **影响**：**周知**。查命令清单改看 `docs/contracts/ipc-and-network-register.md`；
+  写新命令/新网络用途时**改那本册**，§7 只读规则。**预算阻塞已解除**，I3 剩余
+  （`streamable-http` 分支登记、McpManager UI）与 I4（SSH 向导）的新 IPC 可继续登记。
+- **凭据**：行数核算 249 → 213（`wc -l`）；§7 54 → 18；命令名覆盖 59/59；
+  AGENTS 内命令名残留 0；本批为**纯文档**改动，未跑测试（代码零改动）。
+
+### 2026-09-15 feat(mcp) · I3 stdio 分支：MCP 能力探测落地 —— guan（AI 协作）
+
+- **变更**：
+  - 新模块 `src-tauri/src/mcp_probe.rs`：握手（`initialize` → `notifications/initialized`）
+    后枚举 `tools/list` / `resources/list` / `resources/templates/list`。协议版本发
+    `2025-11-25`（与 DSH 所用 `@modelcontextprotocol/sdk@1.30.0` 的 `LATEST_PROTOCOL_VERSION`
+    一致），并**以服务端协商回来的版本为准**。
+  - 合规按 ADR-0022 §3.3：spawn 经 `lifecycle` seam（`Role::Probe`，短命探测不堆 `procs/`）、
+    Windows 经 `crate::child_cmd`；**本模块无任何 in-process 网络客户端**，
+    并在 `network_gate.rs` 加 `Kind::Registered` 行**反向绑定**该点——将来实现
+    `streamable-http`（进程内 HTTP）分支时，闸门会当场红，必须改走条目级 `Kind::Exempt`
+    + AGENTS §7 登记，**不得**只改那一行豁免。
+  - IPC `probe_mcp_server`（`COMMANDS` **58 → 59**），四处名字面全同步 + 新 TS 类型。
+  - `AGENTS.md` §7 登记命令与"探测（stdio 分支）"网络用途。
+- **两处降级/拒绝，都是有意**：
+  ① 服务端未声明 `resources` 时 `resources/list` 回 `-32601` → **降级为"空 + 说明"**，
+  不让整轮探测失败（否则用户看到"连不上"，实际只是"没这能力"）；其他错误原样上抛，
+  **不**吞成"没能力"。
+  ② `streamable-http` 服务器（无 `command`）与 **WSL 客体档**均**显式拒绝**并说明原因
+  （前者指出该走 http 分支；后者因探测需在客体内部 spawn，宿主执行语义不等价）。
+- **⚠️⚠️ `AGENTS.md` 已到 249/250 行（预算上限）**：本轮加登记时**只差一行**。
+  这与 §9 当时的情形同源——**§6/§7 的登记册同样随功能线性增长，却挂在固定预算下**。
+  下一条登记就会越界。**建议尽快按 §11.4「回收」机制再减一轮**（候选：把 §7 的命令
+  清单迁到 `docs/contracts/` 下的专项册，§7 只留规则 + 指针——与 §9 迁出同一手法）。
+  在该裁定之前，**新增 IPC 命令/网络用途都会先撞预算**，请知悉。
+- **影响**：**周知**。I3 的**后端探测能力就位**（UI 卡片未做，用户侧暂不可见）；
+  `mcp.rs` 此前完全没有探测能力，现在有了 stdio 分支。
+- **凭据**：`cargo test` **447 passed**（441 → 447，+6：握手请求形状 / 通知**无 id** /
+  信封解析跳过噪声并透出错误 / 具名列表回退 / `-32601` 窄判定 / http 服务器被拒且文案可操作）·
+  `clippy --all-targets -D warnings` 0 问题 · `fmt --check` 干净 · **`lifecycle` spawn 闸门
+  与 `network_gate` 三闸门全绿** · IPC 59 三处一致 · 前端 `tsc` 0 错误 · `oxlint` 0 警告 ·
+  `vitest` 376 passed。
+  **注意**：`tauri.ts` 漏包一次由机器闸门 `tauri_ts_matches_ipc_commands` 当场拦下
+  （注册了 IPC 却没前端封装）——闸门按设计工作，非事故。
+
+### 2026-09-15 fix(mcp) · I3 前置：MCP 配置模型补 `transport`（修一个静默错配）—— guan（AI 协作）
+
+- **先发现的问题**：壳的 `McpServerConfig` 只有 `name`/`command`/`args`/`env`/`disabled`
+  ——**模型是 stdio-only**，完全不认识上游支持的 `streamable-http`。而 `parse_mcp_servers`
+  对缺失 `command` 的条目兜底成 `"npx"`：一个 `streamable-http` 服务器（本就是
+  `url` + `headers`、**没有 command**）会被**静默误读成 npx stdio**。这是 ADR-0022
+  按 transport 分支的前提缺口——分支之前，模型先得认识 transport。
+- **变更**：
+  - `McpServerConfig` 增 `transport: McpTransport`（枚举，kebab-case，**缺省 `stdio`**）、
+    `url`、`headers`，全部 `#[serde(default)]`（向后兼容）。
+  - `parse_mcp_servers`：**先判 transport**；`streamable-http` 分支**不再塞 npx 兜底**
+    （`command` 保持空），并读 `url`/`headers`；未知 transport 值保守按 `stdio`（不猜新传输）。
+  - `server_to_yaml`：`streamable-http` 写 `transport`/`url`/`headers` 三键、**不写**
+    `command`/`args`（上游该分支没有这两字段）；**`stdio` 分支的既有写法一字未动**（零回归）。
+  - 前端 `types/ipc.ts` 的 `McpServerConfig` 同步（`transport`/`url`/`headers` 可选，
+    兼容既有构造点）。
+- **影响**：**周知**。① 修复了 streamable-http 服务器被误读成 npx 的静默错配；
+  ② 为 I3 的「按 transport 分支探测」扫清了前提（`stdio` → `lifecycle` 子进程 +
+  `Kind::Registered`；`streamable-http` → 条目级 `Kind::Exempt` + AGENTS §7 登记）。
+  **I3 的探测本体（握手 + 能力枚举）尚未实现**；`mcp.rs` 仍无任何探测/连接能力。
+- **凭据**：`cargo test` **441 passed**（440 → 441，+1：`streamable-http` 不得被误读成
+  npx stdio ＋ 写回三键且不含 `command`/`args`）· 既有 6 项 MCP 测试**全绿**（stdio 路径
+  零回归，含注释保真/键序/备份）· `clippy --all-targets -D warnings` 0 问题 ·
+  `fmt --check` 干净 · 前端 `tsc` 0 错误 · `oxlint` 0 警告 · `vitest` 376 passed。
+
+### 2026-09-15 feat(market) · I1 收口：官方实验室 UI ＋ `isOfficial` 单源收敛 —— guan（AI 协作）
+
+- **变更**：
+  - 新增 `components/market/OfficialLab.tsx` ＋ `PluginHub` 第三子 Tab「官方实验室」。
+    卡片呈现：条目名、前置说明、**互斥"将先移除谁"**、每步 `ordinal`/包名/已装标记/
+    **激活方式（dsh 自动激活 vs 需写挂载行——v1 方案两向皆错之处，不让用户猜）**/
+    钉版本/`versionNotice`；按钮驱动 `runPlan`，按 `onProgress` 显示「进行中 n/N」，
+    失败时按钮变「继续剩余步骤」并从 `completedOps` 续装。中英 i18n 对称。
+  - **`isOfficial` 启发式删除**：`MarketPluginCard` 原以 `owner` 含 deepseek 或 name 以
+    `@deepseek-ai/` 开头猜"官方"，改为**必填 prop** `official: boolean`；社区 registry
+    无 officialness 字段，故 `MarketplaceView` 明确传 `false` 并留注释。**官方性自此由
+    策展目录独家拥有**（ADR-0020 §4 单源），启发式无回流缝。
+  - **运行时版本改由后端本地检出**（`updates::detect_current_version`，离线读 `engines/`），
+    `list_official_plugins` 不再要求前端传 `runtime_version`——前端没有廉价且权威的来源，
+    传参只会引入漂移。**检出不到时不拼坏 spec**：退回裸包名并在该步 `versionNotice`
+    **明示未钉版本**（裸包名按 latest 解析，正是 Agent Teams 三包错配的成因）。
+- **⚠️ 一处有意偏离（已回报）**：目录安装**直接调 `install_plugin`、不经安装队列**——
+  `queueStore.enqueue` 签名是 `(input) => void`（**不可 await**），而有序编排需要"逐步
+  串行 + 每步知成败"。后果：**经官方实验室安装的条目不出现在「下载管理」面板**，进度改由
+  `onProgress` 呈现（执行仍严格串行，不并发）。收敛方向已写进代码注释：给队列加可 await
+  句柄（`enqueueAndWait`）后再改接；**不得**用轮询 store 状态糊上去。
+- **影响**：**周知**。功能面至此**可见可点**：I1 的「决策 → 写入 → 自证 → 编排 → UI」五环齐备。
+  一处用户可见的行为变化：社区市场卡片的「OFFICIAL」徽章**不再出现**（卡片无法验证官方性）。
+- **凭据**：Rust `cargo test` **440 passed** · `clippy --all-targets -D warnings` 0 问题 ·
+  `fmt --check` 干净 · IPC 58 三处一致 · 前端 `tsc` 0 错误 · `oxlint` 0 警告 0 错误（148 文件）·
+  `vitest` **376 passed**（47 文件）· `AGENTS.md` 243/250。
+
+### 2026-09-15 feat(frontend) · I1 安装编排纯逻辑（`lib/officialCatalog.ts` ＋ 7 项测试）—— guan（AI 协作）
+
+- **变更**：
+  - 新增 `frontend/src/lib/officialCatalog.ts`：把"点一个目录条目"展开成**有序操作序列**并
+    串行执行——`planEntryRun`（同族冲突先 `remove` 走"替换"而非叠加；逐包 `install`；
+    `insert_row` 步**紧跟**一步 `writeRow`；乱序输入按后端 `ordinal` **纠正**，因为顺序即语义：
+    Agent Teams 的 Web 层装反了会在 Team 服务就位前挂载而失败）＋ `runPlan`（**严格串行**、
+    失败即停、回报 `completedOps` 供续装、`onProgress` 供 UI 渲染）。
+  - 新增 `frontend/src/__tests__/officialCatalog.test.ts`：**7 项**纯逻辑测试（IO 注入模式沿用
+    `lib/shellSettings.ts` 先例；仓测只测纯逻辑，不引 RTL/jsdom）。
+- **一处关键正确性判断**：安装结果 `PluginOpOutcome` 是 `{ok, detail}`——IPC 可以**成功解析
+  但 `ok:false`**（pnpm 审批门、包不存在等）。编排把这种**软失败也当失败**并立即停止，
+  否则会"界面报成功、实际没装上"，且会接着写一条指向**未安装包**的挂载行。已用专门用例钉住。
+- **失败语义（有意）**：失败**不回滚**——已完成的步本处于一致状态（`insert` 行幂等、安装可重入），
+  回滚反而会动到用户别的插件；改为回报 `completedOps` 让用户**续装**。
+- **影响**：**周知**。至此 `apply_official_patch_row` 有了真正的调用方（此前是惰性代码）；
+  I1 只剩**视觉层**（条目卡片/进度/续装按钮），逻辑与后端均已就位。
+- **凭据**：前端 `vitest` **376 passed**（369 → 376，+7）· `tsc` 0 错误 · `oxlint`
+  **0 警告 0 错误**（147 文件）· Rust 侧本轮未改动（沿用上一轮 439 passed 绿态）。
+
+### 2026-09-15 feat(plugin) · I1 写后自证闸门：`--dump-config` 回读组合树 —— guan（AI 协作）
+
+- **变更**（工作区未提交）：
+  - `plugins.rs::verify_catalog_row`（纯函数）：判据**两条同时**成立——① dump 行表里存在
+    `id == row_id`；② 该行 `pkg_name` 命中目标包名（防"行在、但指向别的包"的半对状态）。
+  - **折进 `apply_official_patch_row`**：写行后立刻回读组合树，**命令返回成功即意味着
+    "行已在组合树中"，而非仅"文件已写"**。dump-config 自身失败时**不谎报成功**，
+    明确回"已写入但未能复核，请人工确认"。
+  - **复用而非新建**：走既有 `plugin_rows_blocking`（`dsh --profile <名> --dump-config`，
+    经 `profiles::run_toolchain_forward` → `lifecycle` seam；已支持 Local/WSL 读）。
+    **未新增任何 spawn 路径**，spawn 闸门与既有超时/日志口径原样适用。
+- **为什么必须有这一步**（本轮的核心动机）：v1 方案最危险的失败形态是**静默失效**——
+  patch 写法不对时 DSH **退出码 0** 地把条目丢掉（本机实测：`- name:` 行只往 stderr 打
+  一行 `patch: id is required for non-insert patches`）。只校验"文件写成功"**抓不到**它；
+  只有**回读组合树**才算数。至此 I1 的写入路径具备"写 → 自证"闭环。
+- **影响**：**周知**。`apply_official_patch_row` 的成功语义收紧（更严），前端若已按
+  "成功即生效"理解则无需改动；若有代码把它的失败当"没写"处理，需按新文案调整
+  （失败可能发生在**写之后**，文案已明确点出文件状态）。
+- **凭据**：`cargo test` **439 passed**（438 → 439，+1）· `cargo clippy --all-targets
+  -- -D warnings` 0 问题 · `cargo fmt --check` 干净 · IPC 58 三处一致 · 前端 `typecheck`
+  0 错误 · `oxlint` 0 警告 · `vitest` 369 passed。
+
+### 2026-09-15 feat(plugin) · I1 挂载行写入路径（`ensure_catalog_insert_row` ＋ IPC）—— guan（AI 协作）
+
+- **变更**（宪法级文件改动含 `AGENTS.md`，依 §10 预告与归档；工作区未提交）：
+  - `plugins.rs::ensure_catalog_insert_row` ＋ 纯变换 `apply_catalog_insert_row`：把一条
+    `- insert: [{id, name}]` 并入 profile 的 `cordis.patch.yml`，一切写入经既有 `PatchFile`
+    （覆写前备份 ＋ 原子替换 ＋ 未改条目原文保真）。**幂等**（同 `id` 已存在则零写入）；
+    **只写 `{id, name}`、不写 `config`**（`config` 是整体替换语义，`docs/roadmap.md:31`，
+    留给"先读后写"的配置流）；已有 `insert` 数组则**并入**该数组而非新建第二个 `insert` 条目。
+  - IPC **`apply_official_patch_row`**（`COMMANDS` **57 → 58**）：四处名字面全同步；
+    **WSL 客体档显式报错、不回落本地写**（写错 profile 比报错严重）。`AGENTS.md` §7 登记。
+  - **职责边界（有意）**：本命令**只写行、不安装**——安装仍走既有 `install_plugin`
+    （`dsh plugin add` 转发链）与前端**串行安装队列**。前端按目录行的 `steps` 有序执行
+    「装 → 若该步 `insert_row` 则写行」，任一步失败停在一致态可续装。好处是复用既有队列的
+    pnpm 审批门与错误分类，**不在壳内复制第二条安装链**。
+- **并发/正确性要点（值得记一笔）**：`PatchFile` 的 `render()` 对未改动条目**回填原文片段**，
+  故改动既有条目**必须**走 `for_each_entry_mut`（它负责把该条目原文置 `None`）；直接改
+  `entries` 会让 `render()` 原样回填**旧文本**＝**静默不生效**。已用一项单测专门钉住这一点
+  （若绕过 `for_each_entry_mut`，该测会因"找不到新行"而红）。
+- **影响**：**周知**。I1 的**写入半**完成；前端目录 UI 未做，故用户侧仍看不到新界面。
+- **凭据**：`cargo test` **438 passed**（436 → 438，+2）· `cargo clippy --all-targets
+  -- -D warnings` 0 问题 · `cargo fmt --check` 干净 · IPC **58** 三处一致（`COMMANDS` /
+  `capabilities` / AGENTS 声明）· 前端 `typecheck` 0 错误 · `oxlint` 0 警告 · `vitest` 369 passed ·
+  `AGENTS.md` 243/250 行。
+
+### 2026-09-15 feat(plugin) · 增量 I1 策展目录（决策层 ＋ IPC）—— guan（AI 协作）
+
+- **变更**（宪法级文件改动含 `AGENTS.md`，依 §10 预告与归档；工作区未提交，无 commit hash）：
+  - **新模块 `src-tauri/src/official_catalog.rs`**（**纯决策层**，不触网/不起子进程/不写文件）：
+    `activation_for`（按 `dsh.bundle` 声明分支——bundle 类自动激活、壳**不写** patch；
+    plain 类壳**必须**写 `insert` 行）；`row_id_for`（稳定可复算行 id，缺 id 的行永不可再
+    patch）；`pinned_spec` / `version_skew_notice`（钉版本 ＋ latest 落后提示）；
+    `exclusive_conflict` / `family_of_package`（浏览器三选一、桌面控制二选一，UI 走"替换"）；
+    `install_plan` / `resolve_rows`（有序组合 ＋ 整行解析）。附 **7 项单测**。
+  - **策展集数据** 8 条：auto-review / browser-use×3 / computer-use×2 / Agent Teams 两档
+    （headless 与 Web，后者为**两步有序**）。
+  - **IPC `list_official_plugins`**（`COMMANDS` **56 → 57**）：命令层采集已装态（读
+    `profiles/<名>/package.json` ＋ 逐个依赖的 `package.json` 判 `dsh.bundle.patch`），
+    返回可下发的目录行。四处名字面全同步（`ipc.rs` → `lib.rs` → `capabilities`
+    `allow-list-official-plugins` → `tauri.ts` ＋ `types/ipc.ts` 新类型）。
+  - `AGENTS.md` §7 登记该命令（57 条）。
+- **影响**：**周知**。I1 的**语义核心**（v1 方案两向皆错的激活契约）现在是纯函数 ＋ 单测，
+  "退出码 0 但插件没生效"这类静默失败**先在壳内红**。**尚未接线**：安装/写入路径与前端
+  目录 UI 未做，故用户侧暂时看不到新界面——下一步是"把 `insert` 行经 `PatchFile` 落盘 ＋
+  串行下发 ＋ 前端卡片"。
+- **已知缺口（有意，非阻塞）**：`list_official_plugins` 在 **WSL 客体档显式报错**——
+  客体侧需补 profile 读原语；**有意不回落本地读**，否则会把客体插件全误报成"未安装"
+  （静默错数据比明确报错更糟）。已写入命令注释与实施计划 I1 残留项。
+- **凭据**：`cargo test --lib` **436 passed**（428 → 436，+8）· `cargo clippy --all-targets
+  -- -D warnings` 0 警告 · `cargo fmt --check` 干净 · IPC 四闸门与 `network_gate` 全绿 ·
+  前端 `typecheck` 0 错误 · `oxlint` 0 警告 · `vitest` 369 passed。
+
+### 2026-09-15 adr(0020,0022,0023) · 三份 ADR 评审通过 → I1/I3/I4 解冻 —— guan（AI 协作）
+
+- **变更**（工作区未提交）：
+  - **ADR-0020**（官方插件目录与安装激活契约）→ **已接受**。含 §1.4 无额外条件；I1 解冻。
+  - **ADR-0022**（MCP 探测的网络/子进程面）→ **已接受**。维护者同时确认 §1.4 的**增量价值
+    主张**（配置体检 / 失败归因 / 不耗 token），故不退回方案 E；I3 解冻。
+  - **ADR-0023**（SSH 远程工作区范围与边界）→ **已接受**。维护者确认 §3 **方案 C 的否决**，
+    即接受「Web 视图不随 provider 替换而变为远端感知」这一范围裁剪；I4 解冻。
+  - 同步：`docs/adr/README.md` 行（状态以各 ADR 头部为准，**不复制**）；实施计划 §0 v2.2、
+    §6.1 状态列与 §4.1 清单。
+- **影响**：**周知**。批次状态由「1 在办（I2）＋ 3 待评审 ＋ 1 暂缓」变为
+  **「4 在办（I1/I2/I3/I4）＋ 1 暂缓（I5）」**。I4 依赖 I1 的 patch 写入内核（`PatchFile` 复用），
+  故实施顺序为 **I1 → I3 → I4**（I3 与 I1 无依赖，可并行）。
+- **顺带更正**：实施计划 §6.3 原写「I2 承接并收口 roadmap §4.6」属**过度声明**——I2 只落地
+  归档侧，`工作区增删管理` 子项**仍开放**（壳内无 workspace CRUD IPC，上游却有
+  `create`/`rename`/`delete`/`insertBefore`/`insertSessionBefore`）。已在 `docs/roadmap.md`
+  §4.6 **追加**2026-09-15 落地记录（不删 09-11 记录）并改正计划。
+- **凭据**：ADR 头部状态行；`docs/roadmap.md` diff = `6 insertions, 0 deletions`（纯追加）；
+  本批为纯文档改动，未跑测试。
+
+### 2026-09-15 fix(boot,sessions,plugins) · **回环鉴权失效**：`/api` 需签名 Cookie ＋ 顺带修复既有功能静默失效 —— guan（AI 协作）
+
+- **发现路径**：I2 落地后按 §5/§8.3 做**实机对账**（不只跑单测）——对真实运行中的工作台
+  （`127.0.0.1:53805`）打回环端点，得 **`401 unauthorized`**。查上游源码定位：
+  `rpc-host.ts:97-99` 的 `/api` 是**两道**栅栏——`isTrustedApiRequest`（Host 回环/可信，
+  失败 **403**）之后还有 `browserAuth.isAuthenticated`（失败 **401**），后者要启动期由
+  launch token 兑换出的**签名 Cookie**（`browser-auth.ts:285-300`）。
+- **实机复现（抛离式 `DSH_HOME`，未触碰用户数据）**：`GET /?token=…` → `303` +
+  `set-cookie: dsh-auth-…`（`Max-Age=2592000`、`HttpOnly`、`SameSite=Strict`）→ 同请求带
+  Cookie 后 `/api/pluginInventory/list` → **`200`**；`/api/workspace/unarchiveSession`
+  （不存在的 id，上游保证**无写早退**）→ **`200` + `result.ok=true`**。
+- **变更**：
+  - `ShellState` 新增 **`workbench_cookie`**（仅内存；boot 期 `authenticate_workbench_session`
+    兑换到 Cookie 时留存 `name=value`，**不落盘、不打日志**——AGENTS §4.3）。
+  - `sessions.rs::request_unarchive` 与 `plugins.rs::fetch_runtime_snapshot` 均改为**附
+    `Cookie` 头**（`cookie: Option<&str>`）；两个命令调用点同步传值。
+  - `authenticate_workbench_session` 签名由 `(&WebviewWindow, &Url)` 改为 `(&ShellState, &Url)`
+    以便留存 Cookie（唯一调用点已同步；**既有流程与错误回退路径一律未变**）。
+  - `AGENTS.md` §7 补"两条回环用途必须附 `/api` 会话 Cookie"；台账**更正复现点 11**
+    的失效断言并新增 §三 更正记录。
+- **影响**：⚠️ **周知 + 需关注**。① I2（取消归档）由此**真正可用**；② **顺带修复既有功能**：
+  `get_plugin_runtime`（插件运行态快照，2026-08-29 落地）此前对带栅栏的 dsh **一直恒 401
+  静默失效**——属"记在册的上游姿态随版本漂移"的教科书案例；③ 壳内存里多了一份 `/api`
+  会话 Cookie，**仅内存、不外发、不进日志**。
+- **残余风险（须真机复核）**：WSL 客体模式下 `workbench_url` 是否同样携带 `token=` 未验证
+  ——若不带，客体档回环仍 401（走 `docs/executor.md` 验证清单）。
+- **凭据**：`cargo test` **428 passed**（含新增信封/解析 6 项）· `cargo clippy --all-targets
+  -- -D warnings` 0 警告 · `cargo fmt --check` 干净 · IPC 四闸门 + `network_gate` 15 项全绿 ·
+  前端 typecheck/lint/vitest（369）全绿。
+
+### 2026-09-15 feat(sessions) · 增量 I2「取消归档」落地（ADR-0021 路线 A）—— guan（AI 协作）
+
+- **变更**（宪法级文件改动含 `AGENTS.md`，依 §10 预告与归档；工作区未提交，无 commit hash）：
+  - **后端**：`src-tauri/src/sessions.rs` 新增取消归档三件套——`unarchive_request_body`
+    （纯函数，构造 typert 回环信封）、`parse_unarchive_response`（纯函数，解析
+    `result.ok` 两层 + `value.archivedSessionIds`）、`request_unarchive`（唯一网络原语，
+    `POST /api/workspace/unarchiveSession`，2s 超时）；`src-tauri/src/commands/session.rs`
+    新增 `unarchive_session` 命令。**刻意不写** `$DSH_HOME/storages/workspace.json`
+    （内存状态投影，运行中 Host 会整体覆盖）。
+  - **IPC 四处名字面 + 形状面**：`ipc.rs::COMMANDS` 登记（**55 → 56 条**）→ `lib.rs`
+    `generate_handler!` → `capabilities/default.json` `allow-unarchive-session` →
+    `frontend/src/lib/tauri.ts` 类型化封装（无新结构过 IPC，故 `ipc-shapes.json` 不动）。
+  - **网络闸门**：`network_gate.rs` 新增**条目级** `Kind::Exempt` 行（`sessions.rs::request_unarchive`）
+    ——刻意不整文件豁免，防会话域后续触网偷跑（沿用 plugins.rs 2026-09-11 收窄口径）。
+  - **共享信封**：`plugins.rs` 抽出 `loopback_request_body(method, args)`，`runtime_request_body`
+    改为其无参封装——使回环信封壳内**只有一处**构造。
+  - **复现台账**：`dsh-behavior-ledger.md` 新增复现点 16（取消归档远程契约，含上游
+    `file:line` 锚点与升级复核项）＋ §三 复核记录。
+  - **前端**：`SessionManager` 归档档位新增「取消归档」按钮（仅归档行可见）＋
+    `zh-CN`/`en-US` 对称文案；无活跃 Host 时原样透出 Rust 侧可读错误（提示先启动 DSH）。
+- **影响**：**仅周知**，无需他人动作。用户在壳内会话管理器即可取消归档，不必切到 Web
+  设置页；该动作经 Host RPC 完成（幂等），**不会**绕过运行时直接改磁盘状态。
+- **凭据**：Rust `cargo test` **428 passed**（+6 新单测：信封键集恰为 `["request"]`、
+  响应正例/业务错误/形状漂移三反例、端点常量、信封抽取回归）· `cargo clippy --all-targets
+  -- -D warnings` 0 警告 · `cargo fmt --check` 干净 · IPC 四个闸门 + `network_gate` 15 项
+  全绿（含 `production_network_primitives_are_registered`、`exemptions_are_live`、
+  `item_scoped_exemption_does_not_leak_to_the_rest_of_the_file`）· 前端 `typecheck` 0
+  错误 · `oxlint` 0 警告 0 错误 · `vitest` 46 文件 **369 passed**。`AGENTS.md` 237 行
+  （预算 250）。
+- **实现取舍留痕（对 ADR-0021 的一处有意简化）**：ADR 行动项原写 `unarchive_session` 需
+  "world 分派"，实施时**未加分派**——路线 A 不碰文件路径，归档状态由**当前活跃 Host**
+  持有，其地址在 Local/WSL 两模式下都记在 `ShellState.workbench_url`（`boot.rs:384`），
+  故无宿主/客体可分。已写入代码注释与台账 §三。
+
+### 2026-09-15 adr(0021,0024) · **补记**：维护者对 ADR-0021 / 0024 的裁定 —— guan（AI 协作）
+
+- **补记原委**：上方同日条目载明「5 份 ADR 均为草案」，该表述在数小时后**部分失效**——维护者
+  即时就两项作出裁定。按 §二「漏记不补改旧条目——另发一条『补记』并注明原委」，另立本条。
+- **变更**（工作区未提交）：
+  - **ADR-0021 → 已接受**。维护者裁定「认可」，即认可「`SessionManager` 是独立 Tauri 窗口、
+    够不到 Web 设置页、故壳内应自建入口」这一理由，**据此采纳路线 A**（复用 Host RPC
+    `workspace.unarchiveSession`，不触碰 `$DSH_HOME/storages/workspace.json`）；原设的翻转
+    条件（退回方案 C「不新增，指向 Web 设置页」）**未触发**。**I2 增量由此解锁。**
+  - **ADR-0024 → 草案／暂缓实施**。维护者裁定「**暂时不做**」：方案 A（转交版）与方案 B
+    （完整版）**均不启动**，I5 移出当前批次；两项平台扩展（`tauri-plugin-global-shortcut`
+    新依赖、第四个窗口）**未获批准**。**本 ADR 未被否决**；`docs/roadmap.md:331` 的边界
+    问题**留白未裁决**，故**不改动** §5 不做清单（既不承认越线、也不授权动工）。
+  - **两处 ADR 头部状态、§4 结论、§6 复审条件、`docs/adr/README.md` 索引行、以及
+    `docs/plans/official-plugins-and-capabilities-plan.md`（→ v2.1）**均已同步。
+- **影响**：**仅周知**，无需他人动作。交付批次由 **5 增量收敛为 4 增量 ＋ 1 项暂缓**：
+  I1（策展目录）、**I2（取消归档，已解锁）**、I3（MCP 探测）、I4（SSH 向导）继续；
+  **I5 冻结**。任何人不得在 I5 暂缓期间引入 `tauri-plugin-global-shortcut` 或第四个窗口。
+  I5 的解冻触发只有一个：**维护者重新提出该需求**（ADR-0024 §6）。
+- **凭据**：`docs/adr/0021-archived-session-unarchive-route.md`（状态行「已接受」＋裁定引文）；
+  `docs/adr/0024-desktop-quick-task-runner.md`（状态行、§4 三条边界、§5 行动项、§6 复审条件）；
+  `docs/adr/README.md` 索引行；实施计划 §0 v2.1 行。本仓库未跑测试（纯文档改动）。
+
+### 2026-09-15 docs(agents) · AGENTS §9 ADR 索引迁出至 `docs/adr/README.md` ＋ 新立 ADR-0020~0024 —— guan（AI 协作）
+
+- **变更**（宪法级文件改动，依 AGENTS §10 预告与归档；工作区未提交，无 commit hash）：
+  - **`AGENTS.md`**：§9 的 ADR 索引表（20 行，0001–0018）整体迁出，正文只保留「必须先立
+    ADR 再动代码」规则 ＋ 一行指针。**250 → 233 行**（§9 由 26 行降至 9 行）。
+  - **`docs/adr/README.md`（新建）**：承接索引，既有 18 行**逐字迁移**，补登漏失的
+    ADR-0019 行，并新增 0020–0024 五行。含「新增 ADR 须同提交内补索引行」的维护约定。
+  - **新立 5 份 ADR（草案，待维护者评审）**：`0020` 官方插件目录与安装激活契约 ·
+    `0021` 已归档会话取消归档路线 · `0022` MCP 探测的网络/子进程面归属 ·
+    `0023` SSH 远程工作区范围与边界 · `0024` 桌面任务快跑器范围裁定。
+  - **配套文档**：`docs/plans/official-plugins-and-capabilities-plan.md`（修订版 v2，修正
+    7 项阻断缺陷并拆为 5 个独立增量）＋ `docs/plans/official-plugins-and-capabilities-plan-review.md`（审核报告）。
+- **冲突与依据**：迁出原因是**规范冲突**而非偏好——索引表随 ADR 数量线性增长，而 §11.4 对
+  本文件设「全文 ≤ 250 行」固定预算；改前恰为 250 行，**连补一行 ADR-0019 索引都会越界**，
+  该冲突即 ADR-0019 当日提交（`d2050b8`）却从未进索引的成因。按 AGENTS §8.7「停手提出修订
+  建议、不得变形绕行」上报，经维护者裁定采纳「索引迁出」方案，并以 §11.4 的「回收」机制落地。
+- **影响**：**仅周知**，无需他人动作。索引查法变化：查 ADR 编号与一行结论改看
+  `docs/adr/README.md`；§9 仍承载 ADR 规则。5 份 ADR 均为**草案**，其 §5 行动项里的
+  AGENTS §6/§7 登记、`network_gate.rs` EXEMPTIONS 行、台账行与 roadmap 收口**一律待评审通过后**
+  于实现期执行，本次未提前登记。
+- **凭据**：行数核算 250 → 233（`wc -l`）；索引完整性校验：`docs/adr/` 下 24 份 ADR ↔
+  README 24 行，链接逐一可解析、无断链、无漏行；`AGENTS.md:131`（ADR-0020 引用的 `PatchFile` 条）
+  位于 §6、在本次改动之前，行号未漂移；本仓库未跑测试（纯文档改动）。
+
 ### 2026-09-12 feat(boot): 首次启动工作台与 Windows 运行环境前置选择交互优化 —— guan（AI 协作）
 
 - **变更**：

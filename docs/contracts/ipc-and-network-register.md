@@ -1,0 +1,114 @@
+# IPC 命令与网络面登记册
+
+> **本册是 `AGENTS.md` §7「例外册（登记制）」的**登记台账**。**
+> **规则留在 §7，登记册在本册**——迁出理由同 §9 的 ADR 索引：这两张册子随功能
+> **线性增长**，而 §11.4 给 `AGENTS.md` 设的是**固定**行数预算。2026-09-15 迁出时
+> `AGENTS.md` 已到 **249/250**，**再加一条登记就会越界**，与 ADR-0019 当日"存在却没进
+> 索引"同源。按 §11.4 的「回收」机制迁出。
+>
+> **维护约定**：新增 IPC 命令或新增网络用途时，**改本册**（§一 / §二），
+> `AGENTS.md` §7 只保留规则与指针。两处**不得各写一份**（AGENTS §11.3 禁双源）。
+> 命令清单的**机器事实源**仍是 `src-tauri/src/ipc.rs::COMMANDS`——本册是**人类可读**的
+> 登记册（含落地日期与边界说明），二者由 `ipc.rs::gate_tests` 与代码审查对齐。
+
+---
+
+## 一、IPC 命令登记（62 条）
+
+> 新命令**先登记再实现**。清单一致性另有 cargo test 闸门：
+> `handler_matches_ipc_commands` / `capabilities_match_ipc_commands` /
+> `tauri_ts_matches_ipc_commands` / `ipc_struct_shapes_match_fixture`。
+
+**核心与工作台**：`choose_profile` `terminal_action` `get_update_status` `check_updates`
+`list_dsh_versions`（packument 全版本 + 通道归类，2026-09-09）`get_client_update`
+`client_update_check` `client_update_apply` `open_external` `open_workbench_in_browser`
+`get_workbench_url` `boot_in_wsl` `choose_mode` `get_boot_status`（启动态缓存，防竞态，2026-09-04）。
+
+**Profile**：`list_profiles` `get_profile_detail` `create_profile` `copy_profile`
+`rename_profile` `delete_profile` `set_default_profile` `get_default_profile`
+`switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
+
+**插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
+`update_plugin` `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates`
+`list_plugin_versions` `list_all_plugins` `list_official_plugins`（2026-09-15，ADR-0020
+策展目录：解析出钉版本 spec / 激活方式 / 稳定行 id / 互斥冲突；**WSL 客体档显式报错**，
+不回落本地读）`apply_official_patch_row`（2026-09-15，同上：写策展挂载行，仅
+`insert_row` 步可调、幂等、经 `PatchFile`；**WSL 客体档显式报错**）`copy_plugin_config`（patch 行原样复制，
+写入例外 #4，ADR-0009 五修 2026-08-30）。
+
+**会话 / 控制台 / 凭据 / 设置 / MCP**（2026-08-31 批）：`list_sessions` `repair_session`
+`repair_all_sessions` `delete_session` `unarchive_session`（2026-09-15，ADR-0021
+路线 A：经 Host RPC 取消归档，不写 `storages/workspace.json`）`get_shell_settings` `set_shell_settings`
+`get_system_diagnostics` `get_app_logs` `get_credentials_raw` `save_credentials_raw`
+`get_credentials_summary` `set_credential_key` `get_dsh_settings_raw`
+`save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`
+`probe_mcp_server`（2026-09-15，ADR-0022：探测 MCP 能力；**stdio 分支**经 `lifecycle`
+seam 起子进程，http 分支为条目级网络豁免，WSL 客体档显式报错）。
+`list_ssh_hosts` `probe_ssh_target` `generate_ssh_profile`（2026-09-15，ADR-0023：
+SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `BatchMode` 非交互预检 /
+建 profile 并写四行 ssh 注册行"。读取面边界见 §三，网络面见 §二）。
+
+**市场**：`fetch_market_registry`（2026-08-31）。
+
+**当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对）。
+
+---
+
+## 二、网络面用途登记
+
+> **规则（在 `AGENTS.md` §7）**：唯一网络面 = `updates.rs`（ADR-0006）；其余模块禁触网，
+> **新网络需求先在此登记**；外链域名在 `EXTERNAL_URL_HOSTS` 登记。机器投影在
+> `src-tauri/src/network_gate.rs` 的 `EXEMPTIONS` 表（`Kind::Exempt` = 授权触网，
+> `Kind::Registered` = 仅在册）；两处**必须同步**。
+
+### 回环（127.0.0.1，无外部网络）
+
+**两条回环用途必须附 `/api` 会话 Cookie**：dsh 0.1.6+ 在 Host 栅栏之外还有
+`browserAuth`（缺失恒 401）；Cookie 由 boot 期 launch token 兑换后留在
+`ShellState.workbench_cookie`（**仅内存、不打日志**；2026-09-15 实测更正，台账复现点 11）。
+
+| 用途 | 落点 | 边界 |
+|:---|:---|:---|
+| 插件运行态回环**只读**查询 | `plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list` | 2s 超时、仅活跃会话、一次性快照不订阅——2026-08-29 |
+| 取消归档回环**写** | `sessions.rs::request_unarchive`，`POST http://127.0.0.1:<port>/api/workspace/unarchiveSession` | 2s、幂等、**不经文件改写**——2026-09-15，ADR-0021 路线 A；与上一条不同，本条**会改变 dsh 受管状态**，故单列 |
+| 工作台 Token 环回兑换 | `boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET | 5s、redirects=0；2026-09-04 落地、2026-09-11 补登记——原漏登 |
+
+### 子进程内触网（`Kind::Registered`，本文件无 in-process 原语）
+
+| 用途 | 落点 | 边界 |
+|:---|:---|:---|
+| MCP 能力探测（**stdio 分支**） | `mcp_probe.rs`，2026-09-15，ADR-0022 | 网络在**被 spawn 的 MCP 服务器子进程内**；`network_gate` 的 `Registered` 行**反向绑定**此点。2026-09-15（R3）实现 `streamable-http` 分支后**该行保留**——含义收窄为"**除下节 `post_rpc` 条目级豁免覆盖的范围外**，本文件不得再有进程内原语"；两条并存才封住"第二处触网" |
+| 引擎引导（ADR-0010） | `engines.rs` | 网络在 pnpm 子进程内：`runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：Windows 免符号链接特权，ADR-0017）下载 dsh（镜像 env 注入）；WSL 客体仍同源 `add -g` |
+| WSL 客体投递与管理面（ADR-0016） | `executor.rs`；客体插件装卸/更新在客体 `dsh plugin`（客体 pnpm）子进程内 | 更新检查仍走 `updates.rs`，**壳不新增网络客户端** |
+| SSH 非交互预检（ADR-0023 §2.5） | `ssh_remote.rs::probe_ssh_target`（2026-09-15） | 网络在**系统 `ssh` 子进程内**（壳无 in-process 客户端）；参数锁死 `BatchMode=yes` / `ForwardAgent=no` / `StrictHostKeyChecking=yes` / `ConnectTimeout=10`；整轮 30s；**只读回读**（uname / node / helper 摘要 / workspace），不写远端 |
+
+### 进程内触网（条目级豁免；`Kind::Exempt` + `item`）
+
+| 用途 | 落点 | 边界 |
+|:---|:---|:---|
+| MCP 能力探测（**streamable-http 分支**） | `mcp_probe.rs::post_rpc`，2026-09-15，ADR-0022 §3.3 方案 A | POST **用户在 `cordis.patch.yml` 自填的 `url`**；整轮 15s（5 次往返共享一个 deadline）、`redirects=0`、只读一次性快照。**条目级而非整文件**：将来新增触网点（如 `resources/read` 预览）仍须单独登记（ADR-0022 §3.3 方案 C 否决）。**本探测扩大壳的信任边界**——用户配置的 URL 会被壳真实访问；ADR-0022 **不解决 SSRF 类风险**，仅以"用户自配端点 + 只读 + 有界超时"限制影响面（如需策略另开工） |
+
+### 直接触网（`updates.rs` / `updater.rs`，唯一网络面本体）
+
+| 用途 | 落点 | 边界 |
+|:---|:---|:---|
+| 唯一网络面本体（ADR-0006） | `updates.rs` | `ureq` 客户端的唯一出口（`UreqFetcher`） |
+| 插件更新检查 / 市场 Registry 拉取 | `updates.rs` `npm_packument_versions` / `fetch_market_registry` | 镜像链与超时同 dsh 版本检查 |
+| 客户端自更新 | `updates.rs::APP_RELEASE_FEED` + `updater.rs` | 清单端点在 `tauri.conf` 的 `plugins.updater.endpoints` |
+
+---
+
+## 三、壳的**文件系统读取域**登记（新域先登记，与 §二 网络面同口径）
+
+> 规则：壳只在 `$DSH_HOME` / `app_data_dir()` 内读写是默认口径；**走出这两个根**即属
+> 新读取域，须在此登记**读什么、读多少、不外传什么**。读取面比网络面更难察觉——它没有
+> "触网"这种显眼动作，扩展起来往往是顺手加一句 `read_to_string`，且**没有机器闸门**
+> （`network_gate.rs` 只拦网络原语），所以本节的登记纪律只能靠人守。
+
+| 域 | 落点 | 边界（读什么 / 不外传什么） |
+|:---|:---|:---|
+| 用户 SSH 配置 `~/.ssh/config` | `ssh_config.rs::load_ssh_hosts`（2026-09-15，ADR-0023 §2.7） | **只读这一个文件**，**不跟随 `Include`**（跟随会把读取面扩张成"任意路径"）；**1 MiB 上限**，超限截断并在 `notes` 如实告知；只取**非机密**字段——alias、`HostName`/`User`/`Port`/`ProxyJump`、`IdentityFile` 的**路径**；**私钥内容不在该文件内，且结构体没有能承载它的字段**；非法 UTF-8 用替换字符兜住，不 panic |
+
+**触发登记的两条事实**：① 这是本仓库**首个** `$DSH_HOME` / `app_data_dir()` 之外的读取面；
+② 前端**不得**发起该读取（ADR-0023 §3 方案 D 否决）——解析固定在 Rust 后端，经
+`list_ssh_hosts` 一条 IPC 供前端消费。
