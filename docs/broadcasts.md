@@ -32,6 +32,41 @@
 
 ## 三、记录
 
+### 2026-09-15 chore(release-prep) · R5 收尾：分组提交完成（**未推送、未合 master**）—— guan（AI 协作）
+
+- **提交**（3 条，分支 `feat/capabilities-and-ssh-workspace`，基线 `d89780a`）：
+  1. `3220b1d docs(adr,plan,register)` —— ADR-0020~0024 ＋ 登记册迁出 ＋ §三 文件系统读取域 ＋ 复现点 17/18/19 ＋ AGENTS §6 写入例外。14 文件。
+  2. `2f3ce7d feat(backend)` —— I1 策展目录 / I2 取消归档 ＋ 回环鉴权修复 / I3 MCP 两分支 / R4 SSH 三模块。21 文件 4595+。
+  3. `0237b2b feat(frontend)` —— I1 官方实验室 / I3 探测卡片 / R2 队列可 await / R4d SSH 向导。23 文件 2002+。
+- **分组口径与计划 §7 R5 的差异（诚实记档）**：R5 原计划按"① ADR ② I1 ③ I2 ④ I3 ⑤ R2 ⑥ R4"六组提交。
+  实际改为**按层分三组**，原因是结构性的：IPC 契约要求 4 处同步（`ipc.rs::COMMANDS` →
+  `lib.rs` handler → `capabilities/default.json` → `lib/tauri.ts`），且 `network_gate.rs`
+  的登记表**同时**承载四个功能的条目——按功能切会让**每一个** commit 都处于"契约半同步"
+  状态（例如"只提交 I3"会让 `tauri.ts` 多一个未登记命令，闸门当场红）。用 `git add -p`
+  硬凑六组属于**形式合规**：它不增加可复核性，只增加出错面。三个 commit 的文件集**两两不相交**，
+  且各自自洽。
+- **未推送、未合 master**，理由有二：① `AGENTS.md` 属**宪法级文件**，CONTRIBUTING §2 的流程图
+  要求"碰宪法级文件 → PR → 至少一名其他开发者 review → squash merge"，**不得走快车道直推**；
+  ② 本会话无频道可见性，无法按 §10 完成"改前频道知会"。**请维护者拉分支复核后开 PR**。
+- **收尾三件事状态**：① 相关测试绿 ✅（见下）；② 人肉读 `git diff` 确认无越界 ✅——逐文件核对
+  过 36 个改动文件，全部落在本会话的四个功能面内；顺带修掉三处**我自己引入的**问题：
+  登记册 §二 两行排错标题、§三 排到 §二 之前、`commands/mod.rs` 与 AGENTS §7 的**会漂移的条数**。
+  ③ 提交 ＋ 广播：提交完成，**广播落档于本条**，但"频道知会"这一步因无频道而不适用。
+- **仍未落地（诚实留白，勿当已完成）**：
+  - `docs/executor.md` **MCP F1–F9** 与 **SSH G1–G12** 实机清单 **全部待跑**——真实网络/SSH 两端
+    无法在单测里覆盖（AGENTS §5 口径）；
+  - ADR-0023 §5 明列三项不在范围：放开 `Mode::parse("ssh")`、**会话级 capability 收敛（仍未设计）**、
+    SSH 配置持久化面板；
+  - 已知缺口未动：WSL 客体档的策展目录读写、WSL 客体档的 MCP 探测与 SSH 预览（均需客体侧原语，
+    **有意不回落宿主**）；
+  - ADR-0024（桌面快跑器）按维护者裁定**暂缓**，边界问题留白未裁；
+  - 官方实验室的 `list_official_plugins` 与 WSL 档仍显式报错，未做客体读原语。
+- **凭据（提交后于干净树上复跑）**：Rust `cargo fmt --check` 干净 ·
+  `clippy --all-targets -D warnings` 干净 · `cargo test` **505 passed** / 0 failed / 5 ignored；
+  前端 `tsc -b` 0 错误 · `oxlint` 0 warning 0 error（152 文件）· `vitest` **407 passed / 50 文件**。
+  `git status` 干净。
+
+
 ### 2026-09-15 feat(ssh) · R4 收口：SSH 远程工作区向导（R4b/R4c/R4d 三刀，含一处关键判据修正与一处 AGENTS 写入例外登记）—— guan（AI 协作）
 
 - **R4b — 五键校验 ＋ `BatchMode` 非交互预检**（`ssh_remote.rs` 新增，17 项测试）：
