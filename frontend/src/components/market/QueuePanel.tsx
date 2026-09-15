@@ -107,6 +107,12 @@ export function QueuePanel() {
           <div className="space-y-2">
             {items.map((item) => {
               const chip = STATUS_CHIP[item.status]
+              // 2026-09-15（R2）：卸载项复用 done 相位（成功=绿），但文案必须是
+              // 「已卸载」——对用户说「已安装」是错的陈述，不是措辞偏好。
+              const chipLabel =
+                item.status === "done" && item.kind === "remove"
+                  ? t.market.queueStatusRemoved
+                  : t.market[chip.key]
               return (
                 <div key={item.id} className="rounded-xl border border-line bg-wash/60 p-2.5">
                   <div className="flex items-center justify-between gap-2">
@@ -125,7 +131,7 @@ export function QueuePanel() {
                         {item.status === "installing" && (
                           <LoaderCircle className="size-3 animate-spin" />
                         )}
-                        {t.market[chip.key]}
+                        {chipLabel}
                       </span>
                       {(item.status === "done" || item.status === "failed") && (
                         <button

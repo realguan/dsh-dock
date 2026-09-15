@@ -1,8 +1,10 @@
 // McpManager.tsx —— Profile 的 MCP 服务器可视化结构化管理工作台（4.7 完整版）。
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
+  AlertTriangle,
   Boxes,
   Check,
+  ChevronDown,
   Code2,
   Copy,
   Database,
@@ -19,9 +21,10 @@ import {
   Wrench,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { fmtClock } from "@/lib/format"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
-import type { McpServerConfig, PluginRuntimeSnapshot } from "@/types/ipc"
+import type { McpNamed, McpProbe, McpServerConfig, PluginRuntimeSnapshot } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Switch } from "@/components/ui/switch"
@@ -81,6 +84,115 @@ const MCP_PRESETS: Array<{
   },
 ]
 
+/** 一次探测的行内呈现形态（2026-09-15 R1b）：成功携能力清单，失败携错误原文。
+ *  两态都**保留**——失败不是"没有结果"，它本身就是结果（且必须持续可见）。
+ *  `at` 是快照时刻：一次探测**不反映后续变更**（ADR-0022 §5），UI 必须标出来。 */
+type ProbeEntry =
+  | { ok: true; probe: McpProbe; at: number }
+  | { ok: false; error: string }
+
+/** 能力清单的一节（Tools / Resources / Templates）。三节都用它，避免三份复制。 */
+function ProbeList({ label, items }: { label: string; items: McpNamed[] }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-label font-semibold text-dim">
+        <span>{label}</span>
+        <span className="rounded-md bg-line px-1 font-mono text-meta text-faint">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        // 空 ≠ 缺：真正的"没这个方法"由 notes 说明，这里只陈述"本节为空"。
+        <p className="mt-0.5 pl-1 text-meta text-faint">—</p>
+      ) : (
+        <ul className="mt-0.5 space-y-0.5 pl-1">
+          {items.map((it) => (
+            <li key={`${it.name}:${it.detail}`} className="flex items-baseline gap-1.5">
+              <span className="shrink-0 font-mono text-meta text-ink">{it.name}</span>
+              {it.detail ? (
+                <span className="truncate text-meta text-faint" title={it.detail}>
+                  {it.detail}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** 探测结果行内卡（2026-09-15 R1b）。
+ *  成功 → 可折叠：表头一行给三个计数（收起时也看得见），展开才是清单。
+ *  失败 → **恒展开**：错误折叠起来等于把"没探测成"藏起来，用户会读成"没能力"。 */
+function ProbeCard({
+  serverName,
+  entry,
+  open,
+  onToggle,
+}: {
+  serverName: string
+  entry: ProbeEntry
+  open: boolean
+  onToggle: () => void
+}) {
+  const { t } = useI18n()
+
+  if (!entry.ok) {
+    return (
+      <div className="rounded-lg border border-danger/30 bg-danger-soft p-2 text-xs">
+        <div className="flex items-start gap-1.5 text-label font-semibold text-danger">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          <span>{t.profiles.mcpProbeFailed(serverName, entry.error)}</span>
+        </div>
+      </div>
+    )
+  }
+
+  const { probe } = entry
+  return (
+    <div className="rounded-lg border border-line bg-bg text-xs">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${t.profiles.mcpProbeToggle}：${serverName}`}
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-2 p-2 text-left"
+      >
+        <span className="flex min-w-0 items-center gap-1.5 text-dim">
+          <Wrench className="size-3 shrink-0 text-brand-deep" />
+          <span className="truncate">
+            {t.profiles.mcpProbeResult(
+              serverName,
+              probe.tools.length,
+              probe.resources.length,
+              probe.templates.length,
+            )}
+          </span>
+        </span>
+        {/* 快照时间必显（ADR-0022 §5）：不标时间，旧快照会被当成"当前能力"。 */}
+        <span className="shrink-0 font-mono text-meta text-faint">
+          {t.profiles.mcpProbeAt(fmtClock(entry.at))}
+        </span>
+        <ChevronDown
+          className={`size-3 shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {probe.notes.length > 0 && (
+        <p className="px-2 pb-2 text-meta text-warn">{probe.notes.join("；")}</p>
+      )}
+      {open && (
+        <div className="space-y-2 border-t border-line p-2">
+          <p className="font-mono text-meta text-faint">
+            {t.profiles.mcpProbeProtocol} {probe.protocolVersion} · {probe.serverName}
+          </p>
+          <ProbeList label={t.profiles.mcpProbeTools} items={probe.tools} />
+          <ProbeList label={t.profiles.mcpProbeResources} items={probe.resources} />
+          <ProbeList label={t.profiles.mcpProbeTemplates} items={probe.templates} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function McpManager({
   profileName,
   onNotice,
@@ -107,6 +219,58 @@ export function McpManager({
   const [deletingName, setDeletingName] = useState<string | null>(null)
   // 删除确认（2026-09-08，U9）：统一走模态确认（原为 window.confirm）
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  /** 正在探测的服务器名（按钮转圈用）。 */
+  const [probingName, setProbingName] = useState<string | null>(null)
+  /** 探测结果按服务器名缓存（2026-09-15 R1b）。 */
+  const [probes, setProbes] = useState<Record<string, ProbeEntry>>({})
+  /** 成功卡的折叠态；失败卡不可折叠（错误不该藏在一次点击后面）。 */
+  const [probeOpen, setProbeOpen] = useState<Record<string, boolean>>({})
+
+  /**
+   * MCP 能力探测（2026-09-15，ADR-0022 **stdio 分支**）：后端主动握手后枚举
+   * Tools / Resources / Resource Templates。
+   *
+   * **结果落成行内卡片**（2026-09-15 R1b，取代原先的"仅通知"呈现）：通知是瞬时
+   * 的、一次只能看一条，而能力清单是要**对照着看**的东西（哪个 server 有哪些
+   * tool）。失败同样落在行内且**恒展开**——三类错误（`streamable-http` 分支未实现、
+   * WSL 客体档不支持、该 profile 未配置此服务器）各有明确文案，吞掉会让用户误以为
+   * "这个服务器没能力"，而其实是"没探测成"，两者处置完全不同。
+   */
+  const handleProbe = async (serverName: string) => {
+    setProbingName(serverName)
+    try {
+      const probe = await api.probeMcpServer(profileName, serverName)
+      setProbes((prev) => ({ ...prev, [serverName]: { ok: true, probe, at: Date.now() } }))
+      setProbeOpen((prev) => ({ ...prev, [serverName]: true }))
+    } catch (e) {
+      setProbes((prev) => ({ ...prev, [serverName]: { ok: false, error: String(e) } }))
+    } finally {
+      setProbingName(null)
+    }
+  }
+
+  /** 丢弃某个 server 的探测结果（配置变了，旧结果就是错的——不能新配置配旧清单）。 */
+  const forgetProbe = (serverName: string) => {
+    setProbes((prev) => {
+      if (!(serverName in prev)) return prev
+      const next = { ...prev }
+      delete next[serverName]
+      return next
+    })
+    setProbeOpen((prev) => {
+      if (!(serverName in prev)) return prev
+      const next = { ...prev }
+      delete next[serverName]
+      return next
+    })
+  }
+
+  // 换 profile = 换一整套 server：整批丢弃，避免把上一个 profile 的能力清单挂在
+  // 同名 server 行上（同名不同配置是常态）。
+  useEffect(() => {
+    setProbes({})
+    setProbeOpen({})
+  }, [profileName])
 
   // 2026-09-08（问题记录095 #1）：主数据失败改面板内错误态（原 catch 走
   // onNotice toast——onNotice 是父组件内联箭头，引用不稳，effect 依赖
@@ -214,6 +378,8 @@ export function McpManager({
       }
 
       await api.saveMcpServer(profileName, srv)
+      // 配置变了，旧探测结果即失效——继续展示等于拿旧清单描述新配置。
+      forgetProbe(srv.name)
       onNotice?.(t.profiles.mcpSaveSuccess(srv.name), "ok")
       setDialogOpen(false)
       await loadData()
@@ -228,6 +394,7 @@ export function McpManager({
     setDeletingName(srvName)
     try {
       await api.deleteMcpServer(profileName, srvName)
+      forgetProbe(srvName)
       onNotice?.(t.profiles.mcpDeleteSuccess, "ok")
       await loadData()
     } catch (e) {
@@ -300,6 +467,7 @@ export function McpManager({
           {servers.map((s) => {
             const activeTools = activeToolsByServer.get(s.name) || []
             const isDeleting = deletingName === s.name
+            const probeEntry = probes[s.name]
 
             return (
               <div
@@ -346,6 +514,24 @@ export function McpManager({
                       >
                         <Edit2 className="size-3" />
                         <span>{t.profiles.mcpEditBtn}</span>
+                      </Button>
+                      {/* MCP 能力探测（2026-09-15，ADR-0022 stdio 分支）：
+                          主动握手后枚举 Tools/Resources/Templates；失败原样透出。 */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        title={t.profiles.mcpProbeBtn}
+                        aria-label={`${t.profiles.mcpProbeBtn}：${s.name}`}
+                        onClick={() => void handleProbe(s.name)}
+                        disabled={probingName === s.name || isDeleting}
+                        className="h-7 gap-1 px-2 text-xs"
+                      >
+                        {probingName === s.name ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : (
+                          <Wrench className="size-3 text-faint" />
+                        )}
+                        <span>{t.profiles.mcpProbeBtn}</span>
                       </Button>
                       <Button
                         size="sm"
@@ -399,6 +585,18 @@ export function McpManager({
                         ))}
                       </div>
                     </div>
+                  ) : null}
+
+                  {/* 探测结果行内卡（2026-09-15 R1b）：成功可折叠、失败恒展开。 */}
+                  {probeEntry ? (
+                    <ProbeCard
+                      serverName={s.name}
+                      entry={probeEntry}
+                      open={probeOpen[s.name] ?? false}
+                      onToggle={() =>
+                        setProbeOpen((prev) => ({ ...prev, [s.name]: !(prev[s.name] ?? false) }))
+                      }
+                    />
                   ) : null}
                 </div>
               </div>

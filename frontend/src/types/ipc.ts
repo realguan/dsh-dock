@@ -269,6 +269,34 @@ export interface McpServerConfig {
   args: string[]
   env: Record<string, string>
   disabled: boolean
+  /** 传输方式（2026-09-15，ADR-0022 前置）：上游 `@deepseek-ai/dsh-mcp-client`
+   *  仅支持 `stdio` 与 `streamable-http`（无 `sse` 字面量）；后端缺省发 `stdio`。
+   *  可选是为兼容既有构造点（表单只填 stdio 字段时无需补全）。 */
+  transport?: "stdio" | "streamable-http"
+  /** `streamable-http` 的 MCP 端点 URL（stdio 恒空）。 */
+  url?: string
+  /** `streamable-http` 的附加请求头（stdio 恒空）。 */
+  headers?: Record<string, string>
+}
+
+/// 一条具名 MCP 能力（tool / resource / template）——2026-09-15，ADR-0022。
+export interface McpNamed {
+  name: string
+  /** tool 取 description；resource 取 uri；template 取 uriTemplate。 */
+  detail: string
+}
+
+/** 一次 MCP 能力探测的结果（stdio 分支）。 */
+export interface McpProbe {
+  /** **服务端协商后**的协议版本（非我方发送值）。 */
+  protocolVersion: string
+  /** 服务端自报名称（缺省回退配置里的 serverName）。 */
+  serverName: string
+  tools: McpNamed[]
+  resources: McpNamed[]
+  templates: McpNamed[]
+  /** 降级说明（如"该服务器不支持 resources"）；空 = 全部枚举成功。 */
+  notes: string[]
 }
 
 // ---------- 系统设置与诊断（4.11 / 4.12 / 4.13） ----------
@@ -390,4 +418,99 @@ export interface HandoffIntent {
 /// （仍在途且未超 TTL）——TTL 只由 Rust 持有，前端与注入脚本都不再各抄一份。
 export interface HandoffSnapshot extends HandoffIntent {
   active: boolean
+}
+
+// ---------- 官方插件策展目录（ADR-0020，2026-09-15）----------
+
+/// 激活方式：由目标包**是否声明 `dsh.bundle`** 决定，是激活契约的唯一依据。
+/// - `auto_bundle`：声明了 → `dsh plugin add` 自行追加进 `dsh.profile.bundles`，
+///   壳**不得**再写 `insert`（会重复挂载）；
+/// - `insert_row`：未声明 → CLI 只装依赖并告警，壳**必须**写挂载行。
+export type CatalogActivation = "auto_bundle" | "insert_row"
+
+/// 互斥族：同族 provider 装第二个会**激活失败**，UI 须走「替换」而非「叠加」。
+export type CatalogFamily = "browser_use" | "computer_use"
+
+/// 目录行的**一步**。
+export interface OfficialCatalogStep {
+  /// 第几步（1 起）：有序组合靠它表达"先 host 层再 Web 层"，也是失败续装的锚点。
+  ordinal: number
+  package: string
+  /// 钉版本后的 spec（形如 `@scope/pkg@0.1.6-alpha.1`），直接交给安装链。
+  spec: string
+  activation: CatalogActivation
+  /// patch 行 id（`insert_row` 时才真正落盘；缺 id 的行永不可再 patch）。
+  rowId: string
+  installed: boolean
+  /// 版本错配提示（如 registry `latest` 落后于运行时）；`null` = 无需打扰用户。
+  versionNotice: string | null
+}
+
+/// 一条目录行（一个可点的策展条目）。
+export interface OfficialCatalogRow {
+  labelZh: string
+  family: CatalogFamily | null
+  requiresNoteZh: string | null
+  steps: OfficialCatalogStep[]
+  /// 与**已装**同族 provider 的冲突包名；非 null = UI 须提示将走替换流程。
+  conflictWith: string | null
+}
+
+// ---------- SSH 远程工作区向导（ADR-0023，2026-09-15） ----------
+
+/** 一个可选择的 SSH 主机（`~/.ssh/config` 的一个具体 alias）。
+ *  **只含非机密字段**：alias、HostName/User/Port/ProxyJump、IdentityFile 的**路径**。
+ *  私钥内容从不在此文件里，这里也没有能承载它的字段。 */
+export interface SshHost {
+  /** `Host` 里的具体别名（不含通配/取反）——即可以当 `host` 用的名字。 */
+  alias: string
+  hostname: string | null
+  user: string | null
+  port: number | null
+  proxyJump: string | null
+  identityFiles: string[]
+}
+
+/** 一次 `list_ssh_hosts` 的结果。 */
+export interface SshHosts {
+  hosts: SshHost[]
+  /** 解析期的降级说明（未跟随的 `Include` / 忽略的 `Match` / 畸形行 / 非法端口）。
+   *  空 = 无降级。有值即表示**下面的列表可能不完整**，UI 必须显示。 */
+  notes: string[]
+}
+
+/** `dsh-ssh` 的五个必填配置键（ADR-0023 §2.3）。
+ *  字段名与 Rust 侧 `ssh_remote::SshTarget` 的 camelCase 序列化一一对应。 */
+export interface SshTarget {
+  /** `~/.ssh/config` 里**已存在**的别名（不是任意 hostname）。 */
+  host: string
+  /** 远端 Node 绝对路径。 */
+  node: string
+  /** 远端 helper 入口绝对路径。 */
+  helper: string
+  /** helper 的 SHA-256（小写 64 位十六进制）；不符即拒绝连接。 */
+  helperHash: string
+  /** 远端默认工作区绝对路径。 */
+  workspace: string
+}
+
+/** 一项预检结论。`key` 是稳定的机器可读键（UI 不解析文案）。 */
+export interface SshProbeCheck {
+  key: string
+  ok: boolean
+  detail: string
+}
+
+/** 一次预检结果。`ok === false` 即**不得生成 profile**（ADR-0023 §2.5）。 */
+export interface SshProbe {
+  ok: boolean
+  checks: SshProbeCheck[]
+}
+
+/** `generate_ssh_profile` 的结果。 */
+export interface SshProfileOutcome {
+  /** 本次是否**新建**了 profile（false = 复用已存在的同名 profile）。 */
+  created: boolean
+  /** 是否**改动了** `cordis.patch.yml`（false = 四行本就齐全，零写入）。 */
+  changed: boolean
 }

@@ -3,6 +3,7 @@ import { motion } from "framer-motion"
 import {
   AlertTriangle,
   Archive,
+  ArchiveRestore,
   Bot,
   CalendarClock,
   Check,
@@ -90,6 +91,7 @@ export function SessionManager({
   const [statusFilter, setStatusFilter] = useState<"all" | "needs_repair" | "archived">("all")
   const [repairingTarget, setRepairingTarget] = useState<string | null>(null)
   const [deletingTarget, setDeletingTarget] = useState<string | null>(null)
+  const [unarchivingTarget, setUnarchivingTarget] = useState<string | null>(null)
   // 删除确认（2026-09-08，U9）：统一走模态确认（原为 window.confirm）
   const [pendingDelete, setPendingDelete] = useState<SessionItem | null>(null)
   const [batchRepairing, setBatchRepairing] = useState(false)
@@ -219,6 +221,23 @@ export function SessionManager({
     }
   }
 
+  // 取消归档（2026-09-15，ADR-0021 路线 A）：经 Host RPC 完成，壳**不直接**改
+  // `storages/workspace.json`（那是 dsh 内存状态的投影，运行中 Host 会整体覆盖）。
+  // 无活跃 Host 时 Rust 侧返回可读错误，这里原样透出——用户需要知道"要先启动
+  // DSH"，而不是遇到一次静默失败。
+  const handleUnarchiveSingle = async (session: SessionItem) => {
+    setUnarchivingTarget(session.id)
+    try {
+      await api.unarchiveSession(session.id)
+      onNotice?.(t.sessions.unarchiveSuccess, "ok")
+      await loadSessions()
+    } catch (e) {
+      onNotice?.(String(e), "warn")
+    } finally {
+      setUnarchivingTarget(null)
+    }
+  }
+
   const toggleProjectCollapse = (proj: string) => {
     setCollapsedProjects((prev) => {
       const next = new Set(prev)
@@ -283,6 +302,7 @@ export function SessionManager({
   const renderSessionRow = (sess: SessionItem) => {
     const isBusy = repairingTarget === sess.id
     const isDeleting = deletingTarget === sess.id
+    const isUnarchiving = unarchivingTarget === sess.id
     const isActive = sess.active === true
     // 活跃会话（运行中）不参与「需自愈」：修复会被 dsh 下次 flush 覆盖。
     const isNeedsRepair = sess.status === "needs_repair" && !isActive
@@ -460,6 +480,25 @@ export function SessionManager({
             三种状态原本在左侧徽标与右侧胶囊各显示一次，右侧还挤占修复/删除位。
             状态统一由左侧徽标表达；此处只在「需要修复且非运行中」时给修复按钮。 */}
         <div className="flex shrink-0 items-center gap-1.5 sm:self-center">
+          {/* 取消归档（2026-09-15，ADR-0021 路线 A）：仅归档行可见。
+              设计上刻意只给「动作」——状态仍由左侧归档徽标表达。 */}
+          {sess.archived === true && (
+            <Button
+              size="sm"
+              title={t.sessions.unarchiveBtn}
+              onClick={() => handleUnarchiveSingle(sess)}
+              disabled={isBusy || isDeleting || isUnarchiving || batchRepairing}
+              className="h-7 gap-1 bg-alt text-white hover:bg-alt/90 px-2.5 text-xs"
+            >
+              {isUnarchiving ? (
+                <LoaderCircle className="size-3 animate-spin" />
+              ) : (
+                <ArchiveRestore className="size-3" />
+              )}
+              <span>{t.sessions.unarchiveBtn}</span>
+            </Button>
+          )}
+
           {!isActive && isNeedsRepair && (
             <Button
               size="sm"

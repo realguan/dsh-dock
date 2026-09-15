@@ -80,6 +80,23 @@ export function localizeLogTimestamp(line: string): string {
 }
 
 /**
+ * 把纪元毫秒格式化成本地时钟 `HH:MM:SS`（2026-09-15，§7 R3）。
+ *
+ * 用途单一但不可省：MCP 探测结果是**一次性快照**（ADR-0022 §5 负面后果明确要求
+ * 「UI 必须标注快照时间」）——不标时间，用户会把一次旧快照当成"当前能力"，
+ * 那正是这个功能最容易给出的错误事实。
+ *
+ * 未用 `toLocaleTimeString()`：它受宿主 locale 影响（可能给出 `下午 3:04:05`
+ * 或 12 小时制），既不可测也不可预期；这里固定 24 小时制 + 零填充。
+ */
+export function fmtClock(ms: number): string {
+  const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return "--:--:--"
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/**
  * 计算分页带缩略的页码列表。
  * - 总页数 <= 7 时全部展示：1 2 3 4 5 6 7
  * - 靠近开头时（currentPage <= 4）：1 2 3 4 5 ... N
