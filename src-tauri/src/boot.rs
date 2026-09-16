@@ -920,13 +920,18 @@ pub(crate) const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// 进程存活且日志无进展的上限：超过即进入**宽限期**（仍不判死）。
 pub(crate) const BOOT_STALL: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// 无进展宽限期（2026-09-16 真机事故后立）：`stall` 到点后**再等这么久**才认卡死。
+/// 无进展宽限期（2026-09-16 真机事故后立；同日按二次实测放宽到 40s）：`stall` 到点后
+/// **再等这么久**才认卡死。
 ///
-/// 为什么必须有：插件树加载失败的 dsh **全程零输出**，直到 boot promise 拒绝才吐错误
-/// （真机实测 34s）。旧行为在 20s 就 SIGKILL，`dsh-shell.log` 因此全空——诊断台只能
-/// 说"详情见日志"，而日志里什么都没有。宽限期把"等错误自己说出来"变成默认行为：
-/// 45s 覆盖 34s 且有富余，真正卡死的上限仍是 `BOOT_TIMEOUT`（90s）。
-pub(crate) const BOOT_STALL_GRACE: std::time::Duration = std::time::Duration::from_secs(25);
+/// 为什么必须有：插件树加载失败的 dsh **全程零输出**，直到 boot promise 拒绝才吐错误。
+/// 真机两次实测都落在这条线上：
+/// - `failed to apply loader entry`（配置缺字段 / MCP 连接失败）：**34s** 后退出码 1；
+/// - `failed to import loader entry`（包没装，`ERR_MODULE_NOT_FOUND`）：**44s** 后退出码 1。
+///
+/// 初版取 25s（合计 45s）只比 44s 多 1 秒余量——等于把"能不能看见真因"押在一次抖动上。
+/// 现取 40s（合计 **60s**，仍远低于硬上限 `BOOT_TIMEOUT` 90s）：真卡死的代价是多等
+/// 40 秒，误判卡死的代价却是 SIGKILL 掉一个**正要说出病因**的进程、日志全空。
+pub(crate) const BOOT_STALL_GRACE: std::time::Duration = std::time::Duration::from_secs(40);
 
 /// dev 双写 MakeWriter：日志同落文件与 stdout（`cargo tauri dev` 终端实时可见）。
 /// 文件写入失败不阻断（追加语义尽力而为），stdout 失败忽略（GUI 无控制台）。

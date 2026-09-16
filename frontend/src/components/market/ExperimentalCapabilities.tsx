@@ -609,6 +609,18 @@ function CapabilityCard({
                 }`}
               >
                 {v.labelZh}
+                {/* 前置未满足的档：**在 chip 上就标出来**（2026-09-16 真机暴露）。
+                    卡片徽标现在说能力的实话（可能是"生效"），若不在 chip 上标，
+                    被挡住的那一档就只剩红字一句可辨——用户切档时看不出区别。 */}
+                {v.prerequisiteMissing && (
+                  <span
+                    aria-label={v.prerequisiteMissing}
+                    title={v.prerequisiteMissing}
+                    className="ml-1.5 inline-block align-middle text-danger"
+                  >
+                    <TriangleAlert className="inline size-3" />
+                  </span>
+                )}
                 {active && (
                   <span
                     aria-hidden
@@ -693,18 +705,24 @@ function CapabilityCard({
       {!run && (variant.state === "partial" || cap.state === "conflict" || variant.state === "disabled") && (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line/60 pt-2.5">
           {/* 与错误块里的「继续剩余步骤」是同一个动作 → 只在没有失败块时出现，避免两个按钮
-              指向同一件事（真机 2026-09-16 暴露）。 */}
-          {!subsumedBy && !failure && (variant.state === "partial" || cap.state === "conflict") && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 gap-1 border-warn/40 px-2 text-micro text-warn"
-              onClick={() => onRepair(variant)}
-            >
-              <Wrench className="size-3" />
-              {t.market.capRepair}
-            </Button>
-          )}
+              指向同一件事（真机 2026-09-16 暴露）。
+              **前置门挡住时不给「修复」**（同日真机暴露）：修复=装包+写行，而这两个动作
+              后端都会拒绝——按钮点下去必失败，属于"假按钮"。真正的出路写在红字里
+              （先装 cua-driver / 换自包含档）。 */}
+          {!subsumedBy &&
+            !blocked &&
+            !failure &&
+            (variant.state === "partial" || cap.state === "conflict") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 border-warn/40 px-2 text-micro text-warn"
+                onClick={() => onRepair(variant)}
+              >
+                <Wrench className="size-3" />
+                {t.market.capRepair}
+              </Button>
+            )}
           {variant.state === "disabled" && (
             <span className="text-micro text-ok">{t.market.capReadyToEnable}</span>
           )}
@@ -877,7 +895,12 @@ function StateBadge({
     partial: { text: t.market.capStatePartial, cls: "border-danger/30 bg-danger-soft text-danger" },
     off: { text: t.market.capStateOff, cls: "border-line bg-wash text-faint" },
   } as const
-  const shown = variant.state
+  // 卡片头徽标说**能力**的实话，不说"当前选中的后端"的状态（2026-09-16 真机暴露）：
+  // 桌面控制里「随包自带运行时」正在生效、用户点了被前置门挡住的「复用已装 cua-driver」，
+  // 旧写法照**选中档**渲染 → 整张卡报「需要修复」，而能力其实是好的（原生档在跑）。
+  // 选中档自身的状态由 chips 上的状态点 / ⚠ 表达。
+  // （`conflict` 已在上面的早退分支拦掉，TS 据此也把类型收窄了，故可直接索引。）
+  const shown: keyof typeof map = cap.state
   return (
     <Badge variant="outline" className={`h-5 px-1.5 text-micro ${map[shown].cls}`}>
       {map[shown].text}

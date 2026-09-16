@@ -134,12 +134,27 @@ describe("⑤ 子集档（Agent Teams 的两档）不得被当成互斥后端", 
       /disabled=\{busy \|\| subsumedBy !== null( \|\| blocked !== null)?\}/,
     )
     expect(dock, "被包含的档不得提供冲突修复入口").toMatch(
-      /!subsumedBy[\s\S]{0,40}variant\.state === "partial"/,
+      // 2026-09-16 追加：前置门挡住的档**也不得给「修复」**——修复=装包+写行，
+      // 后端两道都会拒，按钮点下去必失败（假按钮）。三个排除项必须同处一个条件里。
+      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}variant\.state === "partial"/,
     )
     expect(dock, "被包含的档不得提供独立移除入口").toMatch(/!subsumedBy &&\s*\n?\s*\(variant\.state === "on"/)
     // 状态徽标要显式说"已包含"，而不是照抄底层 On/Disabled。
     expect(dock).toMatch(/if \(variant\.subsumedBy\) \{/)
     expect(dock).toContain("capStateSubsumed")
+  })
+})
+
+describe("⑦b 卡片徽标与 chip 标记（2026-09-16 用户真机验收第二轮）", () => {
+  it("徽标说能力的实话，不照「当前选中的后端」渲染", () => {
+    // 真机：桌面控制里「随包自带运行时」正在生效、用户点了被前置门挡住的
+    // 「复用已装 cua-driver」，旧写法按选中档渲染 → 整张卡报「需要修复」。
+    expect(src).toMatch(/const shown: keyof typeof map = cap\.state/)
+    expect(src, "不得再照选中档渲染徽标").not.toMatch(/const shown = variant\.state/)
+  })
+
+  it("被前置门挡住的档在 chip 上有标记（否则切档看不出区别）", () => {
+    expect(src).toMatch(/v\.prerequisiteMissing && \(/)
   })
 })
 
@@ -166,7 +181,9 @@ describe("⑥ 失败态与状态衔接：不许说假话、不许两个按钮干
   })
 
   it("有失败块时不再渲染「修复」——它与「继续剩余步骤」是同一个动作", () => {
-    expect(src).toMatch(/!subsumedBy && !failure && \(variant\.state === "partial"/)
+    expect(src).toMatch(
+      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}variant\.state === "partial"/,
+    )
   })
 
   it("失败先给一句人话，原始输出折叠在后面（不把 200 字符的 pnpm 输出铺在卡面上）", () => {

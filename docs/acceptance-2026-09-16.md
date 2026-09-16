@@ -62,10 +62,10 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 |:---|:---|:---|
 | Rust 格式 | `cd src-tauri && cargo fmt --check` | 干净 |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | 0 警告 |
-| Rust 测试 | `cargo test` | **532 passed / 0 failed / 5 ignored** |
+| Rust 测试 | `cargo test` | **533 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
 | 前端类型 | `cd frontend && node node_modules/typescript/bin/tsc -b` | 0 错误 |
 | 前端 lint | `pnpm run lint` | 0 警告（152 文件） |
-| 前端测试 | `pnpm run test` | **438 passed / 51 文件** |
+| 前端测试 | `pnpm run test` | **440 passed / 51 文件** |
 | 生产构建 | `pnpm run build` | 通过 |
 
 **机器闸门覆盖的契约**（漏一处即红，不需要人记）：
@@ -101,7 +101,11 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 | **A3** | **真机**：你的 playwright 行现为 `config: {mode: launch, headless: true}`（patch 原文）；克隆体实验证明**带 config 就就绪、去掉即退出码 1**；Rust 写入器/回填测试 3 项 | ✅ 完整验过（含你的真机操作） |
 | **A4** | **真机**：你点过两次 replace（chrome-devtools→playwright、cua-driver-mcp→native）——`plugin-op.log` 有 `remove`/`add` 记录、patch 已无坏行、15:37 就绪 | ✅ 功能已验；层类「关闭即移除」文案视觉待你一眼 |
 | **A5** | Rust `subset_variant_is_subsumed_not_conflicting` + `genuinely_exclusive_variants_still_conflict`；前端门禁 ⑤（「已包含」不提供独立开关） | ⚠️ 逻辑已验，视觉待你一眼 |
-| **A6** | 诊断链**端到端**：克隆体写缺 config 行 → dsh 34s 退出码 1，日志含解析器所需原文；分类单测用**真机日志原文**断言行 id/包名/原因；隔离只对 `dsh-dock-` 行下发（单测）；点按钮是 GUI | ✅ 诊断与判定已验；🖐 一键按钮请你点一次 |
+| **A6** | 诊断链**端到端**（含你 16:0x 的真机复现）：
+① 你手工写行但包已卸载 → 失败措辞是 **`failed to import loader entry`**，我的解析器原先只认 `apply` → 分类落兜底（标题「DSH 工作台启动失败」+「重试」）——**这是你这次验收抓到的真缺陷**，已修（两种措辞都认，单测用你的真机原文）；
+② 二次实测该路径 **44s** 才退出，原宽限 45s 只剩 1 秒余量 → 已放宽到 60s（20+40）；
+③ 坏 profile 下 `--dump-config` 仍可用（exit 0）→ 一键隔离的"删后自证"能过；
+④ 壳自有行才下发隔离（单测） | ✅ 缺陷已修 + 链路已验证；🖐 按钮点击请你来 |
 | **A7** | 你当前 native/playwright 组合即 On 态；「包在行缺 → 修复补 config」由 `ensure_catalog_insert_row_backfills_missing_config` 钉住 | ⚠️ 逻辑已验 |
 | **B1 / B2** | 代码核实：命令层**只有回环 RPC、无任何文件写入路径**（`workspace.json` 不被碰）；5 项单测（wire keys / 响应解析 / 业务错误 / 形状漂移 / 方法名） | 🖐 需活跃 Host + 你的点击 |
 | **C1** | **真机端到端通过**：真实 `@modelcontextprotocol/server-everything@2026.8.31` → 协议 `2025-11-25`、**13 工具 / 7 资源 / 2 模板**、3.76s（新增可复跑 `#[ignore]` 测试） | ✅ |
@@ -133,7 +137,23 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
-**532 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净、`vitest` **438 passed**、生产构建通过。
+**533 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净、`vitest` **440 passed**、生产构建通过。
+
+### 你三张截图给出的结论（2026-09-16 第二轮）
+
+| 截图 | 判定 |
+|:--|:--|
+| ① 桌面控制「需要修复」+ 开关灰 + 红字「本机 PATH 中找不到「cua-driver」…」 | **A2 通过** ✅（前置门与文案都对） |
+| ② 多智能体协同「已包含」+「开关与移除统一由「Web 档」控制」+ 无独立开关 | **A5 通过** ✅ |
+| ③ 启动失败诊断台（`ERR_MODULE_NOT_FOUND`） | **抓到 1 个真缺陷**（见 A6 ①），已修；另暴露两处 UI 问题（见下） |
+
+**截图①顺带暴露的两处 UI 问题（已修，`ca`→新提交）**：
+
+1. **卡片徽标被"当前选中的后端"带偏**：能力其实在生效（native 档在跑），只因你点了被挡住
+   的那一档，整张卡报「需要修复」。改为一律说**能力**的实话；选中档的状态由 chip 表达；
+   被挡的档在 chip 上加 ⚠（悬停即是原因）。
+2. **被前置门挡住的档仍有「修复」按钮**（假按钮）：修复=装包+写行，而后端两道都会拒。
+   已加 `!blocked` 条件——出路写在红字里（先装 `cua-driver` 或换自包含档）。
 
 ### 留给你的（就这些）
 

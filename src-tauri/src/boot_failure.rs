@@ -85,48 +85,63 @@ pub(crate) enum BootFailure {
 
 /// 从 dsh 输出里解析「哪条挂载行把插件树搞挂了」。
 ///
-/// 上游原文形如（真机实测，2026-09-16）：
+/// 上游**两种措辞**都要认（2026-09-16 追加第二种，真机复现抓到的缺口）：
 /// ```text
-/// Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): loader entries failed to apply
-/// Error: failed to apply loader entry dsh-dock--deepseek-ai-dsh-experimental-computer-use-cua-driver-mcp (@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp): mcp-client(cua-driver-mcp): initial connection or tool synchronization failed
+/// failed to apply loader entry <id> (<pkg>): <cause>    ← 条目 apply() 抛错
+/// failed to import loader entry <id> (<pkg>): <cause>    ← 模块解析失败（包没装/路径不对）
 /// ```
-/// 判据只有一个来源：上游这句 `failed to apply loader entry <id> (<pkg>): <cause>`。
-/// 解析不出（措辞变了）→ `None`，由调用方退回文本分类，**不猜**。
-fn parse_failed_loader_entry(text: &str) -> Option<(String, String, String)> {
-    const MARK: &str = "failed to apply loader entry ";
-    // **逐处扫**：同一段日志里这句会出现两次——先是
-    // `plugin tree failed to load: failed to apply loader entry include (cordis:include): …`
-    // （`include` 是 loader 条目名，不是行 id），其后才轮到真正出错的那一行。
-    // 只认"长得像行 id"的那一处（含 `-`），其余跳过。
-    let mut offset = 0usize;
-    while let Some(pos) = text[offset..].find(MARK) {
-        let start = offset + pos + MARK.len();
-        offset = start;
-        let rest = &text[start..];
-        let Some((candidate, tail)) = rest.split_once(char::is_whitespace) else {
-            continue;
-        };
-        // 行 id 形态：壳写的 `dsh-dock-…` 或 bundle 的包名派生 id——都含 `-`；
-        // 尾随冒号是无包名括号时的分隔符，去掉。太长的不是行 id。
-        let row_id = candidate.trim_end_matches(':');
-        if !row_id.contains('-') || row_id.len() > 128 {
-            continue;
-        }
-        let (package, cause) = match tail.trim_start().strip_prefix('(') {
-            Some(after) => match after.split_once(')') {
-                Some((pkg, tail)) => (
-                    pkg.to_string(),
-                    tail.trim_start_matches([':', ' ']).to_string(),
-                ),
-                None => (String::new(), String::new()),
-            },
-            None => (
-                String::new(),
+/// 第二种的真实原文（手工写一条 chrome-devtools 行但包已卸载）：
+/// ```text
+/// dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include):
+///   failed to import loader entry dsh-dock--…-chrome-devtools-mcp (@deepseek-ai/…-chrome-devtools-mcp):
+///     Cannot find package '@deepseek-ai/…-chrome-devtools-mcp' imported from …/profiles/web/
+/// ```
+/// **少认一种的代价**：用户看到兜底的「详情见日志 + 重试」，而这恰好是最不该给重试的一类
+/// （重试必然再失败）。判据只有这两句上游原文；解析不出 → `None`，由调用方退回文本分类，**不猜**。
+const LOADER_ENTRY_MARKS: &[&str] = &[
+    "failed to apply loader entry ",
+    "failed to import loader entry ",
+];
+
+/// 在 `failed to … loader entry ` 之后解析 `<id> (<pkg>): <cause>`；不是行 id 形态则 `None`。
+fn parse_loader_entry_after(rest: &str) -> Option<(String, String, String)> {
+    let (candidate, tail) = rest.split_once(char::is_whitespace)?;
+    // 行 id 形态：壳写的 `dsh-dock-…` 或 bundle 的包名派生 id——都含 `-`；
+    // 尾随冒号是无包名括号时的分隔符，去掉。太长的不是行 id。
+    let row_id = candidate.trim_end_matches(':');
+    if !row_id.contains('-') || row_id.len() > 128 {
+        return None;
+    }
+    let (package, cause) = match tail.trim_start().strip_prefix('(') {
+        Some(after) => match after.split_once(')') {
+            Some((pkg, tail)) => (
+                pkg.to_string(),
                 tail.trim_start_matches([':', ' ']).to_string(),
             ),
-        };
-        let cause = cause.lines().next().unwrap_or_default().trim().to_string();
-        return Some((row_id.to_string(), package, cause));
+            None => (String::new(), String::new()),
+        },
+        None => (
+            String::new(),
+            tail.trim_start_matches([':', ' ']).to_string(),
+        ),
+    };
+    let cause = cause.lines().next().unwrap_or_default().trim().to_string();
+    Some((row_id.to_string(), package, cause))
+}
+
+fn parse_failed_loader_entry(text: &str) -> Option<(String, String, String)> {
+    for mark in LOADER_ENTRY_MARKS {
+        // **逐处扫**：同一段日志里这句会出现多次——先是
+        // `failed to apply loader entry include (cordis:include): …`（`include` 是 loader
+        // 条目名，不是行 id），其后才轮到真正出错的那一行。只认"长得像行 id"的那一处。
+        let mut offset = 0usize;
+        while let Some(pos) = text[offset..].find(mark) {
+            let start = offset + pos + mark.len();
+            offset = start;
+            if let Some(hit) = parse_loader_entry_after(&text[start..]) {
+                return Some(hit);
+            }
+        }
     }
     None
 }
@@ -595,5 +610,47 @@ Error: spawn cua-driver ENOENT\n";
         assert_eq!(row, "dsh-dock-x");
         assert!(pkg.is_empty());
         assert_eq!(cause, "boom");
+    }
+
+    /// **真机回归**（2026-09-16 用户验收抓到）：模块解析失败用的是
+    /// `failed to import loader entry`（不是 `apply`）。只认 `apply` 会让这类失败落
+    /// `unknown` 兜底 → 标题变「DSH 工作台启动失败」、建议变「详情见日志」、还摆一个
+    /// **必然再失败**的「重试」——正是最不该给重试的一类。原文取自 dev home 的
+    /// `dsh-shell.log`（手工写行但包已卸载：`ERR_MODULE_NOT_FOUND`）。
+    const REAL_IMPORT_FAILURE: &str = "\
+Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): failed to import loader entry dsh-dock--deepseek-ai-dsh-experimental-browser-use-chrome-devtools-mcp (@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp): Cannot find package '@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp' imported from /Users/x/.dsh-dock-dev/profiles/web/\n\
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp' imported from /Users/x/.dsh-dock-dev/profiles/web/\n";
+
+    #[test]
+    fn import_wording_is_classified_and_names_the_row() {
+        let payload = BootErrorPayload::classify(
+            "dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include)",
+            REAL_IMPORT_FAILURE,
+        );
+        match &payload.failure {
+            BootFailure::PluginRowFailed {
+                row_id,
+                package,
+                cause,
+            } => {
+                assert_eq!(
+                    row_id,
+                    "dsh-dock--deepseek-ai-dsh-experimental-browser-use-chrome-devtools-mcp"
+                );
+                assert_eq!(
+                    package,
+                    "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp"
+                );
+                assert!(cause.contains("Cannot find package"), "根因：{cause}");
+            }
+            other => panic!("import 措辞也必须点名挂载行，得到 {other:?}"),
+        }
+        assert_eq!(payload.title, "实验插件行导致启动失败");
+        assert!(!payload.actions.contains(&"retry"), "不得给必然失败的重试");
+        // 壳自有行 → 必须给出一键隔离（用户点一下就能回到可用状态）。
+        let with_quarantine = payload.with_quarantine(Some("web"));
+        let plan = with_quarantine.quarantine.expect("应下发一键隔离计划");
+        assert_eq!(plan.profile, "web");
+        assert!(crate::plugins::is_shell_row_id(&plan.row_id));
     }
 }
