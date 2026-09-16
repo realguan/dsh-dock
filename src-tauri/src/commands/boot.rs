@@ -268,11 +268,21 @@ pub fn terminal_action(
                     // 安全模式停不了。此时**不启动**——起了也是同一张错误卡，只会把
                     // "点过按钮却回到原点"变成新的困惑。
                     if ids.is_empty() {
+                        // 文案只陈述**这里真正知道的事实**（独立复核 #7）：行表为空时
+                        // 不能说"全部来自随包/第三方插件包"（0 条行当然一条都不是）。
+                        let why = if rows.is_empty() {
+                            "这个 profile 当前一条挂载行都没有，没有可临时停用的行".to_string()
+                        } else {
+                            format!(
+                                "当前 profile 的 {} 条挂载行全部来自随包 / 第三方插件包，临时停用\
+                                 无从下手（实测整层摘掉会让服务依赖悬空）",
+                                rows.len()
+                            )
+                        };
                         return Err(format!(
-                            "这条失败不来自「实验能力」开关：当前 profile 的 {} 条挂载行全部来自\
-                             随包 / 第三方插件包，临时停用无从下手（实测整层摘掉会让服务依赖悬空，\
-                             反而不启动）。请展开错误卡详情，用「其它出路」处理，或卸载出问题的那个插件。",
-                            rows.len()
+                            "这条失败不在「实验能力」开关的管辖内（本按钮未做任何改动，也没有启动）：{why}。\
+                             出路是处理那个插件本身：在控制中心 → 插件页卸载它，或在该 profile 的清单里\
+                             （`package.json` 的 `dsh.profile.bundles`）去掉它，然后重试。"
                         ));
                     }
                     crate::safe_mode::write_overlay(&data_dir, &profile, &ids).map(|_| {
@@ -306,12 +316,18 @@ pub fn terminal_action(
                 }
                 Err(e) => {
                     // 枚举失败（典型：patch 文件 YAML 语法坏，`--dump-config` exit 1）→
-                    // 如实报错并**指路**到放空分支（它在错误卡"展开详情 → 其它出路"里），不静默。
-                    emit_boot_error(
-                        &handle,
-                        &format!("安全模式执行失败：{e}\n——若 patch 文件语法已坏（连行都读不出来），请展开错误卡详情，用「备份并放空插件配置后启动」。"),
+                    // 如实报错，并**在这张新卡上**给出唯一还能走的那一步：「备份并放空」。
+                    // 为什么必须显式带上动作（2026-09-16 独立复核）：emit_boot_error 是**替换**
+                    // 语义，旧卡（带其它出路）当场消失；不给新卡指定动作，提示就是死指针。
+                    let payload = crate::boot_failure::BootErrorPayload::classify(
+                        &format!(
+                            "安全模式执行失败：{e}\n——行都枚举不出来，通常是该 profile 的 cordis.patch.yml 语法已坏。\
+                             下一步：备份并放空插件配置后再启动（会先留下 .bak-<时间戳> 备份）。"
+                        ),
                         "",
-                    );
+                    )
+                    .with_actions(&["safe_mode_reset"]);
+                    crate::boot::emit_boot_error_payload(&handle, payload);
                     return;
                 }
             }

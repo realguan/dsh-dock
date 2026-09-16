@@ -1098,15 +1098,28 @@ pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str, in
 /// 外部文本经兜底表转换；前端按 `kind` 取本地化文案，`title`/`suggestion` 保留为
 /// 兼容分支。
 pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
-    use tauri::Emitter;
     // 会话目标 profile 一并交给分类器：出错行是壳自己写的时候，错误卡才能给出
-    // 「移除该行并重启」这个**就地**出口（只读诊断留给拿不到目标的场景）。
+    // 「只移除出错的那一行并重启」这个**就地**出口（只读诊断留给拿不到目标的场景）。
     let profile = boot_target_profile(app);
     let payload = crate::boot_failure::BootErrorPayload::classify(detail, log_tail)
         .with_quarantine(profile.as_deref());
+    emit_boot_error_payload(app, payload);
+}
+
+/// 发射**已构造好**的错误载荷。
+///
+/// 为什么要这个入口（2026-09-16，独立复核抓到死指针）：`emit_boot_error` 是**替换**语义
+/// ——它换掉用户正看的那张卡。若失败原因变了、出路也变了，调用方必须能**显式指定**新卡
+/// 的动作集（`BootErrorPayload::with_actions`），否则旧提示会指向一个已经消失的按钮
+/// （典型：安全模式枚举失败后提示"去点放空"，而放空按钮随旧卡一起没了）。
+pub(crate) fn emit_boot_error_payload(
+    app: &tauri::AppHandle,
+    payload: crate::boot_failure::BootErrorPayload,
+) {
+    use tauri::Emitter;
     let value = serde_json::to_value(&payload).unwrap_or_else(|e| {
         tracing::error!("boot:error 载荷序列化失败: {e}");
-        serde_json::json!({ "detail": detail, "log": log_tail })
+        serde_json::json!({ "detail": payload.detail, "log": payload.log })
     });
     if let Some(shell_state) = app.try_state::<Arc<ShellState>>() {
         shell_state.boot.set_error(value.clone());

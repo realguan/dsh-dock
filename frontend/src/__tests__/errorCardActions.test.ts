@@ -15,7 +15,7 @@ import {
 } from "@/components/boot/ErrorCard"
 import { t as zhCN } from "@/content/zh-CN"
 import { enUS } from "@/content/en-US"
-import type { BootFailureKind } from "@/types/ipc"
+import { BOOT_FAILURE_KINDS, type BootFailureKind } from "@/types/ipc"
 
 const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/
 
@@ -117,18 +117,24 @@ describe("新增 kind 的文案键齐备（中英对称）", () => {
   })
 
   it("所有契约中的 failure kind 都有本地化文案（防新增 kind 漏配）", () => {
-    // 与 Rust `BootFailureKind` 序列化值逐一对应（D1 §5 跨层契约）
-    const allKinds: BootFailureKind[] = [
-      "credentials_mismatch",
-      "incompatible_options",
-      "network_unavailable",
-      "symlink_privilege_required",
-      "unknown",
-    ]
-    for (const kind of allKinds) {
+    // 与 Rust `BootFailureKind` 序列化值逐一对应（D1 §5 跨层契约）。
+    // 2026-09-16 收口：清单**派生自** `types/ipc.ts::BOOT_FAILURE_KINDS`（类型层唯一事实源），
+    // 不再手抄一份——手抄表漏掉 `symlink_privilege_required` 时无人发现。
+    //
+    // 唯一豁免：`plugin_row_failed` 的文案由**后端**给（`boot_failure.rs::suggestion`），
+    // 因为它要点名出错的那一行 id（`detail`/`log` 里没有稳定的行 id），
+    // 前端若用自己的固定文案会把这个关键信息丢掉。本测试把豁免写成白名单，防止它变成遮羞布。
+    const backendCopyOnly: BootFailureKind[] = ["plugin_row_failed"]
+    for (const kind of BOOT_FAILURE_KINDS) {
+      if (backendCopyOnly.includes(kind)) {
+        expect(zhCN.error.kinds[kind], `豁免项 ${kind} 不该在前端字典里`).toBeUndefined()
+        continue
+      }
       expect(zhCN.error.kinds[kind], `zh-CN 缺 kind=${kind}`).toBeDefined()
       expect(enUS.error.kinds[kind], `en-US 缺 kind=${kind}`).toBeDefined()
     }
+    // 反向断言：豁免表不得凭空扩张（只允许"文案必须点行 id"的那一类）
+    expect(backendCopyOnly).toEqual(["plugin_row_failed"])
   })
 })
 
@@ -175,9 +181,9 @@ describe("组件接线：run() 确实经分派表调用两条 IPC", () => {
     expect(iDetails, "找不到收起区").toBeGreaterThan(iActions)
     // 每个可点动作都必须有影响文案（zh/en 至少一侧）——否则用户只能点一下才知道代价。
     for (const id of INVOKABLE_ACTIONS) {
-      const zh = zhCN.error.impacts[id]
-      const en = enUS.error.impacts[id]
-      expect(zh ?? en, `动作 ${id} 缺「影响」文案`).toBeTruthy()
+      // 两侧都要求（独立复核：原来的 `zh ?? en` 会让 en 侧缺文案静默绿）。
+      expect(zhCN.error.impacts[id], `动作 ${id} 缺 zh「影响」文案`).toBeTruthy()
+      expect(enUS.error.impacts[id], `动作 ${id} 缺 en「影响」文案`).toBeTruthy()
     }
   })
 

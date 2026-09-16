@@ -381,15 +381,26 @@ export interface LogQueryResult {
 }
 
 /// 启动失败分类（ADR-0012）：tagged enum，`kind` 为判别式。
-/// 2026-09-11（task-52）：补 `symlink_privilege_required`（v1.2.0 D1 新增，
-/// Windows 本地模式符号链接特权不足）——**只加不重排**，与
-/// `boot_failure.rs` 的 serde 序列化值逐字对应。
-export type BootFailureKind =
-  | "credentials_mismatch"
-  | "incompatible_options"
-  | "network_unavailable"
-  | "symlink_privilege_required"
-  | "unknown"
+///
+/// **唯一事实源**（2026-09-16 收口）：`BOOT_FAILURE_KINDS` 是运行期白名单，
+/// `BootFailureKind` 由它派生；`lib/eventPayloads.ts::normalizeFailure` 只认这张表。
+/// 改前两处**各自手抄一份**，于是：
+///   ① `symlink_privilege_required` 只加在类型上、白名单没跟上 ⇒ 该 kind 被静默丢弃，
+///      UI 回退到后端中文文案（en 用户看到中文）；
+///   ② 同一天 `normalizeError` 又漏掉新字段 `advancedActions` ⇒ 「其它出路」整块永不渲染
+///      （两条次级出路在 UI 上完全不可达）——2026-09-16 独立复核抓到。
+/// 结论：**能派生就派生**，不能靠两张手抄表互相追。
+/// 与 `boot_failure.rs` 的 serde 序列化值逐字对应（只加不重排）。
+export const BOOT_FAILURE_KINDS = [
+  "credentials_mismatch",
+  "incompatible_options",
+  "network_unavailable",
+  "symlink_privilege_required",
+  "plugin_row_failed",
+  "unknown",
+] as const
+
+export type BootFailureKind = (typeof BOOT_FAILURE_KINDS)[number]
 
 export interface BootFailure {
   kind: BootFailureKind

@@ -348,6 +348,16 @@ impl BootErrorPayload {
         }
     }
 
+    /// 覆盖**首屏**动作集：`emit_boot_error` 是**替换**语义（换掉用户正看的那张卡），
+    /// 而"失败原因换了、出路也就换了"——旧卡上的按钮不会跟过来。不给新卡指定动作，
+    /// 提示就成了**死指针**（让用户去点一个已经不存在的按钮）。2026-09-16 独立复核抓到：
+    /// 安全模式枚举失败时沿用旧提示，而替换后的卡上并没有"放空"那条出路。
+    pub(crate) fn with_actions(mut self, actions: &[&'static str]) -> Self {
+        self.actions = actions.to_vec();
+        self.advanced_actions = Vec::new();
+        self
+    }
+
     /// 补上"就地修好"的出口：出错行是**壳自己写的**（`dsh-dock-` 前缀）时，下发
     /// 一键隔离（移除该行 + 重启）。`profile` 空（拿不到会话目标）时保持只读诊断——
     /// 宁可不给按钮，也不给一个会删错 profile 的按钮。
@@ -664,6 +674,23 @@ Error: spawn cua-driver ENOENT\n";
         assert!(with_plan
             .advanced_actions
             .contains(&"quarantine_plugin_row"));
+    }
+
+    /// **替换卡必须带上自己的出路**（2026-09-16 独立复核）：`emit_boot_error` 换掉旧卡，
+    /// 旧卡的按钮随之消失——安全模式枚举失败时，新卡唯一的出路就是「备份并放空」。
+    #[test]
+    fn with_actions_rewrites_card_ways_out() {
+        let payload =
+            BootErrorPayload::classify("安全模式执行失败：行表查询失败（dsh 退出码 1）", "")
+                .with_actions(&["safe_mode_reset"]);
+        assert_eq!(payload.actions, vec!["safe_mode_reset"]);
+        assert!(
+            payload.advanced_actions.is_empty(),
+            "显式指定首屏动作时不得残留旧的次级出路（否则又会出现指向已消失机制的按钮）"
+        );
+        let v = serde_json::to_value(&payload).unwrap();
+        assert_eq!(v["actions"], serde_json::json!(["safe_mode_reset"]));
+        assert_eq!(v["advancedActions"], serde_json::json!([]));
     }
 
     /// 解析器不得被杂讯骗到：没有上游那句原文时**不猜**（宁可退回 unknown）。

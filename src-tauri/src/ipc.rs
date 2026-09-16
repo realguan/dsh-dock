@@ -426,6 +426,15 @@ mod gate_tests {
                 quarantine: None,
             }
         );
+        // 独立复核 #6：这个结构此前三层都没有形状闸门，而它承载"点一下删掉出问题的那一行"
+        // 的破坏性动作——漂移会变成删错 profile 的静默风险（camelCase：row_id → rowId）。
+        assert_shape!(
+            "QuarantineRow",
+            crate::boot_failure::QuarantineRow {
+                profile: String::new(),
+                row_id: String::new(),
+            }
+        );
         assert_shape!(
             "ProfileSummary",
             ProfileSummary {

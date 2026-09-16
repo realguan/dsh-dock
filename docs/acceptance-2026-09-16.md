@@ -19,6 +19,9 @@
 > 再按 A→B→C→D→E→F 走；否则普通启动会因为你 profile 里那条坏行而失败，容易被误当成新缺陷。
 > **验收中我已经修掉的三个真缺陷**（都不需要你操作，只作背景）：import 措辞未识别 → 已修；
 > 错误卡动作拿不到 profile → 已修；`--patch` 参数顺序 → 已修。
+> **独立复核抓到并已修 1 个阻断级缺陷**（见 §7.5 S1 末）：新字段 `advancedActions`
+> 被 `eventPayloads.ts::normalizeError` 的字段白名单漏掉 ⇒「展开详情 → 其它出路」整块**永不渲染**、
+> 两条次级出路在 UI 上不可达（现已修 + 加防漂移闸门，并用「先红后绿」证明门禁有效）。
 > **你提的第四条已改**（不是缺陷，是交互收敛）：插件行报错的错误卡原先首屏摆三个按钮，
 > 已按"提供一个按钮即可"收敛为**首屏恰好一个**「停用全部插件并启动」，其余两条出路收进
 > "展开详情 → 其它出路"（**可达性不变**，见 §7.5 S1）。
@@ -96,10 +99,10 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 |:---|:---|:---|
 | Rust 格式 | `cd src-tauri && cargo fmt --check` | 干净 |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | 0 警告 |
-| Rust 测试 | `cargo test` | **542 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
+| Rust 测试 | `cargo test` | **543 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
 | 前端类型 | `cd frontend && node node_modules/typescript/bin/tsc -b` | 0 错误 |
 | 前端 lint | `pnpm run lint` | 0 警告（153 文件） |
-| 前端测试 | `pnpm run test` | **448 passed / 52 文件** |
+| 前端测试 | `pnpm run test` | **453 passed / 52 文件** |
 | 生产构建 | `pnpm run build` | 通过 |
 
 **机器闸门覆盖的契约**（漏一处即红，不需要人记）：
@@ -178,7 +181,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
-**542 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **448 passed**、生产构建通过。
+**543 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **453 passed**、生产构建通过。
 
 ### 你三张截图给出的结论（2026-09-16 第二轮）
 
@@ -456,15 +459,28 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 > **状态**：✅ **我已验收**（证据与复跑命令见 §1.5）
 
 - **步骤**：让启动失败（例如手工写一条缺 config / 包已卸载的挂载行后重启）。
-- **期望**：错误卡**默认收起**，首屏给：标题 + 一行摘要 + **恰好一个**动作
+- **期望**：错误卡**默认收起**，首屏给：标题 + 一行摘要 + **恰好一个**修复类动作
   「**停用全部插件并启动**」+ 一句"它会造成什么"（**没有** `重试`）；
   展开"详情 → 其它出路（一般用不到）"里才是 `只移除出错的那一行并重启` /
   `备份并放空插件配置后启动`。
-- **已验**：分类（`apply`/`import` 两种措辞）＋ **首屏动作数 = 1**（Rust
+  （重选页另有一个**导航**按钮「返回重选」——它不是修复动作，别按"只有一个按钮"去数它。）
+- **已验**：分类（`apply`/`import` 两种措辞）＋ **首屏修复类动作数 = 1**（Rust
   `plugin_row_failure_first_screen_has_exactly_one_action`）＋ 次级出路仍在
   （`quarantine_action_only_for_shell_owned_rows`）＋ 默认收起 ＋ 渲染分层门禁
   （`errorCardActions.test.ts`）＋ 空枚举诚实门（无可停行 → 不空启动、如实报错）；
   真机 A/B：坏 profile + overlay → 就绪，原样启动 → exit 1。
+- **同日后半段：独立复核抓到并已修一个阻断级缺陷**——`advancedActions` 被边界规整函数
+  `eventPayloads.ts::normalizeError` 的字段白名单漏掉，于是「其它出路」整块**永不渲染**，
+  两条次级出路在 UI 上彻底不可达（`safe_mode_reset` 在前端没有第二个调用点）。
+  修法：放行该字段 + 新增**防漂移闸门**（用 `ipc-shapes.json` 的字段表逐键验"放行"，
+  并以「临时移除放行 → 该组 2 条测试红 → 还原为绿」证明门禁真的有效）；
+  顺带修同源旧缺陷：kind 白名单手抄一份且漏了 `symlink_privilege_required`（D1 分类被静默丢弃），
+  改为由 `types/ipc.ts::BOOT_FAILURE_KINDS` 派生。另修两处：替换卡**死指针**
+  （枚举失败后的新卡现在自带「备份并放空插件配置后启动」，见
+  `BootErrorPayload::with_actions` / `boot::emit_boot_error_payload`）；`QuarantineRow`
+  补上三层形状闸门（此前无闸门）；空计划文案改成只陈述已知事实。**未修一项（已记档）**：
+  `plugin_row_failed` 两本字典都还没文案 ⇒ en-US 用户看到中文标题/建议（要正确本地化得先把
+  行 id 收进前端结构化字段 + 字典支持函数型文案，属独立意图；见 ADR-0025 §7 末）。
 - **判定**：✅ 我已验收——无需你操作（想抽查按 §1.5 的复跑命令）
 
 ### S2 🖐 待你验收 安全模式的可见性与出口（横幅 + 退出）

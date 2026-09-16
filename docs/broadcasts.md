@@ -309,10 +309,26 @@
     `cordis.patch.yml` 的那些行）；第三方插件包（`dsh.bundle.patch`，如 Agent Teams 三层）不在其中
     ——ADR-0025 §4 已实测整层摘掉会让服务依赖悬空（`exit 1`）。这类坏行的出路是"卸掉那个插件包"，
     本轮**未实现**（触发条件 = 用户报"安全模式也起不来"）。
+  - **独立复核（第三方子 agent 反方核查）抓到 1 个阻断级 + 2 个中等缺陷，已全修**：
+    **①「其它出路」整块永不渲染**——`lib/eventPayloads.ts::normalizeError` 是按字段手写的边界
+    白名单，新字段 `advancedActions` 被漏掉 ⇒ 两条次级出路在 UI 上**彻底不可达**（`safe_mode_reset`
+    在前端没有第二个调用点＝YAML 写坏的救生门失效），而 Rust 契约测试 / ipc-shapes 形状闸门 /
+    ErrorCard 源码门禁**全绿**：它们只证明"线上有这字段""组件会渲染它"，不证明**边界放行了它**。
+    修法：放行字段 + **防漂移闸门**（用 `ipc-shapes.json` 的字段表逐键验"放行"，并以"临时移除放行
+    → 2 条测试红 → 还原为绿"证明门禁有效）；**② 替换卡死指针**——`emit_boot_error` 是替换语义，
+    枚举失败后的新卡没有"其它出路"，提示却让用户去点它 ⇒ 新增 `BootErrorPayload::with_actions`
+    + `boot::emit_boot_error_payload`，让新卡**自带**唯一还能走的那一步（首屏一个「备份并放空
+    插件配置后启动」）；**③ 同源旧缺陷**：kind 白名单手抄一份且漏了 `symlink_privilege_required`
+    （D1 的分类被静默丢弃、回退中文文案）⇒ 改为由 `types/ipc.ts::BOOT_FAILURE_KINDS` 派生。
+    另修：`QuarantineRow` 补三层形状闸门（此前无闸门，而它承载破坏性删行动作）、空计划文案
+    只陈述已知事实、`impacts` 门禁要求 zh/en 双侧齐备。
+    **复核发现但本轮未修（已记档 ADR-0025 §7）**：`plugin_row_failed` 两本字典都还没文案 ⇒
+    en-US 用户看到中文标题/建议（正确本地化需先把行 id 收进前端结构化字段 + 字典函数型文案）。
   - **凭据**：Rust `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 ·
-    `cargo test` **542 passed** / 0 failed / 8 ignored；前端 `tsc -b` 0 错误 · `oxlint` 0 warning
-    （153 文件）· `vitest` **448 passed / 52 文件** · `pnpm run build` 通过；
-    契约面新增 `advancedActions`（Rust struct ↔ `ipc-shapes.json` ↔ TS 两侧接口，四处同步）。
+    `cargo test` **543 passed** / 0 failed / 8 ignored；前端 `tsc -b` 0 错误 · `oxlint` 0 warning
+    （153 文件）· `vitest` **453 passed / 52 文件** · `pnpm run build` 通过；
+    契约面新增 `advancedActions`（Rust struct ↔ `ipc-shapes.json` ↔ TS 两侧接口，四处同步）
+    与 `QuarantineRow` 形状条目。
 - **诚实留白**：WSL 客体档三个命令仍**显式报错**（不回落宿主）；`inspector` /
   `ptc-runtime-python` / 三个库包**有意不在策展集内**（理由见 ADR-0020 §7.5 末）；
   「改完重启该 Profile 才生效」依赖用户点「立即重启」（复用既有重启确认链，不自动重启）。

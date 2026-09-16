@@ -7,6 +7,7 @@
 //
 // 规整原则：缺字段补默认、未知字段忽略、无法识别的整体丢弃——对「dsh/壳先行升级
 // 新增字段」前向兼容。
+import { BOOT_FAILURE_KINDS as IP_BOOT_FAILURE_KINDS } from "@/types/ipc"
 import type { BootFailure, ClientUpdate, QuarantineRow } from "@/types/ipc"
 import type {
   AppUpdateEvent,
@@ -79,12 +80,12 @@ export function normalizeVersions(payload: unknown): VersionsSnapshot | null {
 
 /// 已知分类（ADR-0012）：只接受白名单内的 kind，未识别的值降级为 undefined——
 /// 后端口径变了也不能让前端拿到一个「看起来有分类」的假值。
-const BOOT_FAILURE_KINDS: readonly string[] = [
-  "credentials_mismatch",
-  "incompatible_options",
-  "network_unavailable",
-  "unknown",
-]
+///
+/// **白名单来自类型层**（`types/ipc.ts::BOOT_FAILURE_KINDS`，2026-09-16 收口）：
+/// 手抄两份的写法已经两次出事——`symlink_privilege_required` 被静默丢弃（fallback 成
+/// 后端中文文案）、新字段 `advancedActions` 在 `normalizeError` 里被漏掉（「其它出路」
+/// 永不渲染）。派生之后，加一个 kind 只需改类型层一处。
+const BOOT_FAILURE_KINDS: readonly string[] = IP_BOOT_FAILURE_KINDS
 
 function normalizeFailure(value: unknown): BootFailure | undefined {
   if (typeof value !== "object" || value === null) return undefined
@@ -102,12 +103,20 @@ export function normalizeError(payload: unknown): BootErrorEvent | null {
   const actions = Array.isArray(p.actions)
     ? p.actions.filter((a): a is string => typeof a === "string")
     : undefined
+  // 次级出路（2026-09-16）：**必须在这里放行**，否则 ErrorCard 的
+  // `payload.advancedActions ?? []` 恒为空 ⇒「展开详情 → 其它出路」整块永不渲染，
+  // 「只移除出错的那一行」与「备份并放空插件配置」两条出路在 UI 上彻底不可达
+  // （2026-09-16 独立复核抓到的真缺陷；形状与 `actions` 同口径）。
+  const advancedActions = Array.isArray(p.advancedActions)
+    ? p.advancedActions.filter((a): a is string => typeof a === "string")
+    : undefined
   return {
     failure: normalizeFailure(p.failure),
     title: typeof p.title === "string" ? p.title : undefined,
     detail: typeof p.detail === "string" ? p.detail : undefined,
     suggestion: typeof p.suggestion === "string" ? p.suggestion : undefined,
     actions,
+    advancedActions,
     log: typeof p.log === "string" ? p.log : undefined,
     quarantine: normalizeQuarantine(p.quarantine),
   }

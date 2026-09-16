@@ -24,6 +24,7 @@ import type {
   PluginRowState,
   PnpmDiagnosticInfo,
   ProfileSummary,
+  QuarantineRow,
   RepairOutcome,
   SafeModeState,
   SessionItem,
@@ -55,6 +56,15 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       advancedActions: true,
       log: true,
       quarantine: true,
+    })
+  })
+
+  it("QuarantineRow（camelCase，ADR-0025/一键隔离）", () => {
+    // 独立复核 #6：这个结构此前**三层都没有闸门**，而它承载"点一下删掉出问题的那一行"
+    // 的破坏性动作——形状漂移会变成删错 profile 的静默风险。
+    expectShape<QuarantineRow>("QuarantineRow", {
+      profile: true,
+      rowId: true,
     })
   })
 
