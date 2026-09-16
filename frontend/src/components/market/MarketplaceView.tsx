@@ -439,6 +439,10 @@ export function MarketplaceView({
                     plugin={plugin}
                     categoryLabel={catLabel}
                     installedProfiles={installedProfs}
+                    // 2026-09-15（ADR-0020 单源收敛）：社区 registry 无 officialness
+                    // 字段，卡片不再猜；官方性由策展目录独家拥有并在「官方实验室」
+                    // Tab 据权威数据渲染。此处明确传 false，不给启发式留回流缝。
+                    official={false}
                     onInstall={(p) => setInstallTarget(p)}
                     onOpenExternal={handleOpenExternal}
                   />

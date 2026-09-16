@@ -118,6 +118,8 @@
   `probe-cache.json` `--no-open` 探测缓存（2026-09-01；可丢失可重建的运行时缓存，
   损坏/缺失回退探测不阻断 boot）· `engines/` 引擎目录（2026-09-03，ADR-0010：
   `PNPM_HOME` 指向的壳管理运行时资产 node/pnpm/dsh；可丢失可重建，缺失走引导）·
+  `pluginRegistry` 插件安装源偏好与 `pluginRegistryLastGood` 上次可用源
+  （2026-09-16，ADR-0006 §6：auto 先官方、失败换源、成功才记），
   `dismissedUpdate` 升级提示条已忽略版本键（2026-09-04，ADR-0010 升级呈现；
   形如 `dsh@<ver>`，同键不再弹非阻断提示条）· `~/.dsh-dock-dev`（dev 构建的 dsh
   home，2026-09-10，ADR-0015：与正式 `~/.dsh` 隔离，消除"开发期泄漏锁死正式包"）·
@@ -135,9 +137,12 @@
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
   `pnpm-workspace.yaml` 顶层键 `dangerouslyAllowAllBuilds: true` 单键受控写入
   （写入例外 #5 重立，2026-09-09，ADR-0013：pnpm 构建脚本**默认批准**，非三件套
-  成员；原 allowBuilds 逐包裁决链已退役）；`.credentials.yaml`
-  保持 0600、顶层仅三键、原子写；会话目录只读不删；`profiles/node_modules` 符号链接
-  农场不得直写（陷阱清单见 roadmap §1）。
+  成员；原 allowBuilds 逐包裁决链已退役）；**非模板名 profile 的 app-bundle 声明
+  单键追加（2026-09-15，ADR-0023 §1.3）：与例外 #2 同一机制、同一代码路径，唯一
+  差别是 bundle **取值**——SSH 远程工作区取 `@deepseek-ai/dsh-headless` 而**不是**
+  `@deepseek-ai/dsh-web-app`**（Web 视图非远端感知，声明 web-app 会承诺一个已被
+  否决的形态）；`.credentials.yaml` 保持 0600、顶层仅三键、原子写；会话目录只读不删；
+  `profiles/node_modules` 符号链接农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃 / **硬杀（`SIGKILL`、强制退出）**都收干净
   子进程，不留孤儿（2026-09-10 扩展，ADR-0015：原口径只覆盖"父进程临死前能跑代码"的
   路径，硬杀会逃逸成持着会话写锁的孤儿——**新增 spawn 一律经 `lifecycle::spawn`/`run`**，
@@ -147,41 +152,22 @@
 
 ## 7. IPC 与网络面（例外册，登记制）
 
-- **IPC 命令登记**（新命令先登记再实现；55 条，清单一致性另有 cargo test 闸门）：
-  核心与工作台：`choose_profile` `terminal_action` `get_update_status` `check_updates`
-  `list_dsh_versions`（packument 全版本 + 通道归类，2026-09-09）`get_client_update`
-  `client_update_check` `client_update_apply` `open_external` `open_workbench_in_browser`
-  `get_workbench_url` `boot_in_wsl` `choose_mode` `get_boot_status`（启动态缓存，防竞态，2026-09-04）。
-  Profile：`list_profiles` `get_profile_detail` `create_profile` `copy_profile`
-  `rename_profile` `delete_profile` `set_default_profile` `get_default_profile`
-  `switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
-  插件：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
-  `update_plugin` `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates`
-  `list_plugin_versions` `list_all_plugins` `copy_plugin_config`（patch 行原样复制，
-  写入例外 #4，ADR-0009 五修 2026-08-30）。
-  会话/控制台/凭据/设置/MCP（2026-08-31 批）：`list_sessions` `repair_session`
-  `repair_all_sessions` `delete_session` `get_shell_settings` `set_shell_settings`
-  `get_system_diagnostics` `get_app_logs` `get_credentials_raw` `save_credentials_raw`
-  `get_credentials_summary` `set_credential_key` `get_dsh_settings_raw`
-  `save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`。
-  市场：`fetch_market_registry`（2026-08-31）。
+- **登记册已迁出**：[`docs/contracts/ipc-and-network-register.md`](docs/contracts/ipc-and-network-register.md)
+  ——IPC 命令清单（含各自落地日期与边界）＋ 网络面用途登记 ＋ 文件系统读取域登记。
+  迁出理由同 §9：
+  登记册随功能**线性增长**，与 §11.4 的固定行数预算结构性冲突（2026-09-15 迁出时为
+  249/250，**再加一条登记即越界**）。**规则留在本节，登记册在册**；两处禁双源。
+- **新增 IPC 命令**：先登记（本册 + `ipc.rs::COMMANDS`）再实现；三处同步（`ipc.rs`
+  COMMANDS → `lib.rs` handler + `capabilities/default.json`）全由机器闸门兜底
+  （build.rs 生成 + `ipc.rs` gate_tests，漏处测试红），不必靠人记。
+- **唯一网络面 = `updates.rs`**（ADR-0006）；其余模块禁触网，**新网络需求先登记**（登记册 §二）；
+  外链域名在 `EXTERNAL_URL_HOSTS` 登记；机器投影必须同步到 `network_gate.rs` 的 `EXEMPTIONS`。
+  **回环调用必须附 `/api` 会话 Cookie**：dsh 0.1.6+ 在 Host 栅栏之外还有 `browserAuth`
+  （缺失恒 401）；Cookie 由 boot 期 launch token 兑换后留在 `ShellState.workbench_cookie`
+  （**仅内存、不打日志**；2026-09-15 实测更正，台账复现点 11）。
 - 前端经 `window.__TAURI__.core.invoke` / `event.listen` 消费（remote 页面不享默认授权）；
   事件 = `boot:step` / `boot:error` / `boot:update` / `boot:progress` / `app:update` / `app:settings-changed`
   （仅 main/about/profiles，capability 授权）。
-- **新增 IPC 三处同步**（`ipc.rs` COMMANDS → `lib.rs` handler + `capabilities/default.json`）：
-  全由机器闸门兜底（build.rs 生成 + `ipc.rs` gate_tests，漏处测试红），不必靠人记。
-- **唯一网络面 = `updates.rs`**（ADR-0006）；其余模块禁触网，新网络需求先在此登记；
-  外链域名在 `EXTERNAL_URL_HOSTS` 登记。已登记用途：**插件运行态回环只读查询**
-  （`plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list`，2s 超时、
-  仅活跃会话、一次性快照不订阅——2026-08-29）；**工作台 Token 环回兑换**
-  （`boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET、5s、redirects=0；
-  2026-09-04 落地、2026-09-11 补登记——原漏登）；**插件更新检查 / 市场 Registry 拉取**
-  （`updates.rs` `npm_packument_versions` / `fetch_market_registry`，镜像链与超时同
-  dsh 版本检查）；**客户端自更新**（`updates.rs::APP_RELEASE_FEED` + `updater.rs`，
-  清单端点在 `tauri.conf` 的 `plugins.updater.endpoints`）；**引擎引导**（ADR-0010）：
-  壳内置 pnpm12 经 `runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：
-  Windows 免符号链接特权，ADR-0017）下载 dsh（镜像 env 注入），WSL 客体仍同源 `add -g`；**WSL 客体管理面**（ADR-0016）：客体插件装卸/更新发生在客体
-  `dsh plugin`（客体 pnpm）子进程内，更新检查仍走 `updates.rs`，**壳不新增网络客户端**。
 
 ## 8. AI 交互约束
 
@@ -204,26 +190,9 @@
 影响契约 / 架构 / 安全边界的决策必须**先立 ADR 再动代码**（`docs/adr/`，模板
 TEMPLATE.md；立项依据见姊妹仓库 dsh-launcher ADR-0004/0005）。
 
-| ADR | 一行结论 |
-|:---|:---|
-| [0001](docs/adr/0001-ready-wait-process-liveness.md) | 就绪等待 = 进程存活感知，非死等 |
-| [0002](docs/adr/0002-webview-memory-policy.md) | WebView 长会话内存 = 注入 CSS 缓解 |
-| [0003](docs/adr/0003-external-link-and-navigation.md) | 外链 = 系统浏览器兜底 + 白名单拦截 |
-| [0004](docs/adr/0004-wsl-guest-dsh-install.md) | WSL 客体内安装，Windows 侧壳不触网 |
-| [0005](docs/adr/0005-pnpm-global-bin-dir.md) | pnpm 需注入 global-bin-dir，失败回退 npm |
-| [0006](docs/adr/0006-network-surface-and-mirror-chain.md) | 唯一网络面 + 镜像链 + 下载双超时 |
-| [0007](docs/adr/0007-update-entry-menu-vs-tray.md) | 更新入口 macOS=菜单 / 非 macOS=托盘 |
-| [0008](docs/adr/0008-frontend-framework.md) | React 生态白名单与前端三红线 |
-| [0009](docs/adr/0009-profile-manager.md) | Profile 生命周期：创建走 dsh plugin 转发链，其余文件层；pnpm boot 硬依赖 |
-| [0010](docs/adr/0010-engine-inversion.md) | 运行时归属倒置：引擎=壳资产（pnpm12 引导），探测层退役；升级全显式、离线可启动 |
-| [0011](docs/adr/0011-plugin-management-boundary.md) | 插件职责边界：跨 profile 归插件中心、单 profile 归详情；安装来源三形态白名单（npm / github / tarball），更新检查保持严格 npm 判别 |
-| [0012](docs/adr/0012-typed-boot-failure.md) | 启动失败错误类型化：boot 路径引入 `BootFailure` 枚举，子串分类降级为 `from_legacy_detail` 兜底；其余模块 `Result<_, String>` 不动 |
-| [0013](docs/adr/0013-default-build-approval.md) | 构建脚本默认批准：profile 级 `dangerouslyAllowAllBuilds`，审批门解析/逐包裁决链退役 |
-| [0014](docs/adr/0014-restart-handoff-continuity.md) | 重启/切换交接带：交接意图贯穿两窗 + 启动代际闸门 + 会话槽先收后落 + Windows 进程树收口 |
-| [0015](docs/adr/0015-child-process-lifecycle-ownership.md) | 子进程生命周期归属：硬杀收口（unix 生命线 watcher / Windows Job Object）+ 启动期基于内核锁的孤儿清扫；spawn 收敛到 `lifecycle` 单点 seam |
-| [0016](docs/adr/0016-wsl-guest-management-plane.md) | 管理面下沉 WSL 客体：控制中心跨环境一致（读/写/原语双侧同构，按运行模式择源） |
-| [0017](docs/adr/0017-dsh-project-local-install.md) | dsh 改为 project 内安装 + 自建 shim：结构性绕开 pnpm 全局 hash 符号链接，Windows 普通账户免提权 |
-| [0018](docs/adr/0018-dsh-module-proxy-mode-on-windows.md) | Windows 以「模块代理」模式启动 dsh：绕开 dsh 启动期建 481 个符号链接所需特权（ADR-0017 的续篇） |
+**ADR 索引（全部编号与一行结论）见 [`docs/adr/README.md`](docs/adr/README.md)。**
+（2026-09-15 由本节迁出：索引随 ADR 数量线性增长，与 §11.4 全文行数预算结构性冲突——
+当时恰为 250 行，补一行索引即越界；按 §11.4「回收」机制迁出，规则仍留在本节。）
 
 ## 10. 试验协议
 

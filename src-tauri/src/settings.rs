@@ -56,6 +56,12 @@ pub struct ShellSettings {
     /// 已登记）。形如 "dsh@1.6.0" / "client@0.9.5"——同键不再弹非阻断提示条
     ///（「拒绝后不再弹窗、无硬惩罚」），新版本键不受影响。
     pub dismissed_update: Option<String>,
+    /// 插件安装源偏好（2026-09-16，ADR-0006 §6；`None`/未知值 = `auto`）：
+    /// `auto` 先官方、失败换源一次；`official` / `configured` 只用一个源且不换。
+    pub plugin_registry: Option<String>,
+    /// 上次**成功**用过的源（`auto` 时用来排序首试，避免每次都先失败一次）。
+    /// 只在成功时写——抖动不得带偏记忆。
+    pub plugin_registry_last_good: Option<String>,
 }
 
 fn settings_path(data_dir: &Path) -> std::path::PathBuf {
@@ -126,6 +132,8 @@ mod tests {
             show_floating_switcher: Some(false),
             switcher_shortcut: Some("shift_p".to_string()),
             dismissed_update: Some("dsh@1.6.0".to_string()),
+            plugin_registry: Some("official".to_string()),
+            plugin_registry_last_good: Some("configured".to_string()),
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);
@@ -143,6 +151,8 @@ mod tests {
             show_floating_switcher: None,
             switcher_shortcut: None,
             dismissed_update: None,
+            plugin_registry: None,
+            plugin_registry_last_good: None,
         };
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir), s);

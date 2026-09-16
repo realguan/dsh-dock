@@ -5,9 +5,266 @@
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
 
 use crate::boot::{active_session_profile, ShellState};
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::Manager;
+
+/// 宿主前置探测：策展集要求、但**dsh 子进程 PATH 里找不到**的可执行文件名。
+///
+/// 判据与 `spawn_dsh` 给子进程的 PATH **同源**（`dsh_child_path`）——否则会出现
+/// "壳说在、dsh 找不到"的漂移，而这里判错的代价是用户装完 profile 起不来
+/// （2026-09-16 真机事故，ADR-0020 §7.5）。探不到工具链（引擎半就绪）时按**缺失**
+/// 处理：宁可不给装，也不给装出一个起不来的 profile。
+fn missing_prerequisites(data_dir: &Path, packages: &[&str]) -> Vec<String> {
+    let path_env = match crate::engines::resolve_toolchain(data_dir) {
+        Ok(crate::engines::DshToolchain::Engine { node_bin, .. }) => {
+            crate::resolve::dsh_child_path(&node_bin, data_dir)
+        }
+        Err(_) => String::new(),
+    };
+    let mut missing: Vec<String> = Vec::new();
+    for package in packages {
+        if let Some(command) = crate::official_catalog::required_command(package) {
+            if !crate::resolve::command_on_path(command, &path_env)
+                && !missing.iter().any(|m| m == command)
+            {
+                missing.push(command.to_string());
+            }
+        }
+    }
+    missing
+}
+
+/// 策展集里出现过的**全部包名**（前置探测的输入集：单源在目录数据，不另立清单）。
+fn catalog_packages() -> Vec<&'static str> {
+    crate::official_catalog::CAPABILITIES
+        .iter()
+        .flat_map(|cap| cap.variants.iter())
+        .flat_map(|variant| variant.packages.iter().copied())
+        .collect()
+}
+
+/// 策展条目的**挂载行写入**（2026-09-15 立；2026-09-16 §7.4 改为**写前当场重判**，
+/// §7.5 加**必写 `config`** 与**宿主前置硬门**）：
+/// 把一条 `- insert: [{id, name, config?}]` 并入 profile 的 `cordis.patch.yml`（经
+/// `plugins.rs::PatchFile`：覆写前备份 ＋ 原子替换 ＋ 未改条目原文保真；**幂等**，
+/// 同 id 且必需 `config` 已齐则零写入返回 `changed: false`）。
+///
+/// **为什么必须在这里重判**：激活方式由目标包的 `package.json` 决定，而目录是**安装前**
+/// 拉的——那时包还没进 `node_modules`，任何包都只会被判成"未声明 `dsh.bundle`"。于是
+/// profile 层包（如 `auto-review`）会被误判成需要写行，装完就多写一条 → **同一插件挂两份**。
+/// 本命令在 `dsh plugin add` **完成之后**才被调用，故在这里重读分类才是准的：声明了
+/// `dsh.bundle` 就**拒绝写行**并如实回报 `autoActivated: true`（ADR-0020 §2.8 唯一依据）。
+///
+/// **为什么还要前置硬门**：`cua-driver-mcp` 缺外部 `cua-driver` 时，写行 = 装出一个
+/// 起不来的 profile（插件树加载阶段 `spawn cua-driver` ENOENT）。前端会禁用开关，
+/// 但命令层必须**同样拒绝**——前端是呈现，不是闸门。
+///
+/// **职责边界**：本命令只写行、**不负责安装**——安装仍走既有 `install_plugin`
+/// （`dsh plugin add` 转发链）与前端串行安装队列。前端按变体的 `steps` **按序**执行
+/// 「装 → 确保行」，任一步失败即停在一致态（可续装）。
+///
+/// 世界择源同 `list_experimental_capabilities`：WSL 客体档暂不支持（**显式报错，不回落本地写**
+/// ——写错 profile 比报错严重得多）。
+#[tauri::command]
+pub async fn apply_official_patch_row(
+    app: tauri::AppHandle,
+    profile: String,
+    row_id: String,
+    package: String,
+) -> Result<crate::official_catalog::RowWriteOutcome, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let home = match &world {
+        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
+        crate::mgmt::World::Wsl { .. } => {
+            return Err(
+                "官方策展的挂载行写入暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用\
+                 （有意不回落本地写入，以免写错 profile）。请在本地档使用。"
+                    .to_string(),
+            )
+        }
+    };
+    let verify_profile = profile.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // 写前当场重判（见函数文档）：包已装，此时读它的 package.json 才是权威分类。
+        let declares_bundle = crate::plugins::package_declares_bundle(
+            &home.join("profiles").join(&profile),
+            &package,
+        );
+        if !crate::plugins::needs_insert_row(declares_bundle) {
+            // 声明了 `dsh.bundle`：CLI 已把它追加进层栈完成激活，再写 insert 会**重复挂载**。
+            return Ok(crate::official_catalog::RowWriteOutcome {
+                changed: false,
+                auto_activated: true,
+            });
+        }
+        // 宿主前置硬门（2026-09-16 §7.5）：前置未满足时**拒绝写行**——写下去就是
+        // 一个起不来的 profile，而用户此时的处境是"应用再也进不去"。
+        if let Some(command) = crate::official_catalog::required_command(&package) {
+            if !missing_prerequisites(&data_dir, &[package.as_str()]).is_empty() {
+                return Err(format!(
+                    "已拒绝写入挂载行：本机 PATH 中找不到「{command}」，装上会让 dsh 在加载\
+                     插件时直接失败、工作台起不来。请先装好 {command}（或改用自包含的那一档能力），\
+                     再重试。"
+                ));
+            }
+        }
+        let changed = crate::plugins::ensure_catalog_insert_row(
+            &home,
+            &profile,
+            &row_id,
+            &package,
+            crate::official_catalog::required_row_config(&package),
+        )?;
+        // 写后自证（2026-09-15 补，ADR-0020）：回读 dump-config 组合树确认该行真的生效。
+        // 理由：patch 写法不对时 DSH 会**退出码 0 地静默丢弃**条目，只校验"文件写成功"
+        // 抓不到它。dump-config 自身失败时**不得谎报成功**——明确告知"已写入但未能复核"。
+        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
+            .map_err(|e| {
+                format!(
+                    "挂载行已写入，但写后复核未能执行（dump-config 读取失败）：{e}\
+                         ——请人工确认该行是否生效。"
+                )
+            })?;
+        crate::plugins::verify_catalog_row(&rows, &row_id, &package)?;
+        Ok(crate::official_catalog::RowWriteOutcome {
+            changed,
+            auto_activated: false,
+        })
+    })
+    .await
+    .map_err(|e| format!("策展挂载行写入任务异常终止：{e}"))?
+}
+
+/// **反向原语**：删除壳写过的策展挂载行（2026-09-16，ADR-0020 §7.2-3）。
+///
+/// 与 `apply_official_patch_row` 对称：写行有自证，删行同样有自证——写后复核该行
+/// **已不在**组合树中（"删了却还在"是同一类静默失败）。
+///
+/// 只接受 `dsh-dock-` 前缀的行 id（所有权判据在 `plugins::remove_catalog_insert_row`）：
+/// bundle 自带行与用户手写行**不得**由壳代删。
+///
+/// 世界择源同 `list_experimental_capabilities`：WSL 客体档显式报错，不回落本地写。
+#[tauri::command]
+pub async fn remove_official_patch_row(
+    app: tauri::AppHandle,
+    profile: String,
+    row_id: String,
+) -> Result<bool, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let home = match &world {
+        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
+        crate::mgmt::World::Wsl { .. } => {
+            return Err(
+                "官方策展的挂载行删除暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用\
+                 （有意不回落本地写入，以免删错 profile）。请在本地档使用。"
+                    .to_string(),
+            )
+        }
+    };
+    let verify_profile = profile.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let changed = crate::plugins::remove_catalog_insert_row(&home, &profile, &row_id)?;
+        // 删除后自证：回读 dump-config，确认该行真的不在组合树里了。
+        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
+            .map_err(|e| {
+                format!(
+                    "挂载行已删除，但删除后复核未能执行（dump-config 读取失败）：{e}\
+                     ——请人工确认该行是否已消失。"
+                )
+            })?;
+        if rows.iter().any(|r| r.id == row_id) {
+            return Err(format!(
+                "删除后复核未通过：行 id「{row_id}」仍在组合树中——\
+                 文件已改写但该行仍被 DSH 采纳，请人工核对该 profile 的 cordis.patch.yml。"
+            ));
+        }
+        Ok(changed)
+    })
+    .await
+    .map_err(|e| format!("策展挂载行删除任务异常终止：{e}"))?
+}
+
+/// 实验能力目录（2026-09-15 立；2026-09-16 第二次修订改名 + 改形，ADR-0020 §7）。
+///
+/// 返回**能力 → 变体 → 步骤**三级事实视图，能力状态（`off`/`on`/`disabled`/
+/// `partial`/`conflict`）由后端一次算全——状态是「包 × 行 × disabled」的函数，
+/// 前端不得凭 `installed` 猜（禁双源）。
+///
+/// **已装态与行态采集在命令层**（本层职责即"数据目录定位 + 起一次 dump-config"）：
+/// ① 读 `profiles/<名>/package.json` 的 `dependencies`；
+/// ② 逐个读 `profiles/<名>/node_modules/<包>/package.json`，据其是否声明
+/// **`dsh.bundle.patch`** 判定激活方式——这是激活契约的**唯一分类依据**
+/// （ADR-0020 §2.8 禁双源），不得用包名/来源等启发式代替；
+/// ③ `plugin_rows_blocking` 一次 `--dump-config` 拿到挂载行表（行是否存在、是否被
+/// `disabled` 停用、bundle 贡献了哪些行）——这是"关得掉吗 / 真生效了吗"的唯一来源。
+///
+/// `runtime_version` **由后端本地检出**（`updates::detect_current_version`，离线读
+/// `engines/`），不从前端传——前端没有廉价且权威的来源，传参只会引入漂移。
+/// 检出不到时**不拼坏 spec**：退回裸包名并在该步的 `versionNotice` 里**明示未钉版本**
+/// （裸包名按 `latest` 解析，而 Agent Teams 三包的 `latest` 实测落后于运行时）。
+#[tauri::command]
+pub async fn list_experimental_capabilities(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<Vec<crate::official_catalog::CapabilityView>, String> {
+    // 世界择源（ADR-0016 §5-b/c，**绝不回落本地**）：本地 = 宿主 home 直读；
+    // **WSL 客体档当前显式报错**——客体侧需补一组客体文件读原语才能拼出同一份事实
+    // 快照，本轮未实现。此处宁可如实报"该档暂不支持"，也**不**去读宿主 home
+    // （那会把客体 profile 的插件全报成"未安装"＝静默错数据）。
+    let world = crate::mgmt::current_world(&app)?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let home = match world {
+        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
+        crate::mgmt::World::Wsl { .. } => {
+            return Err(
+                "实验能力目录暂不支持 WSL 客体档：需补客体侧 profile 读原语后方可启用\
+                 （有意不回落本地读取，以免把客体插件误报成未安装）。请在本地档使用。"
+                    .to_string(),
+            )
+        }
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = home.join("profiles").join(&profile);
+        let manifest = std::fs::read_to_string(dir.join("package.json"))
+            .map_err(|e| format!("读取 profile 清单失败（{profile}）：{e}"))?;
+        let installed = crate::plugins::dependency_names(&manifest)?;
+
+        // 逐个依赖读其自身 package.json：声明 `dsh.bundle.patch` 即在册（判据单源在
+        // `plugins::package_declares_bundle`）。读不到按**未声明**处理——保守方向：
+        // 宁可让壳多写一条 `insert` 行（幂等、可复核），也不误判成"已自动激活"而漏挂。
+        let declared_bundles: Vec<String> = installed
+            .iter()
+            .filter(|name| crate::plugins::package_declares_bundle(&dir, name))
+            .cloned()
+            .collect();
+
+        // 行态：一次 dump-config 拿全量行表（含 bundle 段落的贡献行合成条目）。
+        let rows = crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)?;
+
+        // 运行时版本**本地离线检出**（读 `engines/`，不触网）：钉版本的唯一依据。
+        // 检出不到 → `None`，由 `resolve_capabilities` 走诚实降级（裸包名 + 显式告知）。
+        let runtime_version = crate::updates::detect_current_version(&data_dir);
+
+        // 宿主前置探测（2026-09-16 §7.5）：缺 `cua-driver` 之类的包**不得**被开关放行。
+        let missing_commands = missing_prerequisites(&data_dir, &catalog_packages());
+
+        Ok(crate::official_catalog::resolve_capabilities(
+            &crate::official_catalog::PackageFacts {
+                installed,
+                declared_bundles,
+                missing_commands,
+            },
+            &rows,
+            runtime_version.as_deref(),
+        ))
+    })
+    .await
+    .map_err(|e| format!("实验能力目录解析任务异常终止：{e}"))?
+}
 
 /// 插件清单（4.4①，Spike B 方案）：静态清单 = bundles（官方内置）+
 /// dependencies（第三方，含已装版本/描述）。阻塞文件操作走 spawn_blocking。
@@ -50,12 +307,16 @@ pub async fn get_plugin_runtime(
                 u.port().map(|p| format!(":{p}")).unwrap_or_default()
             )
         });
-        (profile, origin)
+        // 2026-09-15：必须带上启动期兑换的 `/api` 会话 Cookie——dsh 0.1.6-alpha.1
+        // 加了 `browserAuth` 栅栏（失败 401），不带 Cookie 会恒 401，本命令此前即
+        // 因此静默失效（复现点 11 原记"回环无鉴权门"已过时）。
+        let cookie = state.workbench_cookie.lock().unwrap().clone();
+        (profile, origin, cookie)
     };
     match target {
-        (Some(profile), Some(origin)) => {
+        (Some(profile), Some(origin), cookie) => {
             let entries = tauri::async_runtime::spawn_blocking(move || {
-                crate::plugins::fetch_runtime_snapshot(&origin)
+                crate::plugins::fetch_runtime_snapshot(&origin, cookie.as_deref())
             })
             .await
             .map_err(|e| format!("运行态任务异常终止：{e}"))??;
@@ -70,12 +331,122 @@ pub async fn get_plugin_runtime(
         }),
     }
 }
+/// 一次插件操作的**源选择与双向兜底**（ADR-0006 §6）。
+///
+/// 为什么在命令层：策略要用 `settings`（偏好与记忆）与 `plugins::mutate_plugin_blocking`
+/// （真正跑 pnpm）两侧，而这两侧都不该互相依赖。决策本身是纯函数
+/// （`plugin_registry::{first_source, next_source}`），这里只做编排与回报。
+///
+/// 三条纪律：
+/// - **只在换源有意义时换**（失败分类说了算；构建审批门/spec 非法不换，否则白等一轮还埋真因）；
+/// - **显式偏好下绝不换源**（换源等于偷偷改用户配置）；
+/// - **成功才写记忆**（抖动不得带偏下次的首试）。
+fn mutate_with_registry_fallback(
+    op: crate::plugins::PluginOp,
+    profile: &str,
+    spec: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<crate::plugins::PluginOpOutcome, String> {
+    use crate::plugin_registry::{self as reg, RegistrySource};
+
+    let settings = crate::settings::load(data_dir);
+    let pref = reg::parse_pref(settings.plugin_registry.as_deref());
+    let last_good = settings
+        .plugin_registry_last_good
+        .as_deref()
+        .and_then(RegistrySource::from_key);
+    let first = reg::first_source(pref, last_good);
+
+    let mut outcome = crate::plugins::mutate_plugin_blocking(
+        op,
+        profile,
+        spec,
+        data_dir,
+        world,
+        first.registry_arg(),
+    )?;
+    if outcome.ok {
+        remember_source(data_dir, pref, first);
+        outcome
+            .detail
+            .push_str(&format!("（源：{}）", first.label_zh()));
+        return Ok(outcome);
+    }
+
+    let Some(second) = reg::next_source(pref, first, &outcome.detail) else {
+        return Ok(outcome);
+    };
+    let first_detail = outcome.detail.clone();
+    let mut second_outcome = crate::plugins::mutate_plugin_blocking(
+        op,
+        profile,
+        spec,
+        data_dir,
+        world,
+        second.registry_arg(),
+    )?;
+    if second_outcome.ok {
+        remember_source(data_dir, pref, second);
+        second_outcome.detail = format!(
+            "{}（{}不可用，已改用{}）\n—— 首次失败原因：{}",
+            second_outcome.detail,
+            first.label_zh(),
+            second.label_zh(),
+            summarize_failure(&first_detail)
+        );
+        return Ok(second_outcome);
+    }
+    // 两个源都失败：**两侧原因都报**——只报最后一个会让用户看不出真正的病根。
+    second_outcome.detail = format!(
+        "两个源都失败。\n· {}：{}\n· {}：{}",
+        first.label_zh(),
+        summarize_failure(&first_detail),
+        second.label_zh(),
+        summarize_failure(&second_outcome.detail)
+    );
+    Ok(second_outcome)
+}
+
+/// 只记成功（`auto` 才写记忆：显式偏好本就是用户的决定，无需壳记）。
+fn remember_source(
+    data_dir: &Path,
+    pref: crate::plugin_registry::RegistryPref,
+    source: crate::plugin_registry::RegistrySource,
+) {
+    if !matches!(pref, crate::plugin_registry::RegistryPref::Auto) {
+        return;
+    }
+    let mut settings = crate::settings::load(data_dir);
+    if settings.plugin_registry_last_good.as_deref() == Some(source.as_key()) {
+        return;
+    }
+    settings.plugin_registry_last_good = Some(source.as_key().to_string());
+    // 记忆写失败不阻断安装（它是优化，不是正确性）；下次仍会走"官方优先"。
+    let _ = crate::settings::save(data_dir, &settings);
+}
+
+/// 失败摘要：取第一行有效信息（原始输出的尾部动辄多行，合并两条时更要短）。
+fn summarize_failure(detail: &str) -> String {
+    let line = detail
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("（无输出）");
+    if line.chars().count() > 240 {
+        format!("{}…", line.chars().take(240).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
 /// 安装/卸载/更新插件（4.4②）：`dsh plugin --profile <名> add/remove/update`
 /// 转发链（复用创建刀基建，pnpm 防御补齐同源）；阻塞转发走 spawn_blocking，
 /// 超时同创建 600s。ok=false 时 detail 带输出尾部，前端按警示态展示。
 ///
 /// 世界择源（ADR-0016 §5-b）：本地 = 宿主引擎 + 宿主 home；WSL 客体 = 客体
 /// `dsh` CLI（同一条链路的客体孪生，网络发生在客体进程内，ADR-0004 §7）。
+
 #[tauri::command]
 pub async fn install_plugin(
     app: tauri::AppHandle,
@@ -88,7 +459,7 @@ pub async fn install_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
+        mutate_with_registry_fallback(
             crate::plugins::PluginOp::Install,
             &profile,
             &package,
@@ -111,12 +482,14 @@ pub async fn remove_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // 卸载不取包（不联网）：**不**走源策略，也不传 `--registry`。
         crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Remove,
             &profile,
             &package,
             &data_dir,
             &world,
+            None,
         )
     })
     .await
@@ -134,7 +507,7 @@ pub async fn update_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
+        mutate_with_registry_fallback(
             crate::plugins::PluginOp::Update,
             &profile,
             &package,

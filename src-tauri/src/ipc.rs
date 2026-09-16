@@ -45,6 +45,9 @@ pub const COMMANDS: &[&str] = &[
     "list_plugin_versions",
     "get_plugin_runtime",
     "list_all_plugins",
+    "list_experimental_capabilities",
+    "apply_official_patch_row",
+    "remove_official_patch_row",
     "copy_plugin_config",
     "list_sessions",
     "repair_session",
@@ -62,7 +65,12 @@ pub const COMMANDS: &[&str] = &[
     "list_mcp_servers",
     "save_mcp_server",
     "delete_mcp_server",
+    "probe_mcp_server",
     "delete_session",
+    "unarchive_session",
+    "list_ssh_hosts",
+    "probe_ssh_target",
+    "generate_ssh_profile",
     "fetch_market_registry",
     "open_profiles_window",
     "focus_main_window",
@@ -398,6 +406,8 @@ mod gate_tests {
                 show_floating_switcher: None,
                 switcher_shortcut: None,
                 dismissed_update: None,
+                plugin_registry: None,
+                plugin_registry_last_good: None,
             }
         );
         assert_shape!(
@@ -408,9 +418,10 @@ mod gate_tests {
                 },
                 title: "",
                 detail: String::new(),
-                suggestion: "",
+                suggestion: String::new(),
                 actions: Vec::new(),
                 log: String::new(),
+                quarantine: None,
             }
         );
         assert_shape!(

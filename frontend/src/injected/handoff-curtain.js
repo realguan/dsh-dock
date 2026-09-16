@@ -102,7 +102,7 @@
     return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
   }
 
-  // body 尚不存在（document-start）：与 memory-policy.js 同法——观察 documentElement，
+  // body 尚不存在（document-start 时序）：先观察 documentElement，
   // body 一出现就挂。绝不往 <html> 直接塞节点（解析中会干扰 HTML 解析器的插入模式）。
   function mount(el) {
     if (document.body) {

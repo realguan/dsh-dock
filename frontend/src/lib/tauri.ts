@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type {
   AggregatePlugin,
+  Capability,
   ClientUpdate,
   CopyConfigOutcome,
   CreateProfileOutcome,
@@ -17,7 +18,9 @@ import type {
   DshVersionsResult,
   LifecycleOutcome,
   LogQueryResult,
+  McpProbe,
   McpServerConfig,
+  RowWriteOutcome,
   PluginEntry,
   PluginOpOutcome,
   PluginRuntimeSnapshot,
@@ -29,6 +32,10 @@ import type {
   RepairOutcome,
   SessionItem,
   ShellSettings,
+  SshHosts,
+  SshProbe,
+  SshProfileOutcome,
+  SshTarget,
   SystemDiagnosticsReport,
   TerminalAction,
   UpdateStatus,
@@ -114,6 +121,23 @@ export const api = {
     invoke<string[]>("list_plugin_versions", { package: pkg }),
   // 4.4④ 收口：插件总览聚合（只读文件扫描）+ 配置行原样复制（写入例外 #4）
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
+  /** 实验能力目录（ADR-0020 §7）：能力 → 变体 → 步骤三级事实视图，能力状态由后端
+   *  一次算全（「包 × 行 × disabled」的函数）。运行时版本由**后端本地检出**，前端不传。 */
+  listExperimentalCapabilities: (profile: string) =>
+    invoke<Capability[]>("list_experimental_capabilities", { profile }),
+  /** 确保一条策展挂载行就位（ADR-0020 §7.4）：**写行前当场重判**该包是否声明
+   *  `dsh.bundle`——声明了则由 CLI 激活，壳**不写行**（返回 `autoActivated: true`），
+   *  因为"安装前"的行形态判定是过期的（v1 因此会给 profile 层多写一条行 = 重复挂载）。
+   *  幂等：同 rowId 已存在则 `changed: false` 且零写入。
+   *  **写后自证**：命令内部回读 `--dump-config` 组合树，返回成功即"行已在树中"；
+   *  若该行未被 DSH 采纳（静默丢弃）或 dump-config 失败，则 reject 并说明"已写入但未生效"。 */
+  applyOfficialPatchRow: (profile: string, rowId: string, pkg: string) =>
+    invoke<RowWriteOutcome>("apply_official_patch_row", { profile, rowId, package: pkg }),
+  /** **反向原语**：删除壳写过的策展挂载行（ADR-0020 §7.2-3）。
+   *  只接受 `dsh-dock-` 前缀的行 id（bundle 自带行与用户手写行不得代删）。
+   *  **删除后自证**：回读 dump-config 确认该行已不在组合树中；幂等（本就不存在 → false）。 */
+  removeOfficialPatchRow: (profile: string, rowId: string) =>
+    invoke<boolean>("remove_official_patch_row", { profile, rowId }),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
   // 会话管理与自愈（4.6）
@@ -123,6 +147,24 @@ export const api = {
   repairAllSessions: () => invoke<RepairOutcome>("repair_all_sessions"),
   deleteSession: (sessionPath: string) =>
     invoke<void>("delete_session", { sessionPath }),
+  /** 取消归档（ADR-0021 路线 A）：经 Host RPC，返回变更后的完整归档集合。
+   *  无活跃 Host 时 reject（需 DSH 在线，壳不直接改磁盘状态）。 */
+  unarchiveSession: (sessionId: string) =>
+    invoke<string[]>("unarchive_session", { sessionId }),
+
+  // SSH 远程工作区向导（ADR-0023）
+  /** 列出 `~/.ssh/config` 里**可选**的主机 alias。
+   *  **不跟随 `Include`**、只含非机密字段；降级情况在 `notes` 里如实透出。 */
+  listSshHosts: () => invoke<SshHosts>("list_ssh_hosts"),
+  /** 非交互预检一个 SSH 目标（ADR-0023 §2.5）：一次 `ssh -o BatchMode=yes` 往返，
+   *  回读远端 uname / node / helper / 摘要 / workspace。**不通过即不得生成 profile**。 */
+  probeSshTarget: (target: SshTarget) =>
+    invoke<SshProbe>("probe_ssh_target", { target }),
+  /** 生成 SSH 远程工作区 profile（ADR-0023）：建 profile（如缺，app bundle 取
+   *  **headless** 而非 web-app）＋ 写四行 ssh 注册行 ＋ 写后自证。
+   *  **不装包**——四个包经既有 `installPlugin` 队列安装，装完再调本命令。 */
+  generateSshProfile: (profile: string, target: SshTarget) =>
+    invoke<SshProfileOutcome>("generate_ssh_profile", { profile, target }),
 
   // 系统设置与诊断（4.11 / 4.12 / 4.13）
   getShellSettings: () => invoke<ShellSettings>("get_shell_settings"),
@@ -154,6 +196,10 @@ export const api = {
     invoke<void>("save_mcp_server", { profile, server }),
   deleteMcpServer: (profile: string, serverName: string) =>
     invoke<void>("delete_mcp_server", { profile, serverName }),
+  /** 探测 MCP 服务器能力（ADR-0022 stdio 分支）：握手后枚举 Tools/Resources/Templates。
+   *  `streamable-http` 与 WSL 客体档会 reject（各自说明原因）。 */
+  probeMcpServer: (profile: string, serverName: string) =>
+    invoke<McpProbe>("probe_mcp_server", { profile, serverName }),
 
   // 社区插件市场 Registry 拉取
   fetchMarketRegistry: () => invoke<string>("fetch_market_registry"),

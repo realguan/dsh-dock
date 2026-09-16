@@ -60,6 +60,14 @@ fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
+/// 用户 home（**公开访问器**，2026-09-15 §7 R4）。
+///
+/// 用途：`~/.ssh/config` 等 `$DSH_HOME` 之外的读取面要解析 `~`。**不复制**上面的
+/// Windows/USERPROFILE 分支——两处各写一遍就是两套口径，而这类差异只在平台上暴露。
+pub fn user_home() -> Option<PathBuf> {
+    user_home_dir()
+}
+
 /// 终端在 system 档 boot 用户世界：$DSH_HOME 或 ~/.dsh。
 ///
 /// **2026-09-10 裁定（ADR-0015 §1.2 放大器 / §5 行动项）**：`dev` 构建改用
@@ -333,6 +341,44 @@ pub fn dsh_child_path(node_bin: &Path, data_dir: &Path) -> String {
             .to_string(),
         path_with_bin(node_bin, &effective_path()),
     ])
+}
+
+/// 给定 PATH 里是否存在该可执行文件（纯文件系统判定：**不 spawn、不联网、不查注册表**）。
+///
+/// 用途：策展目录的**宿主前置门**（2026-09-16，ADR-0020 §7.5）——`cua-driver` 缺失时
+/// 装上对应 provider 会让 dsh 在插件树加载阶段 `spawn cua-driver` 失败而**整棵起不来**，
+/// 故必须在写行之前判一次。判据必须与 dsh 子进程实际拿到的 PATH 同源
+/// （调用方传 [`dsh_child_path`] 的结果），否则会出现"壳说在、dsh 找不到"的漂移。
+///
+/// `command` 含路径分隔符时按路径判（用户显式指定路径的形态）。
+pub fn command_on_path(command: &str, path_env: &str) -> bool {
+    if command.trim().is_empty() {
+        return false;
+    }
+    let as_path = Path::new(command);
+    if as_path.components().count() > 1 {
+        return executable_file(as_path);
+    }
+    path_env
+        .split(path_separator())
+        .filter(|dir| !dir.is_empty())
+        .any(|dir| executable_file(&Path::new(dir).join(command)))
+}
+
+/// 该路径是否为可执行文件：Unix 只要存在且是文件；Windows 再按 PATHEXT 的常见后缀试。
+fn executable_file(path: &Path) -> bool {
+    if path.is_file() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        for ext in ["exe", "cmd", "bat", "com"] {
+            if path.with_extension(ext).is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 按档序解析本次启动的 LaunchSpec（规范化后仅 Engine / Bundle 两档）。

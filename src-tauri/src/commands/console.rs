@@ -224,3 +224,52 @@ pub async fn delete_mcp_server(
     .await
     .map_err(|e| format!("删除 MCP 服务任务异常终止：{e}"))?
 }
+/// MCP 管理：探测指定服务器的能力（2026-09-15，ADR-0022 **stdio 分支**）。
+///
+/// 主动连上服务器、握手后枚举 Tools / Resources / Resource Templates，
+/// 供「MCP 工作台」做**配置体检与失败归因**（ADR-0022 §1.4 的价值主张）。
+/// 合规：spawn 经 `lifecycle` seam（`Role::Probe`）；本模块**无进程内网络客户端**
+/// （`network_gate` 的 `Registered` 行反向绑定这一点）。`streamable-http` 分支
+/// 尚未实现——此类服务器会被 `probe_stdio` 明确拒绝并指出该走 http 分支。
+///
+/// 世界择源：**WSL 客体档显式报错**。探测要 spawn 服务器命令，客体档下该命令应在
+/// 客体里跑；在宿主 spawn 等于跑成"宿主的另一个进程"，语义错。故不回落本地。
+#[tauri::command]
+pub async fn probe_mcp_server(
+    app: tauri::AppHandle,
+    profile: String,
+    server_name: String,
+) -> Result<crate::mcp_probe::McpProbe, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    let home = match world {
+        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
+        crate::mgmt::World::Wsl { .. } => {
+            return Err(
+                "MCP 能力探测暂不支持 WSL 客体档：探测需在客体内部 spawn 服务器命令，\
+                 宿主侧执行语义不等价（有意不回落本地）。请在本地档使用。"
+                    .to_string(),
+            )
+        }
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let servers = crate::mcp::list_mcp_servers(&home, &profile)?;
+        let server = servers
+            .into_iter()
+            .find(|s| s.name == server_name)
+            .ok_or_else(|| {
+                format!("profile「{profile}」未配置名为「{server_name}」的 MCP 服务器")
+            })?;
+        // 整轮总期限（启动 + 握手 + 三次枚举）：卡住的服务器不得挂死详情页。
+        // 按 transport 分派（ADR-0022 §3.3）：两条分支**各自有独立的合规通道**
+        // ——stdio 走子进程，streamable-http 走条目级豁免的进程内 HTTP。
+        let budget = std::time::Duration::from_secs(15);
+        match server.transport {
+            crate::mcp::McpTransport::Stdio => crate::mcp_probe::probe_stdio(&server, budget),
+            crate::mcp::McpTransport::StreamableHttp => {
+                crate::mcp_probe::probe_http(&server, budget)
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("MCP 能力探测任务异常终止：{e}"))?
+}

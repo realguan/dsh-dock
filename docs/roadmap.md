@@ -192,6 +192,12 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 - **依赖**：无强依赖
 - **注意**：dsh 内部已有会话列表 UI，壳的增量价值相对较小；会话默认落在 `$DSH_HOME/sessions/` 下的 zstd JSONL（压缩编码可配置关闭、另有 sqlite 变体，见 §1），壳只做元数据层面的管理，不解析会话内容本身
 - **落地记录（2026-09-11 补注）**：✅ 会话侧已落地（v0.9.0，`b9973fd` 2026-08-31）——`sessions.rs` 扫描/健康自愈/删除，按项目路径分组（`project_name` / `project_dir_raw` / `decoded_project_path`）；IPC `list_sessions` / `repair_session` / `repair_all_sessions` / `delete_session`；前端 `components/profiles/SessionManager.tsx`。原文的「工作区增删管理」子项未见对应 IPC，**未随本次回收关闭**。
+- **落地记录（2026-09-15 补注）**：**归档侧另已落地**（ADR-0021 路线 A，IPC `unarchive_session`，
+  经 Host RPC `workspace/unarchiveSession`；见复现台账复现点 16）。但**原文的「工作区增删管理」
+  子项仍未关闭**：壳内**无任何** workspace CRUD IPC（`ipc.rs::COMMANDS` 56 条中零命中），
+  而上游 `@deepseek-ai/dsh-api-workspace-controller` 已暴露 `@Remote` 的 `create` / `rename` /
+  `delete` / `insertBefore` / `insertSessionBefore`。**「会话归档」与「工作区增删管理」是两件事，
+  勿混为一谈**——本轮只补了前者。
 
 #### 4.7 MCP 服务器管理器 ✅（增删改查，v0.9.0 起）
 
@@ -207,6 +213,7 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 - **壳的独特性**：executor 抽象的自然完成，让 dsh 可以运行在远程服务器上
 - **依赖**：无强依赖；但需要设计会话级 capability 收敛（远端会话拒绝 upgrade 类动作，`docs/executor.md` 已标注安全边界）
 - **注意**：用户覆盖面较窄（需要远程服务器）；SSH 配置管理（保存 host/user/port）属于设置扩展，需要配置面板
+- **落地记录（2026-09-15 补注，ADR-0023）**：⚠️ **范围被上游收窄**，与本项原文的"端口隧道 / TCP 健康探测定就绪"不同——上游把 ssh 家族限定为 **POSIX headless 与自建 profile**，且明写 Web 视图**不会**因此远端感知，故本项以"SSH 远程工作区向导"形态落地：`ssh_config.rs`（`~/.ssh/config` 解析）＋ `ssh_remote.rs`（五键校验 + `BatchMode` 非交互预检）＋ `ssh_profile.rs`（headless profile + 四包钉版本安装 + 四条 `insert` 注册行 + 写后自证）；IPC `list_ssh_hosts` / `probe_ssh_target` / `generate_ssh_profile`。**未落地**（见 ADR-0023 §5「明确不在本 ADR 范围」）：① **放开 `Mode::parse("ssh")` / 把 `ExecutorKind::Ssh` 接入启动路径**——本项只产出 profile，宿主/客体择源逻辑（ADR-0016 的 `World`）未动；② **会话级 capability 收敛**（本项原文要求的"远端会话拒绝 upgrade 类动作"）**仍未设计**；③ SSH 配置的**持久化设置面板**（保存 host/user/port）未做。实机清单见 `docs/executor.md` G1–G12（**待跑**）。
 
 #### 4.9 WSL 迭代 v2
 

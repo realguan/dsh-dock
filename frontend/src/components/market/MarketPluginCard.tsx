@@ -33,6 +33,12 @@ interface MarketPluginCardProps {
   plugin: MarketPlugin
   categoryLabel?: string
   installedProfiles: string[]
+  /**
+   * 是否官方——**必须由调用方以权威数据决定**（ADR-0020 单源收敛）。
+   * 社区 registry 无此字段，故调用方若无法判定就明确传 `false`；
+   * 官方性由策展目录（`official_catalog::CATALOG`）独家拥有。
+   */
+  official: boolean
   onInstall: (plugin: MarketPlugin) => void
   onOpenExternal: (url: string) => void
 }
@@ -41,13 +47,21 @@ export function MarketPluginCard({
   plugin,
   categoryLabel,
   installedProfiles,
+  official,
   onInstall,
   onOpenExternal,
 }: MarketPluginCardProps) {
   const { t, activeLocale } = useI18n()
 
   const isInstalled = installedProfiles.length > 0
-  const isOfficial = plugin.owner.toLowerCase().includes("deepseek") || plugin.name.startsWith("@deepseek-ai/")
+  // 2026-09-15（ADR-0020 §4 单源收敛）：**不再**用 owner/name 猜"官方"
+  // （原启发式：`owner` 含 deepseek 或 name 以 `@deepseek-ai/` 开头）。
+  // 社区 registry（awesome-dsh-plugin）**没有权威的 officialness 字段**，
+  // 猜测会产生假阳性；官方性由 dsh-dock 策展目录（`official_catalog::CATALOG`）
+  // 独家拥有，并在「官方实验室」Tab 中据权威数据渲染。
+  // 故此处改为**显式入参**：调用方要么给出权威结论，要么明确传 false——
+  // 不给启发式留任何回流的缝。
+  const isOfficial = official
   const displayName = getPluginDisplayName(plugin.name)
   const desc = getPluginDescription(plugin.description, activeLocale)
 

@@ -5,7 +5,10 @@
 //! 2. 统计会话元数据（ID、所属项目、更新时间、大小、备份状态）；
 //! 3. 执行会话修复（调用 Node 运行自愈脚本：存储层 seq 修复 + 恢复层
 //!    dsh 本尊 restore 校验与 surface 最小变异，2026-09-07）；
-//! 4. 支持单会话修复与全量自愈。
+//! 4. 支持单会话修复与全量自愈；
+//! 5. 取消归档写动词（2026-09-15，ADR-0021 路线 A）：经 typert 回环调用
+//!    `workspace/unarchiveSession`，**不写** `storages/workspace.json`
+//!    （该文件是 dsh 内存状态的投影，见 `request_unarchive` 注释）。
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -513,6 +516,101 @@ fn read_archived_session_ids(home: &Path) -> std::collections::HashSet<String> {
         Err(_) => return Default::default(),
     };
     parse_archived_session_ids(&text)
+}
+
+// ---------- 取消归档写动词（2026-09-15，ADR-0021 路线 A）----------
+
+/// typert 回环端点（2026-09-15 上游源码锚定）：`@Remote('unarchiveSession')`
+/// 注册在 namespace `workspace`
+/// （`packages/api/workspace-controller/src/index.ts:35,43,118-121`）；
+/// wire 键取**源码形参名**（`packages/typert/generator/src/analyzer.ts:1137-1139`
+/// `wire: parameter.name.text`）。上游 transport 用例把该端点记作
+/// `workspace/unarchiveSession`、请求体为 `[{sessionId}]`
+/// （`packages/api/workspace-controller/tests/transport.client.spec.ts:325-333`）。
+const UNARCHIVE_METHOD: &str = "workspace/unarchiveSession";
+
+/// 构造取消归档请求体（纯函数）。`args` 必须**恰好**含 `request` 一键、值为
+/// `{sessionId}`：gateway 侧 `assertExactArguments` 对多键（例如把请求对象
+/// 直接展开成 `{sessionId}`）与缺键一律拒绝
+/// （`packages/api/gateway/src/index.ts:1107-1128`）。
+pub fn unarchive_request_body(session_id: &str) -> String {
+    crate::plugins::loopback_request_body(
+        UNARCHIVE_METHOD,
+        serde_json::json!({ "request": { "sessionId": session_id } }),
+    )
+}
+
+/// 解析取消归档响应体（纯函数）：信封 + `result.ok` 两层。
+/// 成功值为 `WorkspaceArchiveValue` = `{archivedSessionIds: string[]}`
+/// （`packages/api/workspace-controller/src/types.ts:113-115`），
+/// 即**变更后的完整归档集**；缺字段按契约漂移如实报错，不静默当空集。
+pub fn parse_unarchive_response(text: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("响应不是合法 JSON：{e}"))?;
+    let result = v
+        .get("result")
+        .ok_or_else(|| "响应缺少 result 字段".to_string())?;
+    if !result.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
+        let code = result
+            .pointer("/error/code")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown");
+        let message = result
+            .pointer("/error/message")
+            .and_then(|x| x.as_str())
+            .unwrap_or("未提供错误信息");
+        return Err(format!("取消归档被拒绝（{code}）：{message}"));
+    }
+    let ids = result
+        .pointer("/value/archivedSessionIds")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "响应缺少 value.archivedSessionIds 数组".to_string())?;
+    Ok(ids
+        .iter()
+        .map(|x| x.as_str().unwrap_or_default().to_string())
+        .collect())
+}
+
+/// 经 typert 回环调用 `workspace/unarchiveSession`。
+///
+/// **刻意不触碰** `$DSH_HOME/storages/workspace.json`：该文件是 dsh **内存权威
+/// 状态的投影**（`storage-json/format.ts:5`、`single-unit.ts:1-5`，以及
+/// `atomic.ts:1-10` 的 "exactly one writer per process and last-write-wins is
+/// correct"）——运行中的 Host 会整体覆盖外部写入，且写坏 `unit` 版本戳会让
+/// **整个工作区功能报错**。走官方 RPC 回避上述全部风险，并复用既有回环通道。
+///
+/// `base_origin` 形如 `http://127.0.0.1:PORT`；2s 超时（就绪但未响应按不可用处理）。
+/// 幂等：上游明确 "An id that is not archived is not an error"
+/// （`packages/api/workspace-controller/src/commands.ts:163-174`）。
+///
+/// **必须带 `cookie`**（2026-09-15 实机查明）：dsh 0.1.6-alpha.1 的 `/api` 在 Host
+/// 栅栏（`isTrustedApiRequest`，失败 403）之后还有 `browserAuth.isAuthenticated`
+/// （失败 **401**，`rpc-host.ts:97-99`），要的是启动期由 launch token 兑换出的
+/// **签名 Cookie**；不带则恒 401。实测：无 Cookie → `401 unauthorized`；
+/// 带 Cookie → `200` 且 `result.ok=true`。
+pub fn request_unarchive(
+    base_origin: &str,
+    cookie: Option<&str>,
+    session_id: &str,
+) -> Result<Vec<String>, String> {
+    let url = format!(
+        "{}/api/{}",
+        base_origin.trim_end_matches('/'),
+        UNARCHIVE_METHOD
+    );
+    let mut req = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(2))
+        .set("content-type", "application/json");
+    if let Some(cookie) = cookie {
+        req = req.set("cookie", cookie);
+    }
+    let resp = req
+        .send_string(&unarchive_request_body(session_id))
+        .map_err(|e| format!("回环调用失败：{e}"))?;
+    let text = resp
+        .into_string()
+        .map_err(|e| format!("读取响应失败：{e}"))?;
+    parse_unarchive_response(&text)
 }
 
 /// 会话日志文件名判定（与脚本 `SESSION_LOG_FILENAME` 同口径）：
@@ -2515,5 +2613,93 @@ export const sessionFormatCatalog = {
         assert!(!items[1].is_compressed);
         assert!(!items[1].has_backup);
         assert!(!items[1].archived);
+    }
+
+    // ---------- 取消归档写动词（ADR-0021 路线 A）----------
+
+    /// 信封正例：`method` 串与 `args` 键集**逐一相等**是硬契约。gateway 侧
+    /// `assertExactArguments` 对多键/缺键一律拒绝，故这里连键集一起钉死——
+    /// 防止将来"顺手把请求对象展平"的重构静默破坏线上调用（本仓库最怕的
+    /// 一类失败：退出码 0 而功能不生效）。
+    #[test]
+    fn unarchive_request_body_carries_exact_wire_keys() {
+        let text = unarchive_request_body("session-abc");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v.get("type").and_then(|x| x.as_str()),
+            Some("client-request")
+        );
+        assert_eq!(
+            v.get("method").and_then(|x| x.as_str()),
+            Some("workspace/unarchiveSession")
+        );
+        assert!(
+            v.get("rpcId")
+                .and_then(|x| x.as_str())
+                .is_some_and(|s| s.starts_with("dsh-dock-")),
+            "rpcId 须带壳侧前缀"
+        );
+        let args = v.pointer("/payload/args").expect("payload.args 必须存在");
+        let keys: Vec<&str> = args
+            .as_object()
+            .expect("args 须是 plain object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["request"],
+            "args 必须恰好一键 `request`（typert wire 键 = 源码形参名）"
+        );
+        assert_eq!(
+            args.pointer("/request/sessionId").and_then(|x| x.as_str()),
+            Some("session-abc")
+        );
+    }
+
+    /// 响应正例：`result.ok=true` 时返回变更后的**完整**归档集。
+    #[test]
+    fn parse_unarchive_response_returns_remaining_archive_set() {
+        let text = r#"{"type":"server-response","rpcId":"x","result":{"ok":true,"value":{"archivedSessionIds":["s1","s2"]}}}"#;
+        assert_eq!(parse_unarchive_response(text).unwrap(), vec!["s1", "s2"]);
+    }
+
+    /// 响应反例：`ok:false` 必须把 `code` 与 `message` 透出，不得吞成空集。
+    #[test]
+    fn parse_unarchive_response_surfaces_business_error() {
+        let text = r#"{"type":"server-response","rpcId":"x","result":{"ok":false,"error":{"code":"gateway/arguments-invalid","message":"args has extra field","details":{}}}}"#;
+        let err = parse_unarchive_response(text).unwrap_err();
+        assert!(
+            err.contains("gateway/arguments-invalid"),
+            "错误码须透出：{err}"
+        );
+        assert!(
+            err.contains("args has extra field"),
+            "错误文案须透出：{err}"
+        );
+    }
+
+    /// 响应反例：契约漂移（缺 `value.archivedSessionIds`）必须如实报错，而不是
+    /// 静默当空集——静默当空集会让界面显示"已无归档"，与真实状态恰好相反。
+    /// 畸形输入同口径。
+    #[test]
+    fn parse_unarchive_response_rejects_shape_drift_and_garbage() {
+        let missing_value =
+            r#"{"type":"server-response","rpcId":"x","result":{"ok":true,"value":{}}}"#;
+        assert!(
+            parse_unarchive_response(missing_value).is_err(),
+            "缺 value.archivedSessionIds 须报错"
+        );
+        assert!(parse_unarchive_response("not json").is_err());
+        assert!(
+            parse_unarchive_response(r#"{"rpcId":"x"}"#).is_err(),
+            "缺 result 须报错"
+        );
+    }
+
+    /// 端点常量与文档锚点一致（改动此串即等于换端点，必须有意识为之）。
+    #[test]
+    fn unarchive_method_matches_remote_namespace_verb() {
+        assert_eq!(UNARCHIVE_METHOD, "workspace/unarchiveSession");
     }
 }

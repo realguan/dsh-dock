@@ -5,20 +5,26 @@
 // dangerouslyAllowAllBuilds），审批门退役——`blocked_gate` 相位与 gatePkgs
 // 载荷一并删除，安装不再有「待审批」中间态。
 
+import type { FailureKind } from "@/types/ipc"
+
 export type QueueStatus = "queued" | "installing" | "done" | "failed"
 
 export interface QueueItem {
   id: string
-  /** install = 市场安装；distribute = 总览分发（可连带配置迁移） */
-  kind: "install" | "distribute"
+  /** install = 市场安装；distribute = 总览分发（可连带配置迁移）；
+   *  remove = 卸载（2026-09-15 R2：同族 provider 让位等场景也要在面板可见可重试） */
+  kind: "install" | "distribute" | "remove"
   /** 展示名（市场条目名或依赖包名） */
   pkg: string
-  /** 安装 spec（git/tarball 来源即来源地址，npm 来源为名@区间） */
+  /** 安装 spec（git/tarball 来源即来源地址，npm 来源为名@区间）；
+   *  `kind: "remove"` 无来源，约定填空串（面板不渲染此字段） */
   spec: string
   /** 目标 profile——入队瞬间快照绑定，重试不可改写（2026-09-09） */
   profile: string
   status: QueueStatus
   detail?: string
+  /** 失败分类（后端给；界面据此选文案，见 `types/ipc.ts` 的 `FailureKind`）。 */
+  failureKind?: FailureKind | null
   /** distribute 勾选连带配置迁移时的来源 profile（装完复制 patch 行） */
   sourceProfile?: string
   withConfig?: boolean
@@ -29,6 +35,7 @@ export interface QueueItem {
 export interface QueueOutcomeLike {
   ok: boolean
   detail?: string | null
+  failureKind?: FailureKind | null
 }
 
 /** 串行执行：队列中最早入队的待处理项。 */
@@ -41,7 +48,28 @@ export function applyOutcome(item: QueueItem, outcome: QueueOutcomeLike): QueueI
   if (outcome.ok) {
     return { ...item, status: "done", detail: undefined }
   }
-  return { ...item, status: "failed", detail: outcome.detail ?? undefined }
+  return {
+    ...item,
+    status: "failed",
+    detail: outcome.detail ?? undefined,
+    failureKind: outcome.failureKind ?? null,
+  }
+}
+
+/** 队列项的终态形状（`enqueueAndWait` 的解析值）。 */
+export interface QueueOutcome {
+  ok: boolean
+  detail?: string | undefined
+  failureKind?: FailureKind | null
+}
+
+/** 终态队列项 → 可 await 的结果。**只对 done/failed 有意义**——未终结项返回
+ *  `ok: false`，调用方不应在终结前调用（2026-09-15 R2）。
+ *  纯函数：可 await 契约的判据落在这里，编排见 stores/queueStore。 */
+export function outcomeOf(item: QueueItem): QueueOutcome {
+  return item.status === "done"
+    ? { ok: true }
+    : { ok: false, detail: item.detail, failureKind: item.failureKind ?? null }
 }
 
 /** 面板角标：未终结（排队/安装中）的项数。 */

@@ -30,6 +30,7 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
   children,
+  tone = "danger",
 }: {
   open: boolean
   title: string
@@ -48,6 +49,14 @@ export function ConfirmDialog({
   onClose: () => void
   /** 需要展示 diff / 附加信息时插入（可选）。 */
   children?: ReactNode
+  /**
+   * 语气（2026-09-16 新增，默认 `danger` 保持既有调用点语义不变）：
+   * - `danger`：不可撤销的破坏性动作（卸载 / 覆写 / 删除）——红色主按钮 + 醒目的风险块；
+   * - `primary`：**不是**破坏性动作、但仍需用户确认参数的动作（如启用一项实验能力：
+   *   要装哪些包、有什么前置）。这类动作用红色按钮会给出**错误的风险信号**，
+   *   让用户以为自己在做危险操作。
+   */
+  tone?: "danger" | "primary"
 }) {
   // 执行中不允许关闭：动作已发出，关掉对话框只会让用户以为没发生。
   const close = () => {
@@ -60,15 +69,23 @@ export function ConfirmDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {note && (
-            <DialogDescription className="text-warn text-xs">{note}</DialogDescription>
+            <DialogDescription
+              className={`text-xs ${tone === "danger" ? "text-warn" : "text-dim"}`}
+            >
+              {note}
+            </DialogDescription>
           )}
         </DialogHeader>
 
         {points && points.length > 0 && (
-          <ul className="bg-warn-soft text-dim space-y-1.5 rounded-lg px-3 py-2.5 text-xs leading-relaxed">
+          <ul
+            className={`space-y-1.5 rounded-lg px-3 py-2.5 text-xs leading-relaxed text-dim ${
+              tone === "danger" ? "bg-warn-soft" : "bg-wash"
+            }`}
+          >
             {points.map((p, i) => (
               <li key={i} className="flex gap-1.5">
-                <span aria-hidden className="text-warn">
+                <span aria-hidden className={tone === "danger" ? "text-warn" : "text-faint"}>
                   ·
                 </span>
                 <span>{p}</span>
@@ -89,7 +106,11 @@ export function ConfirmDialog({
           <Button variant="outline" disabled={busy} onClick={close}>
             {cancelLabel}
           </Button>
-          <Button variant="destructive" disabled={busy} onClick={onConfirm}>
+          <Button
+            variant={tone === "danger" ? "destructive" : "default"}
+            disabled={busy}
+            onClick={onConfirm}
+          >
             {busy ? (busyLabel ?? confirmLabel) : confirmLabel}
           </Button>
         </DialogFooter>

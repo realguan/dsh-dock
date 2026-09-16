@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest"
 import {
   fmtBytes,
+  fmtClock,
   fmtEta,
   fmtPercent,
   fmtSpeed,
@@ -162,5 +163,21 @@ describe("getPaginationPages", () => {
   it("居中时首尾各保留一个省略号，中间围绕当前页", () => {
     expect(getPaginationPages(10, 29)).toEqual([1, "...", 9, 10, 11, "...", 29])
     expect(getPaginationPages(15, 29)).toEqual([1, "...", 14, 15, 16, "...", 29])
+  })
+})
+
+// 2026-09-15（§7 R3）：MCP 探测结果是**一次性快照**，ADR-0022 §5 要求 UI 标注快照
+// 时间。格式化必须与宿主 locale 无关——否则同一份快照在不同机器上显示不同，
+// 且没法写断言。
+describe("fmtClock（快照时间标注）", () => {
+  it("24 小时制 + 零填充", () => {
+    // 用本地时间构造，避免测试依赖运行机器的时区。
+    expect(fmtClock(new Date(2026, 8, 15, 9, 5, 3).getTime())).toBe("09:05:03")
+    expect(fmtClock(new Date(2026, 8, 15, 23, 59, 59).getTime())).toBe("23:59:59")
+    expect(fmtClock(new Date(2026, 8, 15, 0, 0, 0).getTime())).toBe("00:00:00")
+  })
+
+  it("非法时间戳回退占位串（不抛、不显示 NaN）", () => {
+    expect(fmtClock(Number.NaN)).toBe("--:--:--")
   })
 })

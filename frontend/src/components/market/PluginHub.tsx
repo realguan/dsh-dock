@@ -1,8 +1,9 @@
 // components/market/PluginHub.tsx —— 插件中心（统一承载「插件市场」与「已安装总览」两大子视图）
 import { useState } from "react"
-import { Layers, Store } from "lucide-react"
+import { Layers, Sparkles, Store } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import { MarketplaceView } from "@/components/market/MarketplaceView"
+import { ExperimentalCapabilities } from "@/components/market/ExperimentalCapabilities"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { QueuePanel } from "@/components/market/QueuePanel"
 import { InstallFlight } from "@/components/market/InstallFlight"
@@ -10,11 +11,13 @@ import { InstallFlight } from "@/components/market/InstallFlight"
 interface PluginHubProps {
   refreshKey: number
   onNotice?: (text: string, kind?: "ok" | "warn") => void
+  /** 重启该 Profile（实验能力的"改动后生效"入口，复用 ProfileManager 的既有确认链）。 */
+  onRestart?: (profile: string) => void
 }
 
-export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
+export function PluginHub({ refreshKey, onNotice, onRestart }: PluginHubProps) {
   const { t } = useI18n()
-  const [subTab, setSubTab] = useState<"market" | "installed">("market")
+  const [subTab, setSubTab] = useState<"market" | "installed" | "official">("market")
 
   return (
     <>
@@ -54,6 +57,22 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
               <Layers className={`size-3.5 ${subTab === "installed" ? "text-brand-deep" : "text-faint"}`} />
               <span>{t.market.subtabInstalled}</span>
             </button>
+
+            {/* 实验能力（2026-09-16，ADR-0020 §7）：能力开关 —— 开/关/换后端/移除 */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "official"}
+              onClick={() => setSubTab("official")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
+                subTab === "official"
+                  ? "bg-panel text-ink shadow-xs font-semibold"
+                  : "text-dim hover:text-ink hover:bg-panel/40"
+              }`}
+            >
+              <Sparkles className={`size-3.5 ${subTab === "official" ? "text-brand-deep" : "text-faint"}`} />
+              <span>{t.market.capTab}</span>
+            </button>
           </div>
 
           {/* 下载管理（095 #4：队列项状态一览） */}
@@ -63,6 +82,12 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
         {/* 子视图渲染 */}
         {subTab === "market" ? (
           <MarketplaceView onNotice={onNotice} />
+        ) : subTab === "official" ? (
+          <ExperimentalCapabilities
+            refreshKey={refreshKey}
+            onNotice={onNotice}
+            onRestart={onRestart}
+          />
         ) : (
           <PluginOverview refreshKey={refreshKey} onNotice={onNotice} />
         )}

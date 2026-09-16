@@ -7,6 +7,7 @@ import {
   Keyboard,
   LoaderCircle,
   MonitorCog,
+  Package,
   RefreshCw,
   Shield,
   ShieldAlert,
@@ -68,6 +69,21 @@ export function PreferencesPane({
     try {
       // 读改写走安全基线：基线来自一次成功读取，patch 只带本次要改的键
       setSettings(await patchShellSettings({ autoRestart: checked }))
+      onNotice(t.console.saveSuccess, "ok")
+    } catch (e) {
+      onNotice(`${t.console.saveFailed}: ${e}`, "warn")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /// 插件安装源偏好（ADR-0006 §6）：`auto`（先官方、失败换源、成功才记）之外，
+  /// 允许用户**固定**单源——固定后壳绝不自动换（换源等于偷偷改了他的选择）。
+  const handleChangeRegistry = async (choice: "auto" | "official" | "configured") => {
+    if (!settings || saving) return
+    setSaving(true)
+    try {
+      setSettings(await patchShellSettings({ pluginRegistry: choice }))
       onNotice(t.console.saveSuccess, "ok")
     } catch (e) {
       onNotice(`${t.console.saveFailed}: ${e}`, "warn")
@@ -158,6 +174,14 @@ export function PreferencesPane({
   const autoRestartActive = settings?.autoRestart ?? false
   const floatingSwitcherActive = settings?.showFloatingSwitcher ?? true
   const shortcutChoice = settings?.switcherShortcut ?? "default"
+  // 空 / 未知值都按 auto 处理（与 settings.rs 的 `parse_pref` 同口径）。
+  const registryChoice = settings?.pluginRegistry ?? "auto"
+  const registryLastGood =
+    settings?.pluginRegistryLastGood === "official"
+      ? t.console.pluginRegistryOfficialShort
+      : settings?.pluginRegistryLastGood === "configured"
+        ? t.console.pluginRegistryConfiguredShort
+        : null
   // null = 每次询问（与 settings.rs 的 None 同义）
   const defaultMode = settings?.defaultMode ?? null
 
@@ -479,6 +503,63 @@ export function PreferencesPane({
               {shortcutChoice === "shift_p" && <Check className="size-4 text-brand-deep" />}
             </button>
           </div>
+        </div>
+      </section>
+
+      {/* 插件安装源（ADR-0006 §6，2026-09-16）：镜像与官方各有各的缺——
+          镜像可能没同步新包，官方在国内可能慢/不通，所以默认"自动换源"，
+          也允许固定一个由用户自己承担。 */}
+      <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
+        <div className="flex items-center gap-2.5 mb-1.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
+            <Package className="size-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">
+              {t.console.pluginRegistrySection}
+            </h2>
+            <p className="text-xs text-faint">{t.console.pluginRegistryDesc}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          {(
+            [
+              ["auto", t.console.pluginRegistryAuto, t.console.pluginRegistryAutoHint],
+              [
+                "official",
+                t.console.pluginRegistryOfficial,
+                t.console.pluginRegistryOfficialHint,
+              ],
+              [
+                "configured",
+                t.console.pluginRegistryConfigured,
+                t.console.pluginRegistryConfiguredHint,
+              ],
+            ] as const
+          ).map(([value, label, hint]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => void handleChangeRegistry(value)}
+              className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
+                registryChoice === value
+                  ? "border-brand bg-brand/5 shadow-xs"
+                  : "border-line bg-bg hover:border-line-hover"
+              }`}
+            >
+              <div>
+                <span className="text-xs font-semibold text-ink">{label}</span>
+                <p className="mt-1 text-label text-faint">{hint}</p>
+                {value === "auto" && registryLastGood && (
+                  <p className="mt-1 text-micro text-ok">
+                    {t.console.pluginRegistryLastGood(registryLastGood)}
+                  </p>
+                )}
+              </div>
+              {registryChoice === value && <Check className="size-4 text-brand-deep" />}
+            </button>
+          ))}
         </div>
       </section>
     </div>

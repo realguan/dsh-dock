@@ -8,7 +8,13 @@
 // - app:settings-changed  commands/console.rs::set_shell_settings —— ShellSettings
 //   全量（含 locale / switcherShortcut 等）。2026-09-11（task-27）：该名字原分别
 //   硬编码在 App.tsx 与 QuickDshSwitcher.tsx 两处，收敛到此处。
-import type { BootFailure, ClientUpdate, ShellSettings, UpdateStatus } from "./ipc"
+import type {
+  BootFailure,
+  ClientUpdate,
+  QuarantineRow,
+  ShellSettings,
+  UpdateStatus,
+} from "./ipc"
 
 export const EV = {
   bootStep: "boot:step",
@@ -45,6 +51,10 @@ export interface BootErrorEvent {
   suggestion?: string
   actions?: string[]
   log?: string
+  /// 可一键隔离的挂载行（2026-09-16）：出错行是壳自己写的（`dsh-dock-` 前缀）时下发，
+  /// 配合 `actions=["quarantine_plugin_row"]` 渲染「移除该行并重启」。
+  /// **只读诊断**：拿不到会话目标 profile、或行不归壳所有时后端不下发。
+  quarantine?: QuarantineRow
 }
 
 export type AppUpdateEvent = ClientUpdate

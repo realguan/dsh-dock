@@ -140,9 +140,15 @@ export interface PluginRuntimeSnapshot {
 /// detail 为人读文案（失败附 dsh 输出尾部，成功含「重启后生效」提示）。
 /// 2026-09-09（ADR-0013）：构建脚本改默认批准，审批门载荷（ignored_builds）
 /// 随审批链一并退役。
+/** 插件操作失败分类：**唯一实现在后端**（`plugin_registry::classify_failure`），
+ *  前端只消费它决定显示哪句话——两份正则分类会在下次改动里漂移。 */
+export type FailureKind = "network" | "not_found" | "build_approval" | "other"
+
 export interface PluginOpOutcome {
   ok: boolean
   detail: string
+  /** 失败分类；成功为 `null`。 */
+  failureKind?: FailureKind | null
 }
 
 /// 插件行表条目（4.4③，复现点 7/ADR 第四次修订）：行 id 不可从包名推导，
@@ -269,6 +275,34 @@ export interface McpServerConfig {
   args: string[]
   env: Record<string, string>
   disabled: boolean
+  /** 传输方式（2026-09-15，ADR-0022 前置）：上游 `@deepseek-ai/dsh-mcp-client`
+   *  仅支持 `stdio` 与 `streamable-http`（无 `sse` 字面量）；后端缺省发 `stdio`。
+   *  可选是为兼容既有构造点（表单只填 stdio 字段时无需补全）。 */
+  transport?: "stdio" | "streamable-http"
+  /** `streamable-http` 的 MCP 端点 URL（stdio 恒空）。 */
+  url?: string
+  /** `streamable-http` 的附加请求头（stdio 恒空）。 */
+  headers?: Record<string, string>
+}
+
+/// 一条具名 MCP 能力（tool / resource / template）——2026-09-15，ADR-0022。
+export interface McpNamed {
+  name: string
+  /** tool 取 description；resource 取 uri；template 取 uriTemplate。 */
+  detail: string
+}
+
+/** 一次 MCP 能力探测的结果（stdio 分支）。 */
+export interface McpProbe {
+  /** **服务端协商后**的协议版本（非我方发送值）。 */
+  protocolVersion: string
+  /** 服务端自报名称（缺省回退配置里的 serverName）。 */
+  serverName: string
+  tools: McpNamed[]
+  resources: McpNamed[]
+  templates: McpNamed[]
+  /** 降级说明（如"该服务器不支持 resources"）；空 = 全部枚举成功。 */
+  notes: string[]
 }
 
 // ---------- 系统设置与诊断（4.11 / 4.12 / 4.13） ----------
@@ -282,6 +316,11 @@ export interface ShellSettings {
   switcherShortcut?: string | null
   /** 升级提示条已忽略版本键（"dsh@x.y.z" / "client@x.y.z"；同键不再弹） */
   dismissedUpdate?: string | null
+  /** 插件安装源偏好（ADR-0006 §6）：`auto` 先官方、失败换源一次；`official` /
+   *  `configured` 只用一个源且不自动换。`null`/未知值 = auto。 */
+  pluginRegistry?: "auto" | "official" | "configured" | null
+  /** 上次**成功**用过的源（`auto` 时用来排序首试）；只记成功，抖动不带偏。 */
+  pluginRegistryLastGood?: "official" | "configured" | null
 }
 
 export interface NodeDiagnosticInfo {
@@ -361,6 +400,16 @@ export interface BootErrorPayload {
   suggestion: string
   actions: string[]
   log: string
+  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时 `actions` 含
+  /// `quarantine_plugin_row`，前端渲染「移除该行并重启」。**只读诊断**：行不归壳
+  /// 所有、或拿不到会话目标 profile 时为 `null`（`null` 时前端不渲染该按钮）。
+  quarantine: QuarantineRow | null
+}
+
+/// 可一键隔离的挂载行（`profile` + 行 id）：`boot_failure.rs::QuarantineRow`。
+export interface QuarantineRow {
+  profile: string
+  rowId: string
 }
 
 /// 交接意图（ADR-0014）：一次「停旧 → 起新 → 进工作台」的贯穿状态。
@@ -390,4 +439,159 @@ export interface HandoffIntent {
 /// （仍在途且未超 TTL）——TTL 只由 Rust 持有，前端与注入脚本都不再各抄一份。
 export interface HandoffSnapshot extends HandoffIntent {
   active: boolean
+}
+
+// ---------- 实验能力开关（ADR-0020，2026-09-15 立 / 2026-09-16 第二次修订）----------
+//
+// 呈现单位是**能力**（capability），不是包：同一能力的互斥后端降级为**变体**
+// （variant）。v1 把策展集摊平成 8 条并列条目，于是"三选一"要靠用户自己读卡片，
+// 而"关掉"这件事在目录里根本不存在（只有安装）。
+
+/// 激活方式：由目标包**是否声明 `dsh.bundle`** 决定，是激活契约的唯一依据。
+/// - `auto_bundle`：声明了 → `dsh plugin add` 自行追加进 `dsh.profile.bundles`，
+///   壳**不得**再写 `insert`（会重复挂载）；
+/// - `insert_row`：未声明 → CLI 只装依赖并告警，壳**必须**写挂载行。
+export type CapabilityActivation = "auto_bundle" | "insert_row"
+
+/// 变体状态：由「包 × 挂载行 × disabled」三者共同决定（后端唯一判定，前端不猜）。
+/// - `off`：一个包都没装；`on`：包齐 + 行齐 + 无停用；
+/// - `disabled`：包齐 + 行齐，但行被停用（已就位、当前关着，秒级可开）；
+/// - `partial`：装了一半或包在而行缺（需要修复）。
+export type VariantState = "off" | "on" | "disabled" | "partial"
+
+/// 能力状态 = 其变体状态的聚合；`conflict` = 同能力多个变体同时生效（上游会激活失败）。
+export type CapabilityState = "off" | "on" | "disabled" | "partial" | "conflict"
+
+/// 能力下的**一步**（一个包的装/挂/开关事实）。
+export interface CapabilityStep {
+  /// 第几步（1 起）：有序组合靠它表达"先宿主层再 Web 层"，也是失败续装的锚点。
+  ordinal: number
+  package: string
+  /// 钉版本后的 spec（形如 `@scope/pkg@0.1.6-alpha.1`）；运行时版本未检出时**退回裸包名**
+  /// 并在 `versionNotice` 里明示未钉版本。
+  spec: string
+  activation: CapabilityActivation
+  /// patch 行 id（`insert_row` 时才真正落盘；缺 id 的行永不可再 patch）。
+  rowId: string
+  /// 该包是否已在 profile 依赖里。
+  installed: boolean
+  /// 该包的挂载行是否已**在组合树中**。
+  rowPresent: boolean
+  disabled: boolean
+  /// 停用/启用该步要写的行 id（bundle 贡献多行时全部一起切）；空 = 无行可切。
+  toggleTargets: string[]
+  /// 版本错配提示（如 registry `latest` 落后于运行时）；`null` = 无需打扰用户。
+  versionNotice: string | null
+}
+
+/// 能力下的一个可选后端。同能力的变体**互斥**（同一时刻只应有一个生效）。
+export interface CapabilityVariant {
+  id: string
+  labelZh: string
+  /// 一句话：这个后端适合谁 / 代价是什么。
+  noteZh: string
+  /// 需要用户自备或额外配置的东西（空 = 无）。
+  prerequisitesZh: string[]
+  steps: CapabilityStep[]
+  state: VariantState
+  /// 本变体的包是**另一个已就位变体**的真子集 → 本档已被那一档包含（Agent Teams 的
+  /// 自建档 ⊂ Web 档）。此时该档不单独开关：关掉它会把超集档的基础层一起拆掉。
+  /// `null` = 独立档。
+  subsumedBy: string | null
+  /// **纯行级停用是否等价于"关掉"**（`false` → 关闭必须走移除）。
+  ///
+  /// `false` 的成因是变体含 profile 层（`dsh.bundle.patch`）：层 patch 带副作用
+  /// （实测 Agent Teams 的层还停用了 4 条旧 subagent 行），行级 disabled 关不干净。
+  /// **仅在 `state !== "off"` 时有意义**：未安装时无从判定包的形态，后端一律给 `false`。
+  toggleOffSupported: boolean
+  /// 同能力其它变体已装、而本变体不含的后端包；非空 = 启用本变体需先替换掉它们。
+  displaced: string[]
+  /// 本变体要求的宿主可执行文件**缺失**（`null` = 前置齐备）。
+  ///
+  /// 非 `null` 时**必须禁用开关**并原样展示这句话：缺 `cua-driver` 之类的前置时装上
+  /// 该 provider，dsh 会在插件树加载阶段直接失败、工作台起不来（2026-09-16 真机事故）。
+  /// 文案由后端下发——只有它知道缺的是哪个命令（禁前端自造文案，避免两处漂移）。
+  prerequisiteMissing: string | null
+}
+
+/// 一项可开关的实验能力。
+export interface Capability {
+  /// 稳定 id（`agent-team` 等）——**不得用展示名当身份**（改文案即丢状态）。
+  id: string
+  labelZh: string
+  /// 一句话价值。
+  summaryZh: string
+  /// 启用后**用户能观察到什么**（含"什么会消失"，如旧 subagent 控件被取代）。
+  unlocksZh: string
+  variants: CapabilityVariant[]
+  state: CapabilityState
+  /// 当前生效（或已就位但停用）的变体 id；`null` = 未启用 / 冲突。
+  activeVariant: string | null
+}
+
+/// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。
+/// `autoActivated` = 该包是 profile 层，已由 CLI 激活，壳**未写行**（也不应写）。
+export interface RowWriteOutcome {
+  /// 是否真的改动了 patch 文件（幂等重写 = false）。
+  changed: boolean
+  autoActivated: boolean
+}
+
+// ---------- SSH 远程工作区向导（ADR-0023，2026-09-15） ----------
+
+/** 一个可选择的 SSH 主机（`~/.ssh/config` 的一个具体 alias）。
+ *  **只含非机密字段**：alias、HostName/User/Port/ProxyJump、IdentityFile 的**路径**。
+ *  私钥内容从不在此文件里，这里也没有能承载它的字段。 */
+export interface SshHost {
+  /** `Host` 里的具体别名（不含通配/取反）——即可以当 `host` 用的名字。 */
+  alias: string
+  hostname: string | null
+  user: string | null
+  port: number | null
+  proxyJump: string | null
+  identityFiles: string[]
+}
+
+/** 一次 `list_ssh_hosts` 的结果。 */
+export interface SshHosts {
+  hosts: SshHost[]
+  /** 解析期的降级说明（未跟随的 `Include` / 忽略的 `Match` / 畸形行 / 非法端口）。
+   *  空 = 无降级。有值即表示**下面的列表可能不完整**，UI 必须显示。 */
+  notes: string[]
+}
+
+/** `dsh-ssh` 的五个必填配置键（ADR-0023 §2.3）。
+ *  字段名与 Rust 侧 `ssh_remote::SshTarget` 的 camelCase 序列化一一对应。 */
+export interface SshTarget {
+  /** `~/.ssh/config` 里**已存在**的别名（不是任意 hostname）。 */
+  host: string
+  /** 远端 Node 绝对路径。 */
+  node: string
+  /** 远端 helper 入口绝对路径。 */
+  helper: string
+  /** helper 的 SHA-256（小写 64 位十六进制）；不符即拒绝连接。 */
+  helperHash: string
+  /** 远端默认工作区绝对路径。 */
+  workspace: string
+}
+
+/** 一项预检结论。`key` 是稳定的机器可读键（UI 不解析文案）。 */
+export interface SshProbeCheck {
+  key: string
+  ok: boolean
+  detail: string
+}
+
+/** 一次预检结果。`ok === false` 即**不得生成 profile**（ADR-0023 §2.5）。 */
+export interface SshProbe {
+  ok: boolean
+  checks: SshProbeCheck[]
+}
+
+/** `generate_ssh_profile` 的结果。 */
+export interface SshProfileOutcome {
+  /** 本次是否**新建**了 profile（false = 复用已存在的同名 profile）。 */
+  created: boolean
+  /** 是否**改动了** `cordis.patch.yml`（false = 四行本就齐全，零写入）。 */
+  changed: boolean
 }

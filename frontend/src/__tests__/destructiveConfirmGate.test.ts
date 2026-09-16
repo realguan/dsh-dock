@@ -21,6 +21,7 @@ const DESTRUCTIVE_ENTRIES = [
   "/components/profiles/McpManager.tsx", // 移除 MCP 服务
   "/components/system/CredentialsPane.tsx", // 清除 Key / 覆写凭据
   "/components/system/DshSettingsPane.tsx", // 覆写引擎设置
+  "/components/market/ExperimentalCapabilities.tsx", // 移除实验能力（卸载包 + 删挂载行）
 ]
 
 describe("破坏性操作确认闸门", () => {
@@ -35,7 +36,7 @@ describe("破坏性操作确认闸门", () => {
     ).toEqual([])
   })
 
-  it("6 个破坏性入口都引用了 ConfirmDialog", () => {
+  it(`${DESTRUCTIVE_ENTRIES.length} 个破坏性入口都引用了 ConfirmDialog`, () => {
     const missing = DESTRUCTIVE_ENTRIES.filter((suffix) => {
       const hit = Object.entries(RAW_SOURCES).find(([path]) => path.endsWith(suffix))
       return !hit || !/ConfirmDialog/.test(hit[1])

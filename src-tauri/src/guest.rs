@@ -58,7 +58,13 @@ pub(crate) use guest_prep;
 /// POSIX shell 单引号字面量：`'` → `'\''`。profile 名虽经 `validate_profile_name`
 /// 校验，拒绝集之外仍可含空格/引号/`;`/`$`/反引号等元字符——插入 guest 脚本
 /// 必须过这里，防脚本断裂与注入面（同机自伤亦是伤）。
-#[cfg(any(windows, test))]
+///
+/// **2026-09-15（§7 R4b）解除 `cfg` 门控**：原为 `#[cfg(any(windows, test))]`
+/// （生产侧只有 WSL 客体脚本用得上）。现在 `ssh_remote.rs` 在**所有**平台都要用它
+/// ——`ssh` 把远端 argv 按空格拼接下发、不经本地 shell 转义，带空格/引号的远端路径
+/// 必须自己 quote。**不复刻第二份**：这个函数的全部价值就是注入面收口，而它已有
+/// `sh_quote_never_lets_metacharacters_escape` 与 `sh_quote_round_trips_through_bash`
+/// 两条反例/实证测试；复制一份等于把这两条测试的保护范围砍一半。
 pub(crate) fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

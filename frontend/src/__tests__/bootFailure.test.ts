@@ -47,4 +47,33 @@ describe("normalizeError：failure 分类", () => {
     expect(normalizeError(null)).toBeNull()
     expect(normalizeError("oops")).toBeNull()
   })
+
+  it("一键隔离计划：形状合法才透出（半个计划一律丢弃）", () => {
+    // 2026-09-16：后端在"壳自己写的挂载行把插件树搞挂"时下发
+    // `actions=["quarantine_plugin_row"]` + `quarantine={profile,rowId}`。
+    // 前端只认完整形状——拿半个计划去调删除 IPC 会删错 profile。
+    const ok = normalizeError({
+      actions: ["quarantine_plugin_row"],
+      quarantine: { profile: "web", rowId: "dsh-dock--deepseek-ai-x" },
+    })
+    expect(ok?.quarantine).toEqual({ profile: "web", rowId: "dsh-dock--deepseek-ai-x" })
+    expect(ok?.actions).toEqual(["quarantine_plugin_row"])
+
+    for (const bad of [
+      { profile: "web" },
+      { rowId: "dsh-dock-x" },
+      { profile: "", rowId: "dsh-dock-x" },
+      { profile: "web", rowId: "" },
+      { profile: 42, rowId: "dsh-dock-x" },
+      null,
+      "nope",
+    ]) {
+      expect(normalizeError({ quarantine: bad })?.quarantine, JSON.stringify(bad)).toBeUndefined()
+    }
+  })
+
+  it("空动作集原样透出（别把「后端说没有出路」补成「重试」）", () => {
+    const e = normalizeError({ actions: [] })
+    expect(e?.actions).toEqual([])
+  })
 })

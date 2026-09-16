@@ -10,6 +10,7 @@ import {
   Copy,
   Check,
   RefreshCw,
+  ShieldOff,
   Terminal,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
@@ -35,7 +36,7 @@ import { Button } from "@/components/ui/button"
  * 契约来源：`docs/team/V120-D1-引擎引导全局安装.md` §5、
  * `src-tauri/src/boot_failure.rs:135`（`vec!["boot_in_wsl", "retry"]`）。
  */
-export type ActionIpc = "terminalAction" | "bootInWsl"
+export type ActionIpc = "terminalAction" | "bootInWsl" | "quarantineRow"
 
 /** 可点动作 → 目标 IPC 的**唯一事实源**（`INVOKABLE_ACTIONS` 由它派生，两处不漂移）。 */
 const ACTION_IPC: Readonly<Record<string, ActionIpc>> = {
@@ -43,6 +44,9 @@ const ACTION_IPC: Readonly<Record<string, ActionIpc>> = {
   upgrade: "terminalAction",
   upgrade_only: "terminalAction",
   boot_in_wsl: "bootInWsl",
+  // 2026-09-16：插件行把插件树搞挂时的**就地**出路——移除该行 + 重启（而不是
+  // 让用户自己去别处找）。契约：`boot_failure.rs::with_quarantine`。
+  quarantine_plugin_row: "quarantineRow",
 }
 
 /** 可由本组件分派的动作 id 集合（从分派表派生，避免"集合/分派"两处漂移）。 */
@@ -79,7 +83,10 @@ export function ErrorCard({
   const { copied, copy } = useCopy()
   // 诊断卡折叠态（v1.2.0 实测 2.1）：默认展开——错误必须被看见；折叠是用户显式选择。
   const [collapsed, setCollapsed] = useState(false)
-  const actions = payload.actions?.length ? payload.actions : ["retry"]
+  // `?? ["retry"]`（不是 `?.length ?`）——**空数组是后端明确说"没有可行动作"**：
+  // 插件的挂载行把插件树搞挂时重试必然再失败，摆一个必然失败的按钮等于教用户白点一次。
+  // 旧缓存载荷（无该字段）才回退「重试」。
+  const actions = payload.actions ?? ["retry"]
   // 2026-09-08（ADR-0012）：优先按结构化分类取本地化文案；后端文案作为兼容分支
   // （旧缓存载荷 / 未来新增的未识别 kind）。
   const kindCopy = payload.failure ? t.error.kinds[payload.failure.kind] : undefined
@@ -95,15 +102,23 @@ export function ErrorCard({
     // 显式分派（task-52）：未知 id 才放弃；已知 id 各自走正确的那条 IPC。
     const call = resolveActionCall(id)
     if (!call) return
+    // 隔离计划由后端下发（只有它知道行归谁、当前 profile 是哪个）；缺失即**不调**
+    // ——宁可不给按钮，也不能拿半个计划去删行（会删错 profile）。
+    const plan = payload.quarantine
+    if (call.ipc === "quarantineRow" && !plan) return
     setPending(id)
     setActionError(null)
     useBootStore.getState().clearError()
     // `boot_in_wsl` 不是 terminalAction 的成员（TerminalAction 联合类型不含它），
     // 故必须按分派目标分别调用，不能统一 `id as TerminalAction` 蒙混过去。
+    // 隔离是**两步一次点击**：先移除该行，再重启。移除失败就不重启——重启也还是
+    // 那个坏 profile，只会把用户再带回同一张错误卡。
     const invoke =
       call.ipc === "bootInWsl"
         ? api.bootInWsl()
-        : api.terminalAction(id as TerminalAction)
+        : call.ipc === "quarantineRow" && plan
+          ? api.removeOfficialPatchRow(plan.profile, plan.rowId).then(() => api.terminalAction("retry"))
+          : api.terminalAction(id as TerminalAction)
     invoke
       .catch((e) => {
         setPending(null)
@@ -191,10 +206,14 @@ export function ErrorCard({
           </div>
         )}
 
-        {/* 行动按钮条 */}
+        {/* 行动按钮条（动作集为空 = 后端明确说"没有可点的出路"，此时不留空行） */}
+        {(actions.length > 0 || onReselect) && (
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           {actions.map((a) => {
             const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only"
+            // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
+            // 而且会改动 profile 文件）。
+            const ActionIcon = a === "quarantine_plugin_row" ? ShieldOff : RefreshCw
             return (
               <Button
                 key={a}
@@ -211,7 +230,7 @@ export function ErrorCard({
                   </>
                 ) : (
                   <>
-                    <RefreshCw className="size-3.5" />
+                    <ActionIcon className="size-3.5" />
                     <span>{actionLabel(a)}</span>
                   </>
                 )}
@@ -230,6 +249,7 @@ export function ErrorCard({
             </Button>
           )}
         </div>
+        )}
 
         {/* 原始终端日志折叠 */}
         {payload.log && (

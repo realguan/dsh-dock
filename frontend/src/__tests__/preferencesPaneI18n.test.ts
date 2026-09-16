@@ -43,6 +43,18 @@ const NEW_KEYS = [
   "breakerThresholdValue",
   "breakerActionLabel",
   "breakerActionValue",
+  // 2026-09-16 新增：插件安装源选择（ADR-0006 §6）
+  "pluginRegistrySection",
+  "pluginRegistryDesc",
+  "pluginRegistryAuto",
+  "pluginRegistryAutoHint",
+  "pluginRegistryOfficial",
+  "pluginRegistryOfficialHint",
+  "pluginRegistryConfigured",
+  "pluginRegistryConfiguredHint",
+  "pluginRegistryOfficialShort",
+  "pluginRegistryConfiguredShort",
+  "pluginRegistryLastGood",
 ] as const
 
 /** task-22 按事实**删除**的键：不得回归（回归即恢复「简体中文=默认」的谎报）。 */
@@ -87,9 +99,17 @@ describe("偏好设置面板文案收口（task-20）", () => {
   it("新增键的 zh 侧不得残留英文整句（技术术语括注除外）", () => {
     // `breakerTitle` 刻意保留技术术语括注「（Circuit Breaker）」——术语对照，
     // 与 zh 侧 mcp* 字段名括注同类（2026-09-11 lead 已裁定不改）。
-    const GLOSS_ALLOWED = new Set(["breakerTitle"])
-    const offenders = NEW_KEYS.filter((k) => !GLOSS_ALLOWED.has(k)).filter((k) =>
-      /\b[A-Za-z]{3,}\b/.test(String(zh[k])),
+    // 源标识符属技术术语对照，与 breakerTitle 的括注同类（2026-09-16）：
+    // `registry.npmjs.org` / `npmmirror` 是用户要照着认的源名，译成中文反而认不出。
+    const GLOSS_ALLOWED = new Set([
+      "breakerTitle",
+      "pluginRegistryOfficialHint",
+      "pluginRegistryConfiguredHint",
+    ])
+    // 只查**字符串**键：函数键的 `String(fn)` 是源码文本（含形参名），拿它判"英文整句"
+    // 是假阳性——动态文案的求值型检查见 marketI18n.test.ts 的探针手法（2026-09-16）。
+    const offenders = NEW_KEYS.filter((k) => !GLOSS_ALLOWED.has(k)).filter(
+      (k) => typeof zh[k] === "string" && /\b[A-Za-z]{3,}\b/.test(String(zh[k])),
     )
     expect(offenders, "zh-CN 侧出现英文整词 ⇒ 反向漏译").toEqual([])
     expect(String(zh.breakerTitle)).toContain("Circuit Breaker")
