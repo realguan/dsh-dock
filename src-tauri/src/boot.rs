@@ -162,6 +162,14 @@ pub(crate) struct ShellState {
     /// 与 `active_session_profile`（会话槽真相：删除/重命名防护、
     /// get_active_profile 数据源）分工——本字段是「目标记录」，非「运行真相」。
     pub(crate) forced_profile: Mutex<Option<String>>,
+    /// **本轮实际启动的 profile**（2026-09-16 补）。
+    ///
+    /// 为什么单独记：启动失败路径会先 `teardown_session`，此后会话槽为空；而
+    /// `forced_profile` 只在"管理器切换 / 错误卡重试注入"时才有值——**冷启动路径上它是
+    /// `None`**。于是"该修哪个 profile"在失败后无据可查：错误卡上「移除该行并重启」
+    /// 与「安全模式启动」双双失效（真机症状：点了像没反应、只剩一个必然失败的重试）。
+    /// 在 **spawn 成功时**记账，是最可靠的来源。
+    pub(crate) last_boot_profile: Mutex<Option<String>>,
     /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
     pub(crate) client_update: Mutex<Option<crate::updater::ClientUpdate>>,
     /// 崩溃历史时间戳（4.12 崩溃守护与熔断，记录最近 60s 内异常退出次数）。
@@ -330,6 +338,8 @@ pub(crate) fn run_executor_session(
     // 记录本线程的会话代际：若等待期间会话被外部切换（teardown_session），
     // 旧线程据此静默退出，不误报错误卡、不误导航/监护新会话。
     let epoch = state.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+    // spawn 成功即记账：这是"本轮到底起了哪个 profile"的权威来源（见字段文档）。
+    *state.last_boot_profile.lock().unwrap() = executor.active_profile().map(String::from);
     *state.session.lock().unwrap() = Some(executor);
     state.advance_handoff(HandoffPhase::Waiting);
 
@@ -707,6 +717,11 @@ pub(crate) fn boot_target_profile(app: &tauri::AppHandle) -> Option<String> {
         return Some(profile);
     }
     let state = app.try_state::<Arc<ShellState>>()?;
+    // 会话已 teardown：退回"本轮实际起过的 profile"，再退回启动目标记录。
+    // **顺序不能倒**：冷启动时 `forced_profile` 为空，只有 `last_boot_profile` 说了实话。
+    if let Some(profile) = state.last_boot_profile.lock().ok().and_then(|g| g.clone()) {
+        return Some(profile);
+    }
     state
         .forced_profile
         .lock()

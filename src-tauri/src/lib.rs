@@ -209,6 +209,7 @@ pub fn run() {
                 // 2026-09-15：/api 会话 Cookie 的壳内存副本（回环调用用；不落盘）。
                 workbench_cookie: Mutex::new(None),
                 forced_profile: Mutex::new(None),
+                last_boot_profile: Mutex::new(None),
                 client_update: Mutex::new(None),
                 crash_timestamps: Mutex::new(Vec::new()),
                 // 启动轮次状态（代际令牌 + 可见缓存）：首启代际从 0 起，
