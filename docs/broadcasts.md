@@ -32,6 +32,22 @@
 
 ## 三、记录
 
+### 2026-09-16 修复 · 安全模式的 `error: unknown option '--patch'`（参数顺序是契约）—— guan（AI 协作）
+
+- **现象**（维护者真机）：点「安全模式启动」→ 错误卡报 `DSH 进程已退出（代码 1）错误摘要：
+  unknown option '--patch'`，被分类成「宿主 DSH 参数不兼容」并建议升级 DSH（误导）。
+- **根因**：`dsh_launcher_args` 把 `--patch` 写在了 **app 参数之后**
+  （`--profile web --port 0 --patch X --no-open`）。启动器只认自己那几个 flag，**遇到 app 的
+  参数（`--port`）就把其后全部交给 app** ⇒ `--patch` 落到 web app 手里 → 未知选项。
+  位置写错时上游不会说"顺序错了"，看起来像"这个版本不支持 --patch"（连引擎版本核查都白费）。
+- **A/B 实证**（克隆 dev home，同一 overlay）：旧顺序 → `error: unknown option '--patch'`；
+  新顺序（`--patch` 紧跟 `--profile`）→ `dsh web: http://127.0.0.1:60058/?token=…` **就绪** ✅
+  （同轮也再次确认：只停用户层 5 行的安全模式能起来）。
+- **修**：`dsh_launcher_args` 顺序改为 `--profile <p> [--patch <overlay>] --port 0 [--no-open]`，
+  单测期望同步（原来那条测试把**错的顺序**钉住了，所以闸门全绿也没拦住——教训：顺序类契约的
+  测试要写"为什么是这个顺序"）。
+- **凭据**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test` **539 passed / 8 ignored**。
+
 ### 2026-09-16 修复 · 安全模式两个真机缺陷（错误卡动作拿不到 profile；A+ 口径不成立）—— guan（AI 协作）
 
 - **现象**（维护者真机）：点「安全模式启动」只出现「重试」，点重试也起不来；

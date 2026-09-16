@@ -117,16 +117,17 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
 /// `--no-open` 的版本适配沿用旧口径（system 档旧版 dsh 收到未知参数会直接秒退）；
 /// `--patch` 同理只在 Engine 档由 `LaunchSpec::patch_overlay` 给出。
 pub fn dsh_launcher_args(launch: &LaunchSpec) -> Vec<String> {
-    let mut args = vec![
-        "--profile".to_string(),
-        launch.profile.clone(),
-        "--port".to_string(),
-        "0".to_string(),
-    ];
+    let mut args = vec!["--profile".to_string(), launch.profile.clone()];
+    // **顺序是契约**（2026-09-16 真机 `error: unknown option '--patch'` 的根因）：
+    // 启动器只认自己那几个 flag，遇到 app 的参数（如 `--port`）就会把**其后全部**交给
+    // app。故 `--patch` 必须在 app 参数之前——位置写错时 dsh 不会说"顺序错了"，
+    // 而是由 web app 报"未知选项 --patch"，看起来像上游不支持这个 flag。
     if let Some(overlay) = &launch.patch_overlay {
         args.push("--patch".to_string());
         args.push(overlay.display().to_string());
     }
+    args.push("--port".to_string());
+    args.push("0".to_string());
     if launch.no_open {
         args.push("--no-open".to_string());
     }
@@ -510,7 +511,8 @@ mod tests {
         };
         assert_eq!(
             dsh_launcher_args(&base),
-            vec!["--profile", "web", "--port", "0", "--no-open"]
+            vec!["--profile", "web", "--port", "0", "--no-open"],
+            "无 overlay 时保持原有顺序"
         );
 
         let safe = LaunchSpec {
@@ -522,13 +524,13 @@ mod tests {
             vec![
                 "--profile",
                 "web",
-                "--port",
-                "0",
                 "--patch",
                 "/data/safe-mode/web.yml",
+                "--port",
+                "0",
                 "--no-open",
             ],
-            "overlay 必须紧跟启动器参数、在 app 参数边界之前"
+            "`--patch` 必须在 app 参数（--port/--no-open）之前，否则被 app 判成未知选项"
         );
     }
 
