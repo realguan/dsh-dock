@@ -74,6 +74,8 @@ describe("outcomeOf（终态 → 可 await 结果）", () => {
     expect(outcomeOf(item({ status: "failed", detail: "pnpm 失败" }))).toEqual({
       ok: false,
       detail: "pnpm 失败",
+      // 失败分类随队列带过（后端给；`null` = 非插件操作失败或旧项）
+      failureKind: null,
     })
   })
 

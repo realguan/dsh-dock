@@ -115,6 +115,8 @@
     "defaultProfile",
     "dismissedUpdate",
     "locale",
+    "pluginRegistry",
+    "pluginRegistryLastGood",
     "showFloatingSwitcher",
     "switcherShortcut"
   ],

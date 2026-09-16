@@ -118,6 +118,8 @@
   `probe-cache.json` `--no-open` 探测缓存（2026-09-01；可丢失可重建的运行时缓存，
   损坏/缺失回退探测不阻断 boot）· `engines/` 引擎目录（2026-09-03，ADR-0010：
   `PNPM_HOME` 指向的壳管理运行时资产 node/pnpm/dsh；可丢失可重建，缺失走引导）·
+  `pluginRegistry` 插件安装源偏好与 `pluginRegistryLastGood` 上次可用源
+  （2026-09-16，ADR-0006 §6：auto 先官方、失败换源、成功才记），
   `dismissedUpdate` 升级提示条已忽略版本键（2026-09-04，ADR-0010 升级呈现；
   形如 `dsh@<ver>`，同键不再弹非阻断提示条）· `~/.dsh-dock-dev`（dev 构建的 dsh
   home，2026-09-10，ADR-0015：与正式 `~/.dsh` 隔离，消除"开发期泄漏锁死正式包"）·

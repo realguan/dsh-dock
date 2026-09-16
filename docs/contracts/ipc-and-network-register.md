@@ -89,6 +89,7 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 | MCP 能力探测（**stdio 分支**） | `mcp_probe.rs`，2026-09-15，ADR-0022 | 网络在**被 spawn 的 MCP 服务器子进程内**；`network_gate` 的 `Registered` 行**反向绑定**此点。2026-09-15（R3）实现 `streamable-http` 分支后**该行保留**——含义收窄为"**除下节 `post_rpc` 条目级豁免覆盖的范围外**，本文件不得再有进程内原语"；两条并存才封住"第二处触网" |
 | 引擎引导（ADR-0010） | `engines.rs` | 网络在 pnpm 子进程内：`runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：Windows 免符号链接特权，ADR-0017）下载 dsh（镜像 env 注入）；WSL 客体仍同源 `add -g` |
 | WSL 客体投递与管理面（ADR-0016） | `executor.rs`；客体插件装卸/更新在客体 `dsh plugin`（客体 pnpm）子进程内 | 更新检查仍走 `updates.rs`，**壳不新增网络客户端** |
+| 插件装卸/更新的**源选择**（ADR-0006 §6，2026-09-16） | `commands/plugin.rs::install_plugin` → `dsh plugin add … --registry <url>`（宿主；客体暂用其自身配置） | 网络仍在 **pnpm 子进程内**；壳只按次传 `--registry`，**不改写用户 npm 配置**、无 in-process 客户端；machine projection 不变 |
 | SSH 非交互预检（ADR-0023 §2.5） | `ssh_remote.rs::probe_ssh_target`（2026-09-15） | 网络在**系统 `ssh` 子进程内**（壳无 in-process 客户端）；参数锁死 `BatchMode=yes` / `ForwardAgent=no` / `StrictHostKeyChecking=yes` / `ConnectTimeout=10`；整轮 30s；**只读回读**（uname / node / helper 摘要 / workspace），不写远端 |
 
 ### 进程内触网（条目级豁免；`Kind::Exempt` + `item`）

@@ -64,7 +64,11 @@ describe("enqueueAndWait（可 await 句柄）", () => {
       .getState()
       .enqueueAndWait({ pkg: "dsh-pet", spec: "dsh-pet@1.2.3", profile: "web", kind: "install" })
 
-    expect(outcome).toEqual({ ok: false, detail: "pnpm 被审批门拦住" })
+    expect(outcome).toEqual({
+      ok: false,
+      detail: "pnpm 被审批门拦住",
+      failureKind: null,
+    })
     expect(useQueueStore.getState().items[0].status).toBe("failed")
   })
 

@@ -711,6 +711,10 @@ mod tests {
 pub struct PluginOpOutcome {
     pub ok: bool,
     pub detail: String,
+    /// 失败分类（**分类的唯一实现**在 `plugin_registry::classify_failure`）：
+    /// 前端据此决定给用户看哪句话，不自己再写一份正则（AGENTS §11.3 禁双源）。
+    /// 成功时为 `None`。
+    pub failure_kind: Option<crate::plugin_registry::FailureClass>,
 }
 
 /// 插件操作种类。
@@ -863,17 +867,27 @@ pub fn mutate_plugin_blocking(
     spec: &str,
     data_dir: &Path,
     world: &crate::mgmt::World,
+    // 本轮要用的 registry（`None` = 不传 `--registry`，沿用 pnpm 配置 = 用户自己的源）。
+    // 选择策略与兜底见 ADR-0006 §6 / `plugin_registry.rs`；本函数只把结论变成参数。
+    registry: Option<&str>,
 ) -> Result<PluginOpOutcome, String> {
     crate::profiles::validate_profile_name(profile)?;
     // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
     validate_install_spec(spec)?;
-    let args = [
+    let mut args = vec![
         "plugin".to_string(),
         "--profile".to_string(),
         profile.to_string(),
         op.verb().to_string(),
         spec.to_string(),
     ];
+    // 按次指定源（ADR-0006 §6）：`dsh plugin` 是 pnpm 薄转发器，参数逐字透传
+    // （`apps/cli/src/plugin.ts:98`），故 `--registry <url>` 直接生效——取包仍发生在
+    // pnpm 子进程内，壳不开网络客户端、也不改写用户的 npm 配置。
+    if let Some(url) = registry {
+        args.push("--registry".to_string());
+        args.push(url.to_string());
+    }
     let log_path = data_dir.join("plugin-op.log");
     let run = match world {
         crate::mgmt::World::Local => {
@@ -962,7 +976,11 @@ fn classify_op_outcome(
             label = op.label()
         )
     };
-    PluginOpOutcome { ok, detail }
+    PluginOpOutcome {
+        ok,
+        failure_kind: (!ok).then(|| crate::plugin_registry::classify_failure(&detail)),
+        detail,
+    }
 }
 
 #[cfg(test)]
@@ -1076,21 +1094,33 @@ mod op_tests {
         let ghost = format!("dsh-dock-ghost-{}", std::process::id());
         let local = crate::mgmt::World::Local;
         assert!(
-            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir, &local)
+            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir, &local, None)
                 .unwrap_err()
                 .contains("尚未初始化")
         );
         // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
-        assert!(
-            mutate_plugin_blocking(PluginOp::Install, &ghost, "-flag", &data_dir, &local).is_err()
-        );
+        assert!(mutate_plugin_blocking(
+            PluginOp::Install,
+            &ghost,
+            "-flag",
+            &data_dir,
+            &local,
+            None
+        )
+        .is_err());
         // 非法 profile 名（路径遍历）：任何世界都在触达客体之前被拒
         let wsl = crate::mgmt::World::Wsl {
             distro: "Ubuntu".to_string(),
         };
-        assert!(
-            mutate_plugin_blocking(PluginOp::Install, "../escape", "pkg", &data_dir, &wsl).is_err()
-        );
+        assert!(mutate_plugin_blocking(
+            PluginOp::Install,
+            "../escape",
+            "pkg",
+            &data_dir,
+            &wsl,
+            None
+        )
+        .is_err());
     }
 
     /// 客体档在非 Windows 上给**诚实错误**（客体只存在于 Windows），绝不静默回落
@@ -1102,8 +1132,8 @@ mod op_tests {
         let wsl = crate::mgmt::World::Wsl {
             distro: "Ubuntu".to_string(),
         };
-        let err =
-            mutate_plugin_blocking(PluginOp::Install, "web", "pkg", &data_dir, &wsl).unwrap_err();
+        let err = mutate_plugin_blocking(PluginOp::Install, "web", "pkg", &data_dir, &wsl, None)
+            .unwrap_err();
         assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
         let err = plugin_rows_blocking("web", &data_dir, &wsl).unwrap_err();
         assert!(err.contains("仅在 Windows 宿主可用"), "{err}");

@@ -5,6 +5,7 @@
 //! 命令清单的唯一事实源仍是 `src/ipc.rs::COMMANDS`，三处同步由 cargo test 闸门拦。
 
 use crate::boot::{active_session_profile, ShellState};
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -270,12 +271,122 @@ pub async fn get_plugin_runtime(
         }),
     }
 }
+/// 一次插件操作的**源选择与双向兜底**（ADR-0006 §6）。
+///
+/// 为什么在命令层：策略要用 `settings`（偏好与记忆）与 `plugins::mutate_plugin_blocking`
+/// （真正跑 pnpm）两侧，而这两侧都不该互相依赖。决策本身是纯函数
+/// （`plugin_registry::{first_source, next_source}`），这里只做编排与回报。
+///
+/// 三条纪律：
+/// - **只在换源有意义时换**（失败分类说了算；构建审批门/spec 非法不换，否则白等一轮还埋真因）；
+/// - **显式偏好下绝不换源**（换源等于偷偷改用户配置）；
+/// - **成功才写记忆**（抖动不得带偏下次的首试）。
+fn mutate_with_registry_fallback(
+    op: crate::plugins::PluginOp,
+    profile: &str,
+    spec: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<crate::plugins::PluginOpOutcome, String> {
+    use crate::plugin_registry::{self as reg, RegistrySource};
+
+    let settings = crate::settings::load(data_dir);
+    let pref = reg::parse_pref(settings.plugin_registry.as_deref());
+    let last_good = settings
+        .plugin_registry_last_good
+        .as_deref()
+        .and_then(RegistrySource::from_key);
+    let first = reg::first_source(pref, last_good);
+
+    let mut outcome = crate::plugins::mutate_plugin_blocking(
+        op,
+        profile,
+        spec,
+        data_dir,
+        world,
+        first.registry_arg(),
+    )?;
+    if outcome.ok {
+        remember_source(data_dir, pref, first);
+        outcome
+            .detail
+            .push_str(&format!("（源：{}）", first.label_zh()));
+        return Ok(outcome);
+    }
+
+    let Some(second) = reg::next_source(pref, first, &outcome.detail) else {
+        return Ok(outcome);
+    };
+    let first_detail = outcome.detail.clone();
+    let mut second_outcome = crate::plugins::mutate_plugin_blocking(
+        op,
+        profile,
+        spec,
+        data_dir,
+        world,
+        second.registry_arg(),
+    )?;
+    if second_outcome.ok {
+        remember_source(data_dir, pref, second);
+        second_outcome.detail = format!(
+            "{}（{}不可用，已改用{}）\n—— 首次失败原因：{}",
+            second_outcome.detail,
+            first.label_zh(),
+            second.label_zh(),
+            summarize_failure(&first_detail)
+        );
+        return Ok(second_outcome);
+    }
+    // 两个源都失败：**两侧原因都报**——只报最后一个会让用户看不出真正的病根。
+    second_outcome.detail = format!(
+        "两个源都失败。\n· {}：{}\n· {}：{}",
+        first.label_zh(),
+        summarize_failure(&first_detail),
+        second.label_zh(),
+        summarize_failure(&second_outcome.detail)
+    );
+    Ok(second_outcome)
+}
+
+/// 只记成功（`auto` 才写记忆：显式偏好本就是用户的决定，无需壳记）。
+fn remember_source(
+    data_dir: &Path,
+    pref: crate::plugin_registry::RegistryPref,
+    source: crate::plugin_registry::RegistrySource,
+) {
+    if !matches!(pref, crate::plugin_registry::RegistryPref::Auto) {
+        return;
+    }
+    let mut settings = crate::settings::load(data_dir);
+    if settings.plugin_registry_last_good.as_deref() == Some(source.as_key()) {
+        return;
+    }
+    settings.plugin_registry_last_good = Some(source.as_key().to_string());
+    // 记忆写失败不阻断安装（它是优化，不是正确性）；下次仍会走"官方优先"。
+    let _ = crate::settings::save(data_dir, &settings);
+}
+
+/// 失败摘要：取第一行有效信息（原始输出的尾部动辄多行，合并两条时更要短）。
+fn summarize_failure(detail: &str) -> String {
+    let line = detail
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("（无输出）");
+    if line.chars().count() > 240 {
+        format!("{}…", line.chars().take(240).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
 /// 安装/卸载/更新插件（4.4②）：`dsh plugin --profile <名> add/remove/update`
 /// 转发链（复用创建刀基建，pnpm 防御补齐同源）；阻塞转发走 spawn_blocking，
 /// 超时同创建 600s。ok=false 时 detail 带输出尾部，前端按警示态展示。
 ///
 /// 世界择源（ADR-0016 §5-b）：本地 = 宿主引擎 + 宿主 home；WSL 客体 = 客体
 /// `dsh` CLI（同一条链路的客体孪生，网络发生在客体进程内，ADR-0004 §7）。
+
 #[tauri::command]
 pub async fn install_plugin(
     app: tauri::AppHandle,
@@ -288,7 +399,7 @@ pub async fn install_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
+        mutate_with_registry_fallback(
             crate::plugins::PluginOp::Install,
             &profile,
             &package,
@@ -311,12 +422,14 @@ pub async fn remove_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // 卸载不取包（不联网）：**不**走源策略，也不传 `--registry`。
         crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Remove,
             &profile,
             &package,
             &data_dir,
             &world,
+            None,
         )
     })
     .await
@@ -334,7 +447,7 @@ pub async fn update_plugin(
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::mutate_plugin_blocking(
+        mutate_with_registry_fallback(
             crate::plugins::PluginOp::Update,
             &profile,
             &package,

@@ -406,6 +406,8 @@ mod gate_tests {
                 show_floating_switcher: None,
                 switcher_shortcut: None,
                 dismissed_update: None,
+                plugin_registry: None,
+                plugin_registry_last_good: None,
             }
         );
         assert_shape!(

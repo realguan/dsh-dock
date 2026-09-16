@@ -16,6 +16,7 @@
 import type {
   Capability,
   CapabilityVariant,
+  FailureKind,
   PluginOpOutcome,
   RowWriteOutcome,
 } from "@/types/ipc"
@@ -58,6 +59,8 @@ export interface RunResult {
     readonly index: number
     readonly op: CapabilityOp
     readonly error: string
+    /** 失败分类（**后端给**，见 `types/ipc.ts` 的 `FailureKind`）：界面据此选文案。 */
+    readonly failureKind: FailureKind | null
   } | null
 }
 
@@ -197,11 +200,21 @@ export function planReplace(cap: Capability, variantId: string): CapabilityOp[] 
   return [...others.flatMap((v) => teardownOps(v, keep)), ...planEnable(cap, variantId)]
 }
 
+/** 插件操作失败：把后端的分类一起带出来（组件据此选文案，不再自己正则判一次）。 */
+class PluginOpFailed extends Error {
+  readonly failureKind: FailureKind | null
+  constructor(message: string, failureKind: FailureKind | null) {
+    super(message)
+    this.name = "PluginOpFailed"
+    this.failureKind = failureKind
+  }
+}
+
 /** 把 `PluginOpOutcome` 的**软失败**也当失败——IPC 成功解析但 `ok:false` 是常态
  *  （pnpm 审批门、包不存在等）。漏判它会变成"界面报成功、实际没装上"。 */
 function requireOk(what: string, outcome: PluginOpOutcome): void {
   if (!outcome.ok) {
-    throw new Error(`${what}未成功：${outcome.detail}`)
+    throw new PluginOpFailed(`${what}未成功：${outcome.detail}`, outcome.failureKind ?? null)
   }
 }
 
@@ -245,45 +258,16 @@ export async function runCapabilityOps(
         ok: false,
         completedOps: index,
         totalOps: total,
-        failedAt: { index, op, error: String(e) },
+        failedAt: {
+          index,
+          op,
+          error: String(e),
+          failureKind: e instanceof PluginOpFailed ? e.failureKind : null,
+        },
       }
     }
   }
   return { ok: true, completedOps: total, totalOps: total, failedAt: null }
-}
-
-/** 失败分类：把 pnpm/dsh 的原始输出收敛成"我该怎么办"。
- *
- * 为什么需要（真机 2026-09-16 暴露）：原始输出动辄上百字符（registry URL + pnpm 调用链 +
- * TLS 细节），直接铺在卡片上会把唯一有用的那句"这是网络问题，可以重试"淹没。 */
-export type FailureKind = "notFound" | "network" | "buildApproval" | "unknown"
-
-export interface FailureSummary {
-  readonly kind: FailureKind
-  /** 从原始输出里抠出的 registry 主机名（用于指明"是哪个源"）。 */
-  readonly registry: string | null
-}
-
-export function classifyFailure(detail: string): FailureSummary {
-  const registry = /https?:\/\/([^/\s"']+)/.exec(detail)?.[1] ?? null
-  const d = detail.toLowerCase()
-  // 顺序有讲究：先判"包不存在"（镜像未同步时也会以 metadata 失败的面目出现，但带 404），
-  // 再判网络（TLS/连接层），最后才是构建审批。
-  if (d.includes("404") || d.includes("not found")) return { kind: "notFound", registry }
-  if (
-    d.includes("tls handshake") ||
-    d.includes("client error (connect)") ||
-    d.includes("failed to fetch metadata") ||
-    d.includes("econnreset") ||
-    d.includes("etimedout") ||
-    d.includes("network")
-  ) {
-    return { kind: "network", registry }
-  }
-  if (d.includes("err_pnpm_ignored_builds") || d.includes("allowbuilds")) {
-    return { kind: "buildApproval", registry }
-  }
-  return { kind: "unknown", registry }
 }
 
 /** 生产绑定：`install`/`remove` 走**下载队列**（可 await），其余直连 IPC。
@@ -320,7 +304,11 @@ async function enqueueOp(
 ): Promise<PluginOpOutcome> {
   const { useQueueStore } = await import("@/stores/queueStore")
   const outcome = await useQueueStore.getState().enqueueAndWait({ pkg, spec, profile, kind })
-  return { ok: outcome.ok, detail: outcome.detail ?? "" }
+  return {
+    ok: outcome.ok,
+    detail: outcome.detail ?? "",
+    failureKind: outcome.failureKind ?? null,
+  }
 }
 
 async function apiEnsureRow(

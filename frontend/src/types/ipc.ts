@@ -140,9 +140,15 @@ export interface PluginRuntimeSnapshot {
 /// detail 为人读文案（失败附 dsh 输出尾部，成功含「重启后生效」提示）。
 /// 2026-09-09（ADR-0013）：构建脚本改默认批准，审批门载荷（ignored_builds）
 /// 随审批链一并退役。
+/** 插件操作失败分类：**唯一实现在后端**（`plugin_registry::classify_failure`），
+ *  前端只消费它决定显示哪句话——两份正则分类会在下次改动里漂移。 */
+export type FailureKind = "network" | "not_found" | "build_approval" | "other"
+
 export interface PluginOpOutcome {
   ok: boolean
   detail: string
+  /** 失败分类；成功为 `null`。 */
+  failureKind?: FailureKind | null
 }
 
 /// 插件行表条目（4.4③，复现点 7/ADR 第四次修订）：行 id 不可从包名推导，
@@ -310,6 +316,11 @@ export interface ShellSettings {
   switcherShortcut?: string | null
   /** 升级提示条已忽略版本键（"dsh@x.y.z" / "client@x.y.z"；同键不再弹） */
   dismissedUpdate?: string | null
+  /** 插件安装源偏好（ADR-0006 §6）：`auto` 先官方、失败换源一次；`official` /
+   *  `configured` 只用一个源且不自动换。`null`/未知值 = auto。 */
+  pluginRegistry?: "auto" | "official" | "configured" | null
+  /** 上次**成功**用过的源（`auto` 时用来排序首试）；只记成功，抖动不带偏。 */
+  pluginRegistryLastGood?: "official" | "configured" | null
 }
 
 export interface NodeDiagnosticInfo {

@@ -741,6 +741,18 @@ export const t = {
     breakerActionLabel: "熔断后动作：",
     breakerActionValue: "停机并弹诊断卡",
     // 悬浮胶囊与快捷键
+    // 插件安装源（ADR-0006 §6，2026-09-16）：镜像/官方各有各的缺，故默认自动换源。
+    pluginRegistrySection: "插件安装源",
+    pluginRegistryDesc: "装插件时从哪里取包。两个源各有各的缺：镜像可能没同步新包，官方源在国内可能慢或连不上。",
+    pluginRegistryAuto: "自动（推荐）",
+    pluginRegistryAutoHint: "先试官方源，失败自动换另一个源；成功的源会被记住，下次直接命中。",
+    pluginRegistryOfficial: "只用官方源",
+    pluginRegistryOfficialHint: "registry.npmjs.org：包最全，但国内可能慢或不通。",
+    pluginRegistryConfigured: "只用本机配置的源",
+    pluginRegistryConfiguredHint: "沿用你 npm 配置里的源（如 npmmirror）：快，但可能缺刚发布的新包。",
+    pluginRegistryOfficialShort: "官方源",
+    pluginRegistryConfiguredShort: "本机配置的源",
+    pluginRegistryLastGood: (name: string) => `上次可用：${name}`,
     switcherSection: "工作台快速切换与胶囊挂件",
     floatingSwitcherLabel: "工作台悬浮胶囊",
     floatingSwitcherDesc: "在 DSH 工作台顶部居中显示控制中心入口胶囊（支持鼠标自由拖拽移动；关闭后依然可通过快捷键呼出）",
@@ -858,10 +870,8 @@ export const t = {
     capOpDisableRow: "停用配置行",
     capOpEnableRow: "启用配置行",
     capFailed: "没有全部完成",
-    capFailNetwork: (host: string) =>
-      `连不上 npm 镜像${host ? ` ${host}` : ""}（网络抖动，或该包还没同步到镜像）。可以直接重试；若一直失败，建议改用官方源。`,
-    capFailNotFound: (host: string) =>
-      `${host ? `${host} ` : "该 registry "}上没有这个包或这个版本。换官方源，或先确认版本号。`,
+    capFailNetwork: "两个包源都没连上（网络抖动、代理或超时）。检查网络后重试即可。",
+    capFailNotFound: "两个包源上都没有这个包或这个版本——确认包名/版本号，或稍后重试（镜像同步有延迟）。",
     capFailBuildApproval: "pnpm 拦下了构建脚本：需要在 profile 的 pnpm-workspace.yaml 里批准后重试。",
     capFailUnknown: "安装失败，展开原始输出看具体原因。",
     capFailRawToggle: "原始输出",

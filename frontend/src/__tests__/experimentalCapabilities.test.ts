@@ -12,7 +12,6 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  classifyFailure,
   planDisable,
   planEnable,
   planRemove,
@@ -495,28 +494,28 @@ describe("串行执行器：软失败当失败、失败可续跑", () => {
   })
 })
 
-describe("失败分类：原始输出 → 人能懂的一句话", () => {
-  it("TLS/连接层失败归为网络，并抠出是哪个源（真机的 npmmirror 形态）", () => {
-    const raw =
-      "Error: 安装「@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp」未成功：安装失败（dsh 退出码 1）。输出尾部：Failed to fetch metadata from https://registry.npmmirror.com/@deepseek-ai%2Fdsh-experimental-browser-use-chrome-devtools-mcp: client error (Connect) → tls handshake eof"
-    const s = classifyFailure(raw)
-    expect(s.kind).toBe("network")
-    expect(s.registry).toBe("registry.npmmirror.com")
+describe("失败分类归后端：前端只消费，不再自己写第二份正则（AGENTS §11.3 禁双源）", () => {
+  it("`PluginOpOutcome.failureKind` 经队列一路带到 `failedAt`", async () => {
+    const { io } = fakeIO({
+      install: async () => ({ ok: false, detail: "两个源都失败", failureKind: "network" }),
+    })
+    const result = await runCapabilityOps(io, "p", [
+      { kind: "install", step: 1, package: BASE, spec: `${BASE}@1.0.0` },
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.failedAt?.failureKind).toBe("network")
   })
 
-  it("包/版本不存在优先于网络判定（404 常被包在 metadata 失败里）", () => {
-    expect(classifyFailure("Failed to fetch metadata from https://r.example/x: 404 Not Found").kind).toBe(
-      "notFound",
-    )
-  })
-
-  it("pnpm 构建审批门单独一档（可操作的是去批准，不是重试）", () => {
-    expect(classifyFailure("ERR_PNPM_IGNORED_BUILDS ... allowBuilds").kind).toBe("buildApproval")
-  })
-
-  it("认不出来时如实说'未知'，不乱猜", () => {
-    const s = classifyFailure("something odd happened")
-    expect(s.kind).toBe("unknown")
-    expect(s.registry).toBeNull()
+  it("非插件操作导致的失败（如写行自证失败）分类为 null —— 不许硬塞一个类别", async () => {
+    const { io } = fakeIO({
+      ensureRow: async () => {
+        throw new Error("写入后复核未通过：行不在组合树中")
+      },
+    })
+    const result = await runCapabilityOps(io, "p", [
+      { kind: "ensureRow", step: 1, package: BASE, rowId: "dsh-dock-base" },
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.failedAt?.failureKind).toBeNull()
   })
 })

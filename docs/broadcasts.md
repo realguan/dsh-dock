@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-09-16 新增 · 插件安装源选择策略（官方优先 / 失败换源 / 成功记忆 / 偏好可固定）—— guan（AI 协作）
+
+- **触发**：真机装实验性插件大面积失败——`@deepseek-ai/dsh-experimental-*` 的部分 provider
+  **在 `registry.npmmirror.com` 上未同步（404）**，官方源 200；而 `~/.npmrc` 把源指向镜像。
+  维护者裁定：「对于有条件的环境，直接走官方源，没有条件的环境走 npmmirror。」
+- **机制（不新增网络面）**：`dsh plugin` 是 **pnpm 薄转发器**（`apps/cli/src/plugin.ts:98`
+  原文 "registry names, and every other pnpm argument pass through"），故按次传
+  `--registry <url>`；取包仍发生在 **pnpm 子进程内**（登记册 §二已覆盖）。**壳不开 in-process
+  网络客户端、不做可达性探测、也不改写用户的 npm 配置**（实测 `dsh plugin … add --help`
+  直通 pnpm，且 pnpm 的 `--registry` 是"每条命令都接受的 rc-option"）。
+- **策略**（ADR-0006 §6）：偏好三态 `auto|official|configured`（`None` = auto）。
+  `auto` 先按 `pluginRegistryLastGood` 试、**无记忆时先官方**，失败后**换另一个源重试一次**；
+  **双向兜底**（官方不可达 ↔ 镜像缺包，既有镜像链只覆盖了其中一个方向）。**只在换源有意义时换**
+  （网络类 / 包不存在；构建审批门与 spec 非法不换，否则白等一轮还埋真因）。**成功才写记忆**。
+  两个源都失败时**两侧错误都报**。Preferences 新增「插件安装源」三选项，可固定单源。
+- **分类只有一处**：`plugin_registry::classify_failure` → `PluginOpOutcome.failureKind`；
+  前端**删掉**了同日早先那份正则分类，改为消费后端给的 kind（AGENTS §11.3 禁双源）。
+- **登记**：`AGENTS.md` §6 两个持久化键（`pluginRegistry` / `pluginRegistryLastGood`）；
+  登记册 §二补注"可按次指定 registry"；**machine projection 不变**（`network_gate.rs` 无需改）。
+- **凭据**：`cargo fmt --check` / `clippy --all-targets -D warnings` 干净、`cargo test`
+  **523 passed**；前端 `tsc` / `oxlint` 干净、`vitest` **432 passed**、生产构建通过。
+
 ### 2026-09-16 重构 · 「官方实验室」（按包）→「实验能力」开关（按能力）：开/关/换后端/移除 —— guan（AI 协作）
 
 - **触发**：维护者实测反馈「实验性功能开关的实现效果与交互逻辑体验极差」。逐条复现为

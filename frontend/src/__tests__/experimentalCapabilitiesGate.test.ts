@@ -155,7 +155,10 @@ describe("⑥ 失败态与状态衔接：不许说假话、不许两个按钮干
   })
 
   it("失败先给一句人话，原始输出折叠在后面（不把 200 字符的 pnpm 输出铺在卡面上）", () => {
-    expect(src).toContain("classifyFailure")
+    // 分类由**后端**给（`plugin_registry::classify_failure`）→ 前端只按 kind 选文案，
+    // 不得再写第二份正则（否则两份分类会漂移：后端换源了、前端却说不是网络问题）。
+    expect(src).toContain("failureKind")
+    expect(src, "前端不得自带失败正则分类").not.toMatch(/tls handshake|failed to fetch metadata/)
     expect(src).toContain("capFailNetwork")
     expect(src).toContain("capFailNotFound")
     expect(src).toContain("capFailBuildApproval")

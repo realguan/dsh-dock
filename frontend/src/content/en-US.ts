@@ -716,6 +716,22 @@ export const enUS: AppCopy = {
     breakerThresholdValue: "3 crashes in a row",
     breakerActionLabel: "On trip:",
     breakerActionValue: "Stop and show diagnostics",
+    // Plugin install registry (ADR-0006 §6, 2026-09-16): mirrors and the official
+    // registry each have gaps, so auto-switching is the default.
+    pluginRegistrySection: "Plugin install registry",
+    pluginRegistryDesc:
+      "Where plugin packages are fetched from. Each source has gaps: mirrors may lag behind new releases, while the official registry can be slow or unreachable in some networks.",
+    pluginRegistryAuto: "Automatic (recommended)",
+    pluginRegistryAutoHint:
+      "Tries the official registry first, switches to the other source on failure, and remembers whichever worked.",
+    pluginRegistryOfficial: "Official registry only",
+    pluginRegistryOfficialHint: "registry.npmjs.org: the most complete, but can be slow or unreachable.",
+    pluginRegistryConfigured: "Configured source only",
+    pluginRegistryConfiguredHint:
+      "Uses whatever your npm config points at (e.g. npmmirror): fast, but may miss freshly published packages.",
+    pluginRegistryOfficialShort: "official registry",
+    pluginRegistryConfiguredShort: "configured source",
+    pluginRegistryLastGood: (name: string) => `Last worked: ${name}`,
     switcherSection: "Workbench Quick Switcher & Floating Pill",
     floatingSwitcherLabel: "Workbench Floating Pill",
     floatingSwitcherDesc: "Display quick switcher capsule at top-center in DSH workbench (supports mouse drag; shortcuts remain active when disabled)",
@@ -833,10 +849,10 @@ export const enUS: AppCopy = {
     capOpDisableRow: "Disable config row",
     capOpEnableRow: "Enable config row",
     capFailed: "Not all steps completed",
-    capFailNetwork: (host: string) =>
-      `Cannot reach the npm registry${host ? ` ${host}` : ""} (network hiccup, or the package is not mirrored yet). Retrying may work; if it keeps failing, switch to the official registry.`,
-    capFailNotFound: (host: string) =>
-      `${host ? `${host} ` : "That registry "}has no such package or version. Switch to the official registry, or check the version.`,
+    capFailNetwork:
+      "Neither package source could be reached (network hiccup, proxy, or timeout). Check the network and retry.",
+    capFailNotFound:
+      "Neither source has this package or version — check the name/version, or retry later (mirror sync lags).",
     capFailBuildApproval:
       "pnpm blocked a build script: approve it in the profile's pnpm-workspace.yaml, then retry.",
     capFailUnknown: "Install failed — expand the raw output for the exact reason.",

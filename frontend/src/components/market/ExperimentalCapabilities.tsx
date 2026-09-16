@@ -50,7 +50,6 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/tauri"
 import {
   capabilityIO,
-  classifyFailure,
   planDisable,
   planRemove,
   planReplace,
@@ -62,6 +61,7 @@ import type {
   Capability,
   CapabilityStep,
   CapabilityVariant,
+  FailureKind,
   ProfileSummary,
 } from "@/types/ipc"
 
@@ -99,7 +99,9 @@ export function ExperimentalCapabilities({ refreshKey, onNotice, onRestart }: Pr
   /** 失败详情按能力记，**并钉住发起失败的那个变体**：让用户在原处看到原因并可续跑。
    *  只按能力记会出错——用户换一下后端选择器再点「继续剩余步骤」，就会去操作另一个变体
    *  （2026-09-16 独立评审核出：那是"什么都没做还报成功"）。 */
-  const [failures, setFailures] = useState<Record<string, { variantId: string; error: string }>>({})
+  const [failures, setFailures] = useState<
+    Record<string, { variantId: string; error: string; failureKind: FailureKind | null }>
+  >({})
   /** 用户选中的变体（**只影响选择**，不触发动作）。 */
   const [picked, setPicked] = useState<Record<string, string>>({})
   /** 每次成功动作后置位：提示"重启后生效"。 */
@@ -186,7 +188,14 @@ export function ExperimentalCapabilities({ refreshKey, onNotice, onRestart }: Pr
         } else {
           // 失败**不回滚**：已完成的步处于一致态，就地保留原因供续跑。
           const detail = result.failedAt?.error ?? ""
-          setFailures((prev) => ({ ...prev, [cap.id]: { variantId, error: detail } }))
+          setFailures((prev) => ({
+            ...prev,
+            [cap.id]: {
+              variantId,
+              error: detail,
+              failureKind: result.failedAt?.failureKind ?? null,
+            },
+          }))
           // 只有**真的改过什么**才提示重启：0/N 步就失败时文件一个字节都没动，
           // 此时报"配置已变更"是谎报，会把用户骗去重启一个没变的 Profile。
           if (result.completedOps > 0) setDirty(true)
@@ -346,6 +355,7 @@ export function ExperimentalCapabilities({ refreshKey, onNotice, onRestart }: Pr
           variant={selectedVariant(cap)}
           run={run?.capId === cap.id ? run : null}
           failure={failures[cap.id]?.error ?? null}
+          failureKind={failures[cap.id]?.failureKind ?? null}
           failedVariantId={failures[cap.id]?.variantId ?? null}
           onPick={(id) => setPicked((prev) => ({ ...prev, [cap.id]: id }))}
           onToggle={handleSwitch}
@@ -471,6 +481,7 @@ function CapabilityCard({
   variant,
   run,
   failure,
+  failureKind,
   failedVariantId,
   onPick,
   onToggle,
@@ -483,6 +494,8 @@ function CapabilityCard({
   variant: CapabilityVariant
   run: RunState | null
   failure: string | null
+  /** 失败分类（后端给）；`null` = 未知，按通用话术处理。 */
+  failureKind: FailureKind | null
   /** 发起失败的那个变体（`null` = 无失败）。 */
   failedVariantId: string | null
   onPick: (id: string) => void
@@ -658,6 +671,7 @@ function CapabilityCard({
       {failure && !run && (
         <FailureBlock
           failure={failure}
+          failureKind={failureKind}
           // 失败的是**哪个档**要说清：用户可能已经切到另一个档看详情了。
           failedVariantLabel={
             failedVariantId && failedVariantId !== variant.id
@@ -768,24 +782,27 @@ function CapabilityCard({
  * 并列出现等于给用户两个按钮干同一件事（「修复」在有失败块时已不再渲染）。 */
 function FailureBlock({
   failure,
+  failureKind,
   failedVariantLabel,
   onResume,
   t,
 }: {
   failure: string
+  failureKind: FailureKind | null
   /** 发起失败的档名（用户已切到别的档时用来点名）；`null` = 就是当前档。 */
   failedVariantLabel: string | null
   onResume: () => void
   t: ReturnType<typeof useI18n>["t"]
 }) {
   const [showRaw, setShowRaw] = useState(false)
-  const { kind, registry } = classifyFailure(failure)
+  // 分类由**后端**给（`plugin_registry::classify_failure`）——前端不再写第二份正则。
+  // 到这里时自动策略已试过两侧源（若换源有意义），故文案说的是"最终结果"。
   const hint =
-    kind === "network"
-      ? t.market.capFailNetwork(registry ?? "")
-      : kind === "notFound"
-        ? t.market.capFailNotFound(registry ?? "")
-        : kind === "buildApproval"
+    failureKind === "network"
+      ? t.market.capFailNetwork
+      : failureKind === "not_found"
+        ? t.market.capFailNotFound
+        : failureKind === "build_approval"
           ? t.market.capFailBuildApproval
           : t.market.capFailUnknown
   return (

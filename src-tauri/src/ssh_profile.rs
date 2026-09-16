@@ -329,12 +329,15 @@ pub fn generate(
 
     for (_, package) in SSH_PACKAGES {
         let spec = crate::official_catalog::pinned_spec(package, &version);
+        // SSH 四包的安装沿用**用户配置的源**（`None`）：这是 profile 生成流程的一部分，
+        // 不属于「实验能力开关」的源策略范围（ADR-0006 §6 只管插件装卸的交互式路径）。
         let outcome = crate::plugins::mutate_plugin_blocking(
             crate::plugins::PluginOp::Install,
             profile,
             &spec,
             data_dir,
             world,
+            None,
         )?;
         if !outcome.ok {
             return Err(format!(
