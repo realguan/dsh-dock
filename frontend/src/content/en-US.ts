@@ -80,7 +80,17 @@ export const enUS: AppCopy = {
       // 2026-09-16: in-place way out when a plugin's mount row breaks the plugin tree
       // (remove that row, then restart). Contract: boot_failure.rs::with_quarantine.
       quarantine_plugin_row: "Remove the row & restart",
+      // ADR-0025 safe mode: the former touches no files; the latter backs up and empties the patch.
+      safe_mode: "Start in safe mode",
+      safe_mode_reset: "Safe mode (back up & empty the patch)",
     } as Record<string, string>,
+    safeModeResetTitle: "Start in safe mode: back up and empty the plugin patch?",
+    safeModeResetNote: "Use this when the patch file is unparsable and rows cannot even be listed.",
+    safeModeResetPointBackup:
+      "Your cordis.patch.yml is backed up as .bak-<timestamp> first, and can be restored by hand",
+    safeModeResetPointScope:
+      "Every plugin mount row of this profile stops taking effect: the workbench starts with shipped capabilities only",
+    safeModeResetConfirm: "Back up & continue",
     // Failure-detail suffix (2026-09-11, task-25): was an inline literal in the
     // component. ASCII parens + a leading space (zh uses full-width parens, which
     // need no space); composed as `${msg}${reselectHint}`.

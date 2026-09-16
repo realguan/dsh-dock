@@ -21,6 +21,7 @@ import type { BootErrorEvent } from "@/types/events"
 import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 /**
  * 动作 id → IPC 分派表（2026-09-11，task-52 / T-F5）。
@@ -47,6 +48,11 @@ const ACTION_IPC: Readonly<Record<string, ActionIpc>> = {
   // 2026-09-16：插件行把插件树搞挂时的**就地**出路——移除该行 + 重启（而不是
   // 让用户自己去别处找）。契约：`boot_failure.rs::with_quarantine`。
   quarantine_plugin_row: "quarantineRow",
+  // 安全模式（ADR-0025，2026-09-16）：`safe_mode` 停用非随包层行后重启（零文件改动）；
+  // `safe_mode_reset` 是"行枚举不出来"时（patch 语法坏）的兜底——**必须先过确认框**
+  // （它会备份并放空用户的 cordis.patch.yml），故走本地 `needsConfirm` 分支。
+  safe_mode: "terminalAction",
+  safe_mode_reset: "terminalAction",
 }
 
 /** 可由本组件分派的动作 id 集合（从分派表派生，避免"集合/分派"两处漂移）。 */
@@ -83,6 +89,9 @@ export function ErrorCard({
   const { copied, copy } = useCopy()
   // 诊断卡折叠态（v1.2.0 实测 2.1）：默认展开——错误必须被看见；折叠是用户显式选择。
   const [collapsed, setCollapsed] = useState(false)
+  // 「安全模式（备份并放空 patch）」会动用户的 cordis.patch.yml → **必须先确认**
+  // （ADR-0025 §4 方案 B；本仓对破坏性动作一律走 ConfirmDialog）。
+  const [resetSafeModeOpen, setResetSafeModeOpen] = useState(false)
   // `?? ["retry"]`（不是 `?.length ?`）——**空数组是后端明确说"没有可行动作"**：
   // 插件的挂载行把插件树搞挂时重试必然再失败，摆一个必然失败的按钮等于教用户白点一次。
   // 旧缓存载荷（无该字段）才回退「重试」。
@@ -98,6 +107,15 @@ export function ErrorCard({
   }
 
   const run = (id: string) => {
+    if (pending) return
+    if (id === "safe_mode_reset") {
+      setResetSafeModeOpen(true)
+      return
+    }
+    doRun(id)
+  }
+
+  const doRun = (id: string) => {
     if (pending) return
     // 显式分派（task-52）：未知 id 才放弃；已知 id 各自走正确的那条 IPC。
     const call = resolveActionCall(id)
@@ -250,6 +268,21 @@ export function ErrorCard({
           )}
         </div>
         )}
+
+        <ConfirmDialog
+          open={resetSafeModeOpen}
+          title={t.error.safeModeResetTitle}
+          note={t.error.safeModeResetNote}
+          points={[t.error.safeModeResetPointBackup, t.error.safeModeResetPointScope]}
+          confirmLabel={t.error.safeModeResetConfirm}
+          cancelLabel={t.confirm.cancel}
+          busy={pending === "safe_mode_reset"}
+          onConfirm={() => {
+            setResetSafeModeOpen(false)
+            doRun("safe_mode_reset")
+          }}
+          onClose={() => setResetSafeModeOpen(false)}
+        />
 
         {/* 原始终端日志折叠 */}
         {payload.log && (

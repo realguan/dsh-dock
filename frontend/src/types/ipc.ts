@@ -72,7 +72,14 @@ export type ClientUpdate =
   | { phase: "failed"; message: string }
 
 /// 错误卡动作 id（terminal_action 的合法入参子集）。
-export type TerminalAction = "retry" | "upgrade" | "upgrade_only"
+export type TerminalAction =
+  | "retry"
+  | "upgrade"
+  | "upgrade_only"
+  // 安全模式（ADR-0025）：临时 overlay 停用非随包层行 / 退出 / 备份并放空 patch 文件。
+  | "safe_mode"
+  | "safe_mode_exit"
+  | "safe_mode_reset"
 
 // ---------- Profile 管理器（4.3；形状锚定 src-tauri/src/profiles.rs 的 serde 序列化） ----------
 

@@ -242,8 +242,10 @@ impl BootFailure {
             // 但 `boot_in_wsl` 才是真正的出路——它与 D3 的「下次默认打开方式」呼应。
             Self::SymlinkPrivilegeRequired => vec!["boot_in_wsl", "retry"],
             // 插件行失败：**不给 `retry`**——同一行会再次失败，摆一个必然失败的按钮
-            // 等于教用户白点一次。前端对空动作集不再渲染按钮区。
-            Self::PluginRowFailed { .. } => Vec::new(),
+            // 等于教用户白点一次。给的是两条真正的出路（ADR-0025）：
+            //   `safe_mode`        —— 临时 overlay 停用非随包层行再启动（零文件改动、可原子回退）；
+            //   `safe_mode_reset`  —— 行枚举不出来时（patch 语法坏）备份并放空 patch（前端须二次确认）。
+            Self::PluginRowFailed { .. } => vec!["safe_mode", "safe_mode_reset"],
             Self::NetworkUnavailable | Self::Unknown { .. } => vec!["retry"],
         }
     }
@@ -337,7 +339,7 @@ impl BootErrorPayload {
         if !crate::plugins::is_shell_row_id(row_id) {
             return self;
         }
-        self.actions = vec!["quarantine_plugin_row"];
+        self.actions = vec!["quarantine_plugin_row", "safe_mode", "safe_mode_reset"];
         self.quarantine = Some(QuarantineRow {
             profile: profile.to_string(),
             row_id: row_id.clone(),
@@ -570,7 +572,11 @@ Error: spawn cua-driver ENOENT\n";
     fn quarantine_action_only_for_shell_owned_rows() {
         let mine = BootErrorPayload::classify("plugin tree failed to load", REAL_FAILURE_TAIL)
             .with_quarantine(Some("web"));
-        assert_eq!(mine.actions, vec!["quarantine_plugin_row"]);
+        // 壳自有行 → 三档动作：点名移除（就地）/ 安全模式（零文件改动）/ 兜底放空（需确认）。
+        assert_eq!(
+            mine.actions,
+            vec!["quarantine_plugin_row", "safe_mode", "safe_mode_reset"]
+        );
         let plan = mine.quarantine.expect("壳自己的行必须能一键隔离");
         assert_eq!(plan.profile, "web");
         assert!(crate::plugins::is_shell_row_id(&plan.row_id));

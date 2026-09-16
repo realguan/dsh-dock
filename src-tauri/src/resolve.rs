@@ -43,6 +43,10 @@ pub struct LaunchSpec {
     /// 本次 boot 引导是否补装了 dsh（引擎档首启）：驱动版本状态即时刷新
     ///（否则关于页/菜单停留在安装前的「未检出」）。
     pub first_bootstrap: bool,
+    /// 安全模式 overlay 路径（ADR-0025）：`Some` 时给 dsh 追加 `--patch <path>`，
+    /// 由 overlay 临时停用非随包层行。**只在引擎档设置**——快照档（bundle）自带旧版
+    /// dsh，不认 `--patch` 会秒退（同 `no_open` 的版本适配理由）。
+    pub patch_overlay: Option<PathBuf>,
 }
 
 // ---------- 用户 home ----------
@@ -506,6 +510,8 @@ fn engine_launch_spec(
     })?;
     let no_open =
         engine_no_open_supported(dsh_version.unwrap_or(""), &launcher, &node_bin, data_dir);
+    // 先算安全模式 overlay（`default_profile` 随后被 move 进 LaunchSpec）。
+    let patch_overlay = crate::safe_mode::active_overlay(data_dir, &default_profile);
     Ok(LaunchSpec {
         node_bin,
         dsh_entry: DshEntry::Launcher { bin: launcher },
@@ -514,6 +520,8 @@ fn engine_launch_spec(
         tier: TierKind::Engine,
         no_open,
         first_bootstrap,
+        // 安全模式当前生效 → 本会话带 overlay 启动（退出安全模式即不带）。
+        patch_overlay,
     })
 }
 
@@ -538,6 +546,8 @@ fn launch_from_fallback(fb: &FallbackSpec, resources_dir: &Path, profile: String
         tier: TierKind::Bundle,
         no_open: true,
         first_bootstrap: false,
+        // 快照档不参与安全模式：其 dsh 版本由快照钉死，可能不认 `--patch`。
+        patch_overlay: None,
     }
 }
 

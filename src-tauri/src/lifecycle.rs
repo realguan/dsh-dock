@@ -1174,6 +1174,7 @@ mod tests {
                 tier: crate::manifest::TierKind::Engine,
                 no_open: true,
                 first_bootstrap: false,
+                patch_overlay: None,
             };
             // 生产路径：内部就是 lifecycle::spawn(Role::DshServer)
             crate::shell::spawn_dsh(&launch, &data_dir)

@@ -1609,6 +1609,56 @@ pub fn plugin_rows_blocking(
     data_dir: &Path,
     world: &crate::mgmt::World,
 ) -> Result<Vec<PluginRowState>, String> {
+    let (rows, manifest_text, patch) = fetch_dump_rows(profile, data_dir, world)?;
+    let deps = dependency_names(&manifest_text)?;
+    Ok(build_row_states(&rows, &deps, &patch))
+}
+
+/// 行表的**原始归属**：这条行由**哪一层**贡献（`None` = 用户 patch 行）。
+///
+/// 为什么需要它（ADR-0025 安全模式）：[`PluginRowState`] 是"合成后的可见行"，只给
+/// `pkg_name`（行自己的 `name`），**丢掉了贡献段**——而安全模式要按"是不是随包层"
+/// 决定停谁。判据仍是**同一个解析器**（`parse_dump_rows_with_section`），不另写一份。
+pub struct RowAttribution {
+    pub id: String,
+    pub name: String,
+    /// 贡献段：bundle 包名；用户 patch 行则是**文件路径**（profile 层 / home 层）。
+    pub contributed_by: Option<String>,
+}
+
+/// 取行表原始归属（一次 `--dump-config`，与 [`plugin_rows_blocking`] 同一 spawn 路径）。
+pub fn row_attributions_blocking(
+    profile: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<Vec<RowAttribution>, String> {
+    let (rows, _, _) = fetch_dump_rows(profile, data_dir, world)?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, bundle)| RowAttribution {
+            id,
+            name,
+            contributed_by: bundle,
+        })
+        .collect())
+}
+
+/// 一次 `--dump-config` 的全部原料：行表（含段落归属）+ profile 清单原文 + 自家 patch 表。
+///
+/// 抽出来是为了**单一 spawn 路径 + 单一解析器**：两个公开取数函数（可见行 / 原始归属）
+/// 都经此处，口径不会漂移。
+fn fetch_dump_rows(
+    profile: &str,
+    data_dir: &Path,
+    world: &crate::mgmt::World,
+) -> Result<
+    (
+        Vec<(String, String, Option<String>)>,
+        String,
+        std::collections::BTreeMap<String, (bool, usize)>,
+    ),
+    String,
+> {
     crate::profiles::validate_profile_name(profile)?;
     let args = [
         "--profile".to_string(),
@@ -1662,11 +1712,10 @@ pub fn plugin_rows_blocking(
                 .unwrap_or_else(|| "未知".into())
         ));
     }
-    let deps = dependency_names(&manifest_text)?;
-    Ok(build_row_states(
-        &parse_dump_rows_with_section(&run.output),
-        &deps,
-        &patch,
+    Ok((
+        parse_dump_rows_with_section(&run.output),
+        manifest_text,
+        patch,
     ))
 }
 

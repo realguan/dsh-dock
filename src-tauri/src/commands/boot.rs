@@ -207,6 +207,90 @@ pub fn terminal_action(
                 return;
             }
         }
+        // ---- 安全模式（ADR-0025）----
+        // 三个动作都只动**壳自有数据目录**或（reset 分支）经备份后放空 patch，
+        // 随后一律走下面的"重新解析链 + 启动"，因此失败不会留下半截状态。
+        if matches!(
+            action.as_str(),
+            "safe_mode" | "safe_mode_exit" | "safe_mode_reset"
+        ) {
+            let profile = crate::boot::active_session_profile(&handle);
+            let Some(profile) = profile else {
+                emit_boot_error(
+                    &handle,
+                    "安全模式需要一个已选定的 profile（当前查不到启动目标）——请先在启动页重选 profile。",
+                    "",
+                );
+                return;
+            };
+            let world = match crate::mgmt::current_world(&handle) {
+                Ok(w) => w,
+                Err(e) => {
+                    emit_boot_error(&handle, &format!("安全模式无法确定运行世界：{e}"), "");
+                    return;
+                }
+            };
+            if let crate::mgmt::World::Wsl { .. } = world {
+                // 与实验能力目录/写行同口径：客体侧需补原语，宁可报错不回落宿主。
+                emit_boot_error(
+                    &handle,
+                    "安全模式暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用（有意不回落宿主，以免改错 profile）。",
+                    "",
+                );
+                return;
+            }
+            let outcome: Result<String, String> = match action.as_str() {
+                "safe_mode" => crate::plugins::row_attributions_blocking(
+                    &profile, &data_dir, &world,
+                )
+                .and_then(|rows| {
+                    let ids: Vec<String> = rows
+                        .iter()
+                        .filter(|r| crate::safe_mode::should_disable(r.contributed_by.as_deref()))
+                        .map(|r| r.id.clone())
+                        .collect();
+                    let kept = rows.len() - ids.len();
+                    crate::safe_mode::write_overlay(&data_dir, &profile, &ids).map(|_| {
+                        format!(
+                            "已启用安全模式：停用 {} 行、保留 {} 行（随包两层）",
+                            ids.len(),
+                            kept
+                        )
+                    })
+                }),
+                "safe_mode_exit" => crate::safe_mode::clear(&data_dir, &profile).map(|changed| {
+                    if changed {
+                        "已退出安全模式".to_string()
+                    } else {
+                        "本就未处于安全模式".to_string()
+                    }
+                }),
+                _ => crate::safe_mode::clear(&data_dir, &profile)
+                    .and_then(|_| {
+                        crate::safe_mode::quarantine_patch(
+                            &crate::resolve::user_dsh_home(),
+                            &profile,
+                        )
+                    })
+                    .map(|path| format!("已备份并放空 {}", path.display())),
+            };
+            match outcome {
+                Ok(msg) => {
+                    crate::boot::emit_step(&handle, 2, "running", &msg);
+                    tracing::info!(action = %action, profile = %profile, "安全模式动作完成");
+                }
+                Err(e) => {
+                    // 枚举失败（典型：patch 文件 YAML 语法坏，`--dump-config` exit 1）→
+                    // 如实报错并**指路**到 reset 分支，不静默。
+                    emit_boot_error(
+                        &handle,
+                        &format!("安全模式执行失败：{e}\n——若 patch 文件语法已坏（行枚举不出来），请改用错误卡上的「安全模式（备份并放空 patch）」。"),
+                        "",
+                    );
+                    return;
+                }
+            }
+        }
         // 重新走解析链 + 启动（重试同样领新令牌：作废在途的旧启动线程）
         let token = state.begin_boot();
         crate::boot::lib_boot_again(state, handle.clone(), data_dir, token);

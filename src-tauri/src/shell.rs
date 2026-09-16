@@ -78,14 +78,8 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         .open(&log_path)
         .with_context(|| format!("打开日志 {}", log_path.display()))?;
 
-    cmd.arg("--profile")
-        .arg(&launch.profile)
-        .arg("--port")
-        .arg("0");
-    // 桌面壳接管呈现：禁止 dsh 自开系统浏览器——但仅当该版本支持
-    // （system 档旧版 dsh 如 rc.5 收到未知参数会直接秒退，须按版本适配）。
-    if launch.no_open {
-        cmd.arg("--no-open");
+    for arg in dsh_launcher_args(launch) {
+        cmd.arg(arg);
     }
     cmd.env("DSH_HOME", dsh_home)
         // 子进程环境自构（ADR-0010 P2）：引擎 bin（pnpm 恒可达）→ 私有/选定
@@ -111,6 +105,32 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
         launch.tier
     );
     Ok(DshProcess { child, log_path })
+}
+
+/// dsh **启动器参数**（纯函数，可测）：`--profile <p> --port 0 [--patch <overlay>] [--no-open]`。
+///
+/// 抽成纯函数是因为顺序与开关都是契约：启动器 flag 必须在 app 参数边界之前
+///（`apps/cli/src/args.ts:8-11,137-143`），而 `--patch` 只在安全模式生效时出现
+///（ADR-0025）——这条一旦写错，症状是"安全模式按钮点了没反应"或"dsh 秒退"，
+/// 都不是单测能靠"看起来对"抓住的。
+///
+/// `--no-open` 的版本适配沿用旧口径（system 档旧版 dsh 收到未知参数会直接秒退）；
+/// `--patch` 同理只在 Engine 档由 `LaunchSpec::patch_overlay` 给出。
+pub fn dsh_launcher_args(launch: &LaunchSpec) -> Vec<String> {
+    let mut args = vec![
+        "--profile".to_string(),
+        launch.profile.clone(),
+        "--port".to_string(),
+        "0".to_string(),
+    ];
+    if let Some(overlay) = &launch.patch_overlay {
+        args.push("--patch".to_string());
+        args.push(overlay.display().to_string());
+    }
+    if launch.no_open {
+        args.push("--no-open".to_string());
+    }
+    args
 }
 
 /// 启动等待的三种结局：
@@ -472,6 +492,46 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// 启动器参数契约（ADR-0025）：安全模式 overlay 必须出现在 app 参数边界之前，
+    /// 且**只在有 overlay 时**出现——写错的症状是"按钮点了没反应"或"dsh 秒退"。
+    #[test]
+    fn launcher_args_include_patch_only_in_safe_mode() {
+        let base = LaunchSpec {
+            node_bin: std::path::PathBuf::from("/n"),
+            dsh_entry: crate::resolve::DshEntry::Launcher {
+                bin: std::path::PathBuf::from("/dsh"),
+            },
+            dsh_home: std::path::PathBuf::from("/home"),
+            profile: "web".to_string(),
+            tier: crate::manifest::TierKind::Engine,
+            no_open: true,
+            first_bootstrap: false,
+            patch_overlay: None,
+        };
+        assert_eq!(
+            dsh_launcher_args(&base),
+            vec!["--profile", "web", "--port", "0", "--no-open"]
+        );
+
+        let safe = LaunchSpec {
+            patch_overlay: Some(std::path::PathBuf::from("/data/safe-mode/web.yml")),
+            ..base
+        };
+        assert_eq!(
+            dsh_launcher_args(&safe),
+            vec![
+                "--profile",
+                "web",
+                "--port",
+                "0",
+                "--patch",
+                "/data/safe-mode/web.yml",
+                "--no-open",
+            ],
+            "overlay 必须紧跟启动器参数、在 app 参数边界之前"
+        );
+    }
+
     #[test]
     fn wait_for_ready_returns_exited_immediately() {
         let dir = std::env::temp_dir().join(format!("dsh-shell-wfr4-{}", std::process::id()));
@@ -758,6 +818,7 @@ mod tests {
             tier: crate::manifest::TierKind::Engine,
             no_open: true,
             first_bootstrap: false,
+            patch_overlay: None,
         };
         let mut proc = spawn_dsh(&launch, &data_dir).expect("spawn_dsh");
         let pid = proc.child.id();

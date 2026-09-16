@@ -85,7 +85,15 @@ export const t = {
       // 2026-09-16：插件的挂载行把插件树搞挂时的**就地**出路（移除该行 + 重启）。
       // 契约：`boot_failure.rs::with_quarantine`；无此键会兜底成英文 id。
       quarantine_plugin_row: "移除该行并重启",
+      // ADR-0025 安全模式：前者零文件改动、后者会备份并放空 patch（需确认框）。
+      safe_mode: "安全模式启动",
+      safe_mode_reset: "安全模式（备份并放空 patch）",
     } as Record<string, string>,
+    safeModeResetTitle: "用安全模式启动：备份并放空插件 patch？",
+    safeModeResetNote: "用于 patch 文件已写坏、连行都枚举不出来的情况。",
+    safeModeResetPointBackup: "你的 cordis.patch.yml 会先备份为 .bak-<时间戳>，可随时手动还原",
+    safeModeResetPointScope: "该 profile 的全部插件挂载行会失效，工作台以「只有随包能力」的形态启动",
+    safeModeResetConfirm: "备份并继续",
     // 失败详情后缀（2026-09-11 task-25）：原为组件内联字面量（zh-CN 全角括号、
     // en 侧需 ASCII 括号 + 前置空格），故并入字典。两处同源拼接：
     // `pages/BootSelector.tsx` 与 `components/boot/ErrorCard.tsx`。
