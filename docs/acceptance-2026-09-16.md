@@ -14,6 +14,12 @@
 
 ## 一眼看结论（谁还需要动手）
 
+> **本文已随代码同步到最新 master**（`ea49d70`）；数字与交互描述按当前构建为准。
+> **顺序建议**：先做 **S2**（安全模式横幅 + 退出，见 §7.5）——**如果你现在正处在安全模式里，先退出**，
+> 再按 A→B→C→D→E→F 走；否则普通启动会因为你 profile 里那条坏行而失败，容易被误当成新缺陷。
+> **验收中我已经修掉的三个真缺陷**（都不需要你操作，只作背景）：import 措辞未识别 → 已修；
+> 错误卡动作拿不到 profile → 已修；`--patch` 参数顺序 → 已修。
+
 **🖐 待你验收（7 项，都在下面各自条目里，标题带 🖐）**
 
 | 编号 | 要你做什么 | 形式 |
@@ -87,16 +93,16 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 |:---|:---|:---|
 | Rust 格式 | `cd src-tauri && cargo fmt --check` | 干净 |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | 0 警告 |
-| Rust 测试 | `cargo test` | **533 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
+| Rust 测试 | `cargo test` | **540 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
 | 前端类型 | `cd frontend && node node_modules/typescript/bin/tsc -b` | 0 错误 |
 | 前端 lint | `pnpm run lint` | 0 警告（152 文件） |
-| 前端测试 | `pnpm run test` | **440 passed / 51 文件** |
+| 前端测试 | `pnpm run test` | **446 passed / 52 文件** |
 | 生产构建 | `pnpm run build` | 通过 |
 
 **机器闸门覆盖的契约**（漏一处即红，不需要人记）：
 
 - IPC 四处同步（`ipc.rs::COMMANDS` → `lib.rs` handler → `capabilities/default.json` → `lib/tauri.ts`），
-  现 **63 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `list_ssh_hosts` /
+  现 **64 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `list_ssh_hosts` /
   `probe_ssh_target` / `generate_ssh_profile` / `apply_official_patch_row` / `remove_official_patch_row`）；
 - IPC 结构体形状 Rust↔TS（`ipc-shapes.json`）——本次 `BootErrorPayload` 加字段就是被它抓到的；
 - 网络面登记（`network_gate.rs`：MCP 探测的 streamable-http 为**条目级**豁免，非整文件）；
@@ -130,7 +136,8 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 | **A4** | **真机**：你点过两次 replace（chrome-devtools→playwright、cua-driver-mcp→native）——`plugin-op.log` 有 `remove`/`add` 记录、patch 已无坏行、15:37 就绪 | ✅ 我已验收（含你截图②的「关闭即移除」文案） |
 | **A5** | Rust `subset_variant_is_subsumed_not_conflicting` + `genuinely_exclusive_variants_still_conflict`；前端门禁 ⑤（「已包含」不提供独立开关） | ✅ 我已验收（你的截图②确认） |
 | **A6** | 诊断链**端到端**（含你 16:0x 的真机复现）：
-① 你手工写行但包已卸载 → 失败措辞是 **`failed to import loader entry`**，我的解析器原先只认 `apply` → 分类落兜底（标题「DSH 工作台启动失败」+「重试」）——**这是你这次验收抓到的真缺陷**，已修（两种措辞都认，单测用你的真机原文）；
+① 你手工写行但包已卸载 → 失败措辞是 **`failed to import loader entry`**，我的解析器原先只认 `apply` → 分类落兜底（标题「DSH 工作台启动失败」+「重试」）——**你验收抓到的真缺陷之一**，已修（两种措辞都认，单测用你的真机原文）；
+①′ **后续又抓到两个硬错（已修）**：错误卡动作拿不到 profile（启动失败先 teardown 会话 → 会话槽恒空，改为 spawn 时记账）；`--patch` 参数位置写错（必须在 app 参数之前，否则 web app 报 `unknown option '--patch'`）；
 ② 二次实测该路径 **44s** 才退出，原宽限 45s 只剩 1 秒余量 → 已放宽到 60s（20+40）；
 ③ 坏 profile 下 `--dump-config` 仍可用（exit 0）→ 一键隔离的"删后自证"能过；
 ④ 壳自有行才下发隔离（单测） | ✅ 缺陷已修 + 链路已验证；🖐 按钮点击请你来 |
@@ -167,7 +174,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
-**533 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净、`vitest` **440 passed**、生产构建通过。
+**540 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净、`vitest` **446 passed**、生产构建通过。
 
 ### 你三张截图给出的结论（2026-09-16 第二轮）
 
@@ -262,10 +269,10 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
          name: '@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp'
      ```
   3. 重启该 Profile（面板的重启，或重启 dev app）。
-- **期望**：① 启动失败，但错误卡标题是「**实验插件行导致启动失败**」；② 建议里**点名行 id**
-  （`dsh-dock--…chrome-devtools-mcp`）与上游原因（`Cannot read properties of undefined (reading 'mode')`）；
-  ③ 底部按钮是「**移除该行并重启**」（**没有**「重试」——重试必然再失败）；④ 点它 → 应用自己回来，
-  patch 文件里那一行消失；⑤ 同时看 `…dsh-dock.dev/dsh-shell.log`：**不再为空**，能看到 dsh 的真实错误栈。
+- **期望**：① 启动失败，但错误卡**默认收起**，首屏给标题 + 一行摘要 + 动作；标题是「**实验插件行导致启动失败**」；
+  ② 每个动作旁一句"它会造成什么"；③ 动作是「**移除该行并重启**」/「**安全模式启动**」/
+  「安全模式（备份并放空 patch）」（**没有**「重试」——重试必然再失败）；④ 点「移除该行并重启」→
+  应用自己回来，patch 文件里那一行消失；⑤ 同时看 `…dsh-dock.dev/dsh-shell.log`：**不再为空**，能看到真实错误栈。
 - **还原**：点完按钮即已还原；若中途放弃，用步骤 1 的备份覆盖回去。
 - **判定**：☐ 待你验收
 
@@ -460,7 +467,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 | # | 项 | 看什么 | 判定 |
 |:--|:--|:--|:--|
 | G1 | ADR 立项 | `docs/adr/0020`…`0024` 五份 + `docs/adr/README.md` 索引（含一行结论） | ☐ |
-| G2 | 登记册 | `docs/contracts/ipc-and-network-register.md`：63 条命令、网络面用途（含 MCP streamable-http 的**条目级**豁免） | ☐ |
+| G2 | 登记册 | `docs/contracts/ipc-and-network-register.md`：**64** 条命令、网络面用途（含 MCP streamable-http 的**条目级**豁免） | ☐ |
 | G3 | 复现台账 | `docs/contracts/dsh-behavior-ledger.md` 复现点 13–21（新增 21 = 本次插件树事故） | ☐ |
 | G4 | 广播留档 | `docs/broadcasts.md` 顶部：本批各条（能力开关重构 / 安装源策略 / 插件行修复 / 本次合并） | ☐ |
 | G5 | AGENTS 变更 | `AGENTS.md` §6 持久化键（`pluginRegistry` 等）、§7 登记册迁出、行数仍在 250 内 | ☐ |
