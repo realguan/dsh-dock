@@ -1621,7 +1621,6 @@ pub fn plugin_rows_blocking(
 /// 决定停谁。判据仍是**同一个解析器**（`parse_dump_rows_with_section`），不另写一份。
 pub struct RowAttribution {
     pub id: String,
-    pub name: String,
     /// 贡献段：bundle 包名；用户 patch 行则是**文件路径**（profile 层 / home 层）。
     pub contributed_by: Option<String>,
 }
@@ -1635,13 +1634,24 @@ pub fn row_attributions_blocking(
     let (rows, _, _) = fetch_dump_rows(profile, data_dir, world)?;
     Ok(rows
         .into_iter()
-        .map(|(id, name, bundle)| RowAttribution {
+        .map(|(id, _name, bundle)| RowAttribution {
             id,
-            name,
             contributed_by: bundle,
         })
         .collect())
 }
+
+/// dump-config 行表的原始形态：`(行 id, 行 name, 贡献段)`。
+type DumpRows = Vec<(String, String, Option<String>)>;
+
+/// 一次 `--dump-config` 的原料：`(行表, profile 清单原文, 自家 patch 表)`。
+/// 起别名只为满足 `clippy::type_complexity`——**不改调用形态**（两个公开取数函数
+/// 仍解构同一个元组，单一 spawn 路径不变）。
+type DumpFacts = (
+    DumpRows,
+    String,
+    std::collections::BTreeMap<String, (bool, usize)>,
+);
 
 /// 一次 `--dump-config` 的全部原料：行表（含段落归属）+ profile 清单原文 + 自家 patch 表。
 ///
@@ -1651,14 +1661,7 @@ fn fetch_dump_rows(
     profile: &str,
     data_dir: &Path,
     world: &crate::mgmt::World,
-) -> Result<
-    (
-        Vec<(String, String, Option<String>)>,
-        String,
-        std::collections::BTreeMap<String, (bool, usize)>,
-    ),
-    String,
-> {
+) -> Result<DumpFacts, String> {
     crate::profiles::validate_profile_name(profile)?;
     let args = [
         "--profile".to_string(),

@@ -49,9 +49,12 @@
 
 **方案 A（采纳）：安全模式 = 临时 `--patch` overlay，禁用**用户层**全部行。**
 
-> **裁定记录**：方案 A+（不是最小口径 A 的"只停用户层行"）——第三方 bundle 层行也停，
-> 保留面只有 `dsh-base` / `dsh-web-app` 两层；这样"官方 app 那种第三方插件层搞挂启动"
-> 的情形同样能救。代价是安全模式下第三方层能力全失效，需横幅明示。
+> **裁定记录（含当日回退）**：维护者先裁定 A+（连第三方 bundle 层行一起停，只留
+> `dsh-base` / `dsh-web-app`）。**实测推翻**：真机 profile 上停 33 行 → dsh **exit 1**，
+> stderr `6 entries did not activate` + `pending (waiting for service: tools)` ——
+> 第三方层的行不是孤立插件，与被保留层有服务依赖，整层摘掉会让依赖悬空；
+> 同一 profile **只停用户层 5 行 → 正常就绪**。故按证据回退为 **方案 A（只停用户层行）**，
+> 并把"A+ 需要更聪明的规则（按服务依赖求闭包）"记为后续可选项。
 
 1. **枚举**（两次只读子进程，均不占端口、不 boot）：
    `--dump-default-config` → B；`--dump-config` → C；**D = C \ B**。

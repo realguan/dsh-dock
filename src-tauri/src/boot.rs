@@ -694,6 +694,26 @@ pub(crate) fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
         .and_then(|e| e.active_profile().map(String::from))
 }
 
+/// 本次/最近一次启动的**目标 profile**：优先会话槽（真在跑的那个），退回
+/// `forced_profile`（启动目标记录）。
+///
+/// **为什么必须有退回**（2026-09-16 真机）：启动失败路径会先 `teardown_session`，
+/// 此后 [`active_session_profile`] 恒为 `None`——于是错误卡上两个需要 profile 的动作
+/// **同时失效**：「移除该行并重启」下不发隔离计划（按钮直接消失），「安全模式启动」
+/// 报"查不到启动目标"并 return（点了像没反应）。而"该修哪个 profile"的答案在失败后
+/// 依然明确：就是本轮启动目标。
+pub(crate) fn boot_target_profile(app: &tauri::AppHandle) -> Option<String> {
+    if let Some(profile) = active_session_profile(app) {
+        return Some(profile);
+    }
+    let state = app.try_state::<Arc<ShellState>>()?;
+    state
+        .forced_profile
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
@@ -1066,7 +1086,7 @@ pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &s
     use tauri::Emitter;
     // 会话目标 profile 一并交给分类器：出错行是壳自己写的时候，错误卡才能给出
     // 「移除该行并重启」这个**就地**出口（只读诊断留给拿不到目标的场景）。
-    let profile = active_session_profile(app);
+    let profile = boot_target_profile(app);
     let payload = crate::boot_failure::BootErrorPayload::classify(detail, log_tail)
         .with_quarantine(profile.as_deref());
     let value = serde_json::to_value(&payload).unwrap_or_else(|e| {

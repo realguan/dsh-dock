@@ -32,6 +32,26 @@
 
 ## 三、记录
 
+### 2026-09-16 修复 · 安全模式两个真机缺陷（错误卡动作拿不到 profile；A+ 口径不成立）—— guan（AI 协作）
+
+- **现象**（维护者真机）：点「安全模式启动」只出现「重试」，点重试也起不来；
+  且同轮截图里「移除该行并重启」也不见了。
+- **缺陷 1（根因，已修）**：`emit_boot_error` 与安全模式分支都用
+  `active_session_profile` —— 而**启动失败路径会先 `teardown_session`**，此后它恒为
+  `None`：于是「移除该行并重启」下不发隔离计划（按钮消失）、「安全模式启动」报
+  "查不到启动目标"并 return（点了像没反应）。修：新增 `boot::boot_target_profile`
+  （会话槽 → 退回 `forced_profile` 启动目标），错误卡与安全模式分支统一走它。
+  证据：现场 `safe-mode/` 目录不存在、`plugin-rows.log` 无 17:13 写入（说明分支没跑到 dump）。
+- **缺陷 2（口径，已按证据回退）**：维护者裁定的 **A+**（连第三方 bundle 层行一起停）
+  在真机 profile 上**起不来**：停 33 行 → dsh `exit 1` + `6 entries did not activate`
+  + `pending (waiting for service: tools)`（第三方层行与被保留层有服务依赖，整层摘掉即悬空）；
+  同一 profile**只停用户层 5 行 → 正常就绪**。故 `should_disable` 改为**只停用户层行**
+  （段落头是文件路径 / 无归属），bundle 层行一律保留；「A+ 按服务依赖求闭包」记为后续可选项。
+- **附带**：安全模式生效时把「已停用 N 个插件行（删除 <overlay> 即退出）」写进启动时间线
+  （退出入口的 UI 仍在下一增量）。
+- **凭据**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test` **539 passed / 8 ignored**
+  （safe_mode 6 项）；前端不变（441 passed）。
+
 ### 2026-09-16 新增 · 启动失败的「安全模式」（ADR-0025）＋ 错误卡交互改版（首屏给动作与影响）—— guan（AI 协作）
 
 - **触发**：维护者要求参考官方 app 给启动失败加兜底（关掉插件再启动），并裁定范围

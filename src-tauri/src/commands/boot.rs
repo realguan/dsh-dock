@@ -214,7 +214,9 @@ pub fn terminal_action(
             action.as_str(),
             "safe_mode" | "safe_mode_exit" | "safe_mode_reset"
         ) {
-            let profile = crate::boot::active_session_profile(&handle);
+            // 用**启动目标**而不是会话槽：失败路径已 teardown，会话槽恒空（2026-09-16
+            // 真机：拿不到 profile → 点了"像没反应"，且隔离按钮同时消失）。
+            let profile = crate::boot::boot_target_profile(&handle);
             let Some(profile) = profile else {
                 emit_boot_error(
                     &handle,

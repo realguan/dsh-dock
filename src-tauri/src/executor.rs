@@ -362,6 +362,20 @@ impl Executor for LocalExecutor {
         // spawn 成功即收口（等待就绪归 step3）：否则 step2 永挂「运行中」，
         // 而后发的 step3/4 done 会让时间线出现「后步完成、前步 loading」的倒挂。
         sink(2, "done", &format!("「{}」工作台已启动", launch.profile));
+        // 安全模式可见性（ADR-0025）：以 overlay 启动时把"停用了多少行"写进时间线——
+        // 否则用户只会觉得"插件怎么都没了"。退出安全模式的入口在下一增量补，
+        // 在此之前这条消息也指明了 overlay 路径。
+        if let Some(overlay) = &launch.patch_overlay {
+            let count = crate::safe_mode::disabled_rows(&self.data_dir, &launch.profile).len();
+            sink(
+                2,
+                "done",
+                &format!(
+                    "安全模式：已停用 {count} 个插件行（删除 {} 即退出）",
+                    overlay.display()
+                ),
+            );
+        }
         Ok(())
     }
 

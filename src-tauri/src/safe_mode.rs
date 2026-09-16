@@ -32,12 +32,6 @@
 //! 文件的分支，且必须由用户在确认框里显式同意（调用方职责）。
 use std::path::{Path, PathBuf};
 
-/// 安全模式**保留**的层（随包发布的两层）。其余行一律停用。
-///
-/// 判据只有这一处（禁双源）：`plugins::row_attributions_blocking` 给出的
-/// `contributed_by` 与它比对。
-pub const KEEP_BUNDLES: &[&str] = &["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"];
-
 /// overlay 存放目录（壳自有数据目录下，绝不写进 profile）。
 pub fn overlay_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("safe-mode")
@@ -50,13 +44,27 @@ pub fn overlay_path(data_dir: &Path, profile: &str) -> PathBuf {
 
 /// 该行是否应在安全模式下停用（**纯函数，判据单源**）。
 ///
-/// - `Some(bundle)`：由某层贡献 → 非保留层即停；
-/// - `None`：无段落归属 = 用户 patch 行（profile 层 / home 层）→ **停**。
+/// 口径 = **只停用户层行**（profile 层 / home 层）；bundle 层行（随包与第三方）一律保留。
+///
+/// **为什么不是"连第三方 bundle 层行一起停"**（2026-09-16 实测推翻更猛的 A+ 口径）：
+/// 真机 profile 上停 33 行（含第三方层行）→ dsh **exit 1**，stderr 报
+/// `6 entries did not activate` + 若干 `pending (waiting for service: tools)` ——
+/// 第三方层的行并非孤立插件，与被保留层之间存在服务依赖，整层摘掉会让依赖悬空。
+/// 同一 profile 只停用户层 5 行 → **正常就绪**。故安全模式只停"用户自己加的东西"，
+/// 不碰随包与第三方**层**结构；单点坏行仍由「移除该行并重启」处理。
+///
+/// 判据：`contributed_by` 为 `None`（无段落归属）或指向**文件**（用户 patch 行的段落头
+/// 是文件路径，如 `/Users/…/profiles/web/cordis.patch.yml`）。
 pub fn should_disable(contributed_by: Option<&str>) -> bool {
     match contributed_by {
-        Some(bundle) => !KEEP_BUNDLES.contains(&bundle),
         None => true,
+        Some(section) => looks_like_file_section(section),
     }
+}
+
+/// 段落头是不是**文件路径**（用户层的标志），而不是包名。
+fn looks_like_file_section(section: &str) -> bool {
+    section.starts_with('/') || section.contains(".yml") || section.contains('\\')
 }
 
 /// 生成 overlay 文本（纯函数；上游要求顶层 YAML 数组，每项是 mapping）。
@@ -123,8 +131,7 @@ pub fn is_active(data_dir: &Path, profile: &str) -> bool {
 
 /// 生效时返回 overlay 路径（供 `resolve_launch` 决定是否给 dsh 传 `--patch`）。
 pub fn active_overlay(data_dir: &Path, profile: &str) -> Option<PathBuf> {
-    let path = overlay_path(data_dir, profile);
-    path.is_file().then_some(path)
+    is_active(data_dir, profile).then(|| overlay_path(data_dir, profile))
 }
 
 /// 退出安全模式：删除 overlay（幂等；返回是否真的删掉了文件）。
@@ -169,17 +176,19 @@ mod tests {
         dir
     }
 
-    /// 停用判据（A+ 口径）：保留随包两层，其余全停；无归属的用户行也停。
+    /// 停用判据（**只停用户层行**）：任何 bundle 层行（含第三方层）都保留。
     #[test]
-    fn only_shipped_bundles_are_kept() {
+    fn only_user_layer_rows_are_disabled() {
         assert!(!should_disable(Some("@deepseek-ai/dsh-base")));
         assert!(!should_disable(Some("@deepseek-ai/dsh-web-app")));
-        assert!(should_disable(Some(
-            "@deepseek-ai/dsh-experimental-agent-team-profile"
-        )));
+        assert!(
+            !should_disable(Some("@deepseek-ai/dsh-experimental-agent-team-profile")),
+            "第三方 bundle 层行不得停：整层摘掉会让服务依赖悬空（2026-09-16 实测 exit 1）"
+        );
         assert!(should_disable(Some(
             "/Users/x/.dsh-dock-dev/profiles/web/cordis.patch.yml"
         )));
+        assert!(should_disable(Some("/Users/x/.dsh/cordis.patch.yml")));
         assert!(should_disable(None), "无归属 = 用户 patch 行，必须停");
     }
 
