@@ -32,6 +32,30 @@
 
 ## 三、记录
 
+### 2026-09-16 调研 · 启动失败的"安全模式"：上游机制盘点 + 我方可行性实测 + ADR-0025 草案 —— guan（AI 协作）
+
+- **触发**：维护者要求参考官方 app 给"启动报错"加一条安全模式兜底（关掉所有插件再启动）。
+- **上游调研**（只读，锚 `0d1f500`）：
+  · CLI **没有** safe/no-plugins 类开关（`args.ts:145-149`）；`dsh --help` 里的 `rescue` 只是示例名。
+  · **官方桌面 app 有**：失败页提供「Disable all third-party plugins and retry」
+  （`apps/desktop/src/startup-document.ts:12-26`），机制是**把 `dsh.profile.bundles` 重置为
+  `[dsh-base, dsh-web-app]`**（`project-manager.ts:83,335-344`）——但它**清不掉
+  `cordis.patch.yml` 的 `- insert:` 行**，治不了本次事故，不能照搬。
+  · `--patch` 是**最高优先级 overlay**，各层挂载前拍平成单列表 → 可按 id 跨层定位
+  （`profile-boot.ts:212-219,246-249`）；id 匹配不到**只 warning**（`include/src/index.ts:110-112`）。
+  · `$DSH_HOME/cordis.patch.yml` 是**第二个用户层**且优先级更高（`profile-boot.ts:243`）——
+    救援 profile 方案躲不开它。
+  · 失败路径**无重试/降级**（`app-boot/src/index.ts:867-916`）；行级无 `optional`（`entry.ts:9-22`）。
+  · **重要分歧**：`vendor/loader/src`（@0d1f500）对坏行**宽容**（降级 warning），而
+    `vendor/loader/lib`（陈旧构建，与已安装运行时**逐字节相同**）是**严格**的（抛出+整组回滚）。
+    ⇒ 本机跑的是严格版（解释症状）；"重新构建 dsh 能否消除非 required 行的致命性"**未实测**，
+    列为选项 E/留档不实施。
+- **我方实测**（克隆 dev home，未动现场）：`--dump-config` − `--dump-default-config` 的 id 差集
+  **恰为用户层 5 行**（含坏行）；用该差集生成 `--patch` overlay → **坏 profile 正常就绪**；
+  对照组原样启动 exit 1。patch **语法坏**时 `--dump-config` **exit 1** ⇒ 需分层兜底。
+- **产出**：`docs/adr/0025-boot-safe-mode-overlay.md`（**提议**，含方案 A/B、不采纳项、复审条件）
+  + `docs/adr/README.md` 索引一行。**未动代码**——按 §9 先立 ADR 待裁。
+
 ### 2026-09-16 修复 · 验收第二轮抓到的两个缺陷（import 措辞分类 + 两处 UI 假象）—— guan（AI 协作）
 
 - **触发**：维护者按 `docs/acceptance-2026-09-16.md` 做 A 组受控复现（手工写一条
