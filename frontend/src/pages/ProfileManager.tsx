@@ -21,6 +21,8 @@ import { HandoffRail } from "@/components/boot/HandoffRail"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginHub } from "@/components/market/PluginHub"
+import { ShieldAlert } from "lucide-react"
+import type { SafeModeState } from "@/types/ipc"
 import { SessionManager } from "@/components/profiles/SessionManager"
 import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
@@ -97,6 +99,9 @@ export function ProfileManager() {
     return "list"
   })
   const [overviewTick, setOverviewTick] = useState(0)
+  // 安全模式状态（ADR-0025）：**只报壳自有 overlay**（配置层未被改动），运行态另有其源。
+  // 没有它就会出现维护者 2026-09-16 报的那种假象：已装列表「已停用」而开关全开。
+  const [safeMode, setSafeMode] = useState<SafeModeState | null>(null)
 
   // 语言初始化已于 2026-09-11（task-24）**收敛到 App.tsx**：该处对所有窗口统一
   // 执行一次 initFromSettings() 并订阅 app:settings-changed（跨窗同步）。
@@ -197,6 +202,23 @@ export function ProfileManager() {
       setSelectedName(preferred)
     }
   }, [list, activeProfile, defaultProfile, selectedName])
+
+  // 安全模式状态随"当前选中的 profile"与刷新 tick 重取（失败静默：横幅是加法，
+  // 取不到就当作未启用，不得因此打断控制中心）。
+  useEffect(() => {
+    if (!selectedName) {
+      setSafeMode(null)
+      return
+    }
+    let alive = true
+    api
+      .getSafeModeState(selectedName)
+      .then((s) => alive && setSafeMode(s))
+      .catch(() => alive && setSafeMode(null))
+    return () => {
+      alive = false
+    }
+  }, [selectedName, overviewTick])
 
   // 设为默认
   const handleSetDefault = (name: string) => {
@@ -385,6 +407,42 @@ export function ProfileManager() {
         )}
       </header>
 
+      {/* 安全模式横幅（ADR-0025）：**这里必须解释"为什么配置说启用、列表说停用"**——
+          安全模式只写壳自有 overlay，不碰 profile 配置，故两个真相源必然不同。
+          没有这条横幅，用户看到的就是"停用徽标 + 全开开关"的自相矛盾（维护者 2026-09-16 报）。 */}
+      {safeMode?.active && (
+        <div
+          role="status"
+          className="mx-6 mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-warn/40 bg-warn-soft/60 px-3.5 py-2.5"
+        >
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-warn">
+            <ShieldAlert className="size-3.5" />
+            {t.profiles.safeModeTitle}
+          </span>
+          <span className="flex-1 text-micro text-dim">
+            {t.profiles.safeModeBody(safeMode.disabledRows.length)}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 border-warn/40 text-micro text-warn"
+            onClick={() => {
+              api
+                .terminalAction("safe_mode_exit")
+                .catch((e) =>
+                  showToast(
+                    t.profiles.safeModeExitFailed(String(e instanceof Error ? e.message : e)),
+                    "warn",
+                  ),
+                )
+            }}
+          >
+            <RefreshCw className="size-3" />
+            {t.profiles.safeModeExit}
+          </Button>
+        </div>
+      )}
+
       {/* 主视图区。
           2026-09-08 裁定：onNotice 必须传 useCallback 稳定的引用（此处即 showToast
           本身），禁止写成 `(msg, kind) => showToast(msg, kind)` 内联箭头——内联每次
@@ -398,7 +456,12 @@ export function ProfileManager() {
       ) : view === "plugins" ? (
         // 重启入口：实验能力改完配置要重启该 Profile 才生效，复用本页既有的重启确认链
         // （handleRestart → ProfileSwitchDialog），不另造一条。
-        <PluginHub refreshKey={overviewTick} onNotice={showToast} onRestart={handleRestart} />
+        <PluginHub
+          refreshKey={overviewTick}
+          onNotice={showToast}
+          onRestart={handleRestart}
+          safeModeActive={safeMode?.active ?? false}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
           {/* 左侧 List：Profile 列表导航 */}

@@ -124,6 +124,27 @@ pub fn disabled_rows(data_dir: &Path, profile: &str) -> Vec<String> {
     out
 }
 
+/// 安全模式状态（给前端的**只读**快照：横幅/文案用）。
+///
+/// 边界：只报"壳自己的 overlay 文件在不在、停了哪些行"——**不报运行态**。
+/// 运行态由回环快照（`plugins::fetch_runtime_snapshot`）负责，两者禁止混一条数据。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeModeState {
+    /// 本轮是否以安全模式启动。
+    pub active: bool,
+    /// 被临时停用的行 id（空 = 未启用安全模式）。
+    pub disabled_rows: Vec<String>,
+}
+
+/// 读当前安全模式状态（无文件 = 未启用）。
+pub fn state(data_dir: &Path, profile: &str) -> SafeModeState {
+    SafeModeState {
+        active: is_active(data_dir, profile),
+        disabled_rows: disabled_rows(data_dir, profile),
+    }
+}
+
 /// 安全模式当前是否生效。
 pub fn is_active(data_dir: &Path, profile: &str) -> bool {
     overlay_path(data_dir, profile).is_file()
@@ -234,6 +255,25 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.trim_end().ends_with("[]"), "{text}");
         assert!(disabled_rows(&dir, "web").is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 状态快照：未启用 = `active:false` + 空表；启用后行数与停用集合一致。
+    #[test]
+    fn state_reports_active_and_rows() {
+        let dir = tmp();
+        assert_eq!(
+            state(&dir, "web"),
+            SafeModeState {
+                active: false,
+                disabled_rows: Vec::new()
+            }
+        );
+        let ids = vec!["dsh-dock-a".to_string()];
+        write_overlay(&dir, "web", &ids).unwrap();
+        let s = state(&dir, "web");
+        assert!(s.active);
+        assert_eq!(s.disabled_rows, ids);
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -410,6 +410,7 @@ pub fn run() {
             commands::plugin::remove_plugin,
             commands::plugin::update_plugin,
             commands::plugin::get_plugin_rows,
+            commands::boot::get_safe_mode_state,
             commands::plugin::set_plugin_disabled,
             commands::plugin::check_plugin_updates,
             commands::plugin::list_plugin_versions,

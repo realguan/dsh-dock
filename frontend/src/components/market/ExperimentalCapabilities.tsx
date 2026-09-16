@@ -78,6 +78,9 @@ interface Props {
   onNotice?: (message: string, tone?: "ok" | "warn") => void
   /** 重启该 Profile（复用 ProfileManager 的既有确认链）；缺省则只给文字提示。 */
   onRestart?: (profile: string) => void
+  /// 本轮是否以安全模式启动（ADR-0025）：为真时面板顶部说明"这里的'已启用'指配置层，
+  /// 本轮实际未生效"——否则它会与已装插件列表的运行态徽标自相矛盾。
+  safeModeActive?: boolean
 }
 
 /** 正在执行的一次动作（进度导轨的数据源）。 */
@@ -88,7 +91,12 @@ interface RunState {
   index: number
 }
 
-export function ExperimentalCapabilities({ refreshKey, onNotice, onRestart }: Props) {
+export function ExperimentalCapabilities({
+  refreshKey,
+  onNotice,
+  onRestart,
+  safeModeActive = false,
+}: Props) {
   const { t } = useI18n()
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [profile, setProfile] = useState("")
@@ -268,6 +276,11 @@ export function ExperimentalCapabilities({ refreshKey, onNotice, onRestart }: Pr
 
   return (
     <div className="flex flex-col gap-3">
+      {safeModeActive && (
+        <p className="rounded-lg border border-warn/40 bg-warn-soft/50 px-3 py-2 text-micro text-dim">
+          {t.market.capSafeModeNote}
+        </p>
+      )}
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-note font-semibold text-ink">{t.market.capTitle}</h2>

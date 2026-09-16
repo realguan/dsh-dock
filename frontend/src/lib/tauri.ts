@@ -21,6 +21,7 @@ import type {
   McpProbe,
   McpServerConfig,
   RowWriteOutcome,
+  SafeModeState,
   PluginEntry,
   PluginOpOutcome,
   PluginRuntimeSnapshot,
@@ -138,6 +139,10 @@ export const api = {
    *  **删除后自证**：回读 dump-config 确认该行已不在组合树中；幂等（本就不存在 → false）。 */
   removeOfficialPatchRow: (profile: string, rowId: string) =>
     invoke<boolean>("remove_official_patch_row", { profile, rowId }),
+  /** 安全模式状态（ADR-0025）：本轮是否以安全模式启动 + 被临时停用的行。
+   *  只读；运行态另由回环快照给（两源禁混）。 */
+  getSafeModeState: (profile: string) =>
+    invoke<SafeModeState>("get_safe_mode_state", { profile }),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
   // 会话管理与自愈（4.6）

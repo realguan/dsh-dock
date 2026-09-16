@@ -25,6 +25,7 @@ import type {
   PnpmDiagnosticInfo,
   ProfileSummary,
   RepairOutcome,
+  SafeModeState,
   SessionItem,
   ShellSettings,
   StorageDiagnosticInfo,
@@ -53,6 +54,13 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       actions: true,
       log: true,
       quarantine: true,
+    })
+  })
+
+  it("SafeModeState（camelCase，ADR-0025）", () => {
+    expectShape<SafeModeState>("SafeModeState", {
+      active: true,
+      disabledRows: true,
     })
   })
 

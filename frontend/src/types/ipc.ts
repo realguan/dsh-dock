@@ -536,6 +536,15 @@ export interface Capability {
   activeVariant: string | null
 }
 
+/// 安全模式状态（ADR-0025，`get_safe_mode_state`）。**只报壳自有 overlay 的状态**，
+/// 不报运行态——运行态由回环快照给，两源禁混（否则又会出现"配置说启用、运行说停用"的假象）。
+export interface SafeModeState {
+  /// 本轮是否以安全模式启动。
+  active: boolean
+  /// 被临时停用的行 id（空 = 未启用）。
+  disabledRows: string[]
+}
+
 /// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。
 /// `autoActivated` = 该包是 profile 层，已由 CLI 激活，壳**未写行**（也不应写）。
 export interface RowWriteOutcome {

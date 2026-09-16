@@ -29,7 +29,10 @@
 `switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
 
 **插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
-`update_plugin` `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates`
+`update_plugin` `get_plugin_rows` `get_safe_mode_state`（2026-09-16 立，ADR-0025：安全模式的
+只读状态——本轮是否以安全模式启动 + 被临时停用的行 id。**只读壳自有 overlay 文件**
+（`<app_data>/safe-mode/<profile>.yml`），**不读运行态**：运行态另由回环快照给，两源禁混，
+否则又会出现"配置说启用 / 运行说停用"的自相矛盾界面） `set_plugin_disabled` `check_plugin_updates`
 `list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
 2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
 三级事实视图，状态含 `off/on/disabled/partial/conflict`，由后端按「包 × 挂载行 × disabled」
@@ -57,9 +60,9 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 63**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
-2026-09-16 净增 1：`list_official_plugins` → `list_experimental_capabilities` 属改名，
-新增 `remove_official_patch_row`）。
+**当前条数 = 64**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-09-16 净增 2：`list_official_plugins` → `list_experimental_capabilities` 属改名，
+新增 `remove_official_patch_row` 与 `get_safe_mode_state`）。
 
 ---
 

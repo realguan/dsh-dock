@@ -396,6 +396,13 @@ export const t = {
     pluginDisable: "禁用（重启后生效）",
     pluginEnable: "启用（重启后生效）",
     pluginDisabled: "已禁用",
+    // 安全模式横幅（ADR-0025，2026-09-16）：必须解释"配置说启用、列表说停用"为何并存——
+    // 安全模式只写壳自有 overlay、不碰配置，两个真相源必然不同。
+    safeModeTitle: "安全模式",
+    safeModeBody: (n: number) =>
+      `本轮已临时停用 ${n} 个插件的挂载行——配置文件未改动（所以列表里的开关仍是开）。退出安全模式并重启即恢复。`,
+    safeModeExit: "退出安全模式并重启",
+    safeModeExitFailed: (msg: string) => `退出安全模式失败：${msg}`,
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
     // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择
@@ -861,6 +868,9 @@ export const t = {
     // 文案纪律：第一阅读层只出现**用户视角**的东西（价值 / 前置 / 状态 / 后果）；
     // 包名、钉版本、激活方式、行 id 一律进「详情」折叠区。
     capTab: "实验能力",
+    capSafeModeNote:
+      "本轮处于安全模式：下表的「已启用」指**配置文件**状态；这些能力的挂载行本轮被临时停用，重启退出安全模式后才会真正生效。",
+
     capTitle: "实验能力",
     capDesc: "上游标记为实验的 dsh 能力：开启即安装并挂载，随时可以关掉。",
     capTargetProfile: "目标 Profile",

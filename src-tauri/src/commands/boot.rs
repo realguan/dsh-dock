@@ -133,6 +133,20 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     });
     Ok(())
 }
+/// 安全模式状态（ADR-0025）：本轮是否以安全模式启动、停用了哪些行。
+///
+/// 只读、零副作用（读壳自有 overlay 文件）；**不读运行态**——那是回环快照的职责。
+/// 前端用它渲染控制中心横幅与「退出安全模式并重启」入口（`terminal_action("safe_mode_exit")`）。
+#[tauri::command]
+pub async fn get_safe_mode_state(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<crate::safe_mode::SafeModeState, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::profiles::validate_profile_name(&profile)?;
+    Ok(crate::safe_mode::state(&data_dir, &profile))
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
 /// `version`（2026-09-09 版本选择器）：upgrade / upgrade_only 的显式目标版本
