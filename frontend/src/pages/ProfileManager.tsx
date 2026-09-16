@@ -396,7 +396,9 @@ export function ProfileManager() {
       ) : view === "sessions" ? (
         <SessionManager refreshKey={overviewTick} onNotice={showToast} />
       ) : view === "plugins" ? (
-        <PluginHub refreshKey={overviewTick} onNotice={showToast} />
+        // 重启入口：实验能力改完配置要重启该 Profile 才生效，复用本页既有的重启确认链
+        // （handleRestart → ProfileSwitchDialog），不另造一条。
+        <PluginHub refreshKey={overviewTick} onNotice={showToast} onRestart={handleRestart} />
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
           {/* 左侧 List：Profile 列表导航 */}

@@ -554,6 +554,127 @@ mod tests {
         );
     }
 
+    /// **反向原语**（ADR-0020 §7.2-3）：删行只摘目标行，其余行逐字保真；再删一次
+    /// 零改动（幂等）。
+    ///
+    /// 同时钉住 `for_each_entry_mut` 的使用：直接改 `entries` 会让 `render()` 回填
+    /// **旧文本**——"删了却还在"，本测会因仍能查到该 id 而红。
+    #[test]
+    fn remove_catalog_insert_row_removes_only_its_row() {
+        let home = tmp();
+        write(
+            &home.join("profiles/p/cordis.patch.yml"),
+            "# 头部注释\n- insert:\n    - id: dsh-dock-a\n      name: '@deepseek-ai/a'\n    - id: dsh-dock-b\n      name: '@deepseek-ai/b'\n",
+        );
+
+        let changed = remove_catalog_insert_row(&home, "p", "dsh-dock-a").unwrap();
+        assert!(changed, "首次删除应改动文件");
+
+        let path = home.join("profiles/p/cordis.patch.yml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("dsh-dock-a"), "目标行必须被摘掉：{text}");
+        assert!(
+            text.contains("dsh-dock-b") && text.contains("@deepseek-ai/b"),
+            "其余行必须原样保住：{text}"
+        );
+        assert!(text.contains("# 头部注释"), "头部注释必须保住：{text}");
+
+        // 幂等：再删一次 → 零改动且文本逐字节不变。
+        let again = remove_catalog_insert_row(&home, "p", "dsh-dock-a").unwrap();
+        assert!(!again, "重复删除必须零改动");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    /// 摘空后的 `- insert: []` 条目必须整条消失（不能给 dsh 留壳制造的垃圾），
+    /// 且同 id 的 `{id, disabled}` 停用桩一并清掉。
+    #[test]
+    fn remove_catalog_insert_row_clears_empty_insert_and_disabled_stub() {
+        let home = tmp();
+        write(
+            &home.join("profiles/p/cordis.patch.yml"),
+            "# 头部\n- name: '@deepseek-ai/other'\n  config:\n    keep: 1\n- insert:\n    - id: dsh-dock-a\n      name: '@deepseek-ai/a'\n- id: dsh-dock-a\n  disabled: true\n",
+        );
+
+        assert!(remove_catalog_insert_row(&home, "p", "dsh-dock-a").unwrap());
+
+        let text = std::fs::read_to_string(home.join("profiles/p/cordis.patch.yml")).unwrap();
+        assert!(!text.contains("dsh-dock-a"), "行与停用桩都必须清掉：{text}");
+        assert!(!text.contains("insert"), "空的 insert 条目不得留下：{text}");
+        assert!(
+            text.contains("@deepseek-ai/other") && text.contains("keep: 1"),
+            "无关条目必须逐字保住：{text}"
+        );
+    }
+
+    /// 激活分类的**唯一判据**：只认包自身 `package.json` 的 `/dsh/bundle/patch`。
+    /// 读不到一律按"未声明"处理——保守方向（宁可多写一条幂等行，也不漏挂）。
+    #[test]
+    fn package_declares_bundle_reads_only_the_manifest_field() {
+        let home = tmp();
+        let dir = home.join("profiles/p");
+        write(
+            &dir.join("node_modules/@deepseek-ai/layer/package.json"),
+            r#"{"name":"@deepseek-ai/layer","dsh":{"bundle":{"patch":"./cordis.patch.yml"}}}"#,
+        );
+        // `dsh.client` 是浏览器侧插件，不是 profile 层——不得算作声明 bundle。
+        write(
+            &dir.join("node_modules/@deepseek-ai/client/package.json"),
+            r#"{"name":"@deepseek-ai/client","dsh":{"client":{}}}"#,
+        );
+        // `patch: null` 不算声明（v1 的判定式即 `!is_null()`，此处钉住）。
+        write(
+            &dir.join("node_modules/@deepseek-ai/nullpatch/package.json"),
+            r#"{"dsh":{"bundle":{"patch":null}}}"#,
+        );
+
+        assert!(package_declares_bundle(&dir, "@deepseek-ai/layer"));
+        assert!(!package_declares_bundle(&dir, "@deepseek-ai/client"));
+        assert!(!package_declares_bundle(&dir, "@deepseek-ai/nullpatch"));
+        assert!(
+            !package_declares_bundle(&dir, "@deepseek-ai/absent"),
+            "读不到（安装前/未装）一律按未声明处理"
+        );
+
+        // 写行判定与分类**互为反相**：只有非层包才轮到壳写行。
+        assert!(!needs_insert_row(package_declares_bundle(
+            &dir,
+            "@deepseek-ai/layer"
+        )));
+        assert!(needs_insert_row(package_declares_bundle(
+            &dir,
+            "@deepseek-ai/absent"
+        )));
+    }
+
+    /// 所有权边界：只有 `dsh-dock-` 前缀的行归壳所有。否则一次误删会动到 bundle
+    /// 自带行或用户手写行——那是**破坏用户配置**，比报错严重得多。
+    #[test]
+    fn remove_catalog_insert_row_refuses_foreign_rows() {
+        let home = tmp();
+        let path = home.join("profiles/p/cordis.patch.yml");
+        write(
+            &path,
+            "- insert:\n    - id: vendor-row\n      name: vendor-pkg\n",
+        );
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let err = remove_catalog_insert_row(&home, "p", "vendor-row").expect_err("必须拒绝");
+        assert!(
+            err.contains("vendor-row") && err.contains(SHELL_ROW_PREFIX),
+            "错误文案须点明行 id 与所有权前缀：{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "拒绝时必须零写入"
+        );
+        assert!(
+            remove_catalog_insert_row(&home, "p", SHELL_ROW_PREFIX).is_err(),
+            "空前缀本身不算壳行"
+        );
+        assert!(is_shell_row_id("dsh-dock-x") && !is_shell_row_id("dsh-dock-"));
+    }
+
     #[test]
     fn parses_runtime_response_envelope() {
         let ok = r#"{"type":"server-response","rpcId":"x","result":{"ok":true,"value":{"entries":[
@@ -1702,7 +1823,6 @@ pub fn set_plugin_disabled_in_guest(
     crate::guest::write_home_files(distro, &[(rel, next)])
 }
 
-/// 行 id 合法性（宿主 / 客体共用；行 id 来自 dump-config，不可从包名推导）。
 /// 为策展条目写入**挂载行** `- insert: [{id, name}]`（2026-09-15，ADR-0020 §3.1.4）。
 ///
 /// **只在 `Activation::InsertRow` 时调用**：声明了 `dsh.bundle` 的包由
@@ -1849,6 +1969,166 @@ fn validate_row_id(row_id: &str) -> Result<(), String> {
         return Err("行 id 非法".to_string());
     }
     Ok(())
+}
+
+/// 壳写入的挂载行 id 前缀（**所有权标记**）。`row_id_for` 恒以此开头；
+/// 只有以此开头的行才允许被壳删除（[`remove_catalog_insert_row`]）。
+pub const SHELL_ROW_PREFIX: &str = "dsh-dock-";
+
+/// 该行 id 是否由壳写入（而不是 bundle 自带行或用户手写行）。
+pub fn is_shell_row_id(row_id: &str) -> bool {
+    row_id.len() > SHELL_ROW_PREFIX.len() && row_id.starts_with(SHELL_ROW_PREFIX)
+}
+
+/// 目标包是否声明 `dsh.bundle` —— **激活契约的唯一分类依据**（ADR-0020 §2.8）。
+///
+/// 判据：读 `profiles/<名>/node_modules/<包>/package.json` 的 `/dsh/bundle/patch`。
+///
+/// 两条纪律：
+/// - **读不到一律按"未声明"处理**：保守方向——宁可让壳多写一条 `insert` 行
+///   （幂等、可复核），也不误判成"已自动激活"而**漏挂**；
+/// - **必须在包已装之后调用**（ADR-0020 §7.4）：分类是从包自身的 `package.json` 读出来的，
+///   安装前该文件不存在，任何"提前判定"都只是"没装"的同义词。
+pub fn package_declares_bundle(profile_dir: &Path, package: &str) -> bool {
+    let path = profile_dir
+        .join("node_modules")
+        .join(package)
+        .join("package.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|pkg| pkg.pointer("/dsh/bundle/patch").map(|v| !v.is_null()))
+        .unwrap_or(false)
+}
+
+/// 写挂载行前的**最终判定**：只有未声明 `dsh.bundle` 的包才需要壳写行。
+///
+/// v1 的漏洞（ADR-0020 §7.1 D7）：`activation` 是**列目录时**算的，而那时包还没装，
+/// 于是 profile 层包（如 `auto-review`）被判成 `insert_row` → 壳给它多写一条行
+/// → **同一插件挂两份实例**。把判定挪到"写之前、装之后"，漏洞闭合，分类依据不变。
+pub fn needs_insert_row(declares_bundle: bool) -> bool {
+    !declares_bundle
+}
+
+/// **反向原语**：删除壳写过的挂载行（2026-09-16，ADR-0020 §7.2-3）。
+///
+/// 为什么必须有（v1 缺陷 D5）：[`ensure_catalog_insert_row`] 只增不减——包在别处被
+/// 卸载后，`- insert:` 行仍留在 patch 里，成为**悬空挂载行**（指向不存在的包，
+/// dsh 启动即加载失败）。"彻底移除一项实验能力"必须能把它一起收干净。
+///
+/// 安全边界（两条，缺一不可）：
+/// ① `row_id` 必须带壳命名空间前缀（[`is_shell_row_id`]）——否则一次误删会动到
+///    bundle 自带行或用户手写的行；
+/// ② 只从 `insert` 数组里删该行，并顺带清掉同 id 的 `{id, disabled}` 停用桩
+///    （那是壳为停用该行写下的补丁，行没了它就是指向空 id 的垃圾）。
+///
+/// 返回 `true` = 实际改动了文件；行本就不存在 → `false`（幂等）。
+pub fn remove_catalog_insert_row(home: &Path, profile: &str, row_id: &str) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    if !is_shell_row_id(row_id) {
+        return Err(format!(
+            "拒绝删除「{row_id}」：只有 `{SHELL_ROW_PREFIX}` 前缀的挂载行归壳所有，\
+             其余行属于 bundle 或用户手写，壳不得代删"
+        ));
+    }
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let mut patch = PatchFile::read(&patch_path)?;
+    let removed_row = apply_catalog_remove_row(&mut patch, row_id);
+    let removed_stub = remove_disabled_stub(&mut patch, row_id);
+    if !removed_row && !removed_stub {
+        return Ok(false); // 零写入（免 mtime 抖动，同 ADR-0013 纪律）
+    }
+    patch.write(&patch_path)?;
+    Ok(true)
+}
+
+/// 纯变换：把挂载行从 `insert` 数组里摘掉，返回是否改动。
+///
+/// 摘空后**整条移除**该 `insert` 条目（否则留下 `- insert: []` 垃圾——
+/// 那是壳制造的、dsh 未必认识的东西）。
+fn apply_catalog_remove_row(patch: &mut PatchFile, row_id: &str) -> bool {
+    let insert_key = serde_yaml::Value::String("insert".into());
+    let id_key = serde_yaml::Value::String("id".into());
+
+    let target = patch.entries.iter().position(|entry| {
+        entry
+            .as_mapping()
+            .and_then(|m| m.get(&insert_key))
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter().any(|row| {
+                    row.as_mapping()
+                        .and_then(|r| r.get(&id_key))
+                        .and_then(|v| v.as_str())
+                        == Some(row_id)
+                })
+            })
+            .unwrap_or(false)
+    });
+    let Some(idx) = target else {
+        return false;
+    };
+
+    let mut removed = false;
+    // 走 `for_each_entry_mut`：被改条目的原文片段必须置 `None`，否则 `render()`
+    // 原样回填旧文本 —— 删了却还在（与写行同一类静默失败）。
+    patch.for_each_entry_mut(|i, entry| {
+        if i != idx {
+            return false;
+        }
+        let Some(seq) = entry
+            .as_mapping_mut()
+            .and_then(|m| m.get_mut(&insert_key))
+            .and_then(|v| v.as_sequence_mut())
+        else {
+            return false;
+        };
+        let before = seq.len();
+        seq.retain(|row| {
+            row.as_mapping()
+                .and_then(|r| r.get(&id_key))
+                .and_then(|v| v.as_str())
+                != Some(row_id)
+        });
+        removed = seq.len() != before;
+        removed
+    });
+
+    if removed {
+        // 空 `insert` 数组的条目整条清掉（保留其余条目原样）。
+        patch.retain(|e| {
+            e.as_mapping()
+                .and_then(|m| m.get(&insert_key))
+                .and_then(|v| v.as_sequence())
+                .map(|s| !s.is_empty())
+                .unwrap_or(true)
+        });
+    }
+    removed
+}
+
+/// 纯变换：清掉壳为停用某行写下的补丁桩 `{id, disabled}`（整条移除）。
+///
+/// 判据严格为「**恰好两个键**：`id` 命中 + `disabled`」——真正的配置条目要么是
+/// `- insert:` 数组、要么带 `name`/`config` 等其它键，绝不会被误删。
+fn remove_disabled_stub(patch: &mut PatchFile, row_id: &str) -> bool {
+    let id_key = serde_yaml::Value::String("id".into());
+    let disabled_key = serde_yaml::Value::String("disabled".into());
+    let is_stub = |e: &serde_yaml::Value| {
+        e.as_mapping()
+            .map(|m| {
+                m.len() == 2
+                    && m.get(&id_key).and_then(|v| v.as_str()) == Some(row_id)
+                    && m.contains_key(&disabled_key)
+            })
+            .unwrap_or(false)
+    };
+    if !patch.entries.iter().any(is_stub) {
+        return false;
+    }
+    patch.retain(|e| !is_stub(e));
+    true
 }
 
 /// 纯变换（宿主 / 客体共用）：禁用 → id 条目仅置 `disabled` 键（不存在则追加

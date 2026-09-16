@@ -271,3 +271,90 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
 - 任一被收录包**新增或移除** `dsh.bundle` 声明（例如方案 F 落地），或新增/合并 provider
   导致互斥族变化；或上游开始提供声明式互斥/配套元数据——届时目录可退化为消费方。
 - AGENTS §11 写入边界或 ADR-0011 来源白名单被修订。
+
+## 7. 第二次修订（2026-09-16）：从「包目录」到「能力开关」
+
+> 触发：维护者实测反馈「实验性功能的实现效果与交互逻辑体验极差」。以下缺陷逐条可复核，
+> 不是风格偏好问题。本次修订**取代** §4 中「目录 UI 层强制替换」与 §5 中「安装弹窗」的
+> 呈现口径；§1–§3 的事实与评估、§2 的激活契约（按 `dsh.bundle` 分支）**不变**。
+
+### 7.1 缺陷（v1 实测）
+
+| # | 缺陷 | 证据 |
+|:--|:---|:---|
+| D1 | **粒度错**：同族三选一渲染成三张并列卡片，用户看不到"当前是哪一个"，换后端只能再点一次安装 | `official_catalog.rs:195-264` 8 条并列 `CatalogEntry` |
+| D2 | **只有开、没有关**：唯一动作是安装。停用要去「已安装」页按**包**找 toggle；`AutoBundle` 类包（auto-review）命中的是它贡献的行，语义更远 | `OfficialLab.tsx:202-222` 单个安装按钮 |
+| D3 | **状态只到"包装没装"**：`installed` 取 `dependencies` 布尔，不反映挂载行是否存在、是否被 `disabled`、同族冲突的当前持有者 | `commands/plugin.rs:106-121`；`CatalogStep.installed` |
+| D4 | **实现细节污染第一阅读层**：「需写入挂载行」「由 dsh 自动激活（不写配置行）」「钉版本：`<spec>`」是维护者信息 | `OfficialLab.tsx:56-64` |
+| D5 | **卸载残留**：写行有正向原语、**无反向原语**。包被卸掉后 `insert` 行仍在 → 悬空挂载行（dsh 启动加载失败面） | `plugins.rs` 无删行实现（`apply_catalog_insert_row` 只增不减） |
+| D6 | `requiresNoteZh` 含 Markdown 反引号，纯文本直出（"`model` 必填"） | `official_catalog.rs:209,227,261` |
+| D8 | **子集档被误报为互斥冲突**：Agent Teams 的两档是子集关系（自建档 = `[host 层]` ⊂ Web 档 = `[host 层, web 层]`），装 Web 档时子集档的包必然也齐 → 面板报「后端冲突」，而这是**完全正常的配置**。该误报只对真互斥族（浏览器 3 选 1 / 桌面 2 选 1）成立 | 2026-09-16 真机（`cargo tauri dev` + dev home 实测）暴露 |
+| D7 | **重复挂载**：`activation` 是**列目录时**算的，而那时包还没进 `node_modules` → 任何包都被判成"未声明 `dsh.bundle`"。于是 profile 层包（`auto-review` 等）被误判为需要写行，装完多写一条 → **同一插件挂两份实例** | `commands/plugin.rs` 采集 `declared_bundles` 只遍历已装包；`official_catalog::activation_for` 对未装包恒得 `InsertRow` |
+
+### 7.2 决策
+
+1. **呈现单位 = 能力（capability），不是包**。四项：`auto-review` / `browser-use` /
+   `computer-use` / `agent-team`。同族后端降级为**能力内的变体（variant）**——互斥由此
+   在**同一张卡内**表达为"当前后端"，用户不再需要理解"三选一"。
+2. **开关语义 = 行级 `disabled`，不是卸载**（ADR-0009 例外 #3 的既有通道）：
+   - ON = 包已装 ∧ 行存在 ∧ 行未 disabled；
+   - OFF = `set_plugin_disabled(id, true)`，**保留包**——秒级可逆、不重下 pnpm；
+   - 「移除」是**独立的次要动作**：删行 → 逆序卸载包（走确认框）。
+   用卸载冒充"关闭"会把开关变成分钟级重操作，且与「已安装」页语义重复。
+3. **新增反向原语 `remove_official_patch_row(profile, row_id)`**：按 `id` 删除壳写过的
+   挂载行，删除后**回读 dump-config 自证该行已不在组合树**（与写行的自证对称）。
+   仅在行确由壳写入时调用。登记册 §一 同步。
+4. **状态由后端一次算全**（`CapabilityState` = `off` / `on` / `disabled` / `partial` /
+   `conflict`）：状态是「包 × 行 × disabled」的函数，**前端不得凭 `installed` 猜**（§2.8 禁双源）。
+5. **实现细节折叠**：包名 / spec / 激活方式 / 行 id 进「详情」，默认不出现在第一阅读层；
+   启用确认框显示**确切版本**（§2.4 的原始要求，v1 未落到弹窗）。
+6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言，无反引号）。
+7. `list_official_plugins` **改名并改形**为 `list_experimental_capabilities`（返回
+   `CapabilityView[]`）。无外部消费者，仅本仓库前端；连带 `ipc.rs` 闸门 fixture 与登记册。
+8. **区分「互斥变体」与「子集变体」**（2026-09-16 真机暴露，D8）：变体状态里新增
+   `subsumed_by`——本变体的包若是另一个**已就位**变体的真子集，则本档显式为「已包含」，
+   **不提供独立开关与移除**（它的包就是超集档的基础层，单独关掉会把超集档拆坏），
+   且**不参与冲突判定**（冲突只数"没被包含"的档）。真互斥族仍必须报冲突——
+   正反两条都有回归测试（`subset_variant_is_subsumed_not_conflicting` /
+   `genuinely_exclusive_variants_still_conflict`）。
+9. **删掉「registry `latest` 错配提示」这条死路径**（2026-09-16 独立评审核出）：
+   `latest` 只能联网取，而该命令**禁网**（唯一网络面 = `updates.rs`），故 `latest_by_package`
+   在生产路径**恒为空** ⇒ `version_skew_notice` 永远不触发。§2.4 的实质要求
+   （确认框显示将要安装的**确切版本**）由确认框直接列出 spec 满足。留下恒不可达的分支
+   只会制造"看着有、其实没有"的假象——与本仓库最忌讳的那类失败同源。
+
+### 7.3 后果
+
+- 目录元数据维护面扩大：每能力新增 `summary` / `prerequisites` / `variants` 三项，随 dsh 升级复核。
+- **停用 ≠ 卸载**这条双重语义必须让用户看见：卡片状态区分「已启用 / 已停用（仍占磁盘）/
+  未启用」，移除入口写明"卸载包并删行"。
+- 破坏性 payload 变更：`CatalogRow`/`CatalogStep` 退役，`CapabilityView`/`VariantView`/`StepView` 接手。
+- 不新增网络面、不改 `docs/contract.md`、不升 `MANIFEST_FORMAT`（改动全在 `$DSH_HOME` 管理面内）。
+
+### 7.4 D7 的闭合：分类只能在**写之前、装之后**判定
+
+激活方式是读目标包 `package.json` 的 `/dsh/bundle/patch` 得到的（§2.8 唯一依据），
+而安装前该文件不存在——"安装前判定"只是"没装"的同义词。故：
+
+- `apply_official_patch_row` **写行前当场重判**：声明了 `dsh.bundle` → **拒绝写行**，
+  返回 `RowWriteOutcome{ autoActivated: true }`（如实告知"由 CLI 激活，壳未写行"，
+  而不是静默什么都不做）；
+- 目录里的 `activation` 字段降级为**展示用**（详情折叠里的实现说明），不再驱动写行决策。
+
+### 7.5 上游锚点（本次修订新增，2026-09-15 实查 @ `0d1f5000`，入台账）
+
+| 事实 | 位置 |
+|:---|:---|
+| 帧格行级 `disabled` 的语义：**卸载插件但不删除其 Cordis 配置项**，改回后重新加载 | `docs/cordis-tutorial/06-composition-and-hmr.zh.md:16,19` |
+| 字段定义「Prevents this entry and descendants from running.」+ 父级继承 | `vendor/loader/src/config/entry.ts:18-19,72-82,133-136` |
+| 真实先例：CLI 自己用 `{ id, disabled: true }` 关遥测行 | `apps/cli/src/profile-boot.ts:171-173` |
+| `agent-team-profile` 的层 patch **除插入 2 行外还停用 4 条旧 subagent 行** → 层副作用无法用行级开关回滚 | `packages/experimental/agent-team-profile/cordis.patch.yml:4-14,16-29` |
+| `dsh plugin remove` **同时把该包从有序层列表 `dsh.profile.bundles` 移除** | `agent-team-profile/README.zh.md:37`；`agent-team-web-profile/README.zh.md:37` |
+| `@deepseek-ai/dsh-browser-use` / `-computer-use` **无 `dsh` 字段** → 两者都是普通行（非层） | `packages/browser-use/browser-use/package.json`、`packages/computer-use/computer-use/package.json`（实查 `dsh: null`） |
+| 浏览器后端 3 选 1 / 桌面提供方 2 选 1：共享服务**拒绝任何第二次注册，含同名实例** | `docs/subsystems/browser-use.zh.md:9,17`；`docs/subsystems/computer-use.zh.md:9,16` |
+| 上游插件清单 GUI **只读**（`EnablementKind` 无写接口）→ 写路径只能自建 | `packages/client/ui-settings-plugin-inventory/.../PluginInventorySettingsTab.tsx:20-27,184` |
+
+**不在策展集内（有意）**：`inspector`（需 `--patch` 手工 overlay + 先构建，不能经
+`dsh plugin add` 成为 profile 层）、`ptc-runtime-python`（需自备 CPython ≥3.10，且与
+workflow 互斥、无随附 profile 启用）、`webworker-*` / `browser-use-runtime`（库或构建工具，
+不可挂载）。

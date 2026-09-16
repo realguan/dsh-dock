@@ -420,40 +420,94 @@ export interface HandoffSnapshot extends HandoffIntent {
   active: boolean
 }
 
-// ---------- 官方插件策展目录（ADR-0020，2026-09-15）----------
+// ---------- 实验能力开关（ADR-0020，2026-09-15 立 / 2026-09-16 第二次修订）----------
+//
+// 呈现单位是**能力**（capability），不是包：同一能力的互斥后端降级为**变体**
+// （variant）。v1 把策展集摊平成 8 条并列条目，于是"三选一"要靠用户自己读卡片，
+// 而"关掉"这件事在目录里根本不存在（只有安装）。
 
 /// 激活方式：由目标包**是否声明 `dsh.bundle`** 决定，是激活契约的唯一依据。
 /// - `auto_bundle`：声明了 → `dsh plugin add` 自行追加进 `dsh.profile.bundles`，
 ///   壳**不得**再写 `insert`（会重复挂载）；
 /// - `insert_row`：未声明 → CLI 只装依赖并告警，壳**必须**写挂载行。
-export type CatalogActivation = "auto_bundle" | "insert_row"
+export type CapabilityActivation = "auto_bundle" | "insert_row"
 
-/// 互斥族：同族 provider 装第二个会**激活失败**，UI 须走「替换」而非「叠加」。
-export type CatalogFamily = "browser_use" | "computer_use"
+/// 变体状态：由「包 × 挂载行 × disabled」三者共同决定（后端唯一判定，前端不猜）。
+/// - `off`：一个包都没装；`on`：包齐 + 行齐 + 无停用；
+/// - `disabled`：包齐 + 行齐，但行被停用（已就位、当前关着，秒级可开）；
+/// - `partial`：装了一半或包在而行缺（需要修复）。
+export type VariantState = "off" | "on" | "disabled" | "partial"
 
-/// 目录行的**一步**。
-export interface OfficialCatalogStep {
-  /// 第几步（1 起）：有序组合靠它表达"先 host 层再 Web 层"，也是失败续装的锚点。
+/// 能力状态 = 其变体状态的聚合；`conflict` = 同能力多个变体同时生效（上游会激活失败）。
+export type CapabilityState = "off" | "on" | "disabled" | "partial" | "conflict"
+
+/// 能力下的**一步**（一个包的装/挂/开关事实）。
+export interface CapabilityStep {
+  /// 第几步（1 起）：有序组合靠它表达"先宿主层再 Web 层"，也是失败续装的锚点。
   ordinal: number
   package: string
-  /// 钉版本后的 spec（形如 `@scope/pkg@0.1.6-alpha.1`），直接交给安装链。
+  /// 钉版本后的 spec（形如 `@scope/pkg@0.1.6-alpha.1`）；运行时版本未检出时**退回裸包名**
+  /// 并在 `versionNotice` 里明示未钉版本。
   spec: string
-  activation: CatalogActivation
+  activation: CapabilityActivation
   /// patch 行 id（`insert_row` 时才真正落盘；缺 id 的行永不可再 patch）。
   rowId: string
+  /// 该包是否已在 profile 依赖里。
   installed: boolean
+  /// 该包的挂载行是否已**在组合树中**。
+  rowPresent: boolean
+  disabled: boolean
+  /// 停用/启用该步要写的行 id（bundle 贡献多行时全部一起切）；空 = 无行可切。
+  toggleTargets: string[]
   /// 版本错配提示（如 registry `latest` 落后于运行时）；`null` = 无需打扰用户。
   versionNotice: string | null
 }
 
-/// 一条目录行（一个可点的策展条目）。
-export interface OfficialCatalogRow {
+/// 能力下的一个可选后端。同能力的变体**互斥**（同一时刻只应有一个生效）。
+export interface CapabilityVariant {
+  id: string
   labelZh: string
-  family: CatalogFamily | null
-  requiresNoteZh: string | null
-  steps: OfficialCatalogStep[]
-  /// 与**已装**同族 provider 的冲突包名；非 null = UI 须提示将走替换流程。
-  conflictWith: string | null
+  /// 一句话：这个后端适合谁 / 代价是什么。
+  noteZh: string
+  /// 需要用户自备或额外配置的东西（空 = 无）。
+  prerequisitesZh: string[]
+  steps: CapabilityStep[]
+  state: VariantState
+  /// 本变体的包是**另一个已就位变体**的真子集 → 本档已被那一档包含（Agent Teams 的
+  /// 自建档 ⊂ Web 档）。此时该档不单独开关：关掉它会把超集档的基础层一起拆掉。
+  /// `null` = 独立档。
+  subsumedBy: string | null
+  /// **纯行级停用是否等价于"关掉"**（`false` → 关闭必须走移除）。
+  ///
+  /// `false` 的成因是变体含 profile 层（`dsh.bundle.patch`）：层 patch 带副作用
+  /// （实测 Agent Teams 的层还停用了 4 条旧 subagent 行），行级 disabled 关不干净。
+  /// **仅在 `state !== "off"` 时有意义**：未安装时无从判定包的形态，后端一律给 `false`。
+  toggleOffSupported: boolean
+  /// 同能力其它变体已装、而本变体不含的后端包；非空 = 启用本变体需先替换掉它们。
+  displaced: string[]
+}
+
+/// 一项可开关的实验能力。
+export interface Capability {
+  /// 稳定 id（`agent-team` 等）——**不得用展示名当身份**（改文案即丢状态）。
+  id: string
+  labelZh: string
+  /// 一句话价值。
+  summaryZh: string
+  /// 启用后**用户能观察到什么**（含"什么会消失"，如旧 subagent 控件被取代）。
+  unlocksZh: string
+  variants: CapabilityVariant[]
+  state: CapabilityState
+  /// 当前生效（或已就位但停用）的变体 id；`null` = 未启用 / 冲突。
+  activeVariant: string | null
+}
+
+/// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。
+/// `autoActivated` = 该包是 profile 层，已由 CLI 激活，壳**未写行**（也不应写）。
+export interface RowWriteOutcome {
+  /// 是否真的改动了 patch 文件（幂等重写 = false）。
+  changed: boolean
+  autoActivated: boolean
 }
 
 // ---------- SSH 远程工作区向导（ADR-0023，2026-09-15） ----------

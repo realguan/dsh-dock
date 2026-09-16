@@ -6,7 +6,7 @@
 // 不持久化；进度流（Rust Channel）为后续切片——本切片队列项只呈现状态机相位。
 // 2026-09-15（R2）：新增可 await 句柄 `enqueueAndWait`，让需要「逐步知道成败」的
 // 调用方（官方目录编排）能用同一队列，而不是各起一套 —— 见该方法的注释与
-// `lib/officialCatalog.ts` 生产绑定处的两条边界记档。
+// `lib/experimentalCapabilities.ts` 生产绑定处的两条边界记档。
 import { create } from "zustand"
 import { api } from "@/lib/tauri"
 import { useI18nStore } from "@/stores/i18nStore"

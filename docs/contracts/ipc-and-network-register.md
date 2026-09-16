@@ -13,7 +13,7 @@
 
 ---
 
-## 一、IPC 命令登记（62 条）
+## 一、IPC 命令登记（63 条）
 
 > 新命令**先登记再实现**。清单一致性另有 cargo test 闸门：
 > `handler_matches_ipc_commands` / `capabilities_match_ipc_commands` /
@@ -30,10 +30,17 @@
 
 **插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
 `update_plugin` `get_plugin_rows` `set_plugin_disabled` `check_plugin_updates`
-`list_plugin_versions` `list_all_plugins` `list_official_plugins`（2026-09-15，ADR-0020
-策展目录：解析出钉版本 spec / 激活方式 / 稳定行 id / 互斥冲突；**WSL 客体档显式报错**，
-不回落本地读）`apply_official_patch_row`（2026-09-15，同上：写策展挂载行，仅
-`insert_row` 步可调、幂等、经 `PatchFile`；**WSL 客体档显式报错**）`copy_plugin_config`（patch 行原样复制，
+`list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
+2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
+三级事实视图，状态含 `off/on/disabled/partial/conflict`，由后端按「包 × 挂载行 × disabled」
+一次算全；另附 `toggleOffSupported` / `displaced`；**WSL 客体档显式报错**，不回落本地读）
+`apply_official_patch_row`（2026-09-15 立、2026-09-16 §7.4 改为**写前当场重判**：包已装后
+重读其 `package.json` 判定是否声明 `dsh.bundle`，声明者**拒绝写行**并回报
+`autoActivated`（安装前判定会给 profile 层多写一条 = 重复挂载）；幂等、经 `PatchFile`、
+写后回读组合树自证；**WSL 客体档显式报错**）`remove_official_patch_row`（2026-09-16，
+ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并清同 id 的停用桩，
+只接受 `dsh-dock-` 前缀（bundle 自带行与用户手写行不得代删），删除后回读自证该行已不在
+组合树；幂等；**WSL 客体档显式报错**）`copy_plugin_config`（patch 行原样复制，
 写入例外 #4，ADR-0009 五修 2026-08-30）。
 
 **会话 / 控制台 / 凭据 / 设置 / MCP**（2026-08-31 批）：`list_sessions` `repair_session`
@@ -50,7 +57,9 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对）。
+**当前条数 = 63**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-09-16 净增 1：`list_official_plugins` → `list_experimental_capabilities` 属改名，
+新增 `remove_official_patch_row`）。
 
 ---
 

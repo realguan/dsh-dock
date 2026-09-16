@@ -316,7 +316,7 @@ pub fn generate(
         true
     };
 
-    // 运行期版本 = 钉版本的依据（与 `list_official_plugins` 同一来源）。
+    // 运行期版本 = 钉版本的依据（与 `list_experimental_capabilities` 同一来源）。
     let version = crate::updates::detect_current_version(data_dir).unwrap_or_default();
     if version.is_empty() {
         return Err(

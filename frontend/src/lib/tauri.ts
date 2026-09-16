@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type {
   AggregatePlugin,
+  Capability,
   ClientUpdate,
   CopyConfigOutcome,
   CreateProfileOutcome,
@@ -19,7 +20,7 @@ import type {
   LogQueryResult,
   McpProbe,
   McpServerConfig,
-  OfficialCatalogRow,
+  RowWriteOutcome,
   PluginEntry,
   PluginOpOutcome,
   PluginRuntimeSnapshot,
@@ -120,17 +121,23 @@ export const api = {
     invoke<string[]>("list_plugin_versions", { package: pkg }),
   // 4.4④ 收口：插件总览聚合（只读文件扫描）+ 配置行原样复制（写入例外 #4）
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
-  /** 官方插件策展目录（ADR-0020）：每步带钉版本 spec、激活方式、稳定行 id、
-   *  已装标记、互斥冲突与版本错配提示。运行时版本由**后端本地检出**，无需前端传。 */
-  listOfficialPlugins: (profile: string) =>
-    invoke<OfficialCatalogRow[]>("list_official_plugins", { profile }),
-  /** 写一条策展挂载行（ADR-0020）：**仅当该步 `activation === "insert_row"` 时调用**
-   *  ——bundle 类包由 `dsh plugin add` 自行激活，再写 insert 会重复挂载。
-   *  幂等：同 rowId 已存在则返回 false 且零写入。
+  /** 实验能力目录（ADR-0020 §7）：能力 → 变体 → 步骤三级事实视图，能力状态由后端
+   *  一次算全（「包 × 行 × disabled」的函数）。运行时版本由**后端本地检出**，前端不传。 */
+  listExperimentalCapabilities: (profile: string) =>
+    invoke<Capability[]>("list_experimental_capabilities", { profile }),
+  /** 确保一条策展挂载行就位（ADR-0020 §7.4）：**写行前当场重判**该包是否声明
+   *  `dsh.bundle`——声明了则由 CLI 激活，壳**不写行**（返回 `autoActivated: true`），
+   *  因为"安装前"的行形态判定是过期的（v1 因此会给 profile 层多写一条行 = 重复挂载）。
+   *  幂等：同 rowId 已存在则 `changed: false` 且零写入。
    *  **写后自证**：命令内部回读 `--dump-config` 组合树，返回成功即"行已在树中"；
    *  若该行未被 DSH 采纳（静默丢弃）或 dump-config 失败，则 reject 并说明"已写入但未生效"。 */
   applyOfficialPatchRow: (profile: string, rowId: string, pkg: string) =>
-    invoke<boolean>("apply_official_patch_row", { profile, rowId, package: pkg }),
+    invoke<RowWriteOutcome>("apply_official_patch_row", { profile, rowId, package: pkg }),
+  /** **反向原语**：删除壳写过的策展挂载行（ADR-0020 §7.2-3）。
+   *  只接受 `dsh-dock-` 前缀的行 id（bundle 自带行与用户手写行不得代删）。
+   *  **删除后自证**：回读 dump-config 确认该行已不在组合树中；幂等（本就不存在 → false）。 */
+  removeOfficialPatchRow: (profile: string, rowId: string) =>
+    invoke<boolean>("remove_official_patch_row", { profile, rowId }),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
   // 会话管理与自愈（4.6）

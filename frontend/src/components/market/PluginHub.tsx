@@ -3,7 +3,7 @@ import { useState } from "react"
 import { Layers, Sparkles, Store } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import { MarketplaceView } from "@/components/market/MarketplaceView"
-import { OfficialLab } from "@/components/market/OfficialLab"
+import { ExperimentalCapabilities } from "@/components/market/ExperimentalCapabilities"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { QueuePanel } from "@/components/market/QueuePanel"
 import { InstallFlight } from "@/components/market/InstallFlight"
@@ -11,9 +11,11 @@ import { InstallFlight } from "@/components/market/InstallFlight"
 interface PluginHubProps {
   refreshKey: number
   onNotice?: (text: string, kind?: "ok" | "warn") => void
+  /** 重启该 Profile（实验能力的"改动后生效"入口，复用 ProfileManager 的既有确认链）。 */
+  onRestart?: (profile: string) => void
 }
 
-export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
+export function PluginHub({ refreshKey, onNotice, onRestart }: PluginHubProps) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState<"market" | "installed" | "official">("market")
 
@@ -56,7 +58,7 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
               <span>{t.market.subtabInstalled}</span>
             </button>
 
-            {/* 官方实验室（2026-09-15，ADR-0020）：策展目录 → 有序安装 + 写挂载行 */}
+            {/* 实验能力（2026-09-16，ADR-0020 §7）：能力开关 —— 开/关/换后端/移除 */}
             <button
               type="button"
               role="tab"
@@ -69,7 +71,7 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
               }`}
             >
               <Sparkles className={`size-3.5 ${subTab === "official" ? "text-brand-deep" : "text-faint"}`} />
-              <span>{t.market.labTab}</span>
+              <span>{t.market.capTab}</span>
             </button>
           </div>
 
@@ -81,7 +83,11 @@ export function PluginHub({ refreshKey, onNotice }: PluginHubProps) {
         {subTab === "market" ? (
           <MarketplaceView onNotice={onNotice} />
         ) : subTab === "official" ? (
-          <OfficialLab refreshKey={refreshKey} onNotice={onNotice} />
+          <ExperimentalCapabilities
+            refreshKey={refreshKey}
+            onNotice={onNotice}
+            onRestart={onRestart}
+          />
         ) : (
           <PluginOverview refreshKey={refreshKey} onNotice={onNotice} />
         )}

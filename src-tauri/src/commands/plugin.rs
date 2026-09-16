@@ -9,20 +9,22 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
-/// 策展条目的**挂载行写入**（2026-09-15，ADR-0020）：把一条 `- insert: [{id, name}]`
-/// 并入 profile 的 `cordis.patch.yml`（经 `plugins.rs::PatchFile`：覆写前备份 ＋
-/// 原子替换 ＋ 未改条目原文保真；**幂等**，同 id 已存在则零写入返回 `false`）。
+/// 策展条目的**挂载行写入**（2026-09-15 立；2026-09-16 §7.4 改为**写前当场重判**）：
+/// 把一条 `- insert: [{id, name}]` 并入 profile 的 `cordis.patch.yml`（经
+/// `plugins.rs::PatchFile`：覆写前备份 ＋ 原子替换 ＋ 未改条目原文保真；**幂等**，
+/// 同 id 已存在则零写入返回 `changed: false`）。
 ///
-/// **调用方必须只在 `Activation::InsertRow` 时调用**（判定见 `official_catalog`）：
-/// 声明了 `dsh.bundle` 的包由 `dsh plugin add` 自行激活，再写一条 `insert`
-/// 会**重复挂载**（行身份是 `id`，同名不同 id 即两份实例）。
+/// **为什么必须在这里重判**：激活方式由目标包的 `package.json` 决定，而目录是**安装前**
+/// 拉的——那时包还没进 `node_modules`，任何包都只会被判成"未声明 `dsh.bundle`"。于是
+/// profile 层包（如 `auto-review`）会被误判成需要写行，装完就多写一条 → **同一插件挂两份**。
+/// 本命令在 `dsh plugin add` **完成之后**才被调用，故在这里重读分类才是准的：声明了
+/// `dsh.bundle` 就**拒绝写行**并如实回报 `autoActivated: true`（ADR-0020 §2.8 唯一依据）。
 ///
 /// **职责边界**：本命令只写行、**不负责安装**——安装仍走既有 `install_plugin`
-/// （`dsh plugin add` 转发链）与前端串行安装队列。前端按目录行的 `steps` **按序**
-/// 执行「装 → 若该步需行则写行」，任一步失败即停在一致态（可续装）。
-/// 这样复用既有队列的 pnpm 审批门/错误分类，不必在壳内复制一条安装链。
+/// （`dsh plugin add` 转发链）与前端串行安装队列。前端按变体的 `steps` **按序**执行
+/// 「装 → 确保行」，任一步失败即停在一致态（可续装）。
 ///
-/// 世界择源同 `list_official_plugins`：WSL 客体档暂不支持（**显式报错，不回落本地写**
+/// 世界择源同 `list_experimental_capabilities`：WSL 客体档暂不支持（**显式报错，不回落本地写**
 /// ——写错 profile 比报错严重得多）。
 #[tauri::command]
 pub async fn apply_official_patch_row(
@@ -30,7 +32,7 @@ pub async fn apply_official_patch_row(
     profile: String,
     row_id: String,
     package: String,
-) -> Result<bool, String> {
+) -> Result<crate::official_catalog::RowWriteOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let home = match &world {
@@ -43,57 +45,126 @@ pub async fn apply_official_patch_row(
             )
         }
     };
+    let verify_profile = profile.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // 写前当场重判（见函数文档）：包已装，此时读它的 package.json 才是权威分类。
+        let declares_bundle = crate::plugins::package_declares_bundle(
+            &home.join("profiles").join(&profile),
+            &package,
+        );
+        if !crate::plugins::needs_insert_row(declares_bundle) {
+            // 声明了 `dsh.bundle`：CLI 已把它追加进层栈完成激活，再写 insert 会**重复挂载**。
+            return Ok(crate::official_catalog::RowWriteOutcome {
+                changed: false,
+                auto_activated: true,
+            });
+        }
         let changed =
             crate::plugins::ensure_catalog_insert_row(&home, &profile, &row_id, &package)?;
         // 写后自证（2026-09-15 补，ADR-0020）：回读 dump-config 组合树确认该行真的生效。
         // 理由：patch 写法不对时 DSH 会**退出码 0 地静默丢弃**条目，只校验"文件写成功"
         // 抓不到它。dump-config 自身失败时**不得谎报成功**——明确告知"已写入但未能复核"。
-        let rows =
-            crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world).map_err(|e| {
+        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
+            .map_err(|e| {
                 format!(
                     "挂载行已写入，但写后复核未能执行（dump-config 读取失败）：{e}\
-                     ——请人工确认该行是否生效。"
+                         ——请人工确认该行是否生效。"
                 )
             })?;
         crate::plugins::verify_catalog_row(&rows, &row_id, &package)?;
-        Ok(changed)
+        Ok(crate::official_catalog::RowWriteOutcome {
+            changed,
+            auto_activated: false,
+        })
     })
     .await
     .map_err(|e| format!("策展挂载行写入任务异常终止：{e}"))?
 }
 
-/// 官方插件策展目录（2026-09-15，ADR-0020 已接受）：把 `official_catalog::CATALOG`
-/// 解析成**可下发**的目录行——每步带钉版本 spec、激活方式（bundle 自动激活 vs
-/// 须写 `insert` 行）、稳定行 `id`、已装标记、互斥冲突与版本错配提示。
+/// **反向原语**：删除壳写过的策展挂载行（2026-09-16，ADR-0020 §7.2-3）。
 ///
-/// **已装态采集在命令层**（本层职责即"数据目录定位"），`official_catalog` 保持纯函数：
-/// 读 `profiles/<名>/package.json` 的 `dependencies`，再逐个读
-/// `profiles/<名>/node_modules/<包>/package.json`，据其是否声明 **`dsh.bundle.patch`**
-/// 判定激活方式——这是激活契约的**唯一分类依据**（ADR-0020 §2.8 禁双源），
-/// 不得用包名/来源等启发式代替。
+/// 与 `apply_official_patch_row` 对称：写行有自证，删行同样有自证——写后复核该行
+/// **已不在**组合树中（"删了却还在"是同一类静默失败）。
+///
+/// 只接受 `dsh-dock-` 前缀的行 id（所有权判据在 `plugins::remove_catalog_insert_row`）：
+/// bundle 自带行与用户手写行**不得**由壳代删。
+///
+/// 世界择源同 `list_experimental_capabilities`：WSL 客体档显式报错，不回落本地写。
+#[tauri::command]
+pub async fn remove_official_patch_row(
+    app: tauri::AppHandle,
+    profile: String,
+    row_id: String,
+) -> Result<bool, String> {
+    let world = crate::mgmt::current_world(&app)?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let home = match &world {
+        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
+        crate::mgmt::World::Wsl { .. } => {
+            return Err(
+                "官方策展的挂载行删除暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用\
+                 （有意不回落本地写入，以免删错 profile）。请在本地档使用。"
+                    .to_string(),
+            )
+        }
+    };
+    let verify_profile = profile.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let changed = crate::plugins::remove_catalog_insert_row(&home, &profile, &row_id)?;
+        // 删除后自证：回读 dump-config，确认该行真的不在组合树里了。
+        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
+            .map_err(|e| {
+                format!(
+                    "挂载行已删除，但删除后复核未能执行（dump-config 读取失败）：{e}\
+                     ——请人工确认该行是否已消失。"
+                )
+            })?;
+        if rows.iter().any(|r| r.id == row_id) {
+            return Err(format!(
+                "删除后复核未通过：行 id「{row_id}」仍在组合树中——\
+                 文件已改写但该行仍被 DSH 采纳，请人工核对该 profile 的 cordis.patch.yml。"
+            ));
+        }
+        Ok(changed)
+    })
+    .await
+    .map_err(|e| format!("策展挂载行删除任务异常终止：{e}"))?
+}
+
+/// 实验能力目录（2026-09-15 立；2026-09-16 第二次修订改名 + 改形，ADR-0020 §7）。
+///
+/// 返回**能力 → 变体 → 步骤**三级事实视图，能力状态（`off`/`on`/`disabled`/
+/// `partial`/`conflict`）由后端一次算全——状态是「包 × 行 × disabled」的函数，
+/// 前端不得凭 `installed` 猜（禁双源）。
+///
+/// **已装态与行态采集在命令层**（本层职责即"数据目录定位 + 起一次 dump-config"）：
+/// ① 读 `profiles/<名>/package.json` 的 `dependencies`；
+/// ② 逐个读 `profiles/<名>/node_modules/<包>/package.json`，据其是否声明
+/// **`dsh.bundle.patch`** 判定激活方式——这是激活契约的**唯一分类依据**
+/// （ADR-0020 §2.8 禁双源），不得用包名/来源等启发式代替；
+/// ③ `plugin_rows_blocking` 一次 `--dump-config` 拿到挂载行表（行是否存在、是否被
+/// `disabled` 停用、bundle 贡献了哪些行）——这是"关得掉吗 / 真生效了吗"的唯一来源。
 ///
 /// `runtime_version` **由后端本地检出**（`updates::detect_current_version`，离线读
 /// `engines/`），不从前端传——前端没有廉价且权威的来源，传参只会引入漂移。
 /// 检出不到时**不拼坏 spec**：退回裸包名并在该步的 `versionNotice` 里**明示未钉版本**
-/// （裸包名按 `latest` 解析，而 Agent Teams 三包的 `latest` 实测落后于运行时，
-/// 同台账行 7 的 dsh-base 事故）。
+/// （裸包名按 `latest` 解析，而 Agent Teams 三包的 `latest` 实测落后于运行时）。
 #[tauri::command]
-pub async fn list_official_plugins(
+pub async fn list_experimental_capabilities(
     app: tauri::AppHandle,
     profile: String,
-) -> Result<Vec<crate::official_catalog::CatalogRow>, String> {
+) -> Result<Vec<crate::official_catalog::CapabilityView>, String> {
     // 世界择源（ADR-0016 §5-b/c，**绝不回落本地**）：本地 = 宿主 home 直读；
-    // **WSL 客体档当前显式报错**——客体侧需补一组客体文件读原语才能拼出同一份
-    // `InstalledState`，本轮未实现。此处宁可如实报"该档暂不支持"，也**不**去读宿主
-    // home（那会把客体 profile 的插件全报成"未安装"＝静默错数据）。
+    // **WSL 客体档当前显式报错**——客体侧需补一组客体文件读原语才能拼出同一份事实
+    // 快照，本轮未实现。此处宁可如实报"该档暂不支持"，也**不**去读宿主 home
+    // （那会把客体 profile 的插件全报成"未安装"＝静默错数据）。
     let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let home = match world {
         crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
         crate::mgmt::World::Wsl { .. } => {
             return Err(
-                "官方插件策展目录暂不支持 WSL 客体档：需补客体侧 profile 读原语后方可启用\
+                "实验能力目录暂不支持 WSL 客体档：需补客体侧 profile 读原语后方可启用\
                  （有意不回落本地读取，以免把客体插件误报成未安装）。请在本地档使用。"
                     .to_string(),
             )
@@ -105,36 +176,33 @@ pub async fn list_official_plugins(
             .map_err(|e| format!("读取 profile 清单失败（{profile}）：{e}"))?;
         let installed = crate::plugins::dependency_names(&manifest)?;
 
-        // 逐个依赖读其自身 package.json：声明 `dsh.bundle.patch` 即在册。
-        // 读不到（未安装/纯内置）按**未声明**处理——保守方向：宁可让壳多写一条
-        // `insert` 行（幂等、可复核），也不误判成"已自动激活"而漏挂。
+        // 逐个依赖读其自身 package.json：声明 `dsh.bundle.patch` 即在册（判据单源在
+        // `plugins::package_declares_bundle`）。读不到按**未声明**处理——保守方向：
+        // 宁可让壳多写一条 `insert` 行（幂等、可复核），也不误判成"已自动激活"而漏挂。
         let declared_bundles: Vec<String> = installed
             .iter()
-            .filter(|name| {
-                std::fs::read_to_string(dir.join("node_modules").join(name).join("package.json"))
-                    .ok()
-                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                    .and_then(|pkg| pkg.pointer("/dsh/bundle/patch").map(|v| !v.is_null()))
-                    .unwrap_or(false)
-            })
+            .filter(|name| crate::plugins::package_declares_bundle(&dir, name))
             .cloned()
             .collect();
 
+        // 行态：一次 dump-config 拿全量行表（含 bundle 段落的贡献行合成条目）。
+        let rows = crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)?;
+
         // 运行时版本**本地离线检出**（读 `engines/`，不触网）：钉版本的唯一依据。
-        // 检出不到 → `None`，由 `resolve_rows` 走诚实降级（裸包名 + 显式告知）。
+        // 检出不到 → `None`，由 `resolve_capabilities` 走诚实降级（裸包名 + 显式告知）。
         let runtime_version = crate::updates::detect_current_version(&data_dir);
 
-        Ok(crate::official_catalog::resolve_rows(
-            &crate::official_catalog::InstalledState {
+        Ok(crate::official_catalog::resolve_capabilities(
+            &crate::official_catalog::PackageFacts {
                 installed,
                 declared_bundles,
-                latest_by_package: Default::default(),
             },
+            &rows,
             runtime_version.as_deref(),
         ))
     })
     .await
-    .map_err(|e| format!("官方目录解析任务异常终止：{e}"))?
+    .map_err(|e| format!("实验能力目录解析任务异常终止：{e}"))?
 }
 
 /// 插件清单（4.4①，Spike B 方案）：静态清单 = bundles（官方内置）+

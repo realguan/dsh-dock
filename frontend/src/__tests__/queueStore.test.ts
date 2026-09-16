@@ -1,7 +1,7 @@
 // queueStore.test.ts —— 安装队列**编排层**测试（2026-09-15，R2）。
 //
 // 为什么必须测编排层：R2 新增的 `enqueueAndWait` 是「官方实验室」目录安装的
-// 唯一驱动方式（`lib/officialCatalog.ts` 的 `install`/`remove` 都绑到它），
+// 唯一驱动方式（`lib/experimentalCapabilities.ts` 的 `install`/`remove` 都绑到它），
 // 而目录的**顺序即语义**——「先移除同族 provider 再装新的」如果并发跑就会
 // 激活失败。纯逻辑测试（queue.test.ts）只覆盖状态迁移，覆盖不到这条契约。
 //
@@ -130,7 +130,7 @@ describe("串行语义（顺序即语义：先移除同族 provider，再装新�
 })
 
 describe("重试边界（有意不自动续跑编排）", () => {
-  // 记档边界（`lib/officialCatalog.ts` 生产绑定注释 ②）：面板「重试」只重跑该项，
+  // 记档边界（`lib/experimentalCapabilities.ts` 生产绑定注释 ②）：面板「重试」只重跑该项，
   // 不会重新解析原 Promise。这里把该行为钉住——若将来改成自动续跑，应当是本测试
   // 先红、再带一个明确的 ADR 决策一起改，而不是悄悄变。
   it("失败后手动重试成功，原 Promise 仍是 ok:false；队列项转 done", async () => {

@@ -127,7 +127,7 @@ export function setupDevMock() {
     },
   ]
 
-  mockIPC((cmd, args: any) => {
+  mockIPC(async (cmd, args: any) => {
     switch (cmd) {
       // 交接导轨/幕布设计走查（ADR-0014）：`?_handoff=1` 时给一份**在途**意图，
       // 于是纯浏览器预览（pnpm dev）也能看到控制中心导轨与启动屏交接态。
@@ -405,6 +405,264 @@ export function setupDevMock() {
             disabled: true,
           },
         ]
+
+      // 实验能力开关（2026-09-16，ADR-0020 §7）：四态各一，供浏览器直开时看全状态
+      // —— 已启用 / 未启用 / 已停用 / 需要修复都在一屏里，改文案与布局时能立刻看出差别。
+      // 命令名与载荷形状必须与 `list_experimental_capabilities` 的 serde 输出逐字一致
+      // （改后端形状忘改这里，dev 联调会以"看不出问题"的方式失真）。
+      // 实验能力的包操作与行操作（2026-09-16）：浏览器直开时要能**走完**一次启用/关闭，
+      // 否则只会撞到未实现的命令，看到的是失败分支而不是真实交互。
+      case "install_plugin":
+        return { ok: true, detail: `已安装 ${args?.package ?? "插件"}` }
+      case "remove_plugin":
+        return { ok: true, detail: `已移除 ${args?.package ?? "插件"}` }
+      case "update_plugin":
+        return { ok: true, detail: `已更新 ${args?.package ?? "插件"}` }
+      case "apply_official_patch_row":
+        return { changed: true, autoActivated: false }
+      case "remove_official_patch_row":
+        return true
+      case "set_plugin_disabled":
+        return null
+
+      case "list_experimental_capabilities": {
+        const V = "@0.1.6-alpha.1"
+        const step = (
+          ordinal: number,
+          pkg: string,
+          activation: "auto_bundle" | "insert_row",
+          state: "off" | "live" | "disabled" | "rowless",
+          targets: string[] = [],
+        ) => {
+          const installed = state !== "off"
+          const rowPresent = state === "live" || state === "disabled"
+          return {
+            ordinal,
+            package: pkg,
+            spec: pkg + V,
+            activation,
+            // 与 `official_catalog::row_id_for` 同式：`dsh-dock-` 前缀 + 非 [A-Za-z0-9_-] 折成 `-`。
+            // 少了前缀，删行会在 `is_shell_row_id` 处被拒（dev 直开时表现为"移除总是失败"）。
+            rowId: "dsh-dock-" + pkg.replace(/[^A-Za-z0-9_-]/g, "-"),
+            installed,
+            rowPresent,
+            disabled: state === "disabled",
+            toggleTargets: state === "off" ? [] : targets,
+            versionNotice: null,
+          }
+        }
+        return [
+          {
+            id: "agent-team",
+            labelZh: "多智能体协同",
+            summaryZh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
+            unlocksZh:
+              "模型多出九个 team 工具。注意：它会取代旧的委派控件 —— subagent、subagent_fork 等四个旧行会被停用，两者不能并存；移除本能力后旧控件恢复。",
+            state: "on",
+            activeVariant: "web",
+            variants: [
+              {
+                id: "web",
+                labelZh: "Web 档",
+                noteZh: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
+                prerequisitesZh: ["需持久会话存储，团队状态才落得下来"],
+                state: "on",
+                toggleOffSupported: false,
+                subsumedBy: null,
+                displaced: [],
+                steps: [
+                  step(1, "@deepseek-ai/dsh-experimental-agent-team-profile", "auto_bundle", "live"),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+                    "auto_bundle",
+                    "live",
+                    ["team-web-row"],
+                  ),
+                ],
+              },
+              {
+                id: "headless",
+                labelZh: "自建档（无 Web 界面）",
+                noteZh: "只装宿主层：工具与任务板可用，界面不新增面板。",
+                prerequisitesZh: ["需持久会话存储，团队状态才落得下来"],
+                // 真机形态：Web 档生效时本档的包必然也齐 → 报"已包含"而不是"冲突"。
+                state: "on",
+                toggleOffSupported: true,
+                subsumedBy: "web",
+                displaced: [],
+                steps: [
+                  // 宿主层已随 Web 档就位（同一份包被两档共用）。
+                  step(1, "@deepseek-ai/dsh-experimental-agent-team-profile", "auto_bundle", "live"),
+                ],
+              },
+            ],
+          },
+          {
+            id: "browser-use",
+            labelZh: "浏览器操作",
+            summaryZh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
+            unlocksZh: "模型多出一组浏览器工具；同一时刻只允许一个后端生效。",
+            state: "disabled",
+            activeVariant: "playwright",
+            variants: [
+              {
+                id: "playwright",
+                labelZh: "Playwright",
+                noteZh: "通用浏览器自动化后端，适合脚本化的多步导航。",
+                prerequisitesZh: ["浏览器只用 Chromium 系"],
+                state: "disabled",
+                subsumedBy: null,
+                toggleOffSupported: true,
+                displaced: [],
+                steps: [
+                  step(
+                    1,
+                    "@deepseek-ai/dsh-browser-use",
+                    "insert_row",
+                    "disabled",
+                    ["dsh-dock-deepseek-ai-dsh-browser-use"],
+                  ),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+                    "insert_row",
+                    "disabled",
+                    ["dsh-dock-deepseek-ai-dsh-experimental-browser-use-playwright-mcp"],
+                  ),
+                ],
+              },
+              {
+                id: "chrome-devtools",
+                labelZh: "Chrome DevTools",
+                noteZh: "直连本机 Chrome，多带一层 DevTools 检查能力。",
+                prerequisitesZh: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+                state: "off",
+                subsumedBy: null,
+                toggleOffSupported: true,
+                displaced: [],
+                steps: [
+                  step(1, "@deepseek-ai/dsh-browser-use", "insert_row", "live", [
+                    "dsh-dock-deepseek-ai-dsh-browser-use",
+                  ]),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
+                    "insert_row",
+                    "off",
+                  ),
+                ],
+              },
+              {
+                id: "stagehand",
+                labelZh: "Stagehand",
+                noteZh: "用自然语言描述操作，由指定模型翻译成动作。",
+                prerequisitesZh: [
+                  "浏览器只用 Chromium 系",
+                  "需在 profile 配置里显式填 model，且不支持 DeepSeek 端点或 baseURL 覆盖",
+                  "会额外消耗该模型的调用额度，且这部分用量不计入 dsh 会话统计",
+                ],
+                state: "off",
+                subsumedBy: null,
+                toggleOffSupported: true,
+                displaced: [],
+                steps: [
+                  step(1, "@deepseek-ai/dsh-browser-use", "insert_row", "live", [
+                    "dsh-dock-deepseek-ai-dsh-browser-use",
+                  ]),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-browser-use-stagehand-native",
+                    "insert_row",
+                    "off",
+                  ),
+                ],
+              },
+            ],
+          },
+          {
+            id: "computer-use",
+            labelZh: "桌面控制",
+            summaryZh: "让模型操作你的桌面：鼠标、键盘、窗口",
+            unlocksZh:
+              "模型多出一组桌面控制工具。这是权限最高的实验能力：多个会话共享同一个桌面，而取消调用无法撤销已经送到桌面的输入。",
+            state: "off",
+            activeVariant: null,
+            variants: [
+              {
+                id: "cua-driver-mcp",
+                labelZh: "复用已装的 cua-driver",
+                noteZh: "通过 MCP 连你本机已装好的 cua-driver，本体不随包带入。",
+                prerequisitesZh: ["需先自行安装并保持 cua-driver 可用"],
+                state: "off",
+                subsumedBy: null,
+                toggleOffSupported: true,
+                displaced: [],
+                steps: [
+                  step(1, "@deepseek-ai/dsh-computer-use", "insert_row", "off"),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
+                    "insert_row",
+                    "off",
+                  ),
+                ],
+              },
+              {
+                id: "cua-driver-native",
+                labelZh: "随包自带运行时",
+                noteZh: "把 cua-driver 原生运行时作为依赖一起装上，自包含。",
+                prerequisitesZh: [
+                  "需授予宿主桌面权限（装包本身不会授权，也不会创建桌面会话）",
+                  "原生崩溃可能终止该进程；若原生关闭失败，换用另一个后端前需重启 dsh",
+                ],
+                state: "off",
+                subsumedBy: null,
+                toggleOffSupported: true,
+                displaced: [],
+                steps: [
+                  step(1, "@deepseek-ai/dsh-computer-use", "insert_row", "off"),
+                  step(
+                    2,
+                    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
+                    "insert_row",
+                    "off",
+                  ),
+                ],
+              },
+            ],
+          },
+          {
+            id: "auto-review",
+            labelZh: "自动安全审查",
+            summaryZh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
+            unlocksZh:
+              "权限选择器里多出带 EXP 上标的 Auto review 模式。代价是每个动作多一轮模型调用（更慢更贵），且模型分类可能出错。",
+            state: "partial",
+            activeVariant: null,
+            variants: [
+              {
+                id: "standard",
+                labelZh: "标准",
+                noteZh: "只对 Web 档有意义，装上即生效。",
+                prerequisitesZh: ["会额外消耗 token；不提供文件沙箱与确定性豁免"],
+                state: "partial",
+                subsumedBy: null,
+                toggleOffSupported: false,
+                displaced: [],
+                steps: [
+                  step(
+                    1,
+                    "@deepseek-ai/dsh-experimental-auto-review",
+                    "auto_bundle",
+                    "rowless",
+                  ),
+                ],
+              },
+            ],
+          },
+        ]
+      }
 
       case "get_diagnostics":
         return { system: "macOS", status: "ok" }

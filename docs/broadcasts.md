@@ -32,6 +32,79 @@
 
 ## 三、记录
 
+### 2026-09-16 重构 · 「官方实验室」（按包）→「实验能力」开关（按能力）：开/关/换后端/移除 —— guan（AI 协作）
+
+- **触发**：维护者实测反馈「实验性功能开关的实现效果与交互逻辑体验极差」。逐条复现为
+  ADR-0020 §7.1 的缺陷表 D1–D7（不是风格问题）。
+- **变更**（分支 `refactor/experimental-capability-switches`，叠在未合并的
+  `feat/capabilities-and-ssh-workspace` 之上）：
+  - 呈现单位由**包**改为**能力**：四项能力（多智能体协同 / 浏览器操作 / 桌面控制 /
+    自动安全审查），同族后端降级为**能力内的变体**——互斥在同一张卡内表达为"当前后端"，
+    不再要求用户理解"三选一"；
+  - **开关是真开关**：关闭 = 行级 `disabled`（不卸载、秒级可逆）；含 profile 层的变体
+    不能纯行级关闭（层 patch 带副作用），此时关闭即移除并在卡面与确认框里**明说原因**；
+    「移除」是独立的破坏性动作（清停用桩 → 删壳写的行 → 逆序卸包），走 ConfirmDialog；
+  - 状态由后端一次算全（`off/on/disabled/partial/conflict` = 「包 × 行 × disabled」的函数）；
+    实现细节（包名 / 钉版本 / 激活方式 / 行 id）收进「详情」折叠区，第一阅读层只留
+    价值 / 前置 / 状态 / 后果；
+  - **修掉 v1 的两个真 bug**：① D7 重复挂载——`activation` 是**安装前**算的，那时包还没进
+    `node_modules`，任何包都被判成"需写行"，于是 profile 层包（如 auto-review）被多写一条
+    `insert` = 同插件挂两份；现改为 `apply_official_patch_row` **写前当场重判**；
+    ② D5 悬空挂载行——只有写行原语、没有反向原语，包被卸载后行还在；现补
+    `remove_official_patch_row`（只删 `dsh-dock-` 前缀的行，删除后回读组合树自证）。
+  - 上游锚点入台账复现点 20（无运行时 feature flag；「关而不卸」= 行级 `disabled`；
+    层类能力须走 `remove` 才干净；两个基座包无 `dsh` 字段 ⇒ 浏览器/桌面两族可整族秒开秒关）。
+- **影响**：IPC **净增 1 条**（`list_official_plugins` → `list_experimental_capabilities` 属改名，
+  新增 `remove_official_patch_row`，62 → 63，四处同步 + 登记册已更）；`AGENTS.md` **未改**
+  （不改宪法文件，故本分支不触发 CONTRIBUTING §2 的 PR 强制，但仍叠在未合并分支上）。
+- **凭据**：`cargo fmt --check` / `clippy --all-targets -D warnings` 干净；
+  `cargo test` **515 passed / 0 failed / 5 ignored**；前端 `tsc -b` 0 错误、`oxlint` 0 警告、
+  `vitest` **425 passed / 51 文件**。视觉与交互经浏览器直开实测（dev mock：四态一屏 +
+  启用确认框 + 进度导轨 + 失败续跑 + 重启提示），非仅靠单测。
+- **独立对抗性评审核出并已修 3 条阻断项**（不是自评）：① **版本错配提示全链失效**——
+  `latest` 需联网而该命令禁网，`latest_by_package` 恒空 ⇒ 提示永不可达，且前端分支还会
+  把降级告知吞掉；**已删这条死路径**（§2.4 的"显示确切版本"由确认框直接列 spec 满足），
+  确认框改为"降级告知优先"。② **`planEnable` 自拆同族旧后端只 remove 不删行** ⇒ 换后端
+  会留下**悬空挂载行**（D5 换了个入口），且测试把该缺陷固化成了期望值；已把让位职责
+  收归 `planReplace`，并加回归护栏。③ **失败归因错**：`failures` 只按能力记，"继续剩余步骤"
+  会用**当前选中**的变体 ⇒ 换过选择器后等于"什么都没做还报成功"；已按「能力+变体」记，
+  续跑绑定发起失败的那个变体，并在失败块里点名变体。
+  另修 4 条重要项：选择器默认落在**当前生效变体**（否则刷新即退回首个，D1 的修复目标丢失）、
+  dev mock 的 rowId 缺 `dsh-dock-` 前缀（dev 直开走不完一次移除）、破坏性门禁注释数字漂移、
+  确认框替换文案未说明"旧后端会被卸载且不会自动装回"。
+- **真机事故与修复**（2026-09-16，维护者报告 `cargo tauri dev` 起不来）：dev home
+  （`~/.dsh-dock-dev`）的 patch 里被 v1 写入了两条 `insert` 行，指向 **Agent Teams 的两个
+  profile 层**（实测 `dsh.bundle.patch: True`，内容全在 patch 文档、`src/index.ts` 是空模块）。
+  Cordis 把层当插件挂 → `invalid plugin, expect function or object with an "apply" method,
+  received object` → `plugin tree failed to load` → dsh 永不打印就绪地址 → 壳在「等待就绪」
+  超时（截图如实）。**即 D7 的真机形态**。手工修复：删掉那两条错误的挂载行（保留 browser-use
+  两条正当行与其 disabled 桩），备份见该目录 `cordis.patch.yml.bak-*`；修复后手工启动
+  `DSH_HOME=~/.dsh-dock-dev dsh --profile web --port 0 --no-open` 复现"已就绪且 stderr 为空"。
+  另记：正式档（`~/.dsh`）的 agent-team 层钉在 `0.1.5-rc.2` 而运行时为 `0.1.6-alpha.1`（错配，
+  本次未动，已告知维护者）；该档 patch 另有 9 条指向已消失行的 `{id, disabled}` 桩，dsh 每次
+  启动打 "entry not found" 警告，**不致命**，属旧启停路径的残留。
+- **真机暴露的第二个缺陷（D8）**：Agent Teams 两档是**子集关系**而非互斥，装 Web 档时"自建档"
+  必然也齐 → 误报「后端冲突」。已修：变体新增 `subsumed_by`，被包含的档显式标「已包含」、
+  禁用其独立开关与移除（关它会拆坏超集档），且不再参与冲突判定；真互斥族仍报冲突（正反各有
+  回归测试）。UI 经浏览器直开复核（真机数据形态）。
+- **真机第 3 轮反馈（2026-09-16）**：
+  - **"安装失败"是网络/镜像层，不是壳的 bug**：失败的两个 provider 里，
+    `…browser-use-chrome-devtools-mcp` 在 `registry.npmmirror.com` 上 **404**（未同步），
+    官方源 `registry.npmjs.org` **200 · 0.1.6-alpha.1**；另叠加一次 `tls handshake eof` 抖动。
+    两个**基座包**（`dsh-browser-use` / `dsh-computer-use`）已装上并写行，所以卡片停在
+    「需要修复」= 真话（能力缺后端，装不上就跑不起来）。绕开办法：profile 目录放一条
+    `@deepseek-ai:registry=https://registry.npmjs.org/` 的 `.npmrc`（属用户侧配置，壳不代改）。
+  - **UI 三处缺陷（本次已修）**：① 失败块里的「继续剩余步骤」与卡片底部「修复」是**同一个动作**，
+    并列出现 ⇒ 有失败块时不再渲染「修复」；② 「该能力由 profile 层提供：关闭即移除」
+    被 `!toggleOffSupported` 单条件触发，而**装了一半**的档同样为 false（分类要读包自己的
+    manifest，没装就不知道）⇒ 一次失败的安装让卡片谎称自己是层类能力；已收紧为
+    **仅 on/disabled**；③ 原始输出（registry URL + pnpm 调用链 + TLS 细节，上百字符）直接铺在
+    卡面上，把"我该怎么办"淹没 ⇒ 新增纯函数 `classifyFailure`（network / notFound /
+    buildApproval / unknown，抠出 registry 主机名）渲染成**一句话**，原始输出折叠在后面。
+- **诚实留白**：WSL 客体档三个命令仍**显式报错**（不回落宿主）；`inspector` /
+  `ptc-runtime-python` / 三个库包**有意不在策展集内**（理由见 ADR-0020 §7.5 末）；
+  「改完重启该 Profile 才生效」依赖用户点「立即重启」（复用既有重启确认链，不自动重启）。
+
 ### 2026-09-15 优化/撤销 · 彻底移除壳侧 WebView content-visibility 内存策略（解决页面左右两侧显示不全与触控板滑动卡顿）—— guan（AI 协作）
 
 - 变更：`src-tauri/src/ui.rs`（移除 `create_main_window` 中的 `webview_memory_policy` 脚本注入及 `WEBVIEW_MEMORY_POLICY_SCRIPT` 常量）、`src-tauri/src/lib.rs`（移除针对该注入脚本的单测）、`frontend/src/injected/memory-policy.js`（彻底删除）、`frontend/src/injected/handoff-curtain.js`（清理相关注释）、`docs/adr/0002-webview-memory-policy.md` 与 `docs/adr/README.md`（状态标记为已废弃/撤销并补齐排查与决策记录）。

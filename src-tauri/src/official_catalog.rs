@@ -1,15 +1,25 @@
-//! official_catalog.rs —— 官方插件策展目录的**纯决策层**（2026-09-15，ADR-0020 已接受）。
+//! official_catalog.rs —— 实验能力的**策展与状态判定**（2026-09-15 立，ADR-0020；
+//! 2026-09-16 第二次修订：目录行 → **能力开关**，见 ADR-0020 §7）。
 //!
 //! ## 职责边界
 //!
-//! 本模块只做「装什么、谁来激活、按什么顺序、彼此是否互斥」的**纯判定**：
-//! 不触网、不起子进程、不写文件。安装仍归 `commands/plugin.rs` 的
-//! `dsh plugin add` 转发链，patch 写入仍归 `plugins.rs::PatchFile`。
+//! 本模块只做纯判定：**有哪些能力、每个能力有哪些变体、现在是何状态、开/关/移除
+//! 各需要哪些行级目标**。不触网、不起子进程、不写文件。安装仍归
+//! `commands/plugin.rs` 的 `dsh plugin add` 转发链，patch 写入仍归 `plugins.rs::PatchFile`。
 //!
-//! 为什么单独成模块并做成纯函数（ADR-0020 §2.10 / §4）：激活契约是**按包分类的分支**，
-//! 其正确性完全取决于「目标包是否声明 `dsh.bundle`」。把它纯函数化 + 单测，才能让
-//! 「**退出码 0 但插件没生效**」这类静默失败**先在壳内红**——这正是 v1 方案两向皆错的
-//! 地方（统一 `- name:` → 6 个包静默漏挂；统一 `- insert:` → bundle 类重复挂载）。
+//! ## 为什么是「能力」而不是「包」（ADR-0020 §7.2）
+//!
+//! v1 把策展集摊平为 8 条并列条目，于是：同一能力的三个互斥后端成了三张等价卡片
+//! （用户看不出"现在是哪一个"），而"关掉"这件事在目录里**根本不存在**（只有安装）。
+//! 第二次修订把呈现单位提为**能力**，互斥后端降级为**能力内的变体**——互斥因此在
+//! 同一张卡内被表达为"当前后端"，而不是让用户去理解"三选一"。
+//!
+//! ## 状态是「包 × 行 × disabled」的函数
+//!
+//! `installed`（profile `dependencies` 里有这个包）**不等于**能力已生效：还要看
+//! 挂载行是否存在（`insert_row` 类由壳写、`auto_bundle` 类由包自带段落贡献）、
+//! 以及该行是否被 `disabled` 停用（ADR-0009 例外 #3）。三者缺一即"没生效"。
+//! 状态判定放在后端、只此一处（§2.8 禁双源）——前端不得凭 `installed` 猜。
 //!
 //! ## 上游事实锚点（2026-09-15 实查，dsh 0.1.6-alpha.1）
 //!
@@ -25,6 +35,8 @@
 //!   `alpha`（实测：裸装得 `0.1.5-alpha.2`，运行时为 `0.1.6-alpha.1`）。
 
 use serde::{Deserialize, Serialize};
+
+use crate::plugins::PluginRowState;
 
 /// 激活方式：由目标包**是否声明 `dsh.bundle`** 决定（ADR-0020 §4）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +68,9 @@ pub fn activation_for(declares_bundle: bool) -> Activation {
 ///
 /// 规则：去掉 npm scope 的 `@` 与 `/`，非 `[A-Za-z0-9_-]` 一律折成 `-`，
 /// 前置 `dsh-dock-` 命名空间前缀避免与 bundle 自身行 id 撞车。
+///
+/// 该前缀同时是**所有权标记**：只有以此前缀开头的行才允许删除
+/// （`plugins::is_shell_row_id`）——否则一次误删会动到 bundle 自带行或用户手写行。
 pub fn row_id_for(package: &str) -> String {
     let mut out = String::from("dsh-dock-");
     for ch in package.chars() {
@@ -77,43 +92,165 @@ pub fn pinned_spec(package: &str, version: &str) -> String {
     format!("{package}@{version}")
 }
 
-/// 期望版本与 registry `latest` 不一致时给出提示文案（`None` = 一致，无需提示）。
-///
-/// 用于安装确认弹窗「显示将要安装的确切版本」这一要求：当 `latest` 落后时，
-/// 用户必须看到壳在钉版本，而不是以为自己拿到的是最新版。
-pub fn version_skew_notice(latest: &str, wanted: &str) -> Option<String> {
-    if latest == wanted {
-        return None;
-    }
-    Some(format!(
-        "registry latest 为 {latest}，与运行时期望的 {wanted} 不一致；\
-         将按 {wanted} 安装（裸包名会装到 latest，属已知错配风险）"
-    ))
-}
+// ---------- 策展集：能力 → 变体 ----------
 
-/// 互斥族：同族 provider **装第二个会激活失败**（ADR-0020 §2.9）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExclusiveFamily {
-    /// 浏览器后端三选一（`docs/subsystems/browser-use.md:17`）。
-    BrowserUse,
-    /// 桌面控制二选一（`computer-use-cua-driver-mcp/README.md:53`：
-    /// "A second computer-use provider **fails activation**"）。
-    ComputerUse,
-}
-
-/// 策展条目：一条「用户可点」的目录项，展开为**有序**的安装步骤。
+/// 能力下的一个**可选后端**（同能力变体互斥：同一时刻只应有一个生效）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogEntry {
+pub struct Variant {
+    /// 稳定 id（前端用它做单选值，不得用展示名——改文案即丢状态）。
+    pub id: &'static str,
     /// 展示名（中文）。
     pub label_zh: &'static str,
-    /// 需要安装的包，**按顺序**（顺序即语义，见 `install_plan`）。
+    /// 一句话：这个后端适合谁 / 代价是什么。**人类语言，不得含 Markdown 反引号**
+    /// （v1 直接把反引号渲染成了字面量，ADR-0020 §7.1 D6）。
+    pub note_zh: &'static str,
+    /// 需要用户自备或额外配置的东西（空 = 无）。展示与确认框共用。
+    pub prerequisites_zh: &'static [&'static str],
+    /// 有序包清单：**顺序即语义**（Agent Teams 先宿主层再 Web 层，装反即激活失败）。
     pub packages: &'static [&'static str],
-    /// 互斥族；`None` = 不与任何条目互斥。
-    pub family: Option<ExclusiveFamily>,
-    /// 是否需要额外前置（展示用；不参与判定）。
-    pub requires_note_zh: Option<&'static str>,
 }
+
+/// 一项实验能力：用户可开关的**呈现单位**。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capability {
+    pub id: &'static str,
+    pub label_zh: &'static str,
+    /// 一句话价值（卡片副标题）。
+    pub summary_zh: &'static str,
+    /// 启用后**用户能观察到什么**（详情与确认框）。
+    pub unlocks_zh: &'static str,
+    pub variants: &'static [Variant],
+}
+
+/// 策展集（**dsh-dock 策展，非"官方首批"**——上游无该概念，为全量发布 16 包，
+/// ADR-0020 §1.1）。变体顺序 = 推荐顺序（UI 默认选中首个）。
+///
+/// ⚠ 包顺序勿随意重排；每项 `summary_zh` / `unlocks_zh` / `prerequisites_zh` 是
+/// **用户可见承诺**，随 dsh 升级须与上游 README 逐条复核（ADR-0020 §7.3）。
+pub const CAPABILITIES: &[Capability] = &[
+    Capability {
+        id: "agent-team",
+        label_zh: "多智能体协同",
+        summary_zh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
+        unlocks_zh: "模型多出九个 team 工具（创建 / 收发消息 / 协调 teammate、读写共享任务板），\
+                     消息与任务挺得过崩溃与重载。Web 档还会在主界面出现 Team 面板与任务板。\
+                     注意：它会**取代旧的委派控件** —— subagent、subagent_fork 等四个旧行会被停用，\
+                     两者不能并存；移除本能力后旧控件恢复。",
+        variants: &[
+            Variant {
+                id: "web",
+                label_zh: "Web 档",
+                note_zh: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
+                prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
+                packages: &[
+                    "@deepseek-ai/dsh-experimental-agent-team-profile",
+                    "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+                ],
+            },
+            Variant {
+                id: "headless",
+                label_zh: "自建档（无 Web 界面）",
+                note_zh: "只装宿主层：工具与任务板可用，界面不新增面板。",
+                prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
+                packages: &["@deepseek-ai/dsh-experimental-agent-team-profile"],
+            },
+        ],
+    },
+    Capability {
+        id: "browser-use",
+        label_zh: "浏览器操作",
+        summary_zh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
+        unlocks_zh: "模型多出一组浏览器工具（打开页面、点击、填表、截图、读取页面结构）。\
+                     同一时刻**只允许一个后端生效**，换后端要走替换。\
+                     浏览器状态按 Session 重建 —— 登录态与浏览器 profile 不会从会话历史恢复；\
+                     取消调用也无法撤销已经送达页面的操作。",
+        variants: &[
+            Variant {
+                id: "playwright",
+                label_zh: "Playwright",
+                note_zh: "通用浏览器自动化后端，适合脚本化的多步导航。",
+                prerequisites_zh: &["浏览器只用 Chromium 系"],
+                packages: &[
+                    "@deepseek-ai/dsh-browser-use",
+                    "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+                ],
+            },
+            Variant {
+                id: "chrome-devtools",
+                label_zh: "Chrome DevTools",
+                note_zh: "直连本机 Chrome，多带一层 DevTools 检查能力。",
+                prerequisites_zh: &["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+                packages: &[
+                    "@deepseek-ai/dsh-browser-use",
+                    "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
+                ],
+            },
+            Variant {
+                id: "stagehand",
+                label_zh: "Stagehand",
+                note_zh: "用自然语言描述操作，由指定模型翻译成动作。",
+                prerequisites_zh: &[
+                    "浏览器只用 Chromium 系",
+                    "需在 profile 配置里显式填 model，且不支持 DeepSeek 端点或 baseURL 覆盖",
+                    "会额外消耗该模型的调用额度，且这部分用量不计入 dsh 会话统计",
+                ],
+                packages: &[
+                    "@deepseek-ai/dsh-browser-use",
+                    "@deepseek-ai/dsh-experimental-browser-use-stagehand-native",
+                ],
+            },
+        ],
+    },
+    Capability {
+        id: "computer-use",
+        label_zh: "桌面控制",
+        summary_zh: "让模型操作你的桌面：鼠标、键盘、窗口",
+        unlocks_zh: "模型多出一组桌面控制工具，可以直接操作真实的鼠标键盘与窗口。\
+                     这是**权限最高**的实验能力：多个会话共享同一个桌面，操作之间不会被串行化，\
+                     而取消调用**无法撤销已经送到桌面的输入**。请只在受控环境启用。",
+        variants: &[
+            Variant {
+                id: "cua-driver-mcp",
+                label_zh: "复用已装的 cua-driver",
+                note_zh: "通过 MCP 连你本机已装好的 cua-driver，本体不随包带入。",
+                prerequisites_zh: &["需先自行安装并保持 cua-driver 可用"],
+                packages: &[
+                    "@deepseek-ai/dsh-computer-use",
+                    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
+                ],
+            },
+            Variant {
+                id: "cua-driver-native",
+                label_zh: "随包自带运行时",
+                note_zh: "把 cua-driver 原生运行时作为依赖一起装上，自包含。",
+                prerequisites_zh: &[
+                    "需授予宿主桌面权限（装包本身不会授权，也不会创建桌面会话）",
+                    "原生崩溃可能终止该进程；若原生关闭失败，换用另一个后端前需重启 dsh",
+                ],
+                packages: &[
+                    "@deepseek-ai/dsh-computer-use",
+                    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
+                ],
+            },
+        ],
+    },
+    Capability {
+        id: "auto-review",
+        label_zh: "自动安全审查",
+        summary_zh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
+        unlocks_zh: "权限选择器里多出带 EXP 上标的 Auto review 模式：每个原生或 PTC 工具调用\
+                     **执行前**先由当前模型评估一次，可拦下危险动作。代价是每个动作多一轮模型\
+                     调用（不缓存、不重试、更慢更贵），且**模型分类可能出错** —— 既可能误放行，\
+                     也可能误拒。卸载时正在使用它的会话会被迁移回 Full access。",
+        variants: &[Variant {
+            id: "standard",
+            label_zh: "标准",
+            note_zh: "只对 Web 档有意义，装上即生效。",
+            prerequisites_zh: &["会额外消耗 token；不提供文件沙箱与确定性豁免"],
+            packages: &["@deepseek-ai/dsh-experimental-auto-review"],
+        }],
+    },
+];
 
 /// 一步安装动作。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +263,7 @@ pub struct InstallStep {
     pub row_id: String,
 }
 
-/// 把条目展开为**有序、串行**的安装步骤（ADR-0020 §2.10）。
+/// 把变体展开为**有序、串行**的安装步骤（ADR-0020 §2.10）。
 ///
 /// 顺序不是装饰：`agent-team-web-profile` 的类型声明要求
 /// `dsh-base` → `dsh-web-app` → `dsh-agent-team-profile` → 本包 **must remain in that order**，
@@ -134,10 +271,9 @@ pub struct InstallStep {
 /// `dsh-agent-team-profile` so the browser mounts only when the Team service is present"。
 /// 装反了浏览器侧会在 Team 服务就位前挂载而失败。
 ///
-/// 同时：`dsh plugin add` **一次只接受一个包**，故必须逐步下发；调用方须**串行**执行
-/// （既有安装队列本身就是串行编排）。`ordinal` 让"第二步失败"能停在一致态并可续装。
-pub fn install_plan(entry: &CatalogEntry) -> Vec<InstallStep> {
-    entry
+/// 同时：`dsh plugin add` **一次只接受一个包**，故必须逐步下发；调用方须**串行**执行。
+pub fn install_plan(variant: &Variant) -> Vec<InstallStep> {
+    variant
         .packages
         .iter()
         .enumerate()
@@ -149,233 +285,421 @@ pub fn install_plan(entry: &CatalogEntry) -> Vec<InstallStep> {
         .collect()
 }
 
-/// 已装 provider 与将要安装的条目是否**同族冲突**。
-///
-/// 返回冲突时已装的那个包名，供 UI 走"**替换**"流程（先移除再安装）而非"叠加"。
-/// 同族且**同一个包**不算冲突（重复安装同一 provider 属幂等重装）。
-pub fn exclusive_conflict<'a>(
-    family: ExclusiveFamily,
-    already_installed: &'a [String],
-    incoming: &CatalogEntry,
-) -> Option<&'a str> {
-    if incoming.family != Some(family) {
-        return None;
-    }
-    already_installed
-        .iter()
-        .find(|installed| {
-            // 冲突判据严格为两条同时成立：① 已装包**属于同一互斥族**
-            // （未知包不得算冲突，否则会拦下无关安装）；② 它**不在**本次要装的包里
-            // （同一 provider 重装属幂等，不拦）。
-            family_of_package(installed) == Some(family)
-                && !incoming.packages.contains(&installed.as_str())
-        })
-        .map(String::as_str)
+// ---------- 状态判定 ----------
+
+/// 变体状态：由「包 × 行 × disabled」三者共同决定（ADR-0020 §7.2-4）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VariantState {
+    /// 一个包都没装、也没有挂载行。
+    Off,
+    /// 包齐 + 行齐 + 无一被停用 = **正在生效**。
+    On,
+    /// 包齐 + 行齐，但行被停用 = 已就位但**当前关着**（秒级可开）。
+    Disabled,
+    /// 介于两者之间：装了一半、或包在而行缺（需要修复）。
+    Partial,
 }
 
-/// 已知包名 → 互斥族（仅覆盖策展集内的 provider；未知包返回 `None`）。
-pub fn family_of_package(package: &str) -> Option<ExclusiveFamily> {
-    match package {
-        p if p.starts_with("@deepseek-ai/dsh-experimental-browser-use-")
-            || p == "@deepseek-ai/dsh-browser-use" =>
-        {
-            Some(ExclusiveFamily::BrowserUse)
-        }
-        p if p.starts_with("@deepseek-ai/dsh-experimental-computer-use-")
-            || p == "@deepseek-ai/dsh-computer-use" =>
-        {
-            Some(ExclusiveFamily::ComputerUse)
-        }
-        _ => None,
-    }
+/// 能力状态 = 其变体状态的聚合（同一能力多个变体同时生效 = 冲突）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityState {
+    Off,
+    On,
+    Disabled,
+    Partial,
+    /// 同能力出现 ≥2 个变体同时生效——上游会激活失败，必须让用户看见。
+    Conflict,
 }
 
-/// 策展集（**dsh-dock 策展，非"官方首批"**——上游无该概念，为全量发布 16 包，
-/// ADR-0020 §1.1）。`packages` 顺序即安装顺序，勿随意重排。
-pub const CATALOG: &[CatalogEntry] = &[
-    CatalogEntry {
-        label_zh: "自动安全审查（Auto review）",
-        packages: &["@deepseek-ai/dsh-experimental-auto-review"],
-        family: None,
-        requires_note_zh: None,
-    },
-    CatalogEntry {
-        label_zh: "浏览器操作 · Playwright（三选一）",
-        packages: &[
-            "@deepseek-ai/dsh-browser-use",
-            "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
-        ],
-        family: Some(ExclusiveFamily::BrowserUse),
-        requires_note_zh: Some("需自备 Chromium；`browser-use-runtime` 是库、不可挂载，随依赖带入"),
-    },
-    CatalogEntry {
-        label_zh: "浏览器操作 · Chrome DevTools（三选一）",
-        packages: &[
-            "@deepseek-ai/dsh-browser-use",
-            "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
-        ],
-        family: Some(ExclusiveFamily::BrowserUse),
-        requires_note_zh: Some("需本机 Chrome；与另两个 browser-use 后端互斥"),
-    },
-    CatalogEntry {
-        label_zh: "浏览器操作 · Stagehand（三选一）",
-        packages: &[
-            "@deepseek-ai/dsh-browser-use",
-            "@deepseek-ai/dsh-experimental-browser-use-stagehand-native",
-        ],
-        family: Some(ExclusiveFamily::BrowserUse),
-        requires_note_zh: Some("`model` 必填（连纯导航也要求）；与另两个后端互斥"),
-    },
-    CatalogEntry {
-        label_zh: "桌面控制 · Cua Driver（MCP，二选一）",
-        packages: &[
-            "@deepseek-ai/dsh-computer-use",
-            "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
-        ],
-        family: Some(ExclusiveFamily::ComputerUse),
-        requires_note_zh: Some("需外置安装 cua-driver；与 native 变体互斥"),
-    },
-    CatalogEntry {
-        label_zh: "桌面控制 · Cua Driver（原生，二选一）",
-        packages: &[
-            "@deepseek-ai/dsh-computer-use",
-            "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
-        ],
-        family: Some(ExclusiveFamily::ComputerUse),
-        requires_note_zh: Some("随依赖带入原生运行时；与 mcp 变体互斥"),
-    },
-    CatalogEntry {
-        label_zh: "多智能体协同 · Agent Teams（headless / 自建档）",
-        packages: &["@deepseek-ai/dsh-experimental-agent-team-profile"],
-        family: None,
-        requires_note_zh: Some("该 convenience bundle 会一并插入 team 域与工具行"),
-    },
-    CatalogEntry {
-        label_zh: "多智能体协同 · Agent Teams（Web 档，**须在上一层之后**）",
-        packages: &[
-            "@deepseek-ai/dsh-experimental-agent-team-profile",
-            "@deepseek-ai/dsh-experimental-agent-team-web-profile",
-        ],
-        family: None,
-        requires_note_zh: Some(
-            "两步**有序**：先建 host 层再建 Web 层；顺序颠倒浏览器侧会因 Team 服务未就位而挂载失败",
-        ),
-    },
-];
-
-/// 一条目录行的**一步**（可序列化给前端）。
+/// 一步的事实视图（可序列化给前端）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CatalogStep {
-    /// 第几步（1 起；UI 据此展示进度与"第二步未完成"的一致态）。
+pub struct StepView {
     pub ordinal: usize,
-    /// 包名。
     pub package: String,
     /// 钉版本后的 spec（交给 `dsh plugin add`）。
     pub spec: String,
-    /// 激活方式：决定壳写不写 patch 行（见 [`Activation`]）。
     pub activation: Activation,
-    /// patch 行 id（`InsertRow` 时才真正落盘）。
+    /// 挂载行 id（`InsertRow` 时才真正落盘）。
     pub row_id: String,
-    /// 该包当前是否已声明在 profile 依赖里。
+    /// 该包是否已在 profile 依赖里。
     pub installed: bool,
+    /// 该包的挂载行是否已**在组合树中**（`AutoBundle` 类由包自带段落贡献）。
+    pub row_present: bool,
+    /// 该步的行是否被停用。
+    pub disabled: bool,
+    /// 停用/启用该步要写的行 id（可能多行：bundle 贡献多行时全部一起切）。
+    /// 空 = 该步没有可切换的行，停用只能靠移除。
+    pub toggle_targets: Vec<String>,
     /// 版本错配提示（`latest` 落后于运行时等）；`None` = 无需打扰用户。
     pub version_notice: Option<String>,
 }
 
-/// 一条目录行（可序列化给前端）。
+/// 变体的事实视图。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CatalogRow {
-    /// 展示名（中文）。
-    pub label_zh: &'static str,
-    /// 互斥族；UI 据此把同族行渲染成"替换"而非"叠加"。
-    pub family: Option<ExclusiveFamily>,
-    /// 前置条件/注意事项（展示用）。
-    pub requires_note_zh: Option<&'static str>,
-    /// 有序步骤。
-    pub steps: Vec<CatalogStep>,
-    /// 与**已装**同族 provider 的冲突（`Some` = UI 须走"替换"流程）。
-    pub conflict_with: Option<String>,
+pub struct VariantView {
+    pub id: String,
+    pub label_zh: String,
+    pub note_zh: String,
+    pub prerequisites_zh: Vec<String>,
+    pub steps: Vec<StepView>,
+    pub state: VariantState,
+    /// 本变体的包是**另一个已就位变体**的真子集 → 本档已被那一档包含。
+    ///
+    /// 为什么需要它（2026-09-16 真机暴露）：Agent Teams 的两档是**子集关系**而非互斥——
+    /// 自建档 = `[agent-team-profile]`，Web 档 = `[同一个包, agent-team-web-profile]`。
+    /// 装 Web 档时"自建档"的包必然也齐，若只看"是否装齐"就会把这份**完全正常的配置**
+    /// 报成「后端冲突」。浏览器/桌面两族才是真互斥（各有独占 provider 包）。
+    /// 有了它：冲突判定只数"没被包含"的档；被包含的档在 UI 上显式为「已包含」且不提供
+    /// 独立开关（关掉它会把超集档的基础层一起拆掉）。
+    pub subsumed_by: Option<String>,
+    /// **纯行级停用是否等价于"关掉"**（`false` → 关闭必须走移除）。
+    ///
+    /// 判据：该变体的**每一步都是 `InsertRow`**（行完全由壳拥有，且包本身不带层 patch）。
+    ///
+    /// 为什么 bundle 步骤不能靠行级 disabled 关掉：`dsh.bundle.patch` 层是**带副作用的
+    /// 补丁文档**。实测 `agent-team-profile/cordis.patch.yml` 除插入 2 条新行外，**还停用
+    /// 4 条旧的 subagent 控件行**；此时把壳插入的行 `disabled: true` 只会关掉新工具，
+    /// 那 4 条旧行仍被层停用着 → 用户手里**新旧都没有**。层副作用无法用行级开关回滚，
+    /// 只能经 `dsh plugin remove`（同时清 `dsh.profile.bundles` 有序层列表）才干净。
+    pub toggle_off_supported: bool,
+    /// 同能力**其它**变体已装、而本变体不含的后端包；非空 = 启用本变体需先替换掉它们
+    /// （同族并存会激活失败）。
+    pub displaced: Vec<String>,
 }
 
-/// 已装状态与 registry 事实的**入参快照**（由调用方采集，本模块保持纯函数）。
+/// 能力的事实视图。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityView {
+    pub id: String,
+    pub label_zh: String,
+    pub summary_zh: String,
+    pub unlocks_zh: String,
+    pub variants: Vec<VariantView>,
+    pub state: CapabilityState,
+    /// 当前生效（或已就位但停用）的变体 id；`None` = 未启用。
+    pub active_variant: Option<String>,
+}
+
+/// `apply_official_patch_row` 的处理结果（**写行前当场重判**的分类结论）。
+///
+/// 为什么要有 `auto_activated` 这一档：目录是安装前拉的，那时包还没进 `node_modules`，
+/// 任何包都会被判成"未声明 `dsh.bundle`"。真正的分类只能在写之前、装之后当场读出来
+/// （ADR-0020 §7.4）——声明了层的包由 CLI 激活，壳**不写行**，并把这件事如实回报，
+/// 而不是静默地"什么都没做"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowWriteOutcome {
+    /// 是否真的改动了 patch 文件（幂等重写 = `false`）。
+    pub changed: bool,
+    /// 该包声明了 `dsh.bundle`：已由 `dsh plugin add` 激活，壳**未写行**（也**不应**写）。
+    pub auto_activated: bool,
+}
+
+/// 状态判定的**入参快照**（由调用方采集，本模块保持纯函数）。
 #[derive(Debug, Clone, Default)]
-pub struct InstalledState {
+pub struct PackageFacts {
     /// profile `dependencies` 的包名。
     pub installed: Vec<String>,
     /// 已装并**声明 `dsh.bundle`** 的包名（激活分类的唯一依据）。
     pub declared_bundles: Vec<String>,
-    /// 包名 → registry `latest`（可空；用于版本错配提示）。
-    pub latest_by_package: std::collections::HashMap<String, String>,
 }
 
-/// 把策展集解析为可下发的目录行（纯函数）。
+/// 判断某能力的某变体现在处于什么状态，以及开/关/移除各需要哪些行级目标。
 ///
-/// 每一步的 `activation` 由 `declared_bundles` 决定：
-/// - 在册 → [`Activation::AutoBundle`]（`dsh plugin add` 自行激活，壳**不写** patch）；
-/// - 不在册 → [`Activation::InsertRow`]（壳**必须**写挂载行）。
-///
-/// `runtime_version` 用于钉版本（ADR-0020 §2.4）——**裸包名会装到 `latest`**，
-/// 而 Agent Teams 三包的 `latest` 实测落后于运行时。
-pub fn resolve_rows(state: &InstalledState, runtime_version: Option<&str>) -> Vec<CatalogRow> {
+/// `rows` 来自 `plugins::plugin_rows_blocking`（一次 `--dump-config`），是"行是否存在 /
+/// 是否被停用"的**唯一**来源；`runtime_version` 用于钉版本（`None` → 诚实降级为裸包名）。
+pub fn resolve_capabilities(
+    facts: &PackageFacts,
+    rows: &[PluginRowState],
+    runtime_version: Option<&str>,
+) -> Vec<CapabilityView> {
+    let installed: std::collections::HashSet<&str> =
+        facts.installed.iter().map(String::as_str).collect();
     let declared: std::collections::HashSet<&str> =
-        state.declared_bundles.iter().map(String::as_str).collect();
+        facts.declared_bundles.iter().map(String::as_str).collect();
 
-    CATALOG
+    CAPABILITIES
         .iter()
-        .map(|entry| {
-            let steps = install_plan(entry)
-                .into_iter()
-                .map(|step| {
-                    let declares_bundle = declared.contains(step.package.as_str());
-                    // 版本未知时**不拼 `pkg@`**（那是个坏 spec）：退回裸包名并**明示风险**
-                    // ——裸包名按 `latest` 解析，正是 Agent Teams 三包错配的成因。
-                    let (spec, notice) = match runtime_version {
-                        Some(v) => (
-                            pinned_spec(&step.package, v),
-                            state
-                                .latest_by_package
-                                .get(&step.package)
-                                .and_then(|latest| version_skew_notice(latest, v)),
-                        ),
-                        None => (
-                            step.package.clone(),
-                            Some(
-                                "运行时版本未检出，本步**未钉版本**——裸包名会按 latest 解析，\
-                                 可能与运行时错配（如需严格匹配请先让引擎就绪）"
-                                    .to_string(),
-                            ),
-                        ),
+        .map(|capability| {
+            let all_packages: Vec<&str> = capability
+                .variants
+                .iter()
+                .flat_map(|v| v.packages.iter().copied())
+                .collect();
+            let mut variants: Vec<VariantView> = capability
+                .variants
+                .iter()
+                .map(|variant| {
+                    let steps: Vec<StepView> = install_plan(variant)
+                        .into_iter()
+                        .map(|step| {
+                            let declares_bundle = declared.contains(step.package.as_str());
+                            let activation = activation_for(declares_bundle);
+                            // 版本未知时**不拼 `pkg@`**（那是个坏 spec）：退回裸包名并**明示风险**
+                            // ——裸包名按 `latest` 解析，正是 Agent Teams 三包错配的成因。
+                            //
+                            // 关于"registry `latest` 与期望版本不一致"的提示（ADR-0020 §2.4 曾设想）：
+                            // **不做**。`latest` 只能联网取，而本命令禁网（唯一网络面 = `updates.rs`），
+                            // 一旦留一个恒为空的入参，那条提示就是"看着有、其实永远不会触发"的死路径
+                            // （2026-09-16 独立评审核出，见 ADR-0020 §7.2-8）。§2.4 的实质要求——
+                            // "确认框显示将要安装的**确切版本**"——由确认框直接列出 spec 满足。
+                            let (spec, notice) = match runtime_version {
+                                Some(v) => (pinned_spec(&step.package, v), None),
+                                None => (
+                                    step.package.clone(),
+                                    Some(
+                                        "运行时版本未检出，本步**未钉版本**——裸包名会按 latest 解析，\
+                                         可能与运行时错配（如需严格匹配请先让引擎就绪）"
+                                            .to_string(),
+                                    ),
+                                ),
+                            };
+                            let row = row_state_for(rows, &step.package, &step.row_id, activation);
+                            StepView {
+                                ordinal: step.ordinal,
+                                package: step.package,
+                                spec,
+                                activation,
+                                row_id: step.row_id,
+                                installed: installed.contains(row.package.as_str()),
+                                row_present: row.present,
+                                disabled: row.disabled,
+                                toggle_targets: row.targets,
+                                version_notice: notice,
+                            }
+                        })
+                        .collect();
+
+                    let all_installed = steps.iter().all(|s| s.installed);
+                    let all_ready = steps.iter().all(|s| s.row_present);
+                    let any_disabled = steps.iter().any(|s| s.disabled);
+                    let state = if all_installed && all_ready {
+                        if any_disabled {
+                            VariantState::Disabled
+                        } else {
+                            VariantState::On
+                        }
+                    } else if steps.iter().any(|s| s.installed || s.row_present) {
+                        VariantState::Partial
+                    } else {
+                        VariantState::Off
                     };
-                    CatalogStep {
-                        ordinal: step.ordinal,
-                        activation: activation_for(declares_bundle),
-                        spec,
-                        installed: state.installed.contains(&step.package),
-                        version_notice: notice,
-                        row_id: step.row_id,
-                        package: step.package,
+                    // 纯行级停用等价于"关掉" ⟺ 每一步都是 InsertRow（见字段文档）。
+                    // 附加 `all installed`：**没装就不知道**该包是否声明 `dsh.bundle`
+                    // （分类由包自身的 package.json 判定），无知不得被报成"可纯开关"。
+                    // 在 On / Disabled 态下每步必然已装，故该附加条件不改变真值，只挡住误报。
+                    let toggle_off_supported = steps
+                        .iter()
+                        .all(|s| s.activation == Activation::InsertRow && s.installed);
+                    // 同能力**其它**变体已装、且本变体不含的包 = 需要替换掉的旧后端。
+                    let displaced: Vec<String> = all_packages
+                        .iter()
+                        .filter(|p| !variant.packages.contains(*p))
+                        .filter(|p| installed.contains(**p))
+                        .map(|p| (*p).to_string())
+                        .collect();
+
+                    VariantView {
+                        id: variant.id.to_string(),
+                        label_zh: variant.label_zh.to_string(),
+                        note_zh: variant.note_zh.to_string(),
+                        prerequisites_zh: variant
+                            .prerequisites_zh
+                            .iter()
+                            .map(|s| (*s).to_string())
+                            .collect(),
+                        steps,
+                        state,
+                        toggle_off_supported,
+                        displaced,
+                        subsumed_by: None,
                     }
                 })
                 .collect();
-            CatalogRow {
-                label_zh: entry.label_zh,
-                family: entry.family,
-                requires_note_zh: entry.requires_note_zh,
-                steps,
-                conflict_with: entry
-                    .family
-                    .and_then(|f| exclusive_conflict(f, &state.installed, entry))
-                    .map(str::to_string),
+
+            // 子集关系：**已就位**（On/Disabled）的档里，谁的包是另一个的**真子集**。
+            // 真子集 = 全含 + 少至少一个包（"两档完全同包"不算包含，那是重复定义）。
+            for i in 0..variants.len() {
+                if !matches!(variants[i].state, VariantState::On | VariantState::Disabled) {
+                    continue;
+                }
+                let mine: Vec<&str> = variants[i]
+                    .steps
+                    .iter()
+                    .map(|s| s.package.as_str())
+                    .collect();
+                let subsumed = variants.iter().enumerate().find(|(j, other)| {
+                    *j != i
+                        && matches!(other.state, VariantState::On | VariantState::Disabled)
+                        && mine
+                            .iter()
+                            .all(|p| other.steps.iter().any(|s| s.package == *p))
+                        && other.steps.len() > mine.len()
+                });
+                if let Some((_, other)) = subsumed {
+                    variants[i].subsumed_by = Some(other.id.clone());
+                }
+            }
+
+            // 冲突/生效只数**没被包含**的档：被包含的档本来就该跟着超集档一起就位。
+            let on: Vec<&VariantView> = variants
+                .iter()
+                .filter(|v| v.state == VariantState::On && v.subsumed_by.is_none())
+                .collect();
+            let (state, active_variant) = if on.len() >= 2 {
+                (CapabilityState::Conflict, None)
+            } else if let Some(only) = on.first() {
+                (CapabilityState::On, Some(only.id.clone()))
+            } else if let Some(off_but_ready) = variants
+                .iter()
+                .find(|v| v.state == VariantState::Disabled && v.subsumed_by.is_none())
+            {
+                (CapabilityState::Disabled, Some(off_but_ready.id.clone()))
+            } else if variants.iter().any(|v| v.state == VariantState::Partial) {
+                (CapabilityState::Partial, None)
+            } else {
+                (CapabilityState::Off, None)
+            };
+
+            CapabilityView {
+                id: capability.id.to_string(),
+                label_zh: capability.label_zh.to_string(),
+                summary_zh: capability.summary_zh.to_string(),
+                unlocks_zh: capability.unlocks_zh.to_string(),
+                variants,
+                state,
+                active_variant,
             }
         })
         .collect()
 }
 
+/// 一步的行事实：`present` = 行已在组合树中；`disabled` = 已停用；`targets` = 切换目标。
+struct RowFacts {
+    package: String,
+    present: bool,
+    disabled: bool,
+    targets: Vec<String>,
+}
+
+/// 从 dump-config 行表里读出该包的行事实（纯函数）。
+///
+/// 两种激活方式的判据**不同**，不可混用：
+/// - `InsertRow`：行由**壳**写入，必须按**精确 `id` + 包名**同时命中才算在
+///   （防"行在、但落在别的包上"的半对状态）；
+/// - `AutoBundle`：行由**包自身的 patch**贡献，在行表里表现为以该包名为段落的合成条目
+///   （`plugins::build_row_states`），其 `contributed_ids` 即全部可切换目标。
+///   无贡献行 = 该包不产生配置行 → 无行可切（停用只能靠移除），但仍视为"已激活"。
+fn row_state_for(
+    rows: &[PluginRowState],
+    package: &str,
+    row_id: &str,
+    activation: Activation,
+) -> RowFacts {
+    match activation {
+        Activation::InsertRow => {
+            let hit = rows
+                .iter()
+                .find(|r| r.id == row_id && r.pkg_name == package);
+            RowFacts {
+                package: package.to_string(),
+                present: hit.is_some(),
+                disabled: hit.map(|r| r.shell_disabled).unwrap_or(false),
+                targets: if hit.is_some() {
+                    vec![row_id.to_string()]
+                } else {
+                    Vec::new()
+                },
+            }
+        }
+        Activation::AutoBundle => {
+            let hit = rows
+                .iter()
+                .find(|r| r.pkg_name == package && !r.contributed_ids.is_empty());
+            match hit {
+                Some(r) => RowFacts {
+                    package: package.to_string(),
+                    present: true,
+                    disabled: r.shell_disabled,
+                    targets: r.contributed_ids.clone(),
+                },
+                None => RowFacts {
+                    package: package.to_string(),
+                    present: true,
+                    disabled: false,
+                    targets: Vec::new(),
+                },
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pkg(name: &str) -> String {
+        name.to_string()
+    }
+
+    /// 只有**声明** `dsh.bundle` 的包已装时才允许出现，故测试里要同时给两份清单。
+    fn facts(installed: &[&str], bundles: &[&str]) -> PackageFacts {
+        PackageFacts {
+            installed: installed.iter().map(|s| pkg(s)).collect(),
+            declared_bundles: bundles.iter().map(|s| pkg(s)).collect(),
+        }
+    }
+
+    fn row(id: &str, name: &str, disabled: bool) -> PluginRowState {
+        PluginRowState {
+            id: id.to_string(),
+            pkg_name: name.to_string(),
+            shell_disabled: disabled,
+            patch_entries: 0,
+            contributed_ids: Vec::new(),
+        }
+    }
+
+    /// bundle 贡献行的合成条目形态（`plugins::build_row_states` 的产物）。
+    fn bundle_row(name: &str, ids: &[&str], disabled: bool) -> PluginRowState {
+        PluginRowState {
+            id: ids[0].to_string(),
+            pkg_name: name.to_string(),
+            shell_disabled: disabled,
+            patch_entries: 0,
+            contributed_ids: ids.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn find<'a>(caps: &'a [CapabilityView], id: &str) -> &'a CapabilityView {
+        caps.iter()
+            .find(|c| c.id == id)
+            .expect("能力必须在策展集里")
+    }
+
+    fn variant<'a>(cap: &'a CapabilityView, id: &str) -> &'a VariantView {
+        cap.variants
+            .iter()
+            .find(|v| v.id == id)
+            .expect("变体必须在能力里")
+    }
+
+    /// 静态策展项（非视图）：供 `install_plan` 这类吃 `Variant` 的纯函数使用。
+    fn static_variant<'a>(cap_id: &str, variant_id: &str) -> &'a Variant {
+        CAPABILITIES
+            .iter()
+            .find(|c| c.id == cap_id)
+            .expect("能力必须在策展集里")
+            .variants
+            .iter()
+            .find(|v| v.id == variant_id)
+            .expect("变体必须在能力里")
+    }
 
     /// B1/B2 的核心反例护栏：分类**只能**由 `dsh.bundle` 声明决定，
     /// 且两种取值必须给出**相反**的激活方式（防将来有人"统一"成一种）。
@@ -400,32 +724,28 @@ mod tests {
         assert_ne!(a, row_id_for("@deepseek-ai/dsh-experimental-agent-team"));
     }
 
-    /// B3 护栏：spec 必须带版本；`latest` 与期望不一致时**必须**提示（不得静默）。
+    /// spec 必须带版本，且**只有检出运行时版本时**才拼版本（检出不到时走裸包名 + 显式告知，
+    /// 见 `resolve_without_runtime_version_degrades_honestly`）。
     #[test]
-    fn pinned_spec_carries_version_and_skew_is_surfaced() {
+    fn pinned_spec_carries_version() {
         let spec = pinned_spec(
             "@deepseek-ai/dsh-experimental-agent-team-profile",
             "0.1.6-alpha.1",
         );
         assert!(spec.ends_with("@0.1.6-alpha.1"), "{spec}");
-
-        // 本机实测的错配形态：latest 落后于运行时。
-        let notice = version_skew_notice("0.1.5-alpha.2", "0.1.6-alpha.1")
-            .expect("latest 落后时必须给出提示");
-        assert!(notice.contains("0.1.5-alpha.2") && notice.contains("0.1.6-alpha.1"));
-        // 一致时不得打扰用户。
-        assert!(version_skew_notice("0.1.6-alpha.1", "0.1.6-alpha.1").is_none());
+        // 检出到运行时版本时，本步**不得**再挂"未钉版本"一类的 notice（那是降级路径专用）。
+        let f = facts(&[], &[]);
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        assert!(find(&caps, "auto-review").variants[0].steps[0]
+            .version_notice
+            .is_none());
     }
 
     /// 有序组合：步骤序号从 1 连续递增，顺序与 `packages` 声明一致
     /// （Agent Teams 的 Web 档装反即失败，顺序是语义不是装饰）。
     #[test]
     fn install_plan_preserves_declared_order_and_ordinals() {
-        let web_team = CATALOG
-            .iter()
-            .find(|e| e.label_zh.contains("Web 档"))
-            .expect("策展集须含 Agent Teams Web 档条目");
-        let plan = install_plan(web_team);
+        let plan = install_plan(static_variant("agent-team", "web"));
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].ordinal, 1);
         assert_eq!(plan[1].ordinal, 2);
@@ -435,174 +755,316 @@ mod tests {
         assert_ne!(plan[0].row_id, plan[1].row_id);
     }
 
-    /// 互斥组：同族换一个 provider = 冲突（须走"替换"）；同包重装 = 不拦（幂等）。
+    /// 策展集自身的一致性：能力 id 唯一、变体 id 唯一、包名非空且变体内不重复；
+    /// **同能力变体必须真互斥**（各自有对方不含的包，否则"切换"无意义）。
     #[test]
-    fn exclusive_conflict_distinguishes_replace_from_reinstall() {
-        let playwright = CATALOG
-            .iter()
-            .find(|e| e.label_zh.contains("Playwright"))
-            .unwrap();
-        let installed_other =
-            vec!["@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp".to_string()];
-        assert_eq!(
-            exclusive_conflict(ExclusiveFamily::BrowserUse, &installed_other, playwright),
-            Some("@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp"),
-            "同族不同后端须判冲突（UI 走替换）"
-        );
-
-        let installed_same: Vec<String> =
-            playwright.packages.iter().map(|p| p.to_string()).collect();
-        assert_eq!(
-            exclusive_conflict(ExclusiveFamily::BrowserUse, &installed_same, playwright),
-            None,
-            "同包重装是幂等，不该拦"
-        );
-
-        // 跨族不互斥：装了 browser-use 不影响装 computer-use。
-        let cua = CATALOG
-            .iter()
-            .find(|e| e.label_zh.contains("Cua Driver（MCP"))
-            .expect("策展集须含 Cua Driver MCP 条目");
-        assert_eq!(
-            exclusive_conflict(ExclusiveFamily::ComputerUse, &installed_other, cua),
-            None
-        );
-    }
-
-    /// provider 互斥族的判别：两个 release 服务与 6 个 provider 都要归族，
-    /// 非 provider 包不得误判（否则会拦下正常安装）。
-    #[test]
-    fn family_classification_covers_services_and_providers_only() {
-        for p in [
-            "@deepseek-ai/dsh-browser-use",
-            "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
-            "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
-            "@deepseek-ai/dsh-experimental-browser-use-stagehand-native",
-        ] {
-            assert_eq!(
-                family_of_package(p),
-                Some(ExclusiveFamily::BrowserUse),
-                "{p}"
-            );
-        }
-        for p in [
-            "@deepseek-ai/dsh-computer-use",
-            "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
-            "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
-        ] {
-            assert_eq!(
-                family_of_package(p),
-                Some(ExclusiveFamily::ComputerUse),
-                "{p}"
-            );
-        }
-        // 非 provider：不得误判。
-        assert_eq!(
-            family_of_package("@deepseek-ai/dsh-experimental-auto-review"),
-            None
-        );
-        assert_eq!(family_of_package("@deepseek-ai/dsh-base"), None);
-    }
-
-    /// 策展集自身的一致性：每个条目 non-empty、包名唯一（同一条目内不重复）、
-    /// 互斥族条目必须声明 `family`（否则互斥校验形同虚设）。
-    #[test]
-    fn catalog_entries_are_well_formed() {
-        for entry in CATALOG {
-            assert!(!entry.packages.is_empty(), "{} 无包", entry.label_zh);
-            let mut seen = std::collections::HashSet::new();
-            for p in entry.packages {
-                assert!(seen.insert(*p), "{} 条目内包名重复：{p}", entry.label_zh);
+    fn catalog_is_well_formed() {
+        let mut cap_ids = std::collections::HashSet::new();
+        for cap in CAPABILITIES {
+            assert!(cap_ids.insert(cap.id), "能力 id 重复：{}", cap.id);
+            assert!(!cap.variants.is_empty(), "{} 无变体", cap.id);
+            let mut var_ids = std::collections::HashSet::new();
+            for v in cap.variants {
+                assert!(var_ids.insert(v.id), "{} 变体 id 重复：{}", cap.id, v.id);
+                assert!(!v.packages.is_empty(), "{}::{} 无包", cap.id, v.id);
+                let mut seen = std::collections::HashSet::new();
+                for p in v.packages {
+                    assert!(seen.insert(*p), "{}::{} 包名重复：{p}", cap.id, v.id);
+                }
             }
         }
-        // 浏览器/桌面控制条目必须归族。
-        for entry in CATALOG {
-            let touches_browser = entry
-                .packages
-                .iter()
-                .any(|p| family_of_package(p) == Some(ExclusiveFamily::BrowserUse));
-            if touches_browser {
-                assert_eq!(
-                    entry.family,
-                    Some(ExclusiveFamily::BrowserUse),
-                    "{} 触及 browser-use 却未归族",
-                    entry.label_zh
+        // 多后端的两个能力：两两变体之间必须各有独占包（否则"同一时刻只一个生效"
+        // 这条互斥语义无法表达成替换动作）。**只适用于真互斥族**——Agent Teams 的两档
+        // 是子集关系（自建档 ⊂ Web 档），刻意不互斥，见 `subset_variant_is_subsumed_not_conflicting`。
+        for cap_id in ["browser-use", "computer-use"] {
+            let cap = CAPABILITIES.iter().find(|c| c.id == cap_id).unwrap();
+            assert!(cap.variants.len() >= 2, "{cap_id} 应有多后端");
+            for a in cap.variants {
+                for b in cap.variants {
+                    if a.id == b.id {
+                        continue;
+                    }
+                    assert!(
+                        a.packages.iter().any(|p| !b.packages.contains(p)),
+                        "{cap_id} 的 {} 与 {} 无独占包，互斥无法表达",
+                        a.id,
+                        b.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
+    #[test]
+    fn user_facing_copy_has_no_markdown_backticks() {
+        for cap in CAPABILITIES {
+            let mut texts: Vec<String> = vec![
+                cap.label_zh.to_string(),
+                cap.summary_zh.to_string(),
+                cap.unlocks_zh.to_string(),
+            ];
+            for v in cap.variants {
+                texts.push(v.label_zh.to_string());
+                texts.push(v.note_zh.to_string());
+                texts.extend(v.prerequisites_zh.iter().map(|s| (*s).to_string()));
+            }
+            for text in texts {
+                assert!(!text.contains('`'), "{} 的文案含反引号：{text}", cap.id);
+            }
+        }
+    }
+
+    /// 「装了」不等于「生效」：包已装但挂载行缺失 → Partial（需要修复），
+    /// 而不是 On。这是 v1 只报 `installed` 时最危险的静默错误。
+    #[test]
+    fn installed_without_row_is_partial_not_on() {
+        const PLAYWRIGHT: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", PLAYWRIGHT], &[]);
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        let v = variant(cap, "playwright");
+        assert_eq!(v.state, VariantState::Partial, "行缺失必须报需要修复");
+        // 基座包（bundle 类）无贡献行 → 视为已激活；provider 行缺 → not ready。
+        assert_eq!(cap.state, CapabilityState::Partial);
+        assert!(cap.active_variant.is_none());
+    }
+
+    /// 行写到位 = On，且 `toggle_targets` 给出**精确**的壳行 id（停用靠它）。
+    #[test]
+    fn row_present_means_on_and_exposes_toggle_target() {
+        const PLAYWRIGHT: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", PLAYWRIGHT], &[]);
+        let rows = vec![
+            row(
+                &row_id_for("@deepseek-ai/dsh-browser-use"),
+                "@deepseek-ai/dsh-browser-use",
+                false,
+            ),
+            row(&row_id_for(PLAYWRIGHT), PLAYWRIGHT, false),
+        ];
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        let v = variant(cap, "playwright");
+        assert_eq!(v.state, VariantState::On);
+        assert!(v.toggle_off_supported, "两步都是壳写的行 → 关而不卸可行");
+        assert_eq!(cap.state, CapabilityState::On);
+        assert_eq!(cap.active_variant.as_deref(), Some("playwright"));
+        let provider = v.steps.iter().find(|s| s.package == PLAYWRIGHT).unwrap();
+        assert_eq!(provider.toggle_targets, vec![row_id_for(PLAYWRIGHT)]);
+        assert!(provider.row_present && !provider.disabled);
+    }
+
+    /// 停用（行在但 `disabled: true`）→ Disabled：与 On **必须**区分开——
+    /// 「已就位但关着」和「正在生效」是用户最需要分辨的两种状态。
+    #[test]
+    fn disabled_row_is_its_own_state_and_still_quickly_reversible() {
+        const PLAYWRIGHT: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", PLAYWRIGHT], &[]);
+        let rows = vec![
+            row(
+                &row_id_for("@deepseek-ai/dsh-browser-use"),
+                "@deepseek-ai/dsh-browser-use",
+                true,
+            ),
+            row(&row_id_for(PLAYWRIGHT), PLAYWRIGHT, true),
+        ];
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        assert_eq!(variant(cap, "playwright").state, VariantState::Disabled);
+        assert_eq!(cap.state, CapabilityState::Disabled);
+        assert_eq!(cap.active_variant.as_deref(), Some("playwright"));
+        // 停用态仍然"可开关"——这正是"关掉不必卸载"的落点。
+        assert!(variant(cap, "playwright").toggle_off_supported);
+    }
+
+    /// bundle 类包：行由**包自身**贡献（`contributed_ids` 多行），启用目标取全部贡献行；
+    /// 但**关闭不走行级开关**——层的 patch 带副作用（实测 agent-team-profile 还停用了
+    /// 4 条旧 subagent 行），行级 disabled 关不干净，故 `toggle_off_supported` 必须为 false。
+    #[test]
+    fn auto_bundle_rows_are_togglable_but_toggle_off_is_not_equivalent_to_off() {
+        const REVIEW: &str = "@deepseek-ai/dsh-experimental-auto-review";
+        let f = facts(&[REVIEW], &[REVIEW]);
+
+        let with_rows = vec![bundle_row(REVIEW, &["review-a", "review-b"], false)];
+        let caps = resolve_capabilities(&f, &with_rows, Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "auto-review");
+        let v = variant(cap, "standard");
+        assert_eq!(v.state, VariantState::On);
+        assert_eq!(
+            v.steps[0].toggle_targets,
+            vec!["review-a".to_string(), "review-b".to_string()]
+        );
+        assert!(
+            !v.toggle_off_supported,
+            "层类能力必须走移除：行级停用会留下层的副作用"
+        );
+
+        // 无贡献行：仍然"已激活"（CLI 管），但没有可切的行。
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "auto-review");
+        let v = variant(cap, "standard");
+        assert_eq!(v.state, VariantState::On);
+        assert!(v.steps[0].toggle_targets.is_empty());
+    }
+
+    /// 纯行级开关的**准入条件**：每一步都得是壳写的行。provider 两个能力满足
+    /// （基座包 `dsh-browser-use` / `dsh-computer-use` 实测**无 `dsh` 字段** → 也是行），
+    /// 含层包的能力永不满足。
+    #[test]
+    fn toggle_off_supported_only_for_insert_row_variants() {
+        let rows = vec![
+            row(
+                &row_id_for("@deepseek-ai/dsh-browser-use"),
+                "@deepseek-ai/dsh-browser-use",
+                false,
+            ),
+            row(
+                &row_id_for("@deepseek-ai/dsh-experimental-browser-use-playwright-mcp"),
+                "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+                false,
+            ),
+        ];
+        let f = facts(
+            &[
+                "@deepseek-ai/dsh-browser-use",
+                "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+            ],
+            &[],
+        );
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        assert_eq!(find(&caps, "browser-use").state, CapabilityState::On);
+        assert!(variant(find(&caps, "browser-use"), "playwright").toggle_off_supported);
+
+        for cap_id in ["agent-team", "auto-review"] {
+            for v in &find(&caps, cap_id).variants {
+                assert!(
+                    !v.toggle_off_supported,
+                    "{cap_id}::{} 未装 → 无从判定，不得声称可纯行级关闭",
+                    v.id
                 );
             }
         }
+
+        // 含 profile 层的能力：即使**已装**也不得声称可纯行级关闭（层 patch 带副作用）。
+        let layer_pkgs = [
+            "@deepseek-ai/dsh-experimental-agent-team-profile",
+            "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+        ];
+        let layer = facts(&layer_pkgs, &layer_pkgs);
+        let caps = resolve_capabilities(&layer, &[], Some("0.1.6-alpha.1"));
+        let web = variant(find(&caps, "agent-team"), "web");
+        assert_eq!(web.state, VariantState::On, "层装上即由 CLI 激活");
+        assert!(!web.toggle_off_supported, "层类能力不得声称可纯行级关闭");
     }
 
-    /// 端到端（纯函数）解析：两种激活分支、钉版本、已装标记、冲突提示
-    /// 必须在同一次解析里**各就各位**——这正是 v1 方案两向皆错的那层判定。
+    /// Agent Teams 的**子集档**不得报冲突（2026-09-16 真机暴露）：
+    /// 自建档 = `[agent-team-profile]` 是 Web 档 `[同一包, agent-team-web-profile]` 的
+    /// 真子集；装 Web 档时子集档的包必然也齐——那是**完全正常的配置**，不是"两个后端并列"。
     #[test]
-    fn resolve_rows_marks_activation_pin_and_conflict() {
-        let state = InstalledState {
-            installed: vec![
-                // 已装一个 bundle 类包 + 一个同族的**别的** provider（制造冲突）。
-                "@deepseek-ai/dsh-experimental-auto-review".to_string(),
-                "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp".to_string(),
-            ],
-            declared_bundles: vec!["@deepseek-ai/dsh-experimental-auto-review".to_string()],
-            latest_by_package: std::collections::HashMap::from([(
-                "@deepseek-ai/dsh-experimental-agent-team-profile".to_string(),
-                "0.1.5-alpha.2".to_string(),
-            )]),
-        };
-        let rows = resolve_rows(&state, Some("0.1.6-alpha.1"));
+    fn subset_variant_is_subsumed_not_conflicting() {
+        const HOST: &str = "@deepseek-ai/dsh-experimental-agent-team-profile";
+        const WEB: &str = "@deepseek-ai/dsh-experimental-agent-team-web-profile";
+        // 两个包都是 profile 层（声明 dsh.bundle）→ 装上即由 CLI 激活，无壳行。
+        let f = facts(&[HOST, WEB], &[HOST, WEB]);
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "agent-team");
 
-        // ① auto-review 声明了 dsh.bundle → 自动激活（壳不写 patch），且已装。
-        let review = rows
-            .iter()
-            .find(|r| r.label_zh.contains("Auto review"))
-            .unwrap();
-        assert_eq!(review.steps[0].activation, Activation::AutoBundle);
-        assert!(review.steps[0].installed);
-        assert!(
-            review.steps[0].version_notice.is_none(),
-            "latest 未提供则不提"
-        );
-
-        // ② Playwright 条目未装 → 须写 insert 行；且与已装的别的后端冲突。
-        let playwright = rows
-            .iter()
-            .find(|r| r.label_zh.contains("Playwright"))
-            .unwrap();
-        assert_eq!(playwright.steps[1].activation, Activation::InsertRow);
-        assert!(!playwright.steps[1].installed);
+        assert_eq!(cap.state, CapabilityState::On, "子集关系不是冲突");
+        assert_eq!(cap.active_variant.as_deref(), Some("web"), "活动档取超集");
+        let headless = variant(cap, "headless");
+        assert_eq!(headless.state, VariantState::On, "它的包确实齐了");
         assert_eq!(
-            playwright.conflict_with.as_deref(),
-            Some("@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp"),
-            "同族已装别的后端须报冲突"
+            headless.subsumed_by.as_deref(),
+            Some("web"),
+            "必须显式说明「已被 Web 档包含」，UI 据此禁用它的独立开关"
         );
-
-        // ③ 钉版本 + 错配提示（模拟 latest 落后）。
-        let web_team = rows.iter().find(|r| r.label_zh.contains("Web 档")).unwrap();
-        assert!(web_team.steps[0].spec.ends_with("@0.1.6-alpha.1"));
         assert!(
-            web_team.steps[0]
-                .version_notice
-                .as_deref()
-                .is_some_and(|n| n.contains("0.1.5-alpha.2")),
-            "latest 落后时必须提示"
+            variant(cap, "web").subsumed_by.is_none(),
+            "超集档自己不被包含"
         );
+    }
 
-        // ④ 互斥族与条目数一致，且无条目被漏掉。
-        assert_eq!(rows.len(), CATALOG.len());
-        // ⑤ 非互斥条目不得凭空报冲突。
-        assert!(rows
-            .iter()
-            .find(|r| r.label_zh.contains("Auto review"))
-            .unwrap()
-            .conflict_with
-            .is_none());
+    /// 反向护栏：**真互斥**的两族仍必须报冲突（子集豁免不得把互斥一起放过）。
+    #[test]
+    fn genuinely_exclusive_variants_still_conflict() {
+        const PW: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
+        const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", PW, CDP], &[]);
+        let rows = vec![
+            row(
+                &row_id_for("@deepseek-ai/dsh-browser-use"),
+                "@deepseek-ai/dsh-browser-use",
+                false,
+            ),
+            row(&row_id_for(PW), PW, false),
+            row(&row_id_for(CDP), CDP, false),
+        ];
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        assert_eq!(cap.state, CapabilityState::Conflict);
+        assert!(variant(cap, "playwright").subsumed_by.is_none());
+        assert!(variant(cap, "chrome-devtools").subsumed_by.is_none());
+    }
+
+    /// 同能力两个变体同时生效 = 冲突（上游会激活失败），必须单独报出来，
+    /// 而不是随便挑一个报 On。
+    #[test]
+    fn two_live_variants_report_conflict() {
+        const PW: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
+        const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", PW, CDP], &[]);
+        let rows = vec![
+            row(
+                &row_id_for("@deepseek-ai/dsh-browser-use"),
+                "@deepseek-ai/dsh-browser-use",
+                false,
+            ),
+            row(&row_id_for(PW), PW, false),
+            row(&row_id_for(CDP), CDP, false),
+        ];
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        assert_eq!(cap.state, CapabilityState::Conflict);
+        assert!(cap.active_variant.is_none(), "冲突时不得谎报单一活动变体");
+    }
+
+    /// 变体切换的预判：另一个变体的后端已装 → `displaced` 报出包名（UI 据此说
+    /// "将先替换掉谁"），而**共享的基座包不得**被算成需要替换。
+    #[test]
+    fn switching_variant_displaces_only_the_other_backend() {
+        const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", CDP], &[]);
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let cap = find(&caps, "browser-use");
+        assert_eq!(
+            variant(cap, "playwright").displaced,
+            vec![CDP.to_string()],
+            "换后端须先替换掉旧后端"
+        );
+        assert!(
+            variant(cap, "chrome-devtools").displaced.is_empty(),
+            "同一个后端自己不算被替换，基座包也不算"
+        );
+    }
+
+    /// 跨能力不互斥：装了 browser-use 不影响 computer-use 的状态判定。
+    #[test]
+    fn capabilities_do_not_leak_across() {
+        const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
+        let f = facts(&["@deepseek-ai/dsh-browser-use", CDP], &[]);
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        assert_eq!(find(&caps, "computer-use").state, CapabilityState::Off);
+        assert_eq!(find(&caps, "auto-review").state, CapabilityState::Off);
+        assert_eq!(find(&caps, "agent-team").state, CapabilityState::Off);
     }
 
     /// 运行时版本**未检出**时必须**降级而非拼坏 spec**：退回裸包名，且**必须**给出
     /// 未钉版本的显式告知（沉默会让用户以为已钉好）。
     #[test]
-    fn resolve_rows_without_runtime_version_degrades_honestly() {
-        let rows = resolve_rows(&InstalledState::default(), None);
-        let step = &rows[0].steps[0];
+    fn resolve_without_runtime_version_degrades_honestly() {
+        let caps = resolve_capabilities(&PackageFacts::default(), &[], None);
+        let step = &find(&caps, "auto-review").variants[0].steps[0];
         assert_eq!(
             step.spec, step.package,
             "版本未知时不得拼出 `pkg@` 这种坏 spec：{}",
@@ -621,5 +1083,20 @@ mod tests {
             notice.contains("未钉版本") && notice.contains("latest"),
             "告知须点明风险：{notice}"
         );
+    }
+
+    /// 钉版本落到**每一步**上（含 Agent Teams 的 web 档两步），且路径为**有序**：
+    /// 宿主层在前、Web 层在后（装反即激活失败）。
+    #[test]
+    fn every_step_carries_the_pin_in_order() {
+        let caps = resolve_capabilities(&PackageFacts::default(), &[], Some("0.1.6-alpha.1"));
+        let v = variant(find(&caps, "agent-team"), "web");
+        assert_eq!(v.steps.len(), 2);
+        for s in &v.steps {
+            assert!(s.spec.ends_with("@0.1.6-alpha.1"), "{}", s.spec);
+            assert!(s.version_notice.is_none());
+        }
+        assert!(v.steps[0].package.contains("agent-team-profile"));
+        assert!(v.steps[1].package.contains("agent-team-web-profile"));
     }
 }
