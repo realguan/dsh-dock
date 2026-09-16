@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-09-16 合并 · I1–I4 ＋ ADR-0020~0024 直合 master（`c3be5a1`，本地未推送）—— guan（AI 协作）
+
+- **触发**：维护者指示「从昨天到今天做了很多功能，先合并到主分支，再出一份验收测试文档」。
+- **合入内容**（来源分支 `refactor/experimental-capability-switches`，9 提交 / 80 文件 / +14796 −262；
+  master 此前无分叉，共同祖先 `d89780a`）：
+  · 治理：ADR-0020~0024 立项 + `docs/adr/README.md` 索引；IPC/网络登记册迁出（AGENTS §7）；
+  复现点 13–21；AGENTS §6 追加持久化键（宪法级改动，见下"流程偏离"）。
+  · I1 实验能力开关（ADR-0020，含本日两轮修订：写行前当场重判、行载荷单源 + 前置硬门 + 启动可见性）；
+  · I2 会话取消归档（ADR-0021，复用 typert 回环 RPC，不碰 `workspace.json`）；
+  · I3 MCP 能力探测（ADR-0022；stdio 走子进程、streamable-http 为**条目级**网络豁免）；
+  · I4 SSH 远程工作区向导（ADR-0023；新增 `ssh_config.rs` / `ssh_profile.rs` / `ssh_remote.rs`，
+    新登记 `~/.ssh/config` 读取域）；
+  · 插件安装源策略（ADR-0006 §6）；WebView `content-visibility` 策略移除（ADR-0002 修订）。
+- **合并方式**：`git merge --no-ff`，合并提交 `c3be5a1`；**未推送**（origin / cnb 的 master 仍为 `d89780a`）。
+- **流程偏离（如实登记）**：CONTRIBUTING §2 对**宪法级改动（`AGENTS.md`）**要求 PR + reviewer，
+  本次按维护者直接指示**本地直合 master**，未走 PR。若需回到 PR 流程，`c3be5a1` 可整体 revert
+  （分支仍在，无外部依赖）。
+- **合入前验证**（master 上重跑）：`cargo fmt --check` / `clippy --all-targets -D warnings` 干净、
+  `cargo test` **532 passed**；前端 `tsc -b` / `oxlint` 干净、`vitest` **438 passed**、`pnpm run build` 通过。
+- **配套产出**：验收清单 `docs/acceptance-2026-09-16.md`（A–H 八组、逐条可打勾；机器已验项与
+  需手点项分开标注；含一次受控复现步骤用于验证"插件行导致启动失败"的诊断与一键隔离）。
+
 ### 2026-09-16 修复 · 实验插件装上后 dsh 起不来：挂载行载荷契约 + 宿主前置硬门 + 启动可见性 —— guan（AI 协作）
 
 - **触发**：真机装完 3 个实验包后重启，工作台**再也起不来**（step3「等待服务响应超时」），
