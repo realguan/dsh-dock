@@ -928,4 +928,86 @@ mod tests {
         let err = probe_http(&file_url, Duration::from_millis(50)).unwrap_err();
         assert!(err.contains("不是 http(s) 地址"), "{err}");
     }
+
+    /// **真机端到端**（`#[ignore]`）：不可达端点必须**有界失败**且错误可读（executor F3 的机器侧）。
+    ///
+    /// 判据：`probe_http` 对"没人监听的本地端口"要在传入超时附近返回 `Err`，
+    /// 而不是挂死；错误里带得上原因（连接被拒 / 超时）。
+    /// 用法：`cargo test --lib mcp_probe::tests::unreachable_http -- --ignored --nocapture`
+    #[test]
+    #[ignore = "真机项：连本机一个没人监听的端口"]
+    fn unreachable_http_target_fails_bounded() {
+        let server = McpServerConfig {
+            name: "dead".to_string(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::BTreeMap::new(),
+            disabled: false,
+            transport: crate::mcp::McpTransport::StreamableHttp,
+            url: "http://127.0.0.1:9/mcp".to_string(),
+            headers: std::collections::BTreeMap::new(),
+        };
+        let started = std::time::Instant::now();
+        let err = probe_http(&server, Duration::from_secs(15))
+            .expect_err("不可达端点必须判失败，不得假成功");
+        let elapsed = started.elapsed();
+        eprintln!("有界失败：{elapsed:?} → {err}");
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "必须在有界时间内返回：{elapsed:?}"
+        );
+        assert!(!err.trim().is_empty(), "错误必须可读");
+    }
+
+    /// **真机端到端**（`#[ignore]`）：用**真实** stdio MCP 服务器跑完整探测。
+    ///
+    /// 为什么必须有（而不是只留人肉清单）：`docs/executor.md` F1–F9 是手工项，而本仓库
+    /// 口径是"能机器化的就别靠人记"。单测只测请求形状（真实服务器不会出现在 CI）；
+    /// 这条把「握手 → tools/list → resources/* 解析」整条链在真服务器上跑一遍。
+    ///
+    /// 用法（自备服务器入口，缺环境变量即视为跳过）：
+    /// ```sh
+    /// DSH_MCP_E2E_CMD=node \
+    /// DSH_MCP_E2E_ARGS=/abs/path/to/node_modules/@modelcontextprotocol/server-everything/dist/index.js \
+    ///   cargo test --lib mcp_probe::tests::real_stdio_server -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "真机项：需 DSH_MCP_E2E_CMD / DSH_MCP_E2E_ARGS 指向真实 stdio MCP 服务器"]
+    fn real_stdio_server_is_probed_end_to_end() {
+        let Ok(command) = std::env::var("DSH_MCP_E2E_CMD") else {
+            eprintln!("跳过：未设置 DSH_MCP_E2E_CMD");
+            return;
+        };
+        let args: Vec<String> = std::env::var("DSH_MCP_E2E_ARGS")
+            .unwrap_or_default()
+            .split(' ')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        let server = McpServerConfig {
+            name: "e2e".to_string(),
+            command,
+            args,
+            env: std::collections::BTreeMap::new(),
+            disabled: false,
+            transport: crate::mcp::McpTransport::Stdio,
+            url: String::new(),
+            headers: std::collections::BTreeMap::new(),
+        };
+        let probe = probe_stdio(&server, Duration::from_secs(30))
+            .unwrap_or_else(|e| panic!("真实服务器探测失败：{e}"));
+        assert!(
+            !probe.tools.is_empty(),
+            "真实服务器必须交出工具清单：{probe:?}"
+        );
+        eprintln!(
+            "探测成功：服务器「{}」协议 {} · 工具 {} · 资源 {} · 模板 {} · 降级说明 {:?}",
+            probe.server_name,
+            probe.protocol_version,
+            probe.tools.len(),
+            probe.resources.len(),
+            probe.templates.len(),
+            probe.notes
+        );
+    }
 }

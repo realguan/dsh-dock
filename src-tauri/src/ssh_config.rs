@@ -719,4 +719,53 @@ mod tests {
         let p = ssh_config_path(Path::new("/home/u"));
         assert!(p.ends_with(".ssh/config"), "{p:?}");
     }
+
+    /// **真机端到端**（`#[ignore]`）：对**本机真实** `~/.ssh/config` 跑一次完整解析。
+    ///
+    /// 为什么必须有：ADR-0023 §2.10 明记"无上游范本 ⇒ 正确性完全依赖实机验证"，
+    /// 而 `docs/executor.md` G1/G2 是手工项。这条把 G1/G2 的**解析侧**机器化（UI 侧仍需手点）：
+    /// 列出真实 alias，并核对"配置里出现 `Include`/`Match` 时有如实降级说明"。
+    ///
+    /// 用法：`DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored --nocapture`
+    #[test]
+    #[ignore = "真机项：需 DSH_SSH_E2E=1 且本机存在 ~/.ssh/config"]
+    fn real_user_config_parses_with_honest_notes() {
+        if std::env::var("DSH_SSH_E2E").as_deref() != Ok("1") {
+            eprintln!("跳过：未设置 DSH_SSH_E2E=1");
+            return;
+        }
+        // 真机项读**真实** home：`load_ssh_hosts` 用的是 `resolve::user_home()`，
+        // 不是测试隔离的 `user_dsh_home()`（后者在 `cfg(test)` 下锁进 `~/.dsh-dock-test`）。
+        let home = crate::resolve::user_home().expect("本机应有 home 目录");
+        let text =
+            std::fs::read_to_string(ssh_config_path(&home)).expect("本机应存在 ~/.ssh/config");
+        let parsed = parse_ssh_config(&text);
+        eprintln!(
+            "真实配置：alias {} 个 → {:?}\n降级说明（{} 条）：{:?}",
+            parsed.hosts.len(),
+            parsed
+                .hosts
+                .iter()
+                .map(|h| h.alias.as_str())
+                .collect::<Vec<_>>(),
+            parsed.notes.len(),
+            parsed.notes
+        );
+        assert!(!parsed.hosts.is_empty(), "真实配置里应有可选主机");
+        // 诚实降级：出现 `Include` / `Match` 时**必须**有对应说明，否则用户会以为列表是完整的。
+        for needle in ["Include", "Match"] {
+            let present = text.lines().any(|l| {
+                l.trim_start()
+                    .to_lowercase()
+                    .starts_with(&needle.to_lowercase())
+            });
+            if present {
+                assert!(
+                    parsed.notes.iter().any(|n| n.contains(needle)),
+                    "配置含 {needle} 时必须如实降级：{:?}",
+                    parsed.notes
+                );
+            }
+        }
+    }
 }

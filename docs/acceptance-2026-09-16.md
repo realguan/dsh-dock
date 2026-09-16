@@ -86,6 +86,64 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 
 ---
 
+## 1.5 我已完成的验收（2026-09-16，逐条给证据）
+
+> 这一节是我**自己跑过的**部分，逐条对应下面的编号。结论列只有三种：
+> ✅ = 已验过（含证据）· ⚠️ = 逻辑/文件/后端已验，**视觉或点击**仍需你一眼 ·
+> 🖐 = 只有你能验（需要活跃 Host / 真实远端主机 / Windows / 你的手）
+>
+> 复跑方式都在命令里；新增的真机项以 `#[ignore]` 常驻仓库，不再靠人记。
+
+| 编号 | 我验了什么（证据） | 结论 |
+|:--|:--|:--|
+| **A1** | 四卡数据由后端 `resolve_capabilities` 算全（Rust 24 项 + 前端 19 项 + 结构门禁 14 项）；**你已实际点过**（`plugin-op.log` 07:15–07:16 六次操作成功） | ⚠️ 布局/文案视觉待你一眼 |
+| **A2** | 后端：本机无 `cua-driver`（`command -v` 空）→ PATH 探测判缺（Rust `missing_driver_blocks_only_the_variant_that_needs_it`）；写行守卫同源拒绝；前端门禁断言 `disabled` 含 `blocked !== null` 且红字在卡面（`experimentalCapabilitiesGate.test.ts` ⑦） | ✅ 逻辑已验，视觉待你一眼 |
+| **A3** | **真机**：你的 playwright 行现为 `config: {mode: launch, headless: true}`（patch 原文）；克隆体实验证明**带 config 就就绪、去掉即退出码 1**；Rust 写入器/回填测试 3 项 | ✅ 完整验过（含你的真机操作） |
+| **A4** | **真机**：你点过两次 replace（chrome-devtools→playwright、cua-driver-mcp→native）——`plugin-op.log` 有 `remove`/`add` 记录、patch 已无坏行、15:37 就绪 | ✅ 功能已验；层类「关闭即移除」文案视觉待你一眼 |
+| **A5** | Rust `subset_variant_is_subsumed_not_conflicting` + `genuinely_exclusive_variants_still_conflict`；前端门禁 ⑤（「已包含」不提供独立开关） | ⚠️ 逻辑已验，视觉待你一眼 |
+| **A6** | 诊断链**端到端**：克隆体写缺 config 行 → dsh 34s 退出码 1，日志含解析器所需原文；分类单测用**真机日志原文**断言行 id/包名/原因；隔离只对 `dsh-dock-` 行下发（单测）；点按钮是 GUI | ✅ 诊断与判定已验；🖐 一键按钮请你点一次 |
+| **A7** | 你当前 native/playwright 组合即 On 态；「包在行缺 → 修复补 config」由 `ensure_catalog_insert_row_backfills_missing_config` 钉住 | ⚠️ 逻辑已验 |
+| **B1 / B2** | 代码核实：命令层**只有回环 RPC、无任何文件写入路径**（`workspace.json` 不被碰）；5 项单测（wire keys / 响应解析 / 业务错误 / 形状漂移 / 方法名） | 🖐 需活跃 Host + 你的点击 |
+| **C1** | **真机端到端通过**：真实 `@modelcontextprotocol/server-everything@2026.8.31` → 协议 `2025-11-25`、**13 工具 / 7 资源 / 2 模板**、3.76s（新增可复跑 `#[ignore]` 测试） | ✅ |
+| **C2** | **真机通过**：`http://127.0.0.1:9/mcp` → **2.19ms** 明确失败（有界、不挂死，新增 `#[ignore]` 测试） | ✅ |
+| **C3** | 代码核实：`forgetProbe` 在**保存**与**删除**两条路径各调用一次 + 换 profile 整批丢弃（`useEffect([profileName])`）；前端测试钉住失败分支不折叠 | ✅ 逻辑 |
+| **C4** | 后端显式报错分支存在（`commands/console.rs:248`「暂不支持 WSL 客体档…」），**无回落本地**分支 | 🖐 需你在 WSL 档点一次 |
+| **D1** | 文案原文即「Web 工作台的文件树、编辑器与终端**不会**因此变成远端感知——上游明确不支持该形态」 | ✅ 文本无过度承诺 |
+| **D2** | **真机通过**：本机 `~/.ssh/config` 解析出 **13 个 alias**，且 `Include` 的降级说明如实给出（新增可复跑 `#[ignore]` 测试） | ✅ |
+| **D3 / D4 / D5** | 需要**真实 Linux/macOS 远端主机**（helper 部署 + SHA-256）／Windows 机器 | 🖐 留给你 |
+| **E1** | 三选项键齐备（`PreferencesPane` 7 处引用）+ `settings.rs` 两键 + 默认 `auto` | ✅ 逻辑 |
+| **E2** | **真机证据**：`plugin-op.log` 今日 **6 次**安装全部带 `--registry https://registry.npmjs.org`；`~/.npmrc` **未被改写**（仍 npmmirror + `@moresec` 私有源 + `strict-ssl=false`） | ✅ |
+| **F1** | 全仓 `content-visibility` 命中 **0**；`injected/memory-policy.js` 已删；ADR-0002 已记修订 | ✅ 机械；滑动手感待你 |
+| **F2** | 失败复现时 `dsh-shell.log` **非空（20565 字节栈）**；正常启动未被拖慢（你 15:37 那次 12s 就绪）；`stall_grace` 回归单测 | ✅ 逻辑 + 计时 |
+| **G1–G5** | ADR 0020–0024 全在且 `docs/adr/README.md` 索引 24 行含一行结论；登记册 **63** 条；复现点 20/21；今日广播 4 条；`AGENTS.md` **219** 行（≤250） | ✅ |
+
+**本节新增的可复跑真机项**（`#[ignore]`，缺环境变量即跳过）：
+
+```sh
+# C1：真实 stdio MCP 服务器端到端
+DSH_MCP_E2E_CMD=node \
+DSH_MCP_E2E_ARGS=/abs/path/node_modules/@modelcontextprotocol/server-everything/dist/index.js \
+  cargo test --lib mcp_probe::tests::real_stdio_server -- --ignored --nocapture
+
+# C2：不可达端点有界失败
+cargo test --lib mcp_probe::tests::unreachable_http -- --ignored --nocapture
+
+# D2：本机真实 ~/.ssh/config 解析 + 诚实降级
+DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored --nocapture
+```
+
+**闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
+**532 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净、`vitest` **438 passed**、生产构建通过。
+
+### 留给你的（就这些）
+
+1. **A2 / A5 的视觉确认**：桌面控制那档开关是灰的且有红字原因；开 Agent Teams Web 档后自建档显示「已包含」。
+2. **A6 点一次「移除该行并重启」**（受控复现步骤见下；想跳过也行，诊断链我已验）。
+3. **B1 / B2**：有活跃 Host 时点「取消归档」；无 Host 时应报错而非改文件。
+4. **C4**：WSL 档点一次「探测」。
+5. **D3 / D4 / D5**：需要真实远端主机与 Windows 机器；`docs/executor.md` 的 **F1–F9 / G1–G11** 全表同理。
+6. **F1 手感**：长列表左右不再截断、滑动顺滑（我只能验到代码层）。
+
 ## 2. A 组 · 实验能力开关（I1，ADR-0020）
 
 > 入口：**控制中心 → 插件中心 → 子 Tab「实验能力」**。四条能力：多智能体协同 / 浏览器操作 /
