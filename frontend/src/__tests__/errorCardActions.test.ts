@@ -159,6 +159,28 @@ describe("组件接线：run() 确实经分派表调用两条 IPC", () => {
     expect(code).toContain("api.removeOfficialPatchRow(")
   })
 
+  it("异常态默认收起，但动作与影响始终可见（2026-09-16 维护者裁定）", async () => {
+    // 首屏主角 = 可点的动作 + 它会带来什么；诊断细节是"需要时才看"。
+    const src = (await import("@/components/boot/ErrorCard.tsx?raw")).default as string
+    const code = src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "")
+    expect(code, "诊断卡必须默认收起").toContain("useState(true)")
+    // 动作区在收起区**之外**（锚在代码 token 上，不靠注释放行）：
+    // 动作行（含影响文案）必须出现在 `{!collapsed && (` 之前，否则收起态看不到出路。
+    const iActions = code.indexOf("actionImpact(a)")
+    const iDetails = code.indexOf("{!collapsed && (")
+    expect(iActions, "动作区必须渲染影响文案").toBeGreaterThan(-1)
+    expect(iDetails, "找不到收起区").toBeGreaterThan(iActions)
+    // 每个可点动作都必须有影响文案（zh/en 至少一侧）——否则用户只能点一下才知道代价。
+    for (const id of INVOKABLE_ACTIONS) {
+      const zh = zhCN.error.impacts[id]
+      const en = enUS.error.impacts[id]
+      expect(zh ?? en, `动作 ${id} 缺「影响」文案`).toBeTruthy()
+    }
+  })
+
   it("动作集为空 = 没有可点的出路（不再无脑补「重试」）", async () => {
     // `payload.actions?.length ? … : ["retry"]` 会把**后端明确给的空集**变成
     // 「重试」——而插件行把插件树搞挂时重试必然再失败（摆个必然失败的按钮

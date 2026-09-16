@@ -84,6 +84,18 @@ export const enUS: AppCopy = {
       safe_mode: "Start in safe mode",
       safe_mode_reset: "Safe mode (back up & empty the patch)",
     } as Record<string, string>,
+    // Action -> **what it does** (shown next to each button on the first screen).
+    // Mirrors `ErrorCard.tsx`'s ACTION_IPC set: a new action must add copy on both sides.
+    impacts: {
+      safe_mode: "Restarts with the offending plugin rows temporarily off; no file is touched, fully reversible",
+      safe_mode_reset: "For an unparsable patch: backs it up as .bak-<timestamp>, then empties the file",
+      quarantine_plugin_row: "Deletes that row from cordis.patch.yml (auto-backed up first)",
+      retry: "Runs the exact same startup flow again",
+      upgrade: "Upgrades DSH first, then retries; touches only the pnpm/npm global, not your data",
+      upgrade_only: "Upgrades DSH only, without restarting the current session",
+      boot_in_wsl: "Starts inside WSL instead, bypassing local-mode privilege limits",
+      reselect: "Back to profile selection",
+    } as Record<string, string>,
     safeModeResetTitle: "Start in safe mode: back up and empty the plugin patch?",
     safeModeResetNote: "Use this when the patch file is unparsable and rows cannot even be listed.",
     safeModeResetPointBackup:

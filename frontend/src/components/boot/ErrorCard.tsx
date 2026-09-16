@@ -87,8 +87,10 @@ export function ErrorCard({
   const [pending, setPending] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const { copied, copy } = useCopy()
-  // 诊断卡折叠态（v1.2.0 实测 2.1）：默认展开——错误必须被看见；折叠是用户显式选择。
-  const [collapsed, setCollapsed] = useState(false)
+  // 诊断卡折叠态（2026-09-16 维护者裁定，取代 v1.2.0 的"默认展开"）：
+  // **异常态首屏给的是"能点的动作 + 这个动作会带来什么"**，诊断细节是"需要时才看"，
+  // 故默认收起。错误事实本身不会被藏：标题、一行摘要与全部动作永远在收起态里可见。
+  const [collapsed, setCollapsed] = useState(true)
   // 「安全模式（备份并放空 patch）」会动用户的 cordis.patch.yml → **必须先确认**
   // （ADR-0025 §4 方案 B；本仓对破坏性动作一律走 ConfirmDialog）。
   const [resetSafeModeOpen, setResetSafeModeOpen] = useState(false)
@@ -105,6 +107,11 @@ export function ErrorCard({
   const actionLabel = (id: string): string => {
     return t.error.actions[id] ?? id
   }
+
+  /// 动作 → **它会造成什么**（首屏必须看得见，用户不该靠点一下才知道代价）。
+  const actionImpact = (id: string): string | undefined => t.error.impacts[id]
+  /// 一行"发生了什么"：收起态也看得见事实，细节留给展开。
+  const reason = payload.detail?.split("\n").map((l) => l.trim()).find(Boolean)
 
   const run = (id: string) => {
     if (pending) return
@@ -196,10 +203,91 @@ export function ErrorCard({
         </div>
       </div>
 
-      {!collapsed && (
       <div className="p-5">
         <h2 className="text-base font-semibold tracking-tight text-ink">{title}</h2>
 
+        {/* 一行"发生了什么"：收起态也看得见错误事实 */}
+        {reason && <p className="mt-1 truncate text-xs text-dim">{reason}</p>}
+
+        {/* 首屏主角 = 可点的动作 + **它会造成什么**（维护者 2026-09-16 裁定）。
+            动作集为空 = 后端明确说"没有可点的出路"，此时不留空行。 */}
+        {(actions.length > 0 || onReselect) && (
+          <div className="mt-3.5 flex flex-col gap-2">
+            {actions.map((a) => {
+              const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only" || a === "safe_mode"
+              // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
+              // 而且会改动 profile 文件）。
+              const ActionIcon =
+                a === "quarantine_plugin_row" || a === "safe_mode" ? ShieldOff : RefreshCw
+              const impact = actionImpact(a)
+              return (
+                <div key={a} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <Button
+                    size="sm"
+                    variant={isPrimary ? "default" : "outline"}
+                    disabled={pending !== null}
+                    onClick={() => run(a)}
+                    className={`gap-1.5 ${a === "safe_mode_reset" ? "border-danger/40 text-danger" : ""}`}
+                  >
+                    {pending === a ? (
+                      <>
+                        <RefreshCw className="size-3.5 animate-spin" />
+                        <span>{actionLabel(a)}…</span>
+                      </>
+                    ) : (
+                      <>
+                        <ActionIcon className="size-3.5" />
+                        <span>{actionLabel(a)}</span>
+                      </>
+                    )}
+                  </Button>
+                  {impact && <span className="text-micro text-faint">{impact}</span>}
+                </div>
+              )
+            })}
+            {onReselect && (
+              <div className="flex items-baseline gap-2.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={pending !== null}
+                  onClick={onReselect}
+                  className="text-dim"
+                >
+                  {t.error.actions.reselect}
+                </Button>
+                {actionImpact("reselect") && (
+                  <span className="text-micro text-faint">{actionImpact("reselect")}</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {actionError && (
+          <div className="mt-3 rounded-lg bg-danger/10 p-2.5 text-xs text-danger break-words">
+            {actionError}
+          </div>
+        )}
+
+        <ConfirmDialog
+          open={resetSafeModeOpen}
+          title={t.error.safeModeResetTitle}
+          note={t.error.safeModeResetNote}
+          points={[t.error.safeModeResetPointBackup, t.error.safeModeResetPointScope]}
+          confirmLabel={t.error.safeModeResetConfirm}
+          cancelLabel={t.confirm.cancel}
+          busy={pending === "safe_mode_reset"}
+          onConfirm={() => {
+            setResetSafeModeOpen(false)
+            doRun("safe_mode_reset")
+          }}
+          onClose={() => setResetSafeModeOpen(false)}
+        />
+
+        {/* 细节默认收起（标题/摘要/动作之外的都在这）*/}
+        {!collapsed && (
+        <div className="mt-3 flex flex-col gap-3">
         {/* 错误详情 */}
         {payload.detail && (
           <div className="mt-2.5 rounded-xl border border-danger/20 bg-danger-soft/30 p-3 text-xs leading-relaxed text-dim break-words">
@@ -217,72 +305,6 @@ export function ErrorCard({
             </div>
           </div>
         )}
-
-        {actionError && (
-          <div className="mt-3 rounded-lg bg-danger/10 p-2.5 text-xs text-danger break-words">
-            {actionError}
-          </div>
-        )}
-
-        {/* 行动按钮条（动作集为空 = 后端明确说"没有可点的出路"，此时不留空行） */}
-        {(actions.length > 0 || onReselect) && (
-        <div className="mt-4 flex flex-wrap items-center gap-2.5">
-          {actions.map((a) => {
-            const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only"
-            // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
-            // 而且会改动 profile 文件）。
-            const ActionIcon = a === "quarantine_plugin_row" ? ShieldOff : RefreshCw
-            return (
-              <Button
-                key={a}
-                size="sm"
-                variant={isPrimary ? "default" : "outline"}
-                disabled={pending !== null}
-                onClick={() => run(a)}
-                className="gap-1.5"
-              >
-                {pending === a ? (
-                  <>
-                    <RefreshCw className="size-3.5 animate-spin" />
-                    <span>{actionLabel(a)}…</span>
-                  </>
-                ) : (
-                  <>
-                    <ActionIcon className="size-3.5" />
-                    <span>{actionLabel(a)}</span>
-                  </>
-                )}
-              </Button>
-            )
-          })}
-          {onReselect && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending !== null}
-              onClick={onReselect}
-              className="text-dim"
-            >
-              {t.error.actions.reselect}
-            </Button>
-          )}
-        </div>
-        )}
-
-        <ConfirmDialog
-          open={resetSafeModeOpen}
-          title={t.error.safeModeResetTitle}
-          note={t.error.safeModeResetNote}
-          points={[t.error.safeModeResetPointBackup, t.error.safeModeResetPointScope]}
-          confirmLabel={t.error.safeModeResetConfirm}
-          cancelLabel={t.confirm.cancel}
-          busy={pending === "safe_mode_reset"}
-          onConfirm={() => {
-            setResetSafeModeOpen(false)
-            doRun("safe_mode_reset")
-          }}
-          onClose={() => setResetSafeModeOpen(false)}
-        />
 
         {/* 原始终端日志折叠 */}
         {payload.log && (
@@ -321,8 +343,9 @@ export function ErrorCard({
             </div>
           </details>
         )}
+        </div>
+        )}
       </div>
-      )}
     </motion.section>
   )
 }

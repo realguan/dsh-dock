@@ -207,3 +207,19 @@
   `boot_failure::parse_failed_loader_entry`。
   **升级复核触发**：上游若给 `mode` 补默认值 / 让 `Config` 变可选 / 打包分发 `cua-driver`
   / 改为失败即快退，本节四条逐条重测（ADR-0020 §8.5）。
+- 2026-09-16 复现点 22 入册（ADR-0025，随「安全模式」落地）：**`--patch` overlay 的层栈位置与
+  停用语义**。五条以只读源码 + 克隆体实测取得：① 层栈序 `bundle → profile 层 → home 层 → --patch`，
+  各层挂载前**拍平成单列表**（`apps/cli/src/profile-boot.ts:212-219,246-249`、
+  `packages/boot/app-boot/src/index.ts:393-395`），故 overlay 可停用任何更早层的行；
+  ② `- id: x` + `disabled: true` 覆盖该行字段，**id 匹配不到只 warning 不报错**
+  （`vendor/include/src/index.ts:110-112,120-123`）——"能禁就禁"因此安全；
+  ③ `--dump-*` 只打印**永不 boot**，`--dump-default-config` 与 `--patch` **互斥**
+  （`apps/cli/src/args.ts:100-105,113-115`）；④ `$DSH_HOME/cordis.patch.yml` 是**第二个用户层**
+  且优先级高于 profile 层（`profile-boot.ts:77-79,243`）→ 救援 profile 躲不开它；
+  ⑤ **源码与构建产物分歧**：`vendor/loader/src`（@0d1f500）对坏行宽容（降级 warning），
+  而 `vendor/loader/lib`（陈旧构建，与已安装运行时**逐字节相同**）严格抛错 + 整组回滚
+  （`src/config/entry.ts:175-189`、`group.ts:56-64` vs `lib/index.js:91-125,307-309,516-529`）
+  ⇒ 本机跑的是严格版（解释 34–44s 退出）；"重构建能否消除非 required 行的致命性"**未实测**。
+  实测两条：`--dump-config − --dump-default-config` 的 id 差集恰为用户层行；语法坏时
+  `--dump-config` exit 1（故需"备份并放空"兜底）。**升级复核触发**：上游提供官方安全模式开关 /
+  loader 构建口径变化 / `--dump-*` 输出格式变更。

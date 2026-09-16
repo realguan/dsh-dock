@@ -32,6 +32,25 @@
 
 ## 三、记录
 
+### 2026-09-16 新增 · 启动失败的「安全模式」（ADR-0025）＋ 错误卡交互改版（首屏给动作与影响）—— guan（AI 协作）
+
+- **触发**：维护者要求参考官方 app 给启动失败加兜底（关掉插件再启动），并裁定范围
+  **A+**（用户层行 ＋ 第三方 bundle 层行）＋「patch 语法坏」兜底本轮一并做（须二次确认 + 备份）。
+- **机制**（零 dsh 文件改动）：`--patch` 临时 overlay 停用非随包层行，overlay 落在
+  `<app_data>/safe-mode/<profile>.yml`；退出安全模式 = 删文件（原子回退）。
+  上游机制盘点与锚点见 ADR-0025 §2（含官方 app 的 `plugins-disable-all` **只重置
+  `dsh.profile.bundles`、治不了 `cordis.patch.yml` insert 行** 这一关键差异）。
+- **链路**：`safe_mode` 模块 + `plugins::row_attributions_blocking`（与可见行表共用同一次
+  `--dump-config` 与解析器）＋ `LaunchSpec.patch_overlay` / `shell::dsh_launcher_args`
+  ＋ `terminal_action` 三个动作（safe_mode / safe_mode_exit / safe_mode_reset）。
+- **交互改版**（同日维护者第二次裁定）：诊断卡**默认收起**——首屏主角是"可点的动作 +
+  每个动作会造成什么"（按钮旁一句影响文案），错误事实（标题 + 一行摘要）与全部动作
+  在收起态依旧可见；详情/建议/原始日志收进展开区。`safe_mode_reset` 走 ConfirmDialog。
+- **登记**：ADR-0025（已采纳）＋ ADR 索引一行；复现台账**复现点 22**；AGENTS §6
+  已登记落盘资产 += `safe-mode/`。
+- **凭据**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test` **539 passed / 8 ignored**；
+  前端 `tsc` / `oxlint` 干净、`vitest` **441 passed**、生产构建通过。
+
 ### 2026-09-16 调研 · 启动失败的"安全模式"：上游机制盘点 + 我方可行性实测 + ADR-0025 草案 —— guan（AI 协作）
 
 - **触发**：维护者要求参考官方 app 给"启动报错"加一条安全模式兜底（关掉所有插件再启动）。
