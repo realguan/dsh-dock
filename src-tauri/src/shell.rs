@@ -129,7 +129,15 @@ pub enum ReadyOutcome {
 /// 20s 常不够（实测点 2 次重试才起）。这里改成：
 ///   1. 硬上限 `limit`（宽松，默认 90s）——到点仍未就绪判 `Stalled`；
 ///   2. **dsh 进程中途退出 → 立即 `Exited`**（真失败秒报，不干等满上限）；
-///   3. 进程活着但日志 `stall` 内无进展 → `Stalled`（防死等，提示卡死）。
+///   3. 进程活着但日志 `stall` 内无进展 → **先宽限 `stall_grace`，仍无输出才**
+///      `Stalled`（防死等，但必须先给失败者开口说话的机会）。
+///
+/// `stall_grace` 为什么必须有（2026-09-16 真机事故）：插件树加载失败时 **dsh 全程
+/// 零输出**，直到 boot promise 拒绝才把错误栈打到 stderr——真机实测 **34s**。
+/// 而彼时 `stall` 只有 20s：壳在 dsh 开口之前就判"卡死"、SIGKILL，`dsh-shell.log`
+/// 因此**一个字节都没有**，诊断台只能显示"详情见日志"而日志是空的——用户与开发者
+/// 同时瞎掉。宽限期的语义是"已怀疑失败，但等尸体把死因说完"：期间一旦有输出就照常
+/// 判 `Ready`/`Exited`，宽限用尽才落回 `Stalled`。
 ///
 /// 双路就绪源（2026-08-26 裁定，WSL 缓冲兜底）：
 ///   - **marker 优先**（`marker` 闭包）——WSL 用，guest_boot_script 把 dsh 输出
@@ -147,11 +155,14 @@ pub fn wait_for_ready(
     exited: &mut dyn FnMut() -> Option<i32>,
     marker: &mut dyn FnMut() -> Option<String>,
     stall: Duration,
+    stall_grace: Duration,
     limit: Duration,
 ) -> ReadyOutcome {
     let deadline = Instant::now() + limit;
     let mut scanned = 0usize;
     let mut last_grow = Instant::now();
+    // 首次越过 `stall` 的时刻；`None` = 尚未进入宽限期（期间一旦有新输出即清空）。
+    let mut stalled_since: Option<Instant> = None;
     loop {
         // marker 优先：直读客体内哨兵文件，绕开 wsl.exe stdout 缓冲。命中即 Ready。
         if let Some(text) = marker() {
@@ -177,6 +188,7 @@ pub fn wait_for_ready(
                 }
                 scanned = text.len();
                 last_grow = Instant::now();
+                stalled_since = None; // 有新输出 = 还活着在说话，退出宽限期
             }
         }
         // 会话进程先退出：不干等，立即判失败（短锁回调，不阻塞退出处理器）。
@@ -186,9 +198,15 @@ pub fn wait_for_ready(
         if Instant::now() >= deadline {
             break;
         }
-        // 进程活着但长时间没有任何新日志：疑似卡死，提示用户而不是继续死等。
+        // 进程活着但长时间没有任何新日志：疑似卡死。**先宽限**——失败者往往正是
+        // 在最后一个字都没打出来的时候挂住的（插件树加载失败即此类），静默不是
+        // 终点而是"还没开口"；宽限用尽才认卡死。
         if last_grow.elapsed() >= stall {
-            return ReadyOutcome::Stalled;
+            match stalled_since {
+                None => stalled_since = Some(Instant::now()),
+                Some(since) if since.elapsed() >= stall_grace => return ReadyOutcome::Stalled,
+                Some(_) => {}
+            }
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -440,6 +458,7 @@ mod tests {
             }),
             &mut (|| None),
             Duration::from_secs(1),
+            Duration::from_secs(1), // 宽限期（本测不需它）
             Duration::from_secs(5),
         ) {
             ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34567"),
@@ -484,10 +503,63 @@ mod tests {
             }),
             &mut (|| None),
             Duration::from_secs(5),
+            Duration::from_secs(1), // 宽限期（本测不需它）
             Duration::from_secs(3),
         ) {
             ReadyOutcome::Exited(_) => {}
             other => panic!("子进程秒退应判 Exited，得到 {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **真机事故回归**（2026-09-16，ADR-0020 §7.5）：插件树加载失败的 dsh **全程零输出**，
+    /// 直到 boot promise 拒绝才吐错误（实测 34s）。旧口径在 `stall`（20s）到点即判
+    /// `Stalled` → 壳 SIGKILL → `dsh-shell.log` 一个字节都没有 → 诊断台只能显示
+    /// "详情见日志"而日志是空的（用户与开发者同时瞎掉）。
+    ///
+    /// 本测钉住新语义：**静默 ≠ 已死**。宽限期内进程若自己退出，必须判 `Exited`
+    /// （于是调用方能拿到退出码，并把子进程最后的输出作为真实死因展示）。
+    #[test]
+    fn silent_process_that_fails_late_is_reported_as_exited_not_stalled() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-wfr-grace-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inst.log");
+        // 完全静默：连一行 "booting..." 都没有——正是事故现场的形态。
+        std::fs::write(&path, "").unwrap();
+
+        // 300ms 静默后才退出（模拟"错误只在最后才打出来"）。
+        let child = if cfg!(unix) {
+            Command::new("sh").args(["-c", "sleep 0.3; exit 7"]).spawn()
+        } else {
+            Command::new("cmd.exe")
+                .args(["/C", "ping -n 1 -w 300 127.0.0.1 >NUL & exit 7"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        }
+        .expect("spawn 模拟进程");
+        let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
+            child,
+            log_path: path.clone(),
+        }));
+        // stall=50ms（远早于进程退出）+ grace=1s：旧口径会在 50ms 就 Stalled。
+        match wait_for_ready(
+            &path,
+            &mut (|| {
+                slot.lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|d| d.child.try_wait().ok())
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            }),
+            &mut (|| None),
+            Duration::from_millis(50),
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+        ) {
+            ReadyOutcome::Exited(code) => assert_eq!(code, 7, "必须回报真实退出码"),
+            other => panic!("静默后自退必须判 Exited（不能提前 SIGKILL）：得到 {other:?}"),
         }
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -499,7 +571,7 @@ mod tests {
         let path = dir.join("inst.log");
         std::fs::write(&path, "booting...\n").unwrap();
 
-        // 进程活着（sleep 长）但日志不加内容 → 停滞阈值后判 Stalled。
+        // 进程活着（sleep 长）但日志不加内容 → 停滞阈值 + 宽限期后才判 Stalled。
         let child = if cfg!(unix) {
             Command::new("sleep").arg("30").spawn()
         } else {
@@ -526,6 +598,7 @@ mod tests {
             }),
             &mut (|| None),
             Duration::from_millis(250),
+            Duration::from_millis(500), // 宽限期：停滞后再等一会儿才认卡死
             Duration::from_secs(5),
         ) {
             ReadyOutcome::Stalled => {}
@@ -588,6 +661,7 @@ mod tests {
             }),
             &mut marker,
             Duration::from_millis(250), // stall 极短——若 marker 不命中会先 Stalled
+            Duration::from_secs(1),     // 宽限期（marker 在 80ms 就命中，走不到这里）
             Duration::from_secs(5),     // 总上限
         ) {
             ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34777"),
@@ -637,6 +711,7 @@ mod tests {
             }),
             &mut marker,
             Duration::from_millis(150),
+            Duration::from_millis(500), // 宽限期
             Duration::from_secs(3),
         ) {
             ReadyOutcome::Stalled => {}
@@ -709,6 +784,7 @@ mod tests {
             },
             &mut || None,
             Duration::from_secs(20),
+            Duration::from_secs(5), // 宽限期
             Duration::from_secs(60),
         );
         let ready = matches!(outcome, ReadyOutcome::Ready(_));

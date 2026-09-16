@@ -432,11 +432,14 @@ mod tests {
         assert_eq!(v["payload"]["args"]["request"]["sessionId"], "s1");
     }
 
-    /// 策展挂载行的写入：首写建条目、再写**幂等零改动**、且**不写 `config`**
-    /// （挂载只需 `{id, name}`；`config` 是整体替换语义，须走"先读后写"配置流）。
+    /// 策展挂载行的写入：首写建条目、再写**幂等零改动**、必需 `config` 必须落盘
+    /// （2026-09-16 真机事故修订：上游 MCP provider 的 `Config` 是必填，缺 `config`
+    /// 会让整棵 plugin tree 加载失败）。这里用真实策展包钉住载荷内容。
     #[test]
     fn ensure_catalog_insert_row_creates_then_is_idempotent() {
+        use crate::official_catalog::required_row_config;
         let home = tmp();
+        let package = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
         // dsh initProfile 的模板形态：头部注释 + 空数组。
         write(
             &home.join("profiles/p/cordis.patch.yml"),
@@ -447,7 +450,8 @@ mod tests {
             &home,
             "p",
             "dsh-dock-hello",
-            "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+            package,
+            required_row_config(package),
         )
         .unwrap();
         assert!(changed, "首次应写入");
@@ -456,19 +460,102 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# 我的注释"), "头部注释必须保住：{text}");
         assert!(text.contains("dsh-dock-hello"), "缺行 id：{text}");
+        assert!(text.contains(package), "缺包名：{text}");
         assert!(
-            text.contains("@deepseek-ai/dsh-experimental-browser-use-playwright-mcp"),
-            "缺包名：{text}"
+            text.contains("config:")
+                && text.contains("mode: launch")
+                && text.contains("headless: true"),
+            "必需 config 必须写入（缺它 dsh 起不来）：{text}"
         );
-        assert!(!text.contains("config"), "挂载行不得写 config：{text}");
 
-        // 幂等：同 id 再写 → 零改动且文本逐字节不变。
-        let again = ensure_catalog_insert_row(&home, "p", "dsh-dock-hello", "@whatever/x").unwrap();
+        // 幂等：同 id + 同包再写 → 零改动且文本逐字节不变。
+        let again = ensure_catalog_insert_row(
+            &home,
+            "p",
+            "dsh-dock-hello",
+            package,
+            required_row_config(package),
+        )
+        .unwrap();
         assert!(!again, "同 id 重复写必须零改动");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             text,
             "幂等重写不得改动文件"
+        );
+    }
+
+    /// **坏行修复路径**（2026-09-16 真机事故）：既有行缺必需 `config` 时，再写一次
+    /// 必须**就地补齐**（这正是"修复"按钮能把起不来的 profile 修好的机制），
+    /// 且不得重建第二行、不得丢掉用户在该行手写的其它键。
+    #[test]
+    fn ensure_catalog_insert_row_backfills_missing_config() {
+        use crate::official_catalog::required_row_config;
+        let home = tmp();
+        let package = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
+        // 事故现场形态：裸 `{id, name}`（缺 config）+ 用户手写的额外键。
+        write(
+            &home.join("profiles/p/cordis.patch.yml"),
+            &format!(
+                "# 头部\n- insert:\n    - id: dsh-dock-cdp\n      name: '{package}'\n      note: keep-me\n"
+            ),
+        );
+
+        let changed = ensure_catalog_insert_row(
+            &home,
+            "p",
+            "dsh-dock-cdp",
+            package,
+            required_row_config(package),
+        )
+        .unwrap();
+        assert!(changed, "缺 config 的既有行必须被判为需要修复");
+
+        let text = std::fs::read_to_string(home.join("profiles/p/cordis.patch.yml")).unwrap();
+        assert!(text.contains("mode: launch"), "必须补齐 mode：{text}");
+        assert!(text.contains("headless: true"), "必须补齐 headless：{text}");
+        assert!(
+            text.contains("note: keep-me"),
+            "用户手写键不得被抹掉：{text}"
+        );
+        assert_eq!(
+            text.matches("dsh-dock-cdp").count(),
+            1,
+            "不得重建第二行：{text}"
+        );
+
+        // 补齐后再写 → 幂等。
+        let again = ensure_catalog_insert_row(
+            &home,
+            "p",
+            "dsh-dock-cdp",
+            package,
+            required_row_config(package),
+        )
+        .unwrap();
+        assert!(!again, "config 已齐时必须零改动");
+    }
+
+    /// 无必需 `config` 的包（如 profile 层包 / native provider）行为与旧版一致：
+    /// 只写 `{id, name}`，不凭空造 `config` 键。
+    #[test]
+    fn ensure_catalog_insert_row_without_config_stays_bare() {
+        let home = tmp();
+        write(&home.join("profiles/p/cordis.patch.yml"), "# 头部\n[]\n");
+
+        let changed = ensure_catalog_insert_row(
+            &home,
+            "p",
+            "dsh-dock-native",
+            "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
+            &[],
+        )
+        .unwrap();
+        assert!(changed);
+        let text = std::fs::read_to_string(home.join("profiles/p/cordis.patch.yml")).unwrap();
+        assert!(
+            !text.contains("config"),
+            "无必需 config 的包不得被写出 config 键：{text}"
         );
     }
 
@@ -486,7 +573,8 @@ mod tests {
         );
 
         let changed =
-            ensure_catalog_insert_row(&home, "p", "dsh-dock-new", "@deepseek-ai/new-pkg").unwrap();
+            ensure_catalog_insert_row(&home, "p", "dsh-dock-new", "@deepseek-ai/new-pkg", &[])
+                .unwrap();
         assert!(changed);
 
         let text = std::fs::read_to_string(home.join("profiles/p/cordis.patch.yml")).unwrap();
@@ -1853,7 +1941,8 @@ pub fn set_plugin_disabled_in_guest(
     crate::guest::write_home_files(distro, &[(rel, next)])
 }
 
-/// 为策展条目写入**挂载行** `- insert: [{id, name}]`（2026-09-15，ADR-0020 §3.1.4）。
+/// 为策展条目写入**挂载行** `- insert: [{id, name, config?}]`（2026-09-15，ADR-0020 §3.1.4；
+/// 2026-09-16 §7.5 加必需 `config`）。
 ///
 /// **只在 `Activation::InsertRow` 时调用**：声明了 `dsh.bundle` 的包由
 /// `dsh plugin add` 自行激活，再写一条 `insert` 会**重复挂载**（行身份是 `id`）。
@@ -1864,8 +1953,14 @@ pub fn set_plugin_disabled_in_guest(
 ///   没有任何 `insert` 条目时才 `push` 一条新的 `- insert: [...]`；
 /// - **幂等**：任意 `insert` 行里已有同 `id` 即命中，**零写入**返回 `false`
 ///   （重复点按不得产生第二份实例）；
-/// - **不写 `config`**：挂载只需 `{id, name}`；`config` 键是整体替换语义
-///   （`docs/roadmap.md:31`），须由"先读后写"的配置流单独处理；
+/// - **必需 `config` 必须写**（2026-09-16 真机事故修订，取代原"一律不写 config"口径）：
+///   上游 MCP provider 的 `Config` 对浏览器族是**必填**（`mode`）、对 cua-driver 是
+///   语义必填。缺 `config` 时插件 `apply` 直接抛错 → **整棵 plugin tree 失败、dsh
+///   永不就绪**（复现：`TypeError: Cannot read properties of undefined (reading 'mode')`）。
+///   载荷单源在 [`crate::official_catalog::required_row_config`]；本函数只负责把它写对。
+///   既有坏行也按同一判据**就地补齐**（`config` 缺字段 → 补），这正是"修复"能修好的原因。
+///   `config` 键仍是**整体替换**语义（`docs/roadmap.md:31`），故只在行级 `config` 上做
+///   定向补齐，不动用户在该行里手写的其它键；
 /// - `name` 取**包名**（策展条目全来自 registry，不是本地路径）；
 /// - 一切写入经 [`PatchFile`]（覆写前备份 + 原子替换 + 未改条目原文保真）。
 ///
@@ -1875,22 +1970,48 @@ pub fn ensure_catalog_insert_row(
     profile: &str,
     row_id: &str,
     package: &str,
+    config: &[(&str, crate::official_catalog::ConfigValue)],
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
     validate_row_id(row_id)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     let mut patch = PatchFile::read(&patch_path)?;
-    let changed = apply_catalog_insert_row(&mut patch, row_id, package);
+    let changed = apply_catalog_insert_row(&mut patch, row_id, package, config);
     if changed {
         patch.write(&patch_path)?;
     }
     Ok(changed)
 }
 
+/// 把 [`crate::official_catalog::ConfigValue`] 渲染成 YAML 值（纯函数）。
+fn config_value_to_yaml(value: crate::official_catalog::ConfigValue) -> serde_yaml::Value {
+    use crate::official_catalog::ConfigValue;
+    match value {
+        ConfigValue::Str(s) => serde_yaml::Value::String(s.to_string()),
+        ConfigValue::Bool(b) => serde_yaml::Value::Bool(b),
+        ConfigValue::StrList(items) => serde_yaml::Value::Sequence(
+            items
+                .iter()
+                .map(|s| serde_yaml::Value::String((*s).to_string()))
+                .collect(),
+        ),
+    }
+}
+
 /// 纯变换（宿主 / 客体孪生共用）：把挂载行并入 patch 结构，返回是否改动。
-fn apply_catalog_insert_row(patch: &mut PatchFile, row_id: &str, package: &str) -> bool {
+///
+/// `config` 非空时：行内 `config` 的每个必需字段都补齐到目标值（缺键补、值不同改）；
+/// 行不存在时整行新建。`config` 为空时行为与旧版一致（只需 `{id, name}`）。
+fn apply_catalog_insert_row(
+    patch: &mut PatchFile,
+    row_id: &str,
+    package: &str,
+    config: &[(&str, crate::official_catalog::ConfigValue)],
+) -> bool {
     let insert_key = serde_yaml::Value::String("insert".into());
     let id_key = serde_yaml::Value::String("id".into());
+    let name_key = serde_yaml::Value::String("name".into());
+    let config_key = serde_yaml::Value::String("config".into());
 
     // —— 只读预扫：幂等命中 + 目标 `insert` 条目下标 ——
     let mut already = false;
@@ -1916,15 +2037,24 @@ fn apply_catalog_insert_row(patch: &mut PatchFile, row_id: &str, package: &str) 
         }
     }
     if already {
-        return false;
+        // 行已存在：不新建，但**补必需 config**（既有坏行的修复路径）；
+        // 该分支只用 `for_each_entry_mut` 定向改，命中即为改动。
+        return fill_required_config(patch, &insert_key, &id_key, &config_key, row_id, config);
     }
 
     let mut row = serde_yaml::Mapping::new();
     row.insert(id_key, serde_yaml::Value::String(row_id.to_string()));
-    row.insert(
-        serde_yaml::Value::String("name".into()),
-        serde_yaml::Value::String(package.to_string()),
-    );
+    row.insert(name_key, serde_yaml::Value::String(package.to_string()));
+    if !config.is_empty() {
+        let mut cfg = serde_yaml::Mapping::new();
+        for (key, value) in config {
+            cfg.insert(
+                serde_yaml::Value::String((*key).to_string()),
+                config_value_to_yaml(*value),
+            );
+        }
+        row.insert(config_key, serde_yaml::Value::Mapping(cfg));
+    }
 
     match target {
         Some(idx) => {
@@ -1960,6 +2090,65 @@ fn apply_catalog_insert_row(patch: &mut PatchFile, row_id: &str, package: &str) 
             true
         }
     }
+}
+
+/// 既有挂载行的必需 `config` 补齐：缺键即补、值不同即改，返回是否改动。
+///
+/// 找不到该行（`id` 命中但形态异常）时保守返回 `false`——不猜、不新建第二行。
+fn fill_required_config(
+    patch: &mut PatchFile,
+    insert_key: &serde_yaml::Value,
+    id_key: &serde_yaml::Value,
+    config_key: &serde_yaml::Value,
+    row_id: &str,
+    config: &[(&str, crate::official_catalog::ConfigValue)],
+) -> bool {
+    if config.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    patch.for_each_entry_mut(|_, entry| {
+        let Some(seq) = entry
+            .as_mapping_mut()
+            .and_then(|m| m.get_mut(insert_key))
+            .and_then(|v| v.as_sequence_mut())
+        else {
+            return false;
+        };
+        let mut touched = false;
+        for row in seq.iter_mut() {
+            let Some(map) = row.as_mapping_mut() else {
+                continue;
+            };
+            if map.get(id_key).and_then(|v| v.as_str()) != Some(row_id) {
+                continue;
+            }
+            // 行级 `config` 缺失 → 建；存在但不是 mapping（手写坏形态）→ 覆盖为 mapping。
+            if !map.get(config_key).is_some_and(|v| v.is_mapping()) {
+                map.insert(
+                    config_key.clone(),
+                    serde_yaml::Value::Mapping(Default::default()),
+                );
+                touched = true;
+            }
+            let Some(cfg) = map.get_mut(config_key).and_then(|v| v.as_mapping_mut()) else {
+                continue;
+            };
+            for (key, value) in config {
+                let want = config_value_to_yaml(*value);
+                let key = serde_yaml::Value::String((*key).to_string());
+                if cfg.get(&key) != Some(&want) {
+                    cfg.insert(key, want);
+                    touched = true;
+                }
+            }
+        }
+        if touched {
+            changed = true;
+        }
+        touched
+    });
+    changed
 }
 
 /// 写后自证（2026-09-15，ADR-0020）：在 dump-config 行表里确认策展挂载行**真的在

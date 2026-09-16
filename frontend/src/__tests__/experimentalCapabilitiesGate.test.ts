@@ -130,7 +130,9 @@ describe("⑤ 子集档（Agent Teams 的两档）不得被当成互斥后端", 
     // 装 Web 档时子集档的包必然也齐 —— 那不是"两个后端并列"，报"冲突"是误报。
     const dock = src
     expect(dock).toContain("subsumedBy")
-    expect(dock, "开关必须因被包含而禁用").toMatch(/disabled=\{busy \|\| subsumedBy !== null\}/)
+    expect(dock, "开关必须因被包含而禁用").toMatch(
+      /disabled=\{busy \|\| subsumedBy !== null( \|\| blocked !== null)?\}/,
+    )
     expect(dock, "被包含的档不得提供冲突修复入口").toMatch(
       /!subsumedBy[\s\S]{0,40}variant\.state === "partial"/,
     )
@@ -138,6 +140,19 @@ describe("⑤ 子集档（Agent Teams 的两档）不得被当成互斥后端", 
     // 状态徽标要显式说"已包含"，而不是照抄底层 On/Disabled。
     expect(dock).toMatch(/if \(variant\.subsumedBy\) \{/)
     expect(dock).toContain("capStateSubsumed")
+  })
+})
+
+describe("⑦ 宿主前置缺失 = 硬门（2026-09-16 真机事故）", () => {
+  it("前置缺失时开关禁用，且把后端给的原因**露在卡面上**（不是藏在折叠详情里）", () => {
+    // 事故：缺 cua-driver 时装上 cua-driver-mcp → dsh 插件树加载失败 → 工作台起不来。
+    // 所以这不是"提示"，是门：禁用开关 + 说明为什么灰。
+    expect(src).toMatch(/const blocked = variant\.prerequisiteMissing/)
+    expect(src, "前置缺失必须并入 Switch 的 disabled").toMatch(
+      /disabled=\{busy \|\| subsumedBy !== null \|\| blocked !== null\}/,
+    )
+    // 原因必须在标题下方（第一眼可见），且用警示色——原样展示后端文案（禁前端自造）。
+    expect(src).toMatch(/\{blocked && <p className="[^"]*text-danger[^"]*">\{blocked\}<\/p>\}/)
   })
 })
 

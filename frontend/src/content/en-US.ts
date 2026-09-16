@@ -77,6 +77,9 @@ export const enUS: AppCopy = {
       // `vec!["boot_in_wsl", "retry"]`. Without this key the label falls back to
       // the raw English id `boot_in_wsl` (`actionLabel`'s `?? id`).
       boot_in_wsl: "Switch to WSL mode",
+      // 2026-09-16: in-place way out when a plugin's mount row breaks the plugin tree
+      // (remove that row, then restart). Contract: boot_failure.rs::with_quarantine.
+      quarantine_plugin_row: "Remove the row & restart",
     } as Record<string, string>,
     // Failure-detail suffix (2026-09-11, task-25): was an inline literal in the
     // component. ASCII parens + a leading space (zh uses full-width parens, which

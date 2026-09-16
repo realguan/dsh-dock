@@ -52,6 +52,7 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       suggestion: true,
       actions: true,
       log: true,
+      quarantine: true,
     })
   })
 

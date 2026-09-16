@@ -32,6 +32,38 @@
 
 ## 三、记录
 
+### 2026-09-16 修复 · 实验插件装上后 dsh 起不来：挂载行载荷契约 + 宿主前置硬门 + 启动可见性 —— guan（AI 协作）
+
+- **触发**：真机装完 3 个实验包后重启，工作台**再也起不来**（step3「等待服务响应超时」），
+  且 `dsh-shell.log` **0 字节**——诊断台显示「详情见日志」，而日志是空的。
+- **根因（隔离复现，未动现场）**：克隆 dsh home（`cp -Rc`）后拿到真实死因，退出码 1、**34 s**：
+  ① 浏览器族 MCP provider 的 `Config` 里 `mode` 是**必填**，壳原先只写 `{id, name}` →
+  `TypeError: Cannot read properties of undefined (reading 'mode')`；
+  ② `cua-driver-mcp` 需要外部 `cua-driver` 可执行文件（本机没有）→ `spawn cua-driver ENOENT`；
+  两者都让**整棵 plugin tree 拒绝加载**。③ 壳的停滞判定只有 20 s，**在 dsh 开口前就 SIGKILL**
+  ——所以日志是空的（这是"没有真实日志"的真正原因）。
+- **修复**（ADR-0020 §8，含 D8/D9/D10 三条缺陷）：
+  · **行载荷单源** `official_catalog::required_row_config`（3 条：两个浏览器档
+  `{mode: launch, headless: true}`、cua-driver MCP `{command: cua-driver, args: [mcp]}`）；
+  既有坏行**就地补齐**（幂等、保留用户手写键、不重建第二行）→「修复」能真正修好；
+  · **宿主前置硬门**（前后端各一道）：缺 `cua-driver` 时前端禁用开关并露原因，
+  `apply_official_patch_row` **同样拒绝写行**（前端是呈现，不是闸门）；
+  · **静默 ≠ 已死**：`wait_for_ready` 加 `stall_grace`（20 + 25 s），进程自退即判 `Exited`
+  并取回真实错误栈；
+  · **错误卡点名 + 就地修**：`BootFailure::PluginRowFailed{row_id,package,cause}` 解析上游
+  `failed to apply loader entry …`（逐处扫，`include` 那条不算行 id），行归壳所有时下发
+  `quarantine_plugin_row` → 一键「移除该行并重启」；该类失败**不给 `retry`**（必然再失败）。
+- **契约面**：无新增 IPC 命令（复用 `remove_official_patch_row`）、无新增网络面；
+  `BootErrorPayload` 加 `quarantine` 字段 → **形状闸门要求同步 `ipc-shapes.json` + TS 接口**
+  （已同步，闸门 `ipc_struct_shapes_match_fixture` / `ipcShapes.test.ts` 全绿）。
+- **登记**：ADR-0020 §8（第三次修订）；`docs/contracts/dsh-behavior-ledger.md` 复现点 21。
+- **凭据**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test` **532 passed**；
+  前端 `tsc` / `oxlint` 干净、`vitest` **438 passed**、生产构建通过；
+  真机等价验证：克隆体写入**带 config** 的 chrome-devtools 行 → 就绪 URL 正常（去掉 config
+  即复现退出码 1）。
+- **现场处理**：用户 dev home 的 `cordis.patch.yml` 已摘掉两条坏行（备份
+  `cordis.patch.yml.bak-lead-repair-*`），验证就绪。
+
 ### 2026-09-16 新增 · 插件安装源选择策略（官方优先 / 失败换源 / 成功记忆 / 偏好可固定）—— guan（AI 协作）
 
 - **触发**：真机装实验性插件大面积失败——`@deepseek-ai/dsh-experimental-*` 的部分 provider

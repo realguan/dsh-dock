@@ -418,9 +418,10 @@ mod gate_tests {
                 },
                 title: "",
                 detail: String::new(),
-                suggestion: "",
+                suggestion: String::new(),
                 actions: Vec::new(),
                 log: String::new(),
+                quarantine: None,
             }
         );
         assert_shape!(

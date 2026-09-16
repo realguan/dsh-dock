@@ -358,3 +358,71 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
 `dsh plugin add` 成为 profile 层）、`ptc-runtime-python`（需自备 CPython ≥3.10，且与
 workflow 互斥、无随附 profile 启用）、`webworker-*` / `browser-use-runtime`（库或构建工具，
 不可挂载）。
+
+## 8. 第三次修订（2026-09-16）：挂载行**载荷契约**、宿主前置硬门与启动可见性
+
+### 8.1 事故
+
+用户装完 3 个实验包（`browser-use` / `computer-use` / `chrome-devtools-mcp`）后重启，
+**工作台再也起不来**：启动页停在 step3「等待服务响应超时」，`dsh-shell.log` **0 字节**，
+诊断台只能显示「详情见日志」——而日志是空的（用户与开发者同时瞎掉）。
+
+隔离复现（`cp -Rc` 克隆 dev home，未动现场）后拿到真实死因，退出码 1、34 s：
+
+```text
+Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): loader entries failed to apply
+Error: failed to apply loader entry dsh-dock--…-computer-use-cua-driver-mcp (@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp): mcp-client(cua-driver-mcp): initial connection or tool synchronization failed
+Error: spawn cua-driver ENOENT
+Error: failed to apply loader entry dsh-dock--…-browser-use-chrome-devtools-mcp (…): Cannot read properties of undefined (reading 'mode')
+TypeError: Cannot read properties of undefined (reading 'mode') at validateBrowserMcpConfig (…/browser-use-runtime/lib/types/mcp.js:26)
+```
+
+### 8.2 缺陷
+
+| # | 缺陷 | 根因 |
+|:---|:---|:---|
+| D8 | 挂载行**只写 `{id, name}`** → 上游 MCP provider 的 `Config` 是**必填**（浏览器族 `mode`），`apply` 直接抛 TypeError | §3.1.4 的「挂载行不写 `config`」口径对**这类包**不成立：`config` 虽是整体替换语义，但**必需字段**必须由壳写 |
+| D9 | `cua-driver-mcp` 未检前置即允许安装：缺 `cua-driver` 可执行文件时 `spawn … ENOENT` → 整棵树失败 | 上游原文即"仅在 Cua Driver 已安装时选用"；壳只把它写成提示语，**没有门** |
+| D10 | `BOOT_STALL` = 20 s，而 dsh 报此类错误要 **34 s** → 壳在 dsh 开口前判「卡死」并 SIGKILL，日志全空 | 停滞判定把"还没开口"当成了"已经死了" |
+
+### 8.3 决策
+
+1. **行载荷单源**：`official_catalog::required_row_config(package)` 是挂载行 `config` 的
+   **唯一来源**（现 3 条：两个浏览器 MCP 档 `{mode: launch, headless: true}`；cua-driver
+   MCP `{command: cua-driver, args: [mcp]}`），`plugins::ensure_catalog_insert_row`
+   只负责写对。依据 = 上游各包 README 的「Minimal configuration」原文。
+2. **既存坏行可就地补齐**：`config` 缺字段 → 补，值不同 → 改；用户在该行手写的其它键
+   不动、不重建第二行、幂等；命中即为 `changed: true`——这正是「修复」能把起不来的
+   profile 修好的机制。
+3. **宿主前置是硬门**（前后端各一道）：`required_command(package)` 声明前置可执行文件，
+   命令层经 **dsh 子进程同源 PATH**（`resolve::command_available` + `dsh_child_path`）探测；
+   - `list_experimental_capabilities` 下发 `VariantView.prerequisite_missing`（后端文案）；
+   - 前端**禁用开关**并把原因露在卡面上（不折叠在详情里）；
+   - `apply_official_patch_row` **同样拒绝写行**（前端是呈现，不是闸门）。
+4. **静默 ≠ 已死**：`wait_for_ready` 新增 `stall_grace`（`BOOT_STALL_GRACE` = 25 s）——
+   停滞到点先宽限，期间进程若自行退出即判 `Exited(code)` 并取回真实错误栈；宽限用尽才
+   `Stalled`。20 + 25 = 45 s 覆盖实测 34 s，硬上限仍是 `BOOT_TIMEOUT`（90 s）。
+5. **错误卡点名 + 就地修**：`boot_failure` 新增 `PluginRowFailed { row_id, package, cause }`
+   （解析上游那句 `failed to apply loader entry <id> (<pkg>): <cause>`，**逐处扫描**——同段
+   日志里 `include` 那条不是行 id）；建议文案点名行 id；行归壳所有（`dsh-dock-` 前缀）时
+   下发 `actions=["quarantine_plugin_row"]` + `quarantine={profile,rowId}`，前端一键
+   「移除该行并重启」（`remove_official_patch_row` → `terminalAction("retry")`）。
+   **不给 `retry`**：同一行必然再失败，摆一个必然失败的按钮等于教用户白点一次。
+
+### 8.4 后果
+
+- **正面**：目录里每个可安装变体现在都"装得上且起得来"（真机等价验证：克隆体写入带
+  `config` 的 chrome-devtools 行 → 就绪 URL 正常；去掉 `config` → 复现退出码 1）；
+  起不来时用户第一次能看见**真实死因**并一键回到可用状态；该类失败不再落 `unknown` 兜底。
+- **负面 / 新增债务**：
+  - 行载荷表随上游 README 漂移（三条，锚点入台账），dsh 升级须复核；
+  - 前置探测按 PATH 判定，装在与 dsh 子进程 PATH 不同的位置时会被判「缺」（保守方向：
+    宁可挡住，也不产生起不来的 profile）；`resolve_toolchain` 失败时同样按缺处理；
+  - **自动隔离兜底未做**（启动失败即自动移除 + 单次自重试），本轮给的是**用户可见的
+    一键**；若同类事故再现则重开。
+
+### 8.5 复审条件
+
+- 上游为 MCP provider 补默认 `mode`、或让 `Config` 变可选 → 行载荷表可减；
+- `cua-driver` 改为随包分发（如同 native 档自包含）→ 前置门可撤；
+- 启动等待口径再调（如 dsh 改为「失败即快退」）→ `stall_grace` 复评。

@@ -70,6 +70,7 @@ function variant(over: Partial<CapabilityVariant> = {}): CapabilityVariant {
     subsumedBy: null,
     toggleOffSupported: true,
     displaced: [],
+    prerequisiteMissing: null,
     ...over,
   }
 }

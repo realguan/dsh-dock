@@ -187,3 +187,23 @@
   （`four_rows_are_written_with_ssh_first`）。**注**：本行不含"装第二个同族 provider 会激活失败"
   一类**互斥族**结论——那是 ADR-0020/复现点 13 的范围，本功能不涉及。
 - 2026-09-16 实验能力开关重构：复现点 20 入册（上游无运行时 feature flag；「关而不卸」= 行级 `disabled`；层类能力须走 `remove` 才干净；分类只能在包已装后判定）。
+- 2026-09-16 复现点 21 入册（ADR-0020 §8，随「挂载行载荷 + 前置门 + 启动可见性」落地）：
+  **MCP provider 的行载荷是必填契约，且失败是"零输出 + 迟报"**。四项事实全部以真机
+  隔离复现（`cp -Rc` 克隆 dsh home，未动用户现场）取得，不靠文档推断：
+  ① 浏览器族 MCP provider 的 `Config` 里 `mode` 为 **required**（`launch` / `attach`），
+  缺 `config` 时 `apply` 拿到 `undefined` → `TypeError: Cannot read properties of
+  undefined (reading 'mode')`（`browser-use-runtime/lib/types/mcp.js:26` `validateBrowserMcpConfig`，
+  锚上游 `packages/experimental/browser-use-runtime/src/types/mcp.ts` 的 `BrowserMcpConfig` 联合）；
+  ② `cua-driver-mcp` 的 `Config.command` 默认 `cua-driver`，缺该可执行文件时
+  `spawn cua-driver ENOENT` → `mcp-client(cua-driver-mcp): initial connection or tool
+  synchronization failed`（锚 `packages/experimental/computer-use-cua-driver-mcp/README.md`
+  「Choose this provider when Cua Driver is already installed」）；
+  ③ 二者都表现为**整棵 plugin tree 拒绝加载**：`dsh: plugin tree failed to load: failed to
+  apply loader entry include (cordis:include): loader entries failed to apply`，且
+  **全程零 stdout/stderr**——错误只在 boot promise 拒绝时打印，实测 `--profile web --port 0
+  --no-open` **34 s 后退出码 1**（这是"壳 20 s 判卡死 → SIGKILL → 日志全空"的直接成因）；
+  ④ 上游日志里同时出现两条 `failed to apply loader entry …`，第一条的 `include` 是 loader
+  条目名**不是行 id**——解析必须逐处扫并按行 id 形态（含 `-`）过滤，壳侧据此实现
+  `boot_failure::parse_failed_loader_entry`。
+  **升级复核触发**：上游若给 `mode` 补默认值 / 让 `Config` 变可选 / 打包分发 `cua-driver`
+  / 改为失败即快退，本节四条逐条重测（ADR-0020 §8.5）。

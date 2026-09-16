@@ -92,6 +92,81 @@ pub fn pinned_spec(package: &str, version: &str) -> String {
     format!("{package}@{version}")
 }
 
+// ---------- 挂载行的必需载荷与宿主前置（2026-09-16 真机事故后立，ADR-0020 §7.5） ----------
+
+/// 挂载行 `config:` 的字段值（只覆盖策展集实际需要的三种形态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigValue {
+    Str(&'static str),
+    Bool(bool),
+    StrList(&'static [&'static str]),
+}
+
+/// 浏览器类 MCP provider 的**启动型**配置：上游 `BrowserMcpConfig` 把 `mode` 定为
+/// **必填**（`launch` / `attach`），缺 `config` 时插件的 `apply` 直接抛 TypeError。
+const BROWSER_LAUNCH_CONFIG: &[(&str, ConfigValue)] = &[
+    ("mode", ConfigValue::Str("launch")),
+    ("headless", ConfigValue::Bool(true)),
+];
+
+/// cua-driver MCP provider 的显式命令配置（上游 README 的最小配置原文）。
+const CUA_DRIVER_MCP_CONFIG: &[(&str, ConfigValue)] = &[
+    ("command", ConfigValue::Str("cua-driver")),
+    ("args", ConfigValue::StrList(&["mcp"])),
+];
+
+/// 包 → 作为挂载行时**必须**写进 `config:` 的字段。
+///
+/// **为什么这是一张必须存在的表**（2026-09-16 真机事故）：上游对 MCP provider 的
+/// `Config` 是**必填**（浏览器族 `mode: launch|attach`）或**语义必填**（cua-driver 的
+/// `command`）。壳原先一律只写 `{id, name}`，于是
+/// `browser-use-chrome-devtools-mcp` 在 `apply` 里 `config` 为 `undefined` →
+/// `TypeError: Cannot read properties of undefined (reading 'mode')` → **整棵 plugin tree
+/// 加载失败** → dsh 永不就绪（真机复现：`profiles/web/cordis.patch.yml` 两行坏行，
+/// 启动 34s 后退出码 1）。上游 README 的最小配置即本表来源，随 dsh 升级须复核。
+const ROW_CONFIGS: &[(&str, &[(&str, ConfigValue)])] = &[
+    (
+        "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+        BROWSER_LAUNCH_CONFIG,
+    ),
+    (
+        "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
+        BROWSER_LAUNCH_CONFIG,
+    ),
+    (
+        "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
+        CUA_DRIVER_MCP_CONFIG,
+    ),
+];
+
+/// 包 → 它要求宿主**先具备**的可执行文件。
+///
+/// `cua-driver-mcp` 只负责连一个**已安装**的 Cua Driver（上游原文：安装与桌面权限归
+/// Cua Driver 自己）。缺了它，插件在 `apply` 里 `spawn cua-driver` → `ENOENT` →
+/// 同样是整棵 plugin tree 失败。故它必须在前置未满足时**拒绝安装**，而不是装完
+/// 把 profile 弄成起不来。自包含的那档（`cua-driver-native`）无此要求。
+const PACKAGE_REQUIRES_COMMAND: &[(&str, &str)] = &[(
+    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
+    "cua-driver",
+)];
+
+/// 该包作为挂载行时的必需 `config:` 载荷；空切片 = 只需 `{id, name}`。
+pub fn required_row_config(package: &str) -> &'static [(&'static str, ConfigValue)] {
+    ROW_CONFIGS
+        .iter()
+        .find(|(name, _)| *name == package)
+        .map(|(_, fields)| *fields)
+        .unwrap_or(&[])
+}
+
+/// 该包要求的宿主可执行文件（`None` = 无前置）。
+pub fn required_command(package: &str) -> Option<&'static str> {
+    PACKAGE_REQUIRES_COMMAND
+        .iter()
+        .find(|(name, _)| *name == package)
+        .map(|(_, cmd)| *cmd)
+}
+
 // ---------- 策展集：能力 → 变体 ----------
 
 /// 能力下的一个**可选后端**（同能力变体互斥：同一时刻只应有一个生效）。
@@ -369,6 +444,14 @@ pub struct VariantView {
     /// 同能力**其它**变体已装、而本变体不含的后端包；非空 = 启用本变体需先替换掉它们
     /// （同族并存会激活失败）。
     pub displaced: Vec<String>,
+    /// 本变体要求的宿主可执行文件**缺失**（`None` = 前置齐备）——非空时前端必须
+    /// **禁用开关**并原样展示这句话。
+    ///
+    /// 为什么是一个硬门而不是提示（2026-09-16 真机事故）：缺 `cua-driver` 时装上
+    /// 该 provider，dsh 会在插件树加载阶段 `spawn cua-driver` → `ENOENT` →
+    /// **整棵 plugin tree 失败、dsh 永不就绪**。也就是说"能装上"的代价是"profile 起不来"，
+    /// 那就不该让用户装上——提示语不够，得挡住。
+    pub prerequisite_missing: Option<String>,
 }
 
 /// 能力的事实视图。
@@ -407,6 +490,11 @@ pub struct PackageFacts {
     pub installed: Vec<String>,
     /// 已装并**声明 `dsh.bundle`** 的包名（激活分类的唯一依据）。
     pub declared_bundles: Vec<String>,
+    /// 策展集要求、但**宿主 PATH 中找不到**的可执行文件名（由调用方探测后填入）。
+    ///
+    /// 判据单源在 [`required_command`]（包 → 前置命令）；本字段只是"探测结果"，
+    /// 让 `resolve_capabilities` 保持纯函数（不碰文件系统）。
+    pub missing_commands: Vec<String>,
 }
 
 /// 判断某能力的某变体现在处于什么状态，以及开/关/移除各需要哪些行级目标。
@@ -504,6 +592,23 @@ pub fn resolve_capabilities(
                         .map(|p| (*p).to_string())
                         .collect();
 
+                    // 宿主前置：本变体任一包要求某个可执行文件而它不在 PATH 里 → 硬门。
+                    // 全变体一起判（如 cua-driver-mcp 与 native 档都要 `@deepseek-ai/dsh-computer-use`，
+                    // 但只有前者要求外部可执行文件——单源是 required_command 的包级表）。
+                    let prerequisite_missing = variant.packages.iter().find_map(|package| {
+                        let command = required_command(package)?;
+                        facts
+                            .missing_commands
+                            .iter()
+                            .any(|missing| missing == command)
+                            .then(|| {
+                                format!(
+                                    "本机 PATH 中找不到「{command}」——装上会让 dsh 在加载插件时\
+                                     直接失败、工作台起不来。请先装好它（或改用自包含的那一档）"
+                                )
+                            })
+                    });
+
                     VariantView {
                         id: variant.id.to_string(),
                         label_zh: variant.label_zh.to_string(),
@@ -518,6 +623,7 @@ pub fn resolve_capabilities(
                         toggle_off_supported,
                         displaced,
                         subsumed_by: None,
+                        prerequisite_missing,
                     }
                 })
                 .collect();
@@ -648,10 +754,20 @@ mod tests {
     }
 
     /// 只有**声明** `dsh.bundle` 的包已装时才允许出现，故测试里要同时给两份清单。
+    /// 宿主前置默认齐备（`missing_commands` 空）；要测门否决时用 [`facts_missing`]。
     fn facts(installed: &[&str], bundles: &[&str]) -> PackageFacts {
         PackageFacts {
             installed: installed.iter().map(|s| pkg(s)).collect(),
             declared_bundles: bundles.iter().map(|s| pkg(s)).collect(),
+            missing_commands: Vec::new(),
+        }
+    }
+
+    /// 同 [`facts`]，但把给定可执行文件标成"宿主 PATH 里没有"。
+    fn facts_missing(installed: &[&str], bundles: &[&str], missing: &[&str]) -> PackageFacts {
+        PackageFacts {
+            missing_commands: missing.iter().map(|s| pkg(s)).collect(),
+            ..facts(installed, bundles)
         }
     }
 
@@ -1098,5 +1214,87 @@ mod tests {
         }
         assert!(v.steps[0].package.contains("agent-team-profile"));
         assert!(v.steps[1].package.contains("agent-team-web-profile"));
+    }
+
+    /// **配置载荷与前置命令的表不得悬空**（2026-09-16 真机事故的对偶约束）：
+    /// 表里的每个包名都必须在策展集里真的出现——否则那是一段"看着有、其实永不生效"
+    /// 的死数据（本仓库明令禁止的死路径）。
+    #[test]
+    fn row_config_and_prerequisite_tables_only_name_catalog_packages() {
+        let catalog: Vec<&str> = CAPABILITIES
+            .iter()
+            .flat_map(|c| c.variants.iter())
+            .flat_map(|v| v.packages.iter().copied())
+            .collect();
+        for (package, fields) in ROW_CONFIGS {
+            assert!(
+                catalog.contains(package),
+                "ROW_CONFIGS 里的「{package}」不在策展集中（死数据）"
+            );
+            assert!(!fields.is_empty(), "「{package}」的 config 表为空");
+        }
+        for (package, command) in PACKAGE_REQUIRES_COMMAND {
+            assert!(
+                catalog.contains(package),
+                "PACKAGE_REQUIRES_COMMAND 里的「{package}」不在策展集中（死数据）"
+            );
+            assert!(!command.trim().is_empty(), "「{package}」的前置命令为空");
+        }
+    }
+
+    /// 浏览器族 MCP provider **必须**带上游要求的 `mode`（缺它 dsh 起不来）。
+    #[test]
+    fn browser_mcp_providers_require_mode_in_row_config() {
+        for package in [
+            "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+            "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
+        ] {
+            let fields = required_row_config(package);
+            let mode = fields
+                .iter()
+                .find(|(key, _)| *key == "mode")
+                .unwrap_or_else(|| panic!("「{package}」必须写 mode"));
+            assert_eq!(mode.1, ConfigValue::Str("launch"));
+        }
+        assert!(
+            required_row_config("@deepseek-ai/dsh-experimental-computer-use-cua-driver-native")
+                .is_empty(),
+            "native 档无配置字段，不得凭空写 config"
+        );
+    }
+
+    /// 宿主前置缺失 = **硬门**：缺 `cua-driver` 时只有"复用已装 cua-driver"那档被挡，
+    /// 自包含档不受影响；前置齐备时两档都不报缺。
+    #[test]
+    fn missing_driver_blocks_only_the_variant_that_needs_it() {
+        let caps = resolve_capabilities(
+            &facts_missing(&[], &[], &["cua-driver"]),
+            &[],
+            Some("0.1.6-alpha.1"),
+        );
+        let cap = find(&caps, "computer-use");
+        let blocked = variant(cap, "cua-driver-mcp");
+        let reason = blocked
+            .prerequisite_missing
+            .as_deref()
+            .expect("缺 cua-driver 必须报前置未满足");
+        assert!(
+            reason.contains("cua-driver"),
+            "原因必须点名缺什么：{reason}"
+        );
+        assert!(
+            variant(cap, "cua-driver-native")
+                .prerequisite_missing
+                .is_none(),
+            "自包含档无外部前置，不得被一起挡掉"
+        );
+
+        let ok = resolve_capabilities(&facts(&[], &[]), &[], Some("0.1.6-alpha.1"));
+        assert!(
+            variant(find(&ok, "computer-use"), "cua-driver-mcp")
+                .prerequisite_missing
+                .is_none(),
+            "前置齐备时不得报缺"
+        );
     }
 }

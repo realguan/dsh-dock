@@ -534,6 +534,9 @@ function CapabilityCard({
     cap.activeVariant !== null && cap.activeVariant !== variant.id
       ? cap.variants.find((v) => v.id === cap.activeVariant)
       : undefined
+  // 宿主前置缺失（2026-09-16 真机事故）：开关必须**禁用**，并把后端给的这句话原样展示。
+  // 只做提示是不够的——这类包装上去的代价是"工作台起不来"，用户根本没有回退余地。
+  const blocked = variant.prerequisiteMissing
 
   return (
     <article className="rounded-xl border border-line bg-panel p-4 shadow-2xs transition-shadow hover:shadow-xs">
@@ -561,13 +564,16 @@ function CapabilityCard({
               </p>
             )
           )}
+          {/* 前置缺失：说明**为什么开关是灰的**。放在标题下（不在折叠详情里）——
+              用户第一眼看见的就是它，不必展开才知道装不了。 */}
+          {blocked && <p className="mt-1 text-micro text-danger">{blocked}</p>}
         </div>
 
         <div className="flex shrink-0 items-center gap-2.5">
           <Switch
             aria-label={t.market.capSwitchLabel(cap.labelZh)}
             checked={on}
-            disabled={busy || subsumedBy !== null}
+            disabled={busy || subsumedBy !== null || blocked !== null}
             onCheckedChange={(next) => onToggle(cap, variant, next)}
           />
           <button

@@ -53,6 +53,17 @@ describe("动作 id → IPC 分派（防「假按钮」回归）", () => {
     expect(resolveActionCall("definitely_not_an_action")).toBeNull()
     expect(resolveActionCall("")).toBeNull()
   })
+
+  it("quarantine_plugin_row 走 quarantineRow —— 不是 terminalAction（2026-09-16）", () => {
+    // 契约：boot_failure.rs::with_quarantine —— 插件行把插件树搞挂时就地移除该行。
+    // 它调的是 `remove_official_patch_row`（另一条 IPC），故必须有独立分派目标；
+    // 落到 `terminalAction` 会变成"重试同一张坏 profile"。
+    expect(resolveActionCall("quarantine_plugin_row")).toEqual({
+      kind: "invoke",
+      ipc: "quarantineRow",
+    })
+    expect(INVOKABLE_ACTIONS.has("quarantine_plugin_row")).toBe(true)
+  })
 })
 
 describe("新增 kind 的文案键齐备（中英对称）", () => {
@@ -95,6 +106,16 @@ describe("新增 kind 的文案键齐备（中英对称）", () => {
     expect(CJK.test(String(enLabel)), "en 文案含中文").toBe(false)
   })
 
+  it("隔离动作的文案键齐备（缺了会显示英文 id）", () => {
+    const zhLabel = zhCN.error.actions["quarantine_plugin_row"]
+    const enLabel = enUS.error.actions["quarantine_plugin_row"]
+    expect(zhLabel, "缺 zh 文案 ⇒ 用户会看到英文 id").toBeTruthy()
+    expect(enLabel).toBeTruthy()
+    expect(zhLabel).not.toBe("quarantine_plugin_row")
+    expect(enLabel).not.toBe("quarantine_plugin_row")
+    expect(CJK.test(String(enLabel)), "en 文案含中文").toBe(false)
+  })
+
   it("所有契约中的 failure kind 都有本地化文案（防新增 kind 漏配）", () => {
     // 与 Rust `BootFailureKind` 序列化值逐一对应（D1 §5 跨层契约）
     const allKinds: BootFailureKind[] = [
@@ -134,6 +155,21 @@ describe("组件接线：run() 确实经分派表调用两条 IPC", () => {
     expect(castCount, "id as TerminalAction 应只在 terminalAction 分支出现一次").toBe(1)
     // 5) 反向断言：剥离注释后仍保留真实结构（防过度剥离假绿）
     expect(code).toContain("export function resolveActionCall")
+    // 6) 隔离路径真的接了删除 IPC（不是只有一张分派表）
+    expect(code).toContain("api.removeOfficialPatchRow(")
+  })
+
+  it("动作集为空 = 没有可点的出路（不再无脑补「重试」）", async () => {
+    // `payload.actions?.length ? … : ["retry"]` 会把**后端明确给的空集**变成
+    // 「重试」——而插件行把插件树搞挂时重试必然再失败（摆个必然失败的按钮
+    // 等于教用户白点一次）。故必须是 `?? ["retry"]`：只有旧缓存载荷才回退。
+    const src = (await import("@/components/boot/ErrorCard.tsx?raw")).default as string
+    const code = src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "")
+    expect(code).toContain('const actions = payload.actions ?? ["retry"]')
+    expect(code).not.toContain("payload.actions?.length")
   })
 
   it("actionLabel 仍对未知 id 兜底展示原文（不静默吞掉）", () => {

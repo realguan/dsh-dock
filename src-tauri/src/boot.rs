@@ -359,8 +359,14 @@ pub(crate) fn run_executor_session(
         // ——时间线上「启动工作台」永挂 loading 而「等待就绪」凭空 done（倒挂）。
         // 发 running 让卡头在等待期正确显示「等待就绪」。
         emit_step(&app, 3, "running", "等待 DSH 服务就绪…");
-        match crate::shell::wait_for_ready(&log, &mut exited, &mut marker, BOOT_STALL, BOOT_TIMEOUT)
-        {
+        match crate::shell::wait_for_ready(
+            &log,
+            &mut exited,
+            &mut marker,
+            BOOT_STALL,
+            BOOT_STALL_GRACE,
+            BOOT_TIMEOUT,
+        ) {
             shell::ReadyOutcome::Exited(code) => {
                 if !session_is_current(&state, epoch) || state.boot_superseded(token) {
                     return; // 已被外部切换（模式切换/退出）：静默，不出错误卡
@@ -911,8 +917,16 @@ pub(crate) fn show_handoff_curtain(window: &tauri::WebviewWindow, handoff: &Hand
 /// 同时靠 `wait_for_ready`（进程退出即判败/停滞判卡死）避免"真失败干等"。
 pub(crate) const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
-/// 进程存活且日志无进展的上限：超过即视为疑似卡死（防死等）。
+/// 进程存活且日志无进展的上限：超过即进入**宽限期**（仍不判死）。
 pub(crate) const BOOT_STALL: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 无进展宽限期（2026-09-16 真机事故后立）：`stall` 到点后**再等这么久**才认卡死。
+///
+/// 为什么必须有：插件树加载失败的 dsh **全程零输出**，直到 boot promise 拒绝才吐错误
+/// （真机实测 34s）。旧行为在 20s 就 SIGKILL，`dsh-shell.log` 因此全空——诊断台只能
+/// 说"详情见日志"，而日志里什么都没有。宽限期把"等错误自己说出来"变成默认行为：
+/// 45s 覆盖 34s 且有富余，真正卡死的上限仍是 `BOOT_TIMEOUT`（90s）。
+pub(crate) const BOOT_STALL_GRACE: std::time::Duration = std::time::Duration::from_secs(25);
 
 /// dev 双写 MakeWriter：日志同落文件与 stdout（`cargo tauri dev` 终端实时可见）。
 /// 文件写入失败不阻断（追加语义尽力而为），stdout 失败忽略（GUI 无控制台）。
@@ -1045,7 +1059,11 @@ pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str, in
 /// 兼容分支。
 pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &str) {
     use tauri::Emitter;
-    let payload = crate::boot_failure::BootErrorPayload::classify(detail, log_tail);
+    // 会话目标 profile 一并交给分类器：出错行是壳自己写的时候，错误卡才能给出
+    // 「移除该行并重启」这个**就地**出口（只读诊断留给拿不到目标的场景）。
+    let profile = active_session_profile(app);
+    let payload = crate::boot_failure::BootErrorPayload::classify(detail, log_tail)
+        .with_quarantine(profile.as_deref());
     let value = serde_json::to_value(&payload).unwrap_or_else(|e| {
         tracing::error!("boot:error 载荷序列化失败: {e}");
         serde_json::json!({ "detail": detail, "log": log_tail })

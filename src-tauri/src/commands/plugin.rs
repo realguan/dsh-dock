@@ -10,16 +10,56 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
-/// 策展条目的**挂载行写入**（2026-09-15 立；2026-09-16 §7.4 改为**写前当场重判**）：
-/// 把一条 `- insert: [{id, name}]` 并入 profile 的 `cordis.patch.yml`（经
+/// 宿主前置探测：策展集要求、但**dsh 子进程 PATH 里找不到**的可执行文件名。
+///
+/// 判据与 `spawn_dsh` 给子进程的 PATH **同源**（`dsh_child_path`）——否则会出现
+/// "壳说在、dsh 找不到"的漂移，而这里判错的代价是用户装完 profile 起不来
+/// （2026-09-16 真机事故，ADR-0020 §7.5）。探不到工具链（引擎半就绪）时按**缺失**
+/// 处理：宁可不给装，也不给装出一个起不来的 profile。
+fn missing_prerequisites(data_dir: &Path, packages: &[&str]) -> Vec<String> {
+    let path_env = match crate::engines::resolve_toolchain(data_dir) {
+        Ok(crate::engines::DshToolchain::Engine { node_bin, .. }) => {
+            crate::resolve::dsh_child_path(&node_bin, data_dir)
+        }
+        Err(_) => String::new(),
+    };
+    let mut missing: Vec<String> = Vec::new();
+    for package in packages {
+        if let Some(command) = crate::official_catalog::required_command(package) {
+            if !crate::resolve::command_on_path(command, &path_env)
+                && !missing.iter().any(|m| m == command)
+            {
+                missing.push(command.to_string());
+            }
+        }
+    }
+    missing
+}
+
+/// 策展集里出现过的**全部包名**（前置探测的输入集：单源在目录数据，不另立清单）。
+fn catalog_packages() -> Vec<&'static str> {
+    crate::official_catalog::CAPABILITIES
+        .iter()
+        .flat_map(|cap| cap.variants.iter())
+        .flat_map(|variant| variant.packages.iter().copied())
+        .collect()
+}
+
+/// 策展条目的**挂载行写入**（2026-09-15 立；2026-09-16 §7.4 改为**写前当场重判**，
+/// §7.5 加**必写 `config`** 与**宿主前置硬门**）：
+/// 把一条 `- insert: [{id, name, config?}]` 并入 profile 的 `cordis.patch.yml`（经
 /// `plugins.rs::PatchFile`：覆写前备份 ＋ 原子替换 ＋ 未改条目原文保真；**幂等**，
-/// 同 id 已存在则零写入返回 `changed: false`）。
+/// 同 id 且必需 `config` 已齐则零写入返回 `changed: false`）。
 ///
 /// **为什么必须在这里重判**：激活方式由目标包的 `package.json` 决定，而目录是**安装前**
 /// 拉的——那时包还没进 `node_modules`，任何包都只会被判成"未声明 `dsh.bundle`"。于是
 /// profile 层包（如 `auto-review`）会被误判成需要写行，装完就多写一条 → **同一插件挂两份**。
 /// 本命令在 `dsh plugin add` **完成之后**才被调用，故在这里重读分类才是准的：声明了
 /// `dsh.bundle` 就**拒绝写行**并如实回报 `autoActivated: true`（ADR-0020 §2.8 唯一依据）。
+///
+/// **为什么还要前置硬门**：`cua-driver-mcp` 缺外部 `cua-driver` 时，写行 = 装出一个
+/// 起不来的 profile（插件树加载阶段 `spawn cua-driver` ENOENT）。前端会禁用开关，
+/// 但命令层必须**同样拒绝**——前端是呈现，不是闸门。
 ///
 /// **职责边界**：本命令只写行、**不负责安装**——安装仍走既有 `install_plugin`
 /// （`dsh plugin add` 转发链）与前端串行安装队列。前端按变体的 `steps` **按序**执行
@@ -60,8 +100,24 @@ pub async fn apply_official_patch_row(
                 auto_activated: true,
             });
         }
-        let changed =
-            crate::plugins::ensure_catalog_insert_row(&home, &profile, &row_id, &package)?;
+        // 宿主前置硬门（2026-09-16 §7.5）：前置未满足时**拒绝写行**——写下去就是
+        // 一个起不来的 profile，而用户此时的处境是"应用再也进不去"。
+        if let Some(command) = crate::official_catalog::required_command(&package) {
+            if !missing_prerequisites(&data_dir, &[package.as_str()]).is_empty() {
+                return Err(format!(
+                    "已拒绝写入挂载行：本机 PATH 中找不到「{command}」，装上会让 dsh 在加载\
+                     插件时直接失败、工作台起不来。请先装好 {command}（或改用自包含的那一档能力），\
+                     再重试。"
+                ));
+            }
+        }
+        let changed = crate::plugins::ensure_catalog_insert_row(
+            &home,
+            &profile,
+            &row_id,
+            &package,
+            crate::official_catalog::required_row_config(&package),
+        )?;
         // 写后自证（2026-09-15 补，ADR-0020）：回读 dump-config 组合树确认该行真的生效。
         // 理由：patch 写法不对时 DSH 会**退出码 0 地静默丢弃**条目，只校验"文件写成功"
         // 抓不到它。dump-config 自身失败时**不得谎报成功**——明确告知"已写入但未能复核"。
@@ -193,10 +249,14 @@ pub async fn list_experimental_capabilities(
         // 检出不到 → `None`，由 `resolve_capabilities` 走诚实降级（裸包名 + 显式告知）。
         let runtime_version = crate::updates::detect_current_version(&data_dir);
 
+        // 宿主前置探测（2026-09-16 §7.5）：缺 `cua-driver` 之类的包**不得**被开关放行。
+        let missing_commands = missing_prerequisites(&data_dir, &catalog_packages());
+
         Ok(crate::official_catalog::resolve_capabilities(
             &crate::official_catalog::PackageFacts {
                 installed,
                 declared_bundles,
+                missing_commands,
             },
             &rows,
             runtime_version.as_deref(),

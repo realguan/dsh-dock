@@ -82,6 +82,9 @@ export const t = {
       // 无此键会兜底成英文 id `boot_in_wsl`（`actionLabel` 的 `?? id`）。
       // 文案取自 D1 §5 建议：zh「改用 WSL 模式打开」。
       boot_in_wsl: "改用 WSL 模式打开",
+      // 2026-09-16：插件的挂载行把插件树搞挂时的**就地**出路（移除该行 + 重启）。
+      // 契约：`boot_failure.rs::with_quarantine`；无此键会兜底成英文 id。
+      quarantine_plugin_row: "移除该行并重启",
     } as Record<string, string>,
     // 失败详情后缀（2026-09-11 task-25）：原为组件内联字面量（zh-CN 全角括号、
     // en 侧需 ASCII 括号 + 前置空格），故并入字典。两处同源拼接：

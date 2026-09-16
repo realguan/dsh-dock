@@ -400,6 +400,16 @@ export interface BootErrorPayload {
   suggestion: string
   actions: string[]
   log: string
+  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时 `actions` 含
+  /// `quarantine_plugin_row`，前端渲染「移除该行并重启」。**只读诊断**：行不归壳
+  /// 所有、或拿不到会话目标 profile 时为 `null`（`null` 时前端不渲染该按钮）。
+  quarantine: QuarantineRow | null
+}
+
+/// 可一键隔离的挂载行（`profile` + 行 id）：`boot_failure.rs::QuarantineRow`。
+export interface QuarantineRow {
+  profile: string
+  rowId: string
 }
 
 /// 交接意图（ADR-0014）：一次「停旧 → 起新 → 进工作台」的贯穿状态。
@@ -496,6 +506,12 @@ export interface CapabilityVariant {
   toggleOffSupported: boolean
   /// 同能力其它变体已装、而本变体不含的后端包；非空 = 启用本变体需先替换掉它们。
   displaced: string[]
+  /// 本变体要求的宿主可执行文件**缺失**（`null` = 前置齐备）。
+  ///
+  /// 非 `null` 时**必须禁用开关**并原样展示这句话：缺 `cua-driver` 之类的前置时装上
+  /// 该 provider，dsh 会在插件树加载阶段直接失败、工作台起不来（2026-09-16 真机事故）。
+  /// 文案由后端下发——只有它知道缺的是哪个命令（禁前端自造文案，避免两处漂移）。
+  prerequisiteMissing: string | null
 }
 
 /// 一项可开关的实验能力。

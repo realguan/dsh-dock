@@ -7,7 +7,7 @@
 //
 // 规整原则：缺字段补默认、未知字段忽略、无法识别的整体丢弃——对「dsh/壳先行升级
 // 新增字段」前向兼容。
-import type { BootFailure, ClientUpdate } from "@/types/ipc"
+import type { BootFailure, ClientUpdate, QuarantineRow } from "@/types/ipc"
 import type {
   AppUpdateEvent,
   BootErrorEvent,
@@ -109,5 +109,16 @@ export function normalizeError(payload: unknown): BootErrorEvent | null {
     suggestion: typeof p.suggestion === "string" ? p.suggestion : undefined,
     actions,
     log: typeof p.log === "string" ? p.log : undefined,
+    quarantine: normalizeQuarantine(p.quarantine),
   }
+}
+
+/// 一键隔离计划的形状校验：缺 `profile` 或 `rowId` 一律丢弃（前端不猜，
+/// 更不允许拿半个计划去调删除 IPC）。
+function normalizeQuarantine(value: unknown): QuarantineRow | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const v = value as Record<string, unknown>
+  if (typeof v.profile !== "string" || typeof v.rowId !== "string") return undefined
+  if (v.profile.trim() === "" || v.rowId.trim() === "") return undefined
+  return { profile: v.profile, rowId: v.rowId }
 }
