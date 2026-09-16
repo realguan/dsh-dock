@@ -35,13 +35,6 @@ pub(crate) const WINDOW_BACKGROUND: tauri::utils::config::Color =
 pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let hook_script = include_str!("../../frontend/src/injected/link-hook.js");
 
-    // WebView 内存与样式兜底策略脚本（ADR-0002，2026-08-26 引入，2026-08-31 修订）：
-    // 1. `content-visibility: auto` + `contain-intrinsic-size` 缓解 WebKit 内存膨胀；
-    // 2. 补齐列表内边距（`padding-left: 1.5em !important`），避免 `content-visibility: auto`
-    //    触发的 Paint Containment 把挂在行左侧外沿（`list-style-position: outside`）
-    //    的有序/无序列表序号与圆点裁切掉（2026-08-31 修复）。
-    let webview_memory_policy = WEBVIEW_MEMORY_POLICY_SCRIPT;
-
     // DSH 工作台快捷切换悬浮胶囊与全局快捷键（2026-09-01 引入，零遮挡重构）：
     // 1. 全局监听快捷键（默认 Cmd/Ctrl+, 或配置的快捷键）呼出控制中心；
     // 2. 仅在真正的 DSH 工作台页挂载独立 Shadow DOM 磨砂胶囊——2026-09-08 裁定：
@@ -132,7 +125,6 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
         })
         .initialization_script(&platform_script)
         .initialization_script(hook_script)
-        .initialization_script(webview_memory_policy)
         .initialization_script(switcher_script)
         .initialization_script(handoff_curtain_script)
         .build()
@@ -430,18 +422,6 @@ pub(crate) fn open_about_window(app: &tauri::AppHandle) {
         }
     });
 }
-
-/// WebView 渲染内存与样式兜底策略（ADR-0002，2026-08-25 提出，2026-08-26 CSS 注入，2026-08-31 列表裁切与直接子代嵌套修复）：
-/// 1. `content-visibility: auto` + `contain-intrinsic-size` 缓解 WebKit 内存膨胀；
-/// 2. 补齐列表内边距（`padding-left: 1.5em !important`），避免 `content-visibility: auto`
-///    触发的 Paint Containment 把挂在行左侧外沿（`list-style-position: outside`）
-///    的有序/无序列表序号与圆点裁切掉（2026-08-31 修复）；
-/// 3. 使用直接子代选择器（`FLOW > ROW`）：仅对顶层会话行生效，防止规则穿透到嵌套
-///    的工具调用节点（`ToolCallTree` 的 `callRow` / `subCalls` 也挂有 `data-chat-anchor-key`），
-///    避免多层嵌套 containment 导致 WebKit 严重虚高估算滚动高度、在底部产生大片空白
-///    滚动区及输入框悬空（2026-08-31 修复）。
-pub const WEBVIEW_MEMORY_POLICY_SCRIPT: &str =
-    include_str!("../../frontend/src/injected/memory-policy.js");
 
 /// 壳页面（启动屏 / 选择器 / 控制中心）的根地址。
 ///

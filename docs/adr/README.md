@@ -14,7 +14,7 @@
 | ADR | 一行结论 |
 |:---|:---|
 | [0001](0001-ready-wait-process-liveness.md) | 就绪等待 = 进程存活感知，非死等 |
-| [0002](0002-webview-memory-policy.md) | WebView 长会话内存 = 注入 CSS 缓解 |
+| [0002](0002-webview-memory-policy.md) | WebView 长会话内存 = content-visibility 注入（已废弃/撤销：隐式 Paint Containment 裁切与滑动卡顿） |
 | [0003](0003-external-link-and-navigation.md) | 外链 = 系统浏览器兜底 + 白名单拦截 |
 | [0004](0004-wsl-guest-dsh-install.md) | WSL 客体内安装，Windows 侧壳不触网 |
 | [0005](0005-pnpm-global-bin-dir.md) | pnpm 需注入 global-bin-dir，失败回退 npm |

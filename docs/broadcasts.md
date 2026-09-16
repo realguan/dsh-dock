@@ -32,6 +32,12 @@
 
 ## 三、记录
 
+### 2026-09-15 优化/撤销 · 彻底移除壳侧 WebView content-visibility 内存策略（解决页面左右两侧显示不全与触控板滑动卡顿）—— guan（AI 协作）
+
+- 变更：`src-tauri/src/ui.rs`（移除 `create_main_window` 中的 `webview_memory_policy` 脚本注入及 `WEBVIEW_MEMORY_POLICY_SCRIPT` 常量）、`src-tauri/src/lib.rs`（移除针对该注入脚本的单测）、`frontend/src/injected/memory-policy.js`（彻底删除）、`frontend/src/injected/handoff-curtain.js`（清理相关注释）、`docs/adr/0002-webview-memory-policy.md` 与 `docs/adr/README.md`（状态标记为已废弃/撤销并补齐排查与决策记录）。
+- 影响：仅周知。解决由于 `content-visibility: auto` 隐式 Paint Containment 强行截断卡片左右两侧内容（Action 按钮、阴影、外延元素），以及 `contain-intrinsic-size` 高度估算落差在触控板滚动时引发 WebKit 主线程 Layout Thrashing、掉帧与视口跳动的问题。移除后恢复 macOS 原生平滑滚动体验且视觉不再被裁切。
+- 凭据：`cargo test` 全绿；前端测试 51 个文件 425 测试全绿。
+
 ### 2026-09-15 chore(release-prep) · R5 收尾：分组提交完成（**未推送、未合 master**）—— guan（AI 协作）
 
 - **提交**（3 条，分支 `feat/capabilities-and-ssh-workspace`，基线 `d89780a`）：

@@ -584,13 +584,6 @@ mod tests {
             "frontend/package.json 的 version 与 CARGO_PKG_VERSION 不一致：预期 {pkg_version}"
         );
     }
-
-    #[test]
-    fn webview_memory_policy_script_contains_list_padding_defense() {
-        assert!(crate::ui::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("content-visibility: auto"));
-        assert!(crate::ui::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("padding-left: 1.5em !important"));
-        assert!(crate::ui::WEBVIEW_MEMORY_POLICY_SCRIPT.contains("FLOW + ' > ' + ROW"));
-    }
 }
 
 // ---------- 更新应用菜单（仅 macOS 菜单栏；托盘已砍，裁定 2026-08-23） ----------
