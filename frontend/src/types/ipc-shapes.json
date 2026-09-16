@@ -11,6 +11,7 @@
   ],
   "BootErrorPayload": [
     "actions",
+    "advancedActions",
     "detail",
     "failure",
     "log",

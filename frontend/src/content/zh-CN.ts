@@ -82,27 +82,31 @@ export const t = {
       // 无此键会兜底成英文 id `boot_in_wsl`（`actionLabel` 的 `?? id`）。
       // 文案取自 D1 §5 建议：zh「改用 WSL 模式打开」。
       boot_in_wsl: "改用 WSL 模式打开",
-      // 2026-09-16：插件的挂载行把插件树搞挂时的**就地**出路（移除该行 + 重启）。
-      // 契约：`boot_failure.rs::with_quarantine`；无此键会兜底成英文 id。
-      quarantine_plugin_row: "移除该行并重启",
-      // ADR-0025 安全模式：前者零文件改动、后者会备份并放空 patch（需确认框）。
-      safe_mode: "安全模式启动",
-      safe_mode_reset: "安全模式（备份并放空 patch）",
+      // 2026-09-16：插件的挂载行把插件树搞挂时的**就地**出路（只移除那一行 + 重启）。
+      // 契约：`boot_failure.rs::with_quarantine`（下发到 `advancedActions`，**首屏不展示**）；
+      // 无此键会兜底成英文 id。
+      quarantine_plugin_row: "只移除出错的那一行并重启",
+      // ADR-0025 安全模式（2026-09-16 维护者反馈后：首屏**只剩这一个**动作）：
+      // 前者零文件改动、点一次就能回到应用；后者会备份并放空 patch，收进「其它出路」。
+      safe_mode: "停用全部插件并启动",
+      safe_mode_reset: "备份并放空插件配置后启动",
     } as Record<string, string>,
     // 动作 → **它会造成什么**（首屏与按钮并排显示；2026-09-16 维护者裁定）。
     // 与 `ErrorCard.tsx` 的 ACTION_IPC 集合一一对应：新增动作必须同时补两侧文案。
     impacts: {
-      safe_mode: "临时停用出问题的插件行后重启，不改任何文件，随时可退出",
-      safe_mode_reset: "patch 已写坏时用：先备份为 .bak-<时间戳>，再放空该文件",
-      quarantine_plugin_row: "从 cordis.patch.yml 删掉那一行（覆写前自动备份）",
+      safe_mode: "临时关掉全部插件开关再启动；不改任何文件，进应用后可一键恢复",
+      safe_mode_reset: "插件配置已写坏（连行都读不出来）时用：先备份为 .bak-<时间戳>，再放空该文件",
+      quarantine_plugin_row: "从 cordis.patch.yml 删掉出错的那一行（覆写前自动备份）",
       retry: "重新走一遍同样的启动流程",
       upgrade: "先升级 DSH 再重试，升级只动 pnpm/npm 全局，不碰你的数据",
       upgrade_only: "只升级 DSH、不打断当前会话",
       boot_in_wsl: "改在 WSL 里启动，绕开本地模式的权限限制",
       reselect: "回到 profile 选择页",
     } as Record<string, string>,
-    safeModeResetTitle: "用安全模式启动：备份并放空插件 patch？",
-    safeModeResetNote: "用于 patch 文件已写坏、连行都枚举不出来的情况。",
+    // 「其它出路」区标题（2026-09-16）：首屏只有一个按钮，其余出路收进"展开详情"。
+    advancedLabel: "其它出路（一般用不到）",
+    safeModeResetTitle: "备份并放空插件配置后再启动？",
+    safeModeResetNote: "用于插件配置已写坏、连行都枚举不出来的情况。",
     safeModeResetPointBackup: "你的 cordis.patch.yml 会先备份为 .bak-<时间戳>，可随时手动还原",
     safeModeResetPointScope: "该 profile 的全部插件挂载行会失效，工作台以「只有随包能力」的形态启动",
     safeModeResetConfirm: "备份并继续",

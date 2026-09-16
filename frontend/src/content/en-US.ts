@@ -78,17 +78,20 @@ export const enUS: AppCopy = {
       // the raw English id `boot_in_wsl` (`actionLabel`'s `?? id`).
       boot_in_wsl: "Switch to WSL mode",
       // 2026-09-16: in-place way out when a plugin's mount row breaks the plugin tree
-      // (remove that row, then restart). Contract: boot_failure.rs::with_quarantine.
-      quarantine_plugin_row: "Remove the row & restart",
-      // ADR-0025 safe mode: the former touches no files; the latter backs up and empties the patch.
-      safe_mode: "Start in safe mode",
-      safe_mode_reset: "Safe mode (back up & empty the patch)",
+      // (remove that row only, then restart). Contract: boot_failure.rs::with_quarantine
+      // -> `advancedActions` (never on the first screen).
+      quarantine_plugin_row: "Remove only that row & restart",
+      // ADR-0025 safe mode. 2026-09-16 (maintainer feedback): the first screen keeps
+      // exactly one action -- the one that gets you back into the app; the reset
+      // variant moved into "Other ways out".
+      safe_mode: "Turn off all plugins & start",
+      safe_mode_reset: "Back up & empty the plugin config, then start",
     } as Record<string, string>,
     // Action -> **what it does** (shown next to each button on the first screen).
     // Mirrors `ErrorCard.tsx`'s ACTION_IPC set: a new action must add copy on both sides.
     impacts: {
-      safe_mode: "Restarts with the offending plugin rows temporarily off; no file is touched, fully reversible",
-      safe_mode_reset: "For an unparsable patch: backs it up as .bak-<timestamp>, then empties the file",
+      safe_mode: "Temporarily turns every plugin switch off and restarts; no file is touched, one click to undo",
+      safe_mode_reset: "For an unparsable plugin config: backs it up as .bak-<timestamp>, then empties the file",
       quarantine_plugin_row: "Deletes that row from cordis.patch.yml (auto-backed up first)",
       retry: "Runs the exact same startup flow again",
       upgrade: "Upgrades DSH first, then retries; touches only the pnpm/npm global, not your data",
@@ -96,7 +99,9 @@ export const enUS: AppCopy = {
       boot_in_wsl: "Starts inside WSL instead, bypassing local-mode privilege limits",
       reselect: "Back to profile selection",
     } as Record<string, string>,
-    safeModeResetTitle: "Start in safe mode: back up and empty the plugin patch?",
+    // Heading of the collapsed "other ways out" block (2026-09-16).
+    advancedLabel: "Other ways out (rarely needed)",
+    safeModeResetTitle: "Back up & empty the plugin config, then start?",
     safeModeResetNote: "Use this when the patch file is unparsable and rows cannot even be listed.",
     safeModeResetPointBackup:
       "Your cordis.patch.yml is backed up as .bak-<timestamp> first, and can be restored by hand",

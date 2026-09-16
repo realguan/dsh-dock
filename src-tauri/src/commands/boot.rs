@@ -260,12 +260,21 @@ pub fn terminal_action(
                     &profile, &data_dir, &world,
                 )
                 .and_then(|rows| {
-                    let ids: Vec<String> = rows
-                        .iter()
-                        .filter(|r| crate::safe_mode::should_disable(r.contributed_by.as_deref()))
-                        .map(|r| r.id.clone())
-                        .collect();
+                    let ids = crate::safe_mode::disable_plan(&rows);
                     let kept = rows.len() - ids.len();
+                    // **无可停行 = 这条失败不在本按钮管辖范围内**（2026-09-16 维护者反馈后
+                    // 补的诚实门，判据在 `safe_mode::disable_plan`，单测钉住）：坏行若来自
+                    // **随包 / 第三方插件包**，它们不在用户 patch 层（`should_disable` 为假），
+                    // 安全模式停不了。此时**不启动**——起了也是同一张错误卡，只会把
+                    // "点过按钮却回到原点"变成新的困惑。
+                    if ids.is_empty() {
+                        return Err(format!(
+                            "这条失败不来自「实验能力」开关：当前 profile 的 {} 条挂载行全部来自\
+                             随包 / 第三方插件包，临时停用无从下手（实测整层摘掉会让服务依赖悬空，\
+                             反而不启动）。请展开错误卡详情，用「其它出路」处理，或卸载出问题的那个插件。",
+                            rows.len()
+                        ));
+                    }
                     crate::safe_mode::write_overlay(&data_dir, &profile, &ids).map(|_| {
                         format!(
                             "已启用安全模式：停用 {} 行、保留 {} 行（随包两层）",
@@ -297,10 +306,10 @@ pub fn terminal_action(
                 }
                 Err(e) => {
                     // 枚举失败（典型：patch 文件 YAML 语法坏，`--dump-config` exit 1）→
-                    // 如实报错并**指路**到 reset 分支，不静默。
+                    // 如实报错并**指路**到放空分支（它在错误卡"展开详情 → 其它出路"里），不静默。
                     emit_boot_error(
                         &handle,
-                        &format!("安全模式执行失败：{e}\n——若 patch 文件语法已坏（行枚举不出来），请改用错误卡上的「安全模式（备份并放空 patch）」。"),
+                        &format!("安全模式执行失败：{e}\n——若 patch 文件语法已坏（连行都读不出来），请展开错误卡详情，用「备份并放空插件配置后启动」。"),
                         "",
                     );
                     return;

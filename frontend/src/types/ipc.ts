@@ -406,9 +406,13 @@ export interface BootErrorPayload {
   detail: string
   suggestion: string
   actions: string[]
+  /// 次级出路（2026-09-16 维护者反馈后的分层）：**首屏只渲染 `actions`**（插件行失败时
+  /// 恰好一项 = 「停用全部插件并启动」），`advancedActions` 收进"展开详情 → 其它出路"。
+  /// 空表 = 无次级出路（非插件行失败恒空）。
+  advancedActions: string[]
   log: string
-  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时 `actions` 含
-  /// `quarantine_plugin_row`，前端渲染「移除该行并重启」。**只读诊断**：行不归壳
+  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时"其它出路"里渲染
+  /// 「只移除出错的那一行并重启」（**首屏不展示**）。**只读诊断**：行不归壳
   /// 所有、或拿不到会话目标 profile 时为 `null`（`null` 时前端不渲染该按钮）。
   quarantine: QuarantineRow | null
 }

@@ -421,6 +421,7 @@ mod gate_tests {
                 detail: String::new(),
                 suggestion: String::new(),
                 actions: Vec::new(),
+                advanced_actions: Vec::new(),
                 log: String::new(),
                 quarantine: None,
             }

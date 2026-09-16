@@ -295,6 +295,24 @@
     **仅 on/disabled**；③ 原始输出（registry URL + pnpm 调用链 + TLS 细节，上百字符）直接铺在
     卡面上，把"我该怎么办"淹没 ⇒ 新增纯函数 `classifyFailure`（network / notFound /
     buildApproval / unknown，抠出 registry 主机名）渲染成**一句话**，原始输出折叠在后面。
+- **真机第 4 轮反馈（2026-09-16）：错误卡首屏收敛为单按钮**（维护者原话："我感觉做复杂了，
+  遇到是插件相关的报错，提供一个按钮即可，点击按钮直接把插件开关都暂时关闭，然后启动"）：
+  - **采纳**：`PluginRowFailed` 首屏**恰好一个**动作 = `safe_mode`（文案「停用全部插件并启动」）。
+    另两条出路**不删而下沉**——新载荷字段 `advancedActions`（`boot_failure.rs::advanced_actions`）
+    收进"展开详情 → 其它出路"：`quarantine_plugin_row`（只移除出错那一行，仅壳自有行）与
+    `safe_mode_reset`（备份并放空插件配置，**YAML 写坏时唯一出路**）。下沉理由：删除 = 用户在
+    "patch 语法坏"时无路可走；平铺 = 用户要先读懂三条机制的差别才能点（正是本次反馈）。
+  - **新增诚实门**（`commands/boot.rs` 的 `safe_mode` 分支）：枚举出的可停行数为 0 时
+    （坏行来自随包 / 第三方**插件包**，不在用户 patch 层）**不写 overlay、不启动**，如实报错并指向
+    "其它出路"——起了也是同一张错误卡，只会把"点过按钮却回到原点"变成新的困惑。
+  - **口径边界（勿当 bug）**：「关闭所有插件」= 关闭**用户层插件行**（实验能力开关写进
+    `cordis.patch.yml` 的那些行）；第三方插件包（`dsh.bundle.patch`，如 Agent Teams 三层）不在其中
+    ——ADR-0025 §4 已实测整层摘掉会让服务依赖悬空（`exit 1`）。这类坏行的出路是"卸掉那个插件包"，
+    本轮**未实现**（触发条件 = 用户报"安全模式也起不来"）。
+  - **凭据**：Rust `cargo fmt --check` 干净 · `clippy --all-targets -D warnings` 干净 ·
+    `cargo test` **542 passed** / 0 failed / 8 ignored；前端 `tsc -b` 0 错误 · `oxlint` 0 warning
+    （153 文件）· `vitest` **448 passed / 52 文件** · `pnpm run build` 通过；
+    契约面新增 `advancedActions`（Rust struct ↔ `ipc-shapes.json` ↔ TS 两侧接口，四处同步）。
 - **诚实留白**：WSL 客体档三个命令仍**显式报错**（不回落宿主）；`inspector` /
   `ptc-runtime-python` / 三个库包**有意不在策展集内**（理由见 ADR-0020 §7.5 末）；
   「改完重启该 Profile 才生效」依赖用户点「立即重启」（复用既有重启确认链，不自动重启）。

@@ -50,10 +50,14 @@ export interface BootErrorEvent {
   detail?: string
   suggestion?: string
   actions?: string[]
+  /// 次级出路（2026-09-16 维护者反馈后的分层）：**首屏只渲染 `actions`**，本字段收进
+  /// "展开详情 → 其它出路"（插件行失败时是「只移除出错的那一行」+「备份并放空插件配置」）。
+  /// 旧缓存载荷没有该字段 → 可选，`?? []` 退化成"没有其它出路"。
+  advancedActions?: string[]
   log?: string
   /// 可一键隔离的挂载行（2026-09-16）：出错行是壳自己写的（`dsh-dock-` 前缀）时下发，
-  /// 配合 `actions=["quarantine_plugin_row"]` 渲染「移除该行并重启」。
-  /// **只读诊断**：拿不到会话目标 profile、或行不归壳所有时后端不下发。
+  /// 配合 `advancedActions` 里的 `quarantine_plugin_row` 渲染「只移除出错的那一行并重启」
+  /// （**首屏不展示**）。**只读诊断**：拿不到会话目标 profile、或行不归壳所有时后端不下发。
   quarantine?: QuarantineRow
 }
 

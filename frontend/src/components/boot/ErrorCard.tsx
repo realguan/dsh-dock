@@ -91,13 +91,19 @@ export function ErrorCard({
   // **异常态首屏给的是"能点的动作 + 这个动作会带来什么"**，诊断细节是"需要时才看"，
   // 故默认收起。错误事实本身不会被藏：标题、一行摘要与全部动作永远在收起态里可见。
   const [collapsed, setCollapsed] = useState(true)
-  // 「安全模式（备份并放空 patch）」会动用户的 cordis.patch.yml → **必须先确认**
+  // 「备份并放空插件配置后启动」会动用户的 cordis.patch.yml → **必须先确认**
   // （ADR-0025 §4 方案 B；本仓对破坏性动作一律走 ConfirmDialog）。
   const [resetSafeModeOpen, setResetSafeModeOpen] = useState(false)
+  // 动作集（task-52 显式分派口径不变）：**首屏只渲染 `actions`**。
   // `?? ["retry"]`（不是 `?.length ?`）——**空数组是后端明确说"没有可行动作"**：
   // 插件的挂载行把插件树搞挂时重试必然再失败，摆一个必然失败的按钮等于教用户白点一次。
   // 旧缓存载荷（无该字段）才回退「重试」。
   const actions = payload.actions ?? ["retry"]
+  // 次级出路（2026-09-16 维护者反馈后的分层）：**首屏只有 `actions`**——插件行失败时
+  // 恰好一个按钮「停用全部插件并启动」（点一次就能回到应用）；「只移除出错那一行」与
+  // 「备份并放空插件配置」收进"展开详情 → 其它出路"，**可达性不变**（YAML 写坏时
+  // 只有后者能救）。空表 = 无次级出路。
+  const advanced = payload.advancedActions ?? []
   // 2026-09-08（ADR-0012）：优先按结构化分类取本地化文案；后端文案作为兼容分支
   // （旧缓存载荷 / 未来新增的未识别 kind）。
   const kindCopy = payload.failure ? t.error.kinds[payload.failure.kind] : undefined
@@ -160,6 +166,40 @@ export function ErrorCard({
     if (!outcome.ok) logger.warn("[boot]", "复制诊断日志失败", { error: outcome.error })
   }
 
+  /// 一个动作 = 按钮 + "它会造成什么"。首屏与"展开详情 → 其它出路"共用同一渲染，
+  /// 两处不漂移（新增动作只需在 `ACTIONS`/字典登记一次）。
+  const actionRow = (a: string) => {
+    const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only" || a === "safe_mode"
+    // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
+    // 而且会改动 profile 文件）。
+    const ActionIcon = a === "quarantine_plugin_row" || a === "safe_mode" ? ShieldOff : RefreshCw
+    const impact = actionImpact(a)
+    return (
+      <div key={a} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <Button
+          size="sm"
+          variant={isPrimary ? "default" : "outline"}
+          disabled={pending !== null}
+          onClick={() => run(a)}
+          className={`gap-1.5 ${a === "safe_mode_reset" ? "border-danger/40 text-danger" : ""}`}
+        >
+          {pending === a ? (
+            <>
+              <RefreshCw className="size-3.5 animate-spin" />
+              <span>{actionLabel(a)}…</span>
+            </>
+          ) : (
+            <>
+              <ActionIcon className="size-3.5" />
+              <span>{actionLabel(a)}</span>
+            </>
+          )}
+        </Button>
+        {impact && <span className="text-micro text-faint">{impact}</span>}
+      </div>
+    )
+  }
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 10 }}
@@ -209,42 +249,12 @@ export function ErrorCard({
         {/* 一行"发生了什么"：收起态也看得见错误事实 */}
         {reason && <p className="mt-1 truncate text-xs text-dim">{reason}</p>}
 
-        {/* 首屏主角 = 可点的动作 + **它会造成什么**（维护者 2026-09-16 裁定）。
+        {/* 首屏主角 = **一个**可点的动作 + **它会造成什么**（维护者 2026-09-16 裁定）。
+            插件行失败时首屏只有「停用全部插件并启动」一项；其余出路在"展开详情 → 其它出路"。
             动作集为空 = 后端明确说"没有可点的出路"，此时不留空行。 */}
         {(actions.length > 0 || onReselect) && (
           <div className="mt-3.5 flex flex-col gap-2">
-            {actions.map((a) => {
-              const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only" || a === "safe_mode"
-              // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
-              // 而且会改动 profile 文件）。
-              const ActionIcon =
-                a === "quarantine_plugin_row" || a === "safe_mode" ? ShieldOff : RefreshCw
-              const impact = actionImpact(a)
-              return (
-                <div key={a} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                  <Button
-                    size="sm"
-                    variant={isPrimary ? "default" : "outline"}
-                    disabled={pending !== null}
-                    onClick={() => run(a)}
-                    className={`gap-1.5 ${a === "safe_mode_reset" ? "border-danger/40 text-danger" : ""}`}
-                  >
-                    {pending === a ? (
-                      <>
-                        <RefreshCw className="size-3.5 animate-spin" />
-                        <span>{actionLabel(a)}…</span>
-                      </>
-                    ) : (
-                      <>
-                        <ActionIcon className="size-3.5" />
-                        <span>{actionLabel(a)}</span>
-                      </>
-                    )}
-                  </Button>
-                  {impact && <span className="text-micro text-faint">{impact}</span>}
-                </div>
-              )
-            })}
+            {actions.map(actionRow)}
             {onReselect && (
               <div className="flex items-baseline gap-2.5">
                 <Button
@@ -303,6 +313,16 @@ export function ErrorCard({
               <span className="font-semibold text-brand-deep">{t.error.suggestionLabel}</span>
               {suggestion}
             </div>
+          </div>
+        )}
+
+        {/* 其它出路（2026-09-16 维护者反馈）：首屏只留一个按钮，外科式删行与
+            "放空 patch"收在这里——**可达性不变**（YAML 写坏时只有放空这一条能救），
+            但用户不必先读懂三条机制的差别才能点。 */}
+        {advanced.length > 0 && (
+          <div className="mt-3 rounded-xl border border-line bg-muted/30 p-3">
+            <div className="font-mono text-label font-medium text-dim">{t.error.advancedLabel}</div>
+            <div className="mt-2 flex flex-col gap-2">{advanced.map(actionRow)}</div>
           </div>
         )}
 

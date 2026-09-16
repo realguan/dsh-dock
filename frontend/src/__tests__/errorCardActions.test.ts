@@ -199,3 +199,56 @@ describe("组件接线：run() 确实经分派表调用两条 IPC", () => {
     expect(zhCN.error.actions["boot_in_wsl"]).toBeTruthy()
   })
 })
+
+/**
+ * 首屏单一按钮（2026-09-16 维护者反馈）。
+ *
+ * 原话："遇到是插件相关的报错，提供一个按钮即可"——改前插件行失败一口气摆三个按钮
+ * （移除该行 / 安全模式 / 备份并放空），用户要先读懂三条机制的差别才能点。
+ * 现在的分层：**首屏 = `actions`（恰一项）**，其余出路进"展开详情 → 其它出路"
+ * （`advancedActions`），**可达性不变**——YAML 写坏时只有"放空"那一条能救。
+ *
+ * 机器判据分两层：后端「恰一项」由 `boot_failure.rs::
+ * plugin_row_failure_first_screen_has_exactly_one_action` 钉住；这里钉**渲染分层**
+ * （本仓禁 RTL/jsdom，故用源码结构断言代替 DOM 断言）。
+ */
+describe("首屏只留一个按钮，其它出路收进详情（2026-09-16）", () => {
+  const stripComments = (src: string) =>
+    src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "")
+
+  it("首屏渲染 actions，次级出路渲染在收起区之内", async () => {
+    const code = stripComments(
+      (await import("@/components/boot/ErrorCard.tsx?raw")).default as string,
+    )
+    const iFirstScreen = code.indexOf("{actions.map(actionRow)}")
+    const iDetails = code.indexOf("{!collapsed && (")
+    const iAdvanced = code.indexOf("{advanced.map(actionRow)}")
+    expect(iFirstScreen, "首屏必须渲染 actions").toBeGreaterThan(-1)
+    expect(iDetails, "找不到收起区").toBeGreaterThan(iFirstScreen)
+    expect(iAdvanced, "「其它出路」必须渲染 advancedActions").toBeGreaterThan(iDetails)
+    // 次级出路来自后端下发（不前端写死 id 列表——那是"假按钮"的来源）
+    expect(code).toContain("const advanced = payload.advancedActions ?? []")
+  })
+
+  it("「其它出路」标题与三条动作的文案键齐备（zh/en 对称）", () => {
+    for (const dict of [zhCN.error, enUS.error] as const) {
+      expect(dict.advancedLabel, "缺标题会渲染成空块").toBeTruthy()
+    }
+    expect(zhCN.error.advancedLabel).not.toBe(enUS.error.advancedLabel)
+    expect(CJK.test(String(enUS.error.advancedLabel)), "en 标题含中文").toBe(false)
+    for (const id of ["safe_mode", "safe_mode_reset", "quarantine_plugin_row"]) {
+      const zhLabel = zhCN.error.actions[id]
+      const enLabel = enUS.error.actions[id]
+      expect(zhLabel, `${id} 缺 zh 文案（会显示英文 id）`).toBeTruthy()
+      expect(enLabel).toBeTruthy()
+      expect(zhLabel).not.toBe(id)
+      expect(enLabel).not.toBe(id)
+    }
+    // 首屏按钮的文案必须说清"会发生什么"（不许用"安全模式"这种要用户先懂的名词当唯一线索）
+    expect(zhCN.error.actions["safe_mode"]).toContain("插件")
+    expect(zhCN.error.impacts["safe_mode"]).toMatch(/不改任何文件|可一键恢复/)
+  })
+})

@@ -37,7 +37,7 @@
 | [0022](0022-mcp-probe-network-face.md) | MCP 连通性与能力探测的网络面按 `transport` 分支：`stdio` = `lifecycle` 子进程 + `Kind::Registered`；`streamable-http` = 条目级 `Kind::Exempt`。二者均 2s 量级超时、只读、一次性快照 |
 | [0023](0023-ssh-remote-workspace-scope.md) | SSH 远程工作区限 headless / 自建 profile（四包组合、`~/.ssh/config` 后端解析、`BatchMode` 预检）；**明确不为 `web` profile 承诺远端感知视图** |
 | [0024](0024-desktop-quick-task-runner.md) | 桌面任务快跑器：OS 全局热键 + 轻量窗口，壳不解析 `--json`、职责限「任务转交」。（**2026-09-15 维护者裁定「暂时不做」——未否决，当前批次不实施，`roadmap` §5 边界问题留白**） |
-| [0025](0025-boot-safe-mode-overlay.md) | 启动失败的安全模式：用 `--patch` **临时 overlay** 禁用用户层全部行（差分 `--dump-config − --dump-default-config` 枚举，overlay 落在壳自有数据目录）——零 dsh 文件改动、原子回退；官方 app 的 `plugins-disable-all` 重置 bundles 治不了 `cordis.patch.yml` 的 insert 行。**状态：提议** |
+| [0025](0025-boot-safe-mode-overlay.md) | 启动失败的安全模式：用 `--patch` **临时 overlay** 禁用用户层全部行（差分 `--dump-config − --dump-default-config` 枚举，overlay 落在壳自有数据目录）——零 dsh 文件改动、原子回退；官方 app 的 `plugins-disable-all` 重置 bundles 治不了 `cordis.patch.yml` 的 insert 行；错误卡首屏收敛为**一个**按钮（其余出路下沉到"展开详情"，§7）。**状态：已采纳**（② 只停用户层行——A+ 口径被实测推翻） |
 
 ## 维护约定
 
