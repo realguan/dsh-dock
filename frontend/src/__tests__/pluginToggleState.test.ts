@@ -29,15 +29,21 @@ const pane = stripComments(paneSrc)
 describe("插件开关：运行态必须在写完后自己追平（不再靠切页自愈）", () => {
   it("写完后立刻重取运行态，并短轮询到落定", () => {
     expect(pane, "开关写完后必须重取运行态快照").toContain("refreshRuntime(profile)")
-    expect(pane, "落定判据走纯函数（可单测）").toContain("runtimeToggleApplied(")
+    expect(pane, "落定判据走纯函数（可单测）").toContain("splitSettledToggles(")
     expect(pane, "轮询要有次数上限").toMatch(/const TOGGLE_SETTLE_ATTEMPTS = \d+/)
     expect(pane, "轮询要有间隔上限").toMatch(/const TOGGLE_SETTLE_INTERVAL_MS = \d+/)
   })
 
   it("落定前该行显示「生效中」而不是留着旧徽标", () => {
-    expect(pane).toContain("setPendingToggle({ pkg, on: next })")
+    expect(pane).toContain("setPending({ ...pendingRef.current, [pkg]: wantEnabled })")
     expect(pane).toContain("t.profiles.chip.applying")
     expect(pane).toContain("t.profiles.chipHint.applying")
+  })
+
+  it("多行连点不互相挤掉结论（待定集合而非单个 ref）", () => {
+    expect(pane).toContain("pendingToggles")
+    expect(pane).toContain("pendingRef.current")
+    expect(pane, "已落定行逐条报结论").toContain("t.profiles.toggleApplied(p, pending[p])")
   })
 
   it("定时器随组件卸载收掉（切页/切 profile 不留残轮询）", () => {
@@ -53,6 +59,32 @@ describe("插件开关：运行态必须在写完后自己追平（不再靠切�
     expect(pane).toContain("t.profiles.chipHint[chip.kind]")
     expect(pane).toContain("t.profiles.pluginDisabledHint")
     expect(pane, "配色由 chipTone 按种类给").toContain("chipTone(chip)")
+  })
+
+  // 2026-09-17 独立复核抓到的 P0：写面用 `disabled` 口径、文案/判据用 `enabled` 口径，
+  // 旧实现把两者当同一个 `next` 用 ⇒ toast 动词与"是否已生效"全反。
+  // 文本门禁抓不到实参极性，只能靠"口径各自具名 + 极性纯函数单测"钉死。
+  it("极性护栏：写 patch 用 writeDisabled，文案与落定判据用 wantEnabled", () => {
+    expect(pane).toContain("toggleIntent(row)")
+    expect(pane).toMatch(/setPluginDisabled\(profile, id, writeDisabled\)/)
+    expect(pane, "落定结算走纯函数（内部按 wantEnabled 比 enabled）").toContain(
+      "splitSettledToggles(pending, entries)",
+    )
+    expect(pane).toContain("t.profiles.toggleRestart(pkg, wantEnabled)")
+    expect(pane).toContain("t.profiles.toggleDone(pkg, wantEnabled)")
+    expect(pane, "已生效的回报在落定结算里").toContain("toggleApplied(p, pending[p])")
+    expect(pane, "禁止再用裸 next 当两种口径").not.toMatch(
+      /toggle(Applied|Restart|Done)\(pkg, next\)|setPluginDisabled\(profile, id, next\)/,
+    )
+    expect(pane).not.toMatch(/setPluginDisabled\(profile, id, wantEnabled\)/)
+  })
+
+  it("落定判定用本次取回的快照，不读渲染闭包里的旧 runtime", () => {
+    expect(pane).toContain("appliesToProfile")
+    expect(pane, "查询失败与会话没在跑必须分开（失败不许报「需要重启」）").toMatch(
+      /!observed[\s\S]{0,160}?toggleDone/,
+    )
+    expect(pane, "启动后补取一次运行态（面板不重挂）").toMatch(/prevRunning\.current = isRunning/)
   })
 })
 
@@ -70,8 +102,8 @@ describe("插件开关：文案不得再对生效时机许下相反的承诺", (
     expect(zhCN.profiles.toggleRestart("pkg-x", true)).toContain("重启")
     expect(enUS.profiles.toggleApplied("pkg-x", true)).toContain("applied")
     expect(enUS.profiles.toggleRestart("pkg-x", true)).toContain("restart")
-    expect(pane).toContain("t.profiles.toggleApplied(pkg, on)")
-    expect(pane).toContain("t.profiles.toggleRestart(pkg, on)")
+    expect(pane).toContain("toggleApplied(p, pending[p])")
+    expect(pane).toContain("t.profiles.toggleRestart(pkg, wantEnabled)")
   })
 
   it("观测不到运行态的行（补丁包）不承诺时机，只报「配置已写入」", () => {
@@ -80,7 +112,7 @@ describe("插件开关：文案不得再对生效时机许下相反的承诺", (
     expect(zhCN.profiles.toggleDone("pkg-x", true)).toContain("配置已写入")
     expect(zhCN.profiles.toggleDone("pkg-x", true)).not.toContain("重启")
     expect(enUS.profiles.toggleDone("pkg-x", true)).toContain("config written")
-    expect(pane).toMatch(/runtimeChipFor\(pkg, liveEntries\) === null[\s\S]{0,200}?toggleDone/)
+    expect(pane).toMatch(/runtimeChipFor\(pkg, entries\) === null[\s\S]{0,220}?toggleDone/)
   })
 
   it("运行侧徽标的两个「没到位」状态用不同词，且都不叫「已停用」", () => {

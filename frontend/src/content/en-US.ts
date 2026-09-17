@@ -399,7 +399,7 @@ export const enUS: AppCopy = {
     pluginDisable: "Disable",
     pluginEnable: "Enable",
     pluginToggleHint:
-      "The switch writes this profile's cordis.patch.yml: a running session reloads it automatically (about half a second in our measurements); if it does not apply, restart the profile.",
+      "The switch writes this profile's config: some profiles apply it right away (web profiles: about half a second in our measurements), others only after a restart — the row's badge tells you which happened.",
     pluginDisabled: "Disabled",
     pluginDisabledHint:
       "Disabled in config (written to this profile's cordis.patch.yml) — dsh will not load this row.",

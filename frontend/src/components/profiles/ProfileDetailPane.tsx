@@ -18,14 +18,15 @@ import {
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
-import { runtimeChipFor, runtimeSummary, runtimeToggleApplied, validatePluginSpec } from "@/lib/profiles"
+import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
 import type { RuntimeChip } from "@/lib/profiles"
-import { pluginToggleTargets } from "@/lib/pluginToggle"
+import { pluginToggleTargets, splitSettledToggles, toggleIntent } from "@/lib/pluginToggle"
 import type {
   PluginEntry,
   PluginRowState,
   PluginRuntimeSnapshot,
   ProfileDetail,
+  RuntimeEntry,
 } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -84,8 +85,15 @@ export function ProfileDetailPane({
 
   // 操作状态
   const [opBusy, setOpBusy] = useState<string | null>(null)
-  // 开关已写入、运行态尚未落定的行（行内显示「生效中」，见 settleToggle）
-  const [pendingToggle, setPendingToggle] = useState<{ pkg: string; on: boolean } | null>(null)
+  // 开关已写入、运行态尚未落定的行：pkg -> 目标启用态（行内显示「生效中」，见 settleToggle）。
+  // 用**集合**而非单个（2026-09-17 独立复核 P2）：连点两行时前一行不该被后一行挤掉结论。
+  const [pendingToggles, setPendingToggles] = useState<Record<string, boolean>>({})
+  const pendingRef = useRef<Record<string, boolean>>({})
+  // ref 与 state 始终同写：轮询回调读 ref（不吃闭包旧值），渲染读 state
+  const setPending = (next: Record<string, boolean>) => {
+    pendingRef.current = next
+    setPendingToggles(next)
+  }
   const settleTimer = useRef<number | null>(null)
   // 落定回调里比对"当前还在看的 profile"（切换后旧轮询静默收尾，不播结论）
   const nameRef = useRef(name)
@@ -116,17 +124,22 @@ export function ProfileDetailPane({
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
 
   // 运行态快照（回环 pluginInventory/list）：开关落定轮询与整页 reload 共用同一取数
-  // 口径，避免两处各自拼一份（2026-09-17）。返回该 profile 的条目（不匹配则空表）。
+  // 口径，避免两处各自拼一份（2026-09-17）。返回**这一次**取回的结论 + 条目：
+  //  - `observed=false` = 这次查询本身失败（回环不可达/401…）：**不可**据此断言任何时机；
+  //  - `appliesToProfile=false` = 查到了，但会话没在跑（快照 profile 不是它）。
+  // 两者必须分开，否则"查询失败"会被当成"需要重启"播出去（复核 P1 的同族问题）。
+  // 判定也不许读渲染闭包里的旧 `runtime`。
   const refreshRuntime = useCallback((profile: string) => {
     return api
       .getPluginRuntime()
       .then((s) => {
         setRuntime(s)
-        return s.profile !== null && s.profile === profile ? s.entries : []
+        const appliesToProfile = s.profile !== null && s.profile === profile
+        return { observed: true, appliesToProfile, entries: appliesToProfile ? s.entries : [] }
       })
       .catch(() => {
         setRuntime({ profile: null, entries: [] })
-        return []
+        return { observed: false, appliesToProfile: false, entries: [] as RuntimeEntry[] }
       })
   }, [])
 
@@ -160,7 +173,7 @@ export function ProfileDetailPane({
     setSearchQuery("")
     setUpdateMap(null)
     setCheckState("idle")
-    setPendingToggle(null)
+    setPending({})
     // 换 profile 也要收掉上一轮的落定轮询（否则旧实例的快照/toast 会串到新页面）
     if (settleTimer.current !== null) {
       window.clearTimeout(settleTimer.current)
@@ -176,6 +189,16 @@ export function ProfileDetailPane({
     },
     [],
   )
+
+  // 会话由「未运行」转为「运行中」时补取一次运行态（复核 P1 的另一半）：面板不重挂，
+  // 旧实现只按 name 变化取数 ⇒ 启动后所有行都没有运行态徽标，页头却写着"会话运行中"。
+  const prevRunning = useRef(isRunning)
+  useEffect(() => {
+    const wasRunning = prevRunning.current
+    prevRunning.current = isRunning
+    if (!name || !isRunning || wasRunning) return
+    refreshRuntime(name).catch(() => {})
+  }, [isRunning, name, refreshRuntime])
 
   // 卸载 / 更新插件
   const runOp = (op: "remove" | "update", pkg: string) => {
@@ -236,27 +259,50 @@ export function ProfileDetailPane({
   // 同一行出现"开关是开的 / 徽标说停用"的自相矛盾，直到切页重挂才自愈。
   // 现在：写完后立刻拉一次运行态，并短轮询到落定（实测热载 0.43s 内完成，故 400ms×8
   // 足够；到点仍未落定 = 该 Profile 的 patchReload 不是 live 或未运行 → 如实报"重启后生效"）。
-  const settleToggle = (profile: string, pkg: string, on: boolean, attempt: number) => {
+  const settleToggle = (profile: string, attempt: number) => {
     settleTimer.current = window.setTimeout(() => {
       settleTimer.current = null
       refreshRuntime(profile)
-        .then((entries) => {
+        .then(({ observed, appliesToProfile, entries }) => {
           // 已切走/已换 profile：静默收尾，别把上一页的结论播到新页面
           if (nameRef.current !== profile) {
-            setPendingToggle(null)
+            setPending({})
             return
           }
-          if (runtimeToggleApplied(entries, pkg, on)) {
-            setPendingToggle(null)
-            onNotice(t.profiles.toggleApplied(pkg, on), "ok")
-          } else if (attempt + 1 >= TOGGLE_SETTLE_ATTEMPTS) {
-            setPendingToggle(null)
-            onNotice(t.profiles.toggleRestart(pkg, on), "ok")
-          } else {
-            settleToggle(profile, pkg, on, attempt + 1)
+          const pending = pendingRef.current
+          // 查询失败时不结算（没有观测面），但保留待定继续重试
+          const { settled, remaining } = observed
+            ? splitSettledToggles(pending, entries)
+            : { settled: [] as string[], remaining: pending }
+          if (settled.length > 0) {
+            setPending(remaining)
+            for (const p of settled) onNotice(t.profiles.toggleApplied(p, pending[p]), "ok")
           }
+          if (Object.keys(remaining).length === 0) return
+          // 会话确实没在跑：等不到观测面，直接如实报"重启后生效"
+          if (observed && !appliesToProfile) {
+            setPending({})
+            for (const [p, wantEnabled] of Object.entries(remaining)) {
+              onNotice(t.profiles.toggleRestart(p, wantEnabled), "ok")
+            }
+            return
+          }
+          if (attempt + 1 >= TOGGLE_SETTLE_ATTEMPTS) {
+            // 到点仍未落定：查到"没生效"→ 重启后生效；查不到 → 只敢说"配置已写入"
+            setPending({})
+            for (const [p, wantEnabled] of Object.entries(remaining)) {
+              onNotice(
+                observed
+                  ? t.profiles.toggleRestart(p, wantEnabled)
+                  : t.profiles.toggleDone(p, wantEnabled),
+                "ok",
+              )
+            }
+            return
+          }
+          settleToggle(profile, attempt + 1)
         })
-        .catch(() => setPendingToggle(null))
+        .catch(() => setPending({}))
     }, TOGGLE_SETTLE_INTERVAL_MS)
   }
 
@@ -267,16 +313,13 @@ export function ProfileDetailPane({
     const targets = pluginToggleTargets(row)
     if (targets.length === 0) return
     const profile = name
-    const next = !row.shell_disabled
-    if (settleTimer.current !== null) {
-      window.clearTimeout(settleTimer.current)
-      settleTimer.current = null
-    }
-    setPendingToggle(null)
+    // 两种口径分开（2026-09-17 独立复核抓到极性缺陷后的护栏，见 lib/pluginToggle.ts）：
+    // 写 patch 用 `writeDisabled`，文案与落定判据用 `wantEnabled`。
+    const { wantEnabled, writeDisabled } = toggleIntent(row)
     setOpBusy(`toggle:${pkg}`)
     targets
       .reduce<Promise<void>>(
-        (acc, id) => acc.then(() => api.setPluginDisabled(profile, id, next)),
+        (acc, id) => acc.then(() => api.setPluginDisabled(profile, id, writeDisabled)),
         Promise.resolve(),
       )
       .then(() => {
@@ -285,20 +328,30 @@ export function ProfileDetailPane({
           .getPluginRows(profile)
           .then((r) => setRows(r))
           .catch((e) => onNotice(String(e), "warn"))
-        refreshRuntime(profile).catch(() => {})
-        if (runtime?.profile !== profile) {
-          // 会话没在跑：配置写完即完成，生效只能等下次启动——不空转轮询
-          onNotice(t.profiles.toggleRestart(pkg, next), "ok")
-          return
-        }
-        if (runtimeChipFor(pkg, liveEntries) === null) {
-          // 该行没有可观测的运行态条目（补丁包：贡献行用的是各自的 name，包名不成条目）
-          // ——观测不到就不许承诺时机，只报"配置已写入"。
-          onNotice(t.profiles.toggleDone(pkg, next), "ok")
-          return
-        }
-        setPendingToggle({ pkg, on: next })
-        settleToggle(profile, pkg, next, 0)
+        refreshRuntime(profile)
+          .then(({ observed, appliesToProfile, entries }) => {
+            // 判定用**这一次**取回的新快照，不看渲染闭包里的旧 runtime（复核 P1）
+            if (!observed) {
+              // 查询本身失败：没有观测面，不猜时机，只报"配置已写入"
+              onNotice(t.profiles.toggleDone(pkg, wantEnabled), "ok")
+              return
+            }
+            if (!appliesToProfile) {
+              // 查到会话没在跑：配置写完即完成，生效只能等下次启动——不空转轮询
+              onNotice(t.profiles.toggleRestart(pkg, wantEnabled), "ok")
+              return
+            }
+            if (runtimeChipFor(pkg, entries) === null) {
+              // 该行没有可观测的运行态条目（补丁包：贡献行用的是各自的 name，包名不成条目）
+              // ——观测不到就不许承诺时机，只报"配置已写入"。
+              onNotice(t.profiles.toggleDone(pkg, wantEnabled), "ok")
+              return
+            }
+            // 并入待定集合（不挤掉上一行的落定）；已有轮询在跑就让它一并结算
+            setPending({ ...pendingRef.current, [pkg]: wantEnabled })
+            if (settleTimer.current === null) settleToggle(profile, 0)
+          })
+          .catch(() => {})
       })
       .catch((e) => onNotice(String(e), "warn"))
       .finally(() => setOpBusy(null))
@@ -701,7 +754,7 @@ export function ProfileDetailPane({
                 {filteredDeps.map((p) => {
                   const spec = detail?.dependencies[p.name]
                   const chip = runtimeChipFor(p.name, liveEntries)
-                  const isPending = pendingToggle?.pkg === p.name
+                  const isPending = p.name in pendingToggles
                   const rowBusy =
                     opBusy === `remove:${p.name}` ||
                     opBusy === `update:${p.name}` ||

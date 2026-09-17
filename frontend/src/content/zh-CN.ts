@@ -406,7 +406,7 @@ export const t = {
     pluginDisable: "禁用",
     pluginEnable: "启用",
     pluginToggleHint:
-      "开关写入该 Profile 的 cordis.patch.yml：运行中的会话会自动重载（实测约半秒）；若未生效，重启该 Profile。",
+      "开关写入该 Profile 的配置：有的 Profile 会立即生效（web 形态实测约半秒），有的要等重启该 Profile——行内徽标会告诉你到底生效没有。",
     pluginDisabled: "已禁用",
     pluginDisabledHint:
       "配置里已禁用（写入该 Profile 的 cordis.patch.yml）——dsh 不会加载这一行。",
