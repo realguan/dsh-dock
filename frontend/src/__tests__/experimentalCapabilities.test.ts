@@ -51,6 +51,7 @@ function step(over: Partial<CapabilityStep> = {}): CapabilityStep {
     disabled: false,
     toggleTargets: [],
     versionNotice: null,
+    description: null,
     ...over,
     // spec 跟着 package 走（除非显式覆盖）——否则"第二步"的期望值会带着第一步的包名，
     // 测出来的顺序就成了假的。

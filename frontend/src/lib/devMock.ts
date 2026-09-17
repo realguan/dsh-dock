@@ -449,6 +449,7 @@ export function setupDevMock() {
             disabled: state === "disabled",
             toggleTargets: state === "off" ? [] : targets,
             versionNotice: null,
+            description: null,
           }
         }
         return [

@@ -180,6 +180,24 @@ fn installed_info(pkg_text: &str) -> (Option<String>, Option<String>) {
     )
 }
 
+/// 已装包的**官方 description**（= 包自己声明的简介；未装/损坏 → None）。
+///
+/// 2026-09-17（维护者裁定「插件的名字和描述也要以官方为主」）：策展目录的每一行要显示
+/// 该包自己的简介，**不转述、不翻译**——拿我们的措辞冒充官方描述是误导。文件就在
+/// `<profile>/node_modules/<包>/package.json`，与 [`list_profile_plugins`] 同一读取口径
+/// （符号链接农场只读穿透），故复用 [`installed_info`] 而不新写第二份清单解析。
+pub fn installed_description(home: &Path, profile: &str, package: &str) -> Option<String> {
+    let manifest = std::fs::read_to_string(
+        home.join("profiles")
+            .join(profile)
+            .join("node_modules")
+            .join(package)
+            .join("package.json"),
+    )
+    .ok()?;
+    installed_info(&manifest).1
+}
+
 /// manifest 原文 → 依赖包名（字典序；缺失 `dependencies` = 空表，非法 JSON = Err）。
 /// `pub(crate)`：官方策展目录的已装态采集复用（2026-09-15）。
 pub(crate) fn dependency_names(manifest_text: &str) -> Result<Vec<String>, String> {

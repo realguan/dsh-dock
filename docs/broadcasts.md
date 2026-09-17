@@ -32,6 +32,35 @@
 
 ## 三、记录
 
+### 2026-09-17 移除 · SSH 远程工作区（I4）整体退役 + 实验能力卡改以官方口径呈现 —— guan（AI 协作）
+
+- **触发**（维护者三条裁定，发版前）：
+  ①「SSH 远程工作区向导这个功能相关的代码逻辑都干掉」；
+  ②「实验功能模块要突出是 dsh 官方实验功能，插件的名字和描述也要以官方为主」；
+  ③「没做的功能不需要在 release doc 里面说，我们只说做了什么」。
+- **① SSH 整体退役**（**该功能从未随任何版本发布**，故对用户不可见）：
+  - 代码：`ssh_config.rs`(771) / `ssh_profile.rs`(525) / `ssh_remote.rs`(675) / `commands/ssh.rs`、
+    前端 `SshWorkspaceWizard.tsx` 与 `sshWizardGate.test.ts`；`list_ssh_hosts` / `probe_ssh_target` /
+    `generate_ssh_profile` 三条 IPC（登记册 **65 → 62**）＋ capabilities 三条授权；
+  - 连带回收：`network_gate.rs` 的 ssh_remote 整文件登记、登记册 §二「SSH 非交互预检」行与
+    §三「用户 SSH 配置」读取域、`AGENTS §6` 的 app-bundle 写入例外（§11.4 回收触发=已失效）、
+    `profiles.rs::ssh_app_bundle` 与 `create_profile_with_app_blocking` 的"指定 bundle"参数化
+    （唯一另一调用方就是向导，遂收回单一路径）、`resolve::user_home` 公开访问器（唯一消费者是解析器）、
+    `guest::sh_quote` 恢复 `#[cfg(any(windows, test))]` 门控（当年为 ssh 解除）。
+  - 文档：ADR-0023 状态改「**已撤回**」（正文留决策史）、ADR 索引同步、计划 §7 R4 行改 `❌ 已撤回`、
+    roadmap §4.8 回到「未实施」、台账复现点 **18/19 标记 ❌已退役**＋§三退役记录、
+    `docs/executor.md` G1–G12 清单整节退役、验收清单 D 组整体撤销（D1/D2 记录保留）。
+  - **保留**：`ExecutorKind::Ssh` 是 v0.4.0 就存在的**预留位**（与本次向导无关），不动。
+- **② 实验能力卡（`ExperimentalCapabilities.tsx`）**：改以**官方口径**呈现——面板与每张卡标注
+  「DSH 官方」，明写这些是 DeepSeek 发布的 dsh 实验包（`@deepseek-ai/*`）、dsh-dock 只做策展与开关；
+  每个包的**官方包名**（= 官方名）与**该包自己的 description**（装好后从 `package.json` 读，
+  不转述不翻译）进「详情」逐行呈现；未安装时如实显示"装好后显示官方简介"，**不拿我们的转述冒充官方描述**。
+- **③ 发布日志**：按「只说做了什么」重写——删除 SSH 条目、删除"暂缓/未实施"类说明
+  （ADR-0024 桌面任务快跑器），「已知限制」只留已交付功能的边界。
+- **影响**：① 仅周知（功能未发布，用户侧无感）；② 用户可见（实验能力页文案与包信息）。
+- **凭据**：Rust `fmt --check` / `clippy --all-targets -D warnings` 干净、`cargo test` 全绿；
+  前端 `tsc` / `oxlint` / `vitest` / `build` 全绿（数字见同批下方条目）。
+
 ### 2026-09-17 修复 · 插件行「已禁用 / 已停用」两词并存 + 运行态不刷新（实机报障）—— guan（AI 协作）
 
 - **触发**（维护者实机，附截图）：外挂插件列表里同一屏既有「已禁用」又有「已停用」，

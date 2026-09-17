@@ -590,28 +590,6 @@ export const t = {
     mcpProbeResources: "资源",
     mcpProbeTemplates: "资源模板",
     // SSH 远程工作区向导（2026-09-15，ADR-0023）
-    sshWizardTitle: "SSH 远程工作区向导",
-    sshWizardScope:
-      "面向 headless / 自建 profile：会创建一个声明 @deepseek-ai/dsh-headless 的 profile，并在其 cordis.patch.yml 里注册四个 ssh 包（dsh-ssh / dsh-fs-ssh / dsh-subprocess-ssh / dsh-sandbox-ssh）。**Web 工作台的文件树、编辑器与终端不会因此变成远端感知**——上游明确不支持该形态，故这里不承诺。",
-    sshWizardWindows:
-      "当前宿主是 Windows：SSH 远程工作区要求 POSIX 客户端（Linux/macOS），上游在非 POSIX 宿主上会直接拒绝启动 ssh 服务。本向导在此不可用。",
-    sshNameLabel: "Profile 名称（不存在则创建）",
-    sshHostLabel: "SSH 主机（来自 ~/.ssh/config 的别名）",
-    sshHostPlaceholder: "请选择一个别名",
-    sshHostLoadFailed: (reason: string) => `读取 ~/.ssh/config 失败：${reason}`,
-    sshNodeLabel: "远端 node 绝对路径",
-    sshHelperLabel: "远端 helper 绝对路径",
-    sshHashLabel: "helper 的 SHA-256（小写 64 位十六进制）",
-    sshWorkspaceLabel: "远端工作区绝对路径",
-    sshProbeBtn: "非交互预检",
-    sshProbeFailed: "预检未能完成",
-    sshInstallBtn: "生成并安装（可能数分钟）",
-    sshInstalling:
-      "正在创建 profile 并安装四个 ssh 包（各自一次 pnpm 安装，可能数分钟，请勿关闭窗口）…",
-    sshDoneCreated: (name: string) => `已创建 profile「${name}」`,
-    sshDoneReused: (name: string) => `已复用已有 profile「${name}」`,
-    sshDoneWrote: "并写入四条 ssh 挂载行。",
-    sshDoneUnchanged: "挂载行本就齐全，未改动文件。",
     mcpDeleteNote: "将从当前 Profile 的 cordis.patch.yml 中安全删除。",
     mcpActiveTools: (count: number) => `运行时已加载 ${count} 个工具`,
     mcpNoActiveTools: "当前未在运行态或无导出工具",
@@ -912,7 +890,16 @@ export const t = {
     capTab: "实验能力",
 
     capTitle: "实验能力",
-    capDesc: "上游标记为实验的 dsh 能力：开启即安装并挂载，随时可以关掉。",
+    // 2026-09-17 维护者裁定「实验功能模块要突出是 dsh 官方实验功能，插件的名字和描述也要
+    // 以官方为主」：面板与每张卡都带「DSH 官方」标记，说明来源与我们的角色；包名 = 官方名，
+    // 包简介 = 包自己 package.json 的 description（装好后读本地文件，不转述不翻译）。
+    capOfficialBadge: "DSH 官方",
+    capOfficialNote:
+      "这些是 DeepSeek 官方发布的 dsh 实验功能（`@deepseek-ai/*` 包）：dsh-dock 只做策展与开关，不是社区插件。",
+    capOfficialPackages: "官方包",
+    capOfficialDesc: "官方简介",
+    capOfficialDescPending: "装好这条后会显示它自带的官方简介",
+    capDesc: "DeepSeek 官方以实验包形式发布的 dsh 能力：开启即安装并挂载，随时可以关掉。",
     capTargetProfile: "目标 Profile",
     capPickProfile: "请先选择一个已创建的 Profile",
     capLoadFailed: "读取实验能力失败",

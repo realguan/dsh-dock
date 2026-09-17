@@ -3,9 +3,14 @@
 // 纯逻辑测试不渲染 DOM（AGENTS §4.3 末段），所以这里用 `?raw` + 窗口切片钉住四件
 // 会**悄悄退化**的事——它们都是 v1「官方实验室」的真实缺陷形态：
 //
-//  ① **第一阅读层被实现细节污染**：包名 / 钉版本 / 激活方式 / 行 id 必须只在「详情」
+//  ① **第一阅读层被实现细节污染**：钉版本 / 激活方式 / 行 id 必须只在「详情」
 //     折叠区里出现（v1 把这些直接排在卡片第一屏）。反向也要钉：折叠区**必须**真有它们，
 //     否则第 ① 条会靠"整个功能被删掉"而假绿。
+//     **2026-09-17 修订**：维护者裁定「实验功能模块要突出是 dsh 官方实验功能，插件的**名字**
+//     和描述也要以官方为主」——官方名就是 npm 包名，遂把**当前后端的官方包名**移到第一阅读层
+//     （用官方标识 `capOfficialPackages` 标注）。这是裁定对 v1 判据的**有意放宽**，不是退化：
+//     仍然禁止 spec（钉版本）、激活方式、行 id、版本提示出现在折叠态，并改用更强的窗口判据
+//     （`variant.steps` 的官方包名行之外不得再出现任何逐包实现字段）。
 //  ② **破坏性移除不确认**：`移除并卸载` 必须经 `ConfirmDialog`（U9 口径），
 //     且按钮只**置起待确认态**，不得直接执行。
 //  ③ **关闭 ≠ 卸载**：只有 `toggleOffSupported` 的变体才允许走行级停用；
@@ -42,26 +47,44 @@ function stripComments(text: string): string {
     .join("\n")
 }
 
-describe("① 第一阅读层不得出现实现细节", () => {
-  it("折叠态里没有包名、钉版本、激活方式与行 id", () => {
+describe("① 第一阅读层不得出现实现细节（官方包名除外，2026-09-17 裁定）", () => {
+  it("折叠态里没有钉版本、激活方式与行 id", () => {
     const collapsed = collapsedRegion()
     for (const forbidden of [
-      "s.package",
       "capPinned",
       "capImplTitle",
       "capActivationAuto",
       "capActivationInsert",
       "s.rowId",
       "versionNotice",
+      "s.spec",
+      "s.ordinal",
     ]) {
       expect(collapsed, `第一阅读层出现了「${forbidden}」`).not.toContain(forbidden)
     }
   })
 
+  it("官方包名在第一阅读层**且**带官方标识（裁定要求，不得悄悄消失）", () => {
+    const collapsed = collapsedRegion()
+    expect(collapsed, "第一阅读层缺少官方包名行").toContain("t.market.capOfficialPackages")
+    expect(collapsed, "官方包名行必须取自 variant.steps 的官方包名").toContain(
+      "variant.steps.map((s) => s.package).join",
+    )
+  })
+
+  it("官方来源与官方简介文案齐备（面板与逐包两处）", () => {
+    expect(src, "面板头缺官方标记").toContain("t.market.capOfficialBadge")
+    expect(src, "面板头缺官方来源说明").toContain("t.market.capOfficialNote")
+    expect(src, "详情缺逐包官方简介标签").toContain("t.market.capOfficialDesc")
+    expect(src, "未装时必须如实说明（不得用我们的文案冒充官方简介）").toContain(
+      "t.market.capOfficialDescPending",
+    )
+  })
+
   it("详情折叠区**确实**承载这些实现细节（否则上一条是假绿）", () => {
     const body = cardBody()
     const detail = body.slice(body.indexOf("{openDetail &&"))
-    for (const required of ["s.package", "capPinned", "capImplTitle", "s.rowId"]) {
+    for (const required of ["s.package", "capPinned", "capImplTitle", "s.rowId", "s.description"]) {
       expect(detail, `折叠区缺少「${required}」`).toContain(required)
     }
   })

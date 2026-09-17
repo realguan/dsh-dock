@@ -252,11 +252,23 @@ pub async fn list_experimental_capabilities(
         // 宿主前置探测（2026-09-16 §7.5）：缺 `cua-driver` 之类的包**不得**被开关放行。
         let missing_commands = missing_prerequisites(&data_dir, &catalog_packages());
 
+        // 已装包的**官方简介**（2026-09-17 维护者裁定「描述以官方为主」）：逐包读其
+        // `node_modules/<包>/package.json` 的 description。未装的包读不到 ⇒ 不进表
+        // （前端如实显示"装好后显示官方简介"），**不拿策展文案冒充**。
+        let descriptions = installed
+            .iter()
+            .filter_map(|name| {
+                crate::plugins::installed_description(&home, &profile, name)
+                    .map(|d| (name.clone(), d))
+            })
+            .collect();
+
         Ok(crate::official_catalog::resolve_capabilities(
             &crate::official_catalog::PackageFacts {
                 installed,
                 declared_bundles,
                 missing_commands,
+                descriptions,
             },
             &rows,
             runtime_version.as_deref(),

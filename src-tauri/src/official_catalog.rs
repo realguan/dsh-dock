@@ -410,6 +410,10 @@ pub struct StepView {
     pub toggle_targets: Vec<String>,
     /// 版本错配提示（`latest` 落后于运行时等）；`None` = 无需打扰用户。
     pub version_notice: Option<String>,
+    /// **该包自己的** `description`（2026-09-17 维护者裁定「描述以官方为主」）。
+    /// 装在 `<profile>/node_modules/<包>/package.json` 里才读得到，故未装时为 `None`
+    /// ——**绝不用策展文案冒充官方描述**，前端对 `None` 如实显示"装好后显示官方简介"。
+    pub description: Option<String>,
 }
 
 /// 变体的事实视图。
@@ -495,6 +499,9 @@ pub struct PackageFacts {
     /// 判据单源在 [`required_command`]（包 → 前置命令）；本字段只是"探测结果"，
     /// 让 `resolve_capabilities` 保持纯函数（不碰文件系统）。
     pub missing_commands: Vec<String>,
+    /// 已装包的官方 `description`（包名 → 简介）。同样由调用方读好后填入，
+    /// 让本函数保持纯（不碰文件系统）。缺包/包没写 description = 不在表里。
+    pub descriptions: std::collections::BTreeMap<String, String>,
 }
 
 /// 判断某能力的某变体现在处于什么状态，以及开/关/移除各需要哪些行级目标。
@@ -548,6 +555,8 @@ pub fn resolve_capabilities(
                                 ),
                             };
                             let row = row_state_for(rows, &step.package, &step.row_id, activation);
+                            // 官方简介先取（`step.package` 下一行被 move 进 StepView）
+                            let description = facts.descriptions.get(&step.package).cloned();
                             StepView {
                                 ordinal: step.ordinal,
                                 package: step.package,
@@ -559,6 +568,7 @@ pub fn resolve_capabilities(
                                 disabled: row.disabled,
                                 toggle_targets: row.targets,
                                 version_notice: notice,
+                                description,
                             }
                         })
                         .collect();
@@ -760,7 +770,48 @@ mod tests {
             installed: installed.iter().map(|s| pkg(s)).collect(),
             declared_bundles: bundles.iter().map(|s| pkg(s)).collect(),
             missing_commands: Vec::new(),
+            descriptions: Default::default(),
         }
+    }
+
+    /// 2026-09-17（维护者裁定「描述以官方为主」）：`description` **只**来自调用方
+    /// 读到的已装包事实——没装/包没写 description 时必须是 `None`（前端据此如实显示
+    /// "装好后显示官方简介"），**不得**用策展文案兜底冒充官方。
+    #[test]
+    fn step_description_comes_only_from_installed_package_facts() {
+        // 取策展目录里真实存在的第一个包作样本（不硬编码包名，目录变了测试仍成立）
+        let sample = CAPABILITIES
+            .iter()
+            .flat_map(|c| c.variants.iter())
+            .flat_map(|v| v.packages.iter())
+            .next()
+            .expect("策展目录非空")
+            .to_string();
+        let facts = PackageFacts {
+            descriptions: [(sample.clone(), "该包自己的简介".to_string())]
+                .into_iter()
+                .collect(),
+            ..facts(&[sample.as_str()], &[])
+        };
+        let view = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"));
+        let steps: Vec<_> = view
+            .iter()
+            .flat_map(|c| c.variants.iter())
+            .flat_map(|v| v.steps.iter())
+            .collect();
+        let hit = steps
+            .iter()
+            .find(|s| s.package == sample)
+            .expect("样本包必须在策展目录里");
+        assert_eq!(hit.description.as_deref(), Some("该包自己的简介"));
+        // 反例：没给描述的包（目录里其余包）不得凭空有描述
+        assert!(
+            steps
+                .iter()
+                .filter(|s| s.package != sample)
+                .all(|s| s.description.is_none()),
+            "未提供官方描述时必须是 None，不得编造"
+        );
     }
 
     /// 同 [`facts`]，但把给定可执行文件标成"宿主 PATH 里没有"。

@@ -577,28 +577,6 @@ export const enUS: AppCopy = {
     mcpProbeResources: "Resources",
     mcpProbeTemplates: "Resource templates",
     // SSH remote workspace wizard (2026-09-15, ADR-0023)
-    sshWizardTitle: "SSH Remote Workspace Wizard",
-    sshWizardScope:
-      "For headless / custom profiles: creates a profile declaring @deepseek-ai/dsh-headless and registers four ssh packages (dsh-ssh / dsh-fs-ssh / dsh-subprocess-ssh / dsh-sandbox-ssh) in its cordis.patch.yml. **The Web workbench file tree, editor and terminal do NOT become remote-aware** — upstream explicitly does not support that shape, so we make no such promise.",
-    sshWizardWindows:
-      "This host is Windows: an SSH remote workspace requires a POSIX client (Linux/macOS); upstream refuses to start the ssh service on a non-POSIX host. This wizard is unavailable here.",
-    sshNameLabel: "Profile name (created when missing)",
-    sshHostLabel: "SSH host (an alias from ~/.ssh/config)",
-    sshHostPlaceholder: "Select an alias",
-    sshHostLoadFailed: (reason: string) => `Failed to read ~/.ssh/config: ${reason}`,
-    sshNodeLabel: "Absolute remote node path",
-    sshHelperLabel: "Absolute remote helper path",
-    sshHashLabel: "helper SHA-256 (lowercase 64-hex)",
-    sshWorkspaceLabel: "Absolute remote workspace path",
-    sshProbeBtn: "Non-interactive preflight",
-    sshProbeFailed: "Preflight could not complete",
-    sshInstallBtn: "Generate and install (may take minutes)",
-    sshInstalling:
-      "Creating the profile and installing four ssh packages (one pnpm install each; may take minutes — do not close the window)…",
-    sshDoneCreated: (name: string) => `Created profile "${name}"`,
-    sshDoneReused: (name: string) => `Reused existing profile "${name}"`,
-    sshDoneWrote: "and wrote the four ssh registration rows.",
-    sshDoneUnchanged: "registration rows were already complete; no file changed.",
     mcpDeleteNote: "This will be safely removed from cordis.patch.yml.",
     mcpActiveTools: (count: number) => `${count} tools active in runtime`,
     mcpNoActiveTools: "Not running or no exported tools",
@@ -900,6 +878,15 @@ export const enUS: AppCopy = {
     capTab: "Experimental",
 
     capTitle: "Experimental Capabilities",
+    // 2026-09-17 ruling: make the official provenance explicit; package names are the official
+    // names and each description is the package's own (`description` from its package.json, read
+    // locally once installed — never paraphrased or translated).
+    capOfficialBadge: "DSH Official",
+    capOfficialNote:
+      "These are dsh experimental capabilities published by DeepSeek (`@deepseek-ai/*` packages): dsh-dock only curates them and flips the switch — they are not community plugins.",
+    capOfficialPackages: "Official packages",
+    capOfficialDesc: "Official description",
+    capOfficialDescPending: "The package's own description appears here once installed",
     capDesc: "dsh capabilities that upstream marks as experimental. Turn one on to install and mount it; you can turn it off at any time.",
     capTargetProfile: "Target Profile",
     capPickProfile: "Pick a Profile first",

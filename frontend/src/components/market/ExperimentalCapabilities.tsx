@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
+  BadgeCheck,
   Bot,
   Check,
   ChevronRight,
@@ -276,8 +277,17 @@ export function ExperimentalCapabilities({
     <div className="flex flex-col gap-3">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-note font-semibold text-ink">{t.market.capTitle}</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-note font-semibold text-ink">{t.market.capTitle}</h2>
+            {/* DSH 官方标记（2026-09-17 维护者裁定）：这些是上游官方实验包，
+                不是社区插件——来源必须在第一阅读层说清。 */}
+            <Badge variant="outline" className="h-4.5 gap-1 px-1.5 text-micro">
+              <BadgeCheck className="size-3" />
+              {t.market.capOfficialBadge}
+            </Badge>
+          </div>
           <p className="mt-0.5 text-label text-dim">{t.market.capDesc}</p>
+          <p className="mt-0.5 text-micro text-faint">{t.market.capOfficialNote}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="whitespace-nowrap text-label text-faint">
@@ -556,6 +566,9 @@ function CapabilityCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-note font-semibold text-ink">{cap.labelZh}</h3>
+            <Badge variant="outline" className="h-4 px-1 text-micro">
+              {t.market.capOfficialBadge}
+            </Badge>
             <StateBadge cap={cap} variant={variant} t={t} />
           </div>
           <p className="mt-0.5 text-label text-dim">{cap.summaryZh}</p>
@@ -646,6 +659,14 @@ function CapabilityCard({
           {variant.noteZh}
           {variant.noteZh && offIsRemove && " · "}
           {offIsRemove && t.market.capOffIsRemove}
+        </p>
+      )}
+
+      {/* 官方包名（2026-09-17 裁定「以官方为主」）：官方名就是 npm 包名，写全而不转述。
+          排在简介/前置之上但仍是小字，排障与"这是谁的包"一问即答。 */}
+      {variant.steps.length > 0 && (
+        <p className="mt-2 break-all font-mono text-micro text-faint">
+          {t.market.capOfficialPackages}：{variant.steps.map((s) => s.package).join(" · ")}
         </p>
       )}
 
@@ -768,6 +789,16 @@ function CapabilityCard({
                       {stepStatus(s, t)}
                     </span>
                   </div>
+                  {s.description ? (
+                    <p className="mt-0.5 pl-4 text-micro leading-relaxed text-dim">
+                      <span className="text-faint">{t.market.capOfficialDesc}：</span>
+                      {s.description}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 pl-4 text-micro text-faint">
+                      {t.market.capOfficialDescPending}
+                    </p>
+                  )}
                   <div className="mt-0.5 pl-4 font-mono text-micro text-faint">
                     {t.market.capPinned(s.spec)}
                     {s.activation === "insert_row" && ` · ${s.rowId}`}
