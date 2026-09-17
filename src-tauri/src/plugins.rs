@@ -1901,7 +1901,7 @@ impl PatchFile {
         self.write_with_backup(path).map(|_| ())
     }
 
-    /// 同 [`Self::write`]，但**返回刚创建的备份路径**（供"一键恢复"记账）。
+    /// 同 [`Self::write`]，但**返回刚创建的备份路径**（供调用方记账/排障）。
     ///
     /// 安全模式（ADR-0026）要记住"进入前那份配置"，退出时按记录**原样覆盖回去**——
     /// 因此备份路径必须由写入方回传，不能事后按文件名猜最新一份。
@@ -1968,8 +1968,8 @@ fn serialize_patch_item(v: &serde_yaml::Value) -> Result<String, String> {
 /// 原子替换：同目录临时文件 + rename（与 settings / credentials 同口径）。
 /// 原子替换：同目录临时文件 + rename（跨平台；`rename` 覆盖语义在目标已存在时成立）。
 ///
-/// `pub(crate)` 是给安全模式（ADR-0026）用的：一键恢复要**逐字节**把备份覆盖回去，
-/// 走这里而不是重新解析-渲染（配置已坏时也能恢复，且不引入任何改写）。
+/// `pub(crate)` 是给安全模式（ADR-0026）用的：它要在**不重新解析**的前提下把用户原配置
+/// 那几行原样写回/替换（配置已坏时也照写不误），从而不引入任何额外改写。
 pub(crate) fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path

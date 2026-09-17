@@ -16,9 +16,9 @@ pub fn backup_before_overwrite(target: &Path) -> Result<(), String> {
 
 /// 同 [`backup_before_overwrite`]，但**返回刚创建的那份备份路径**（目标不存在 → `None`）。
 ///
-/// 为什么需要它（2026-09-16，安全模式改"写配置"）：一键恢复的语义是"把进入安全模式前的
-/// 配置文件覆盖回去"，因此调用方必须**记住是哪一份备份**——按文件名猜"最新一份"会在用户
-/// 进入安全模式后又改过插件时指错（那时最新备份是"安全模式之后"的状态）。
+/// 为什么需要它（2026-09-16）：调用方（安全模式）要把"这次覆写前的那一份"记进记账，
+/// 便于事后判断/排障；按文件名猜"最新一份"在用户随后又改过配置时必然指错。
+/// （界面上的"一键恢复"已按维护者裁定移除，本函数仍服务于记账与既有调用方。）
 pub fn backup_before_overwrite_path(target: &Path) -> Result<Option<std::path::PathBuf>, String> {
     if !target.exists() {
         return Ok(None);
@@ -80,7 +80,7 @@ mod tests {
             .expect("应产生备份");
         assert!(first.exists());
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "v1\n");
-        // 第二次：拿到的是**新的**那一份（不是第一份）——否则"一键恢复"会指错文件。
+        // 第二次：拿到的是**新的**那一份（不是第一份）——否则记账会指错文件。
         std::fs::write(&target, "v2\n").unwrap();
         let second = backup_before_overwrite_path(&target)
             .unwrap()
