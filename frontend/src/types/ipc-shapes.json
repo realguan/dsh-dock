@@ -143,7 +143,6 @@
   ],
   "SafeModeState": [
     "active",
-    "disabledRows",
-    "restorable"
+    "disabledRows"
   ]
 }

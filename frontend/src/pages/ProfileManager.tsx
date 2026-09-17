@@ -408,8 +408,9 @@ export function ProfileManager() {
       </header>
 
       {/* 安全模式横幅（ADR-0026）：三方插件已在**配置里** disable，故下面的开关本来就显示"关"——
-          不再需要解释两个真相源；这里要交代的是"怎么恢复"（一键用备份覆盖回去）
-          与"哪些插件被停了"（数量）。 */}
+          这里只交代"有几个插件行被停用"（数字与配置实时联动，用户逐个打开后会降）。
+          **没有恢复按钮**（维护者 2026-09-16 裁定：恢复 = 把坏配置搬回来，启动照样失败）；
+          想用哪个插件就到「实验能力」里打开哪个开关。 */}
       {safeMode?.active && (
         <div
           role="status"
@@ -422,32 +423,6 @@ export function ProfileManager() {
           <span className="flex-1 text-micro text-dim">
             {t.profiles.safeModeBody(safeMode.disabledRows.length)}
           </span>
-          {safeMode.restorable ? (
-            <>
-              <span className="text-micro text-faint">{t.profiles.safeModeRestoreHint}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 border-warn/40 text-micro text-warn"
-                onClick={() => {
-                  api
-                    .terminalAction("safe_mode_exit")
-                    .catch((e) =>
-                      showToast(
-                        t.profiles.safeModeExitFailed(String(e instanceof Error ? e.message : e)),
-                        "warn",
-                      ),
-                    )
-                }}
-              >
-                <RefreshCw className="size-3" />
-                {t.profiles.safeModeExit}
-              </Button>
-            </>
-          ) : (
-            // 备份被手动删了 → **不给按钮**（点了必然报错），只如实说明。
-            <span className="text-micro text-warn">{t.profiles.safeModeNotRestorable}</span>
-          )}
         </div>
       )}
 

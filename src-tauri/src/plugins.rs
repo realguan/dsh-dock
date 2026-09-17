@@ -1561,6 +1561,18 @@ fn build_row_states(
     out
 }
 
+/// 当前处于**停用态**的顶层行 id（读 profile 自家 patch，缺失/损坏 → 空表）。
+///
+/// 用途（ADR-0026 第三次裁定后）：安全模式横幅要显示"**现在**还有几个插件行是停用的"
+/// ——用户逐个打开后数字要跟着降，不能停留在进入安全模式那一刻的快照。
+pub(crate) fn disabled_row_ids(patch_path: &Path) -> Vec<String> {
+    patch_entry_map(patch_path)
+        .into_iter()
+        .filter(|(_, (disabled, _))| *disabled)
+        .map(|(id, _)| id)
+        .collect()
+}
+
 /// 读 profile 自家 patch：id -> (含 disabled:true, 条目数)。文件缺失/损坏 →
 /// 空表（与清单容忍半初始化同口径）。
 fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (bool, usize)> {

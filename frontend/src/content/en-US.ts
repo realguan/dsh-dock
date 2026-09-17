@@ -393,18 +393,14 @@ export const enUS: AppCopy = {
     pluginDisable: "Disable (Requires Restart)",
     pluginEnable: "Enable (Requires Restart)",
     pluginDisabled: "Disabled",
-    // Safe-mode banner (ADR-0026): the profile config is now the single source of truth —
-    // third-party plugins are disabled there, so the toggles below read as off.
+    // Safe-mode banner (ADR-0026, third revision): the profile config is the single source of
+    // truth — third-party plugins are disabled there, so the toggles read as off. There is NO
+    // restore button (2026-09-16 ruling: restoring brings the broken config back, so startup
+    // fails again); the way forward is turning capabilities back on one by one.
     safeModeTitle: "Safe mode",
     safeModeBody: (n: number) =>
       `${n} third-party plugins are disabled in your profile config (backed up before the change). ` +
-      `Turn on whichever ones you want; one-click restore overwrites the config with that backup.`,
-    safeModeExit: "Restore plugin config & restart",
-    safeModeRestoreHint:
-      "Restoring overwrites any plugin changes made while in safe mode (those are backed up first)",
-    safeModeNotRestorable:
-      "The pre-safe-mode backup is gone, so one-click restore is unavailable — edit the config manually.",
-    safeModeExitFailed: (msg: string) => `Restore failed: ${msg}`,
+      `To use one, turn it back on under Experimental Capabilities.`,
     pluginOpBusyRemove: "Uninstalling…",
     pluginOpBusyUpdate: "Updating…",
     checkUpdatesBtn: "Check Updates",

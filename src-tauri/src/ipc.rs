@@ -442,7 +442,6 @@ mod gate_tests {
             crate::safe_mode::SafeModeState {
                 active: false,
                 disabled_rows: Vec::new(),
-                restorable: false,
             }
         );
         assert_shape!(

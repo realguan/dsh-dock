@@ -377,22 +377,17 @@ impl Executor for LocalExecutor {
         // spawn 成功即收口（等待就绪归 step3）：否则 step2 永挂「运行中」，
         // 而后发的 step3/4 done 会让时间线出现「后步完成、前步 loading」的倒挂。
         sink(2, "done", &format!("「{}」工作台已启动", launch.profile));
-        // 安全模式可见性（ADR-0026）：进入安全模式时把"在配置里停用了多少行"写进时间线
-        // ——否则用户只会觉得"插件怎么都没了"。**只有真的还能恢复**才承诺恢复入口
-        // （restorable=false 时那样说会把用户引到一个点了必然报错的地方，2026-09-16 独立复核 P4）。
+        // 安全模式可见性（ADR-0026）：把"配置里现在有几个插件行是停用的"写进时间线
+        // ——否则用户只会觉得"插件怎么都没了"。**没有恢复按钮**（维护者 2026-09-16 裁定：
+        // 恢复 = 把坏配置搬回来、启动照样失败），想用哪个插件就在「实验能力」里打开哪个开关。
         let safe_mode_state =
             crate::safe_mode::state(&self.data_dir, &launch.profile, &launch.dsh_home);
         if safe_mode_state.active {
-            let tail = if safe_mode_state.restorable {
-                "（可在控制中心一键恢复）"
-            } else {
-                "（进入前那份备份已不在，需手动改配置）"
-            };
             sink(
                 2,
                 "done",
                 &format!(
-                    "安全模式：已在配置里停用 {} 个插件行{tail}",
+                    "安全模式：配置里有 {} 个插件行处于停用（想用哪个就到「实验能力」打开）",
                     safe_mode_state.disabled_rows.len()
                 ),
             );

@@ -400,16 +400,12 @@ export const t = {
     pluginDisable: "禁用（重启后生效）",
     pluginEnable: "启用（重启后生效）",
     pluginDisabled: "已禁用",
-    // 安全模式横幅（ADR-0026，2026-09-16 第二版）：配置层就是唯一真相源——
-    // 三方插件已在配置里 disable，故下面的开关状态本来就是"关"，不再需要解释两个真相源。
+    // 安全模式横幅（ADR-0026，2026-09-16 第三版）：配置层就是唯一真相源——三方插件已在配置里
+    // disable，故下面的开关本来就显示"关"。**没有恢复按钮**（维护者裁定：恢复 = 把坏配置搬回来，
+    // 启动照样失败）；出路是在「实验能力」里逐个打开开关。
     safeModeTitle: "安全模式",
     safeModeBody: (n: number) =>
-      `已在配置文件里停用 ${n} 个三方插件（进入前已备份）。想用哪个就打开哪个开关；` +
-      `一键恢复 = 用备份覆盖回配置。`,
-    safeModeExit: "一键恢复插件配置并重启",
-    safeModeRestoreHint: "恢复会覆盖进入安全模式之后对该配置的改动（那份改动也会先被备份）",
-    safeModeNotRestorable: "进入安全模式前的那份备份不在了，无法一键恢复——可手动改配置。",
-    safeModeExitFailed: (msg: string) => `恢复失败：${msg}`,
+      `已在配置文件里停用 ${n} 个三方插件（进入前已备份）。想用哪个，就到「实验能力」里打开哪个开关。`,
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
     // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择

@@ -3,8 +3,12 @@
 //! ## 一句话
 //!
 //! 安全模式 = **在 profile 的 `cordis.patch.yml` 里，把所有"非随包（三方）挂载行"写成
-//! `disabled: true`**（覆写前备份），然后**正常启动**；「一键恢复」= 用那份备份**原样覆盖
-//! 回去**。用户的插件开关（配置层）从此就是安全模式的真相源，不再有第二套状态。
+//! `disabled: true`**（覆写前备份），然后**正常启动**。用户的插件开关（配置层）就是安全模式
+//! 的真相源：想用哪个插件，就到「实验能力」里打开哪个开关（面板改的是同一个文件）。
+//!
+//! **没有"一键恢复"**（2026-09-16 维护者第三次裁定）：恢复 = 把坏配置原样搬回来，启动照样
+//! 失败，"多此一举"。覆写前的 `.bak-<时间戳>` 备份仍在（既有写入纪律），需要时**手工**取用；
+//! 界面不再提供把整份配置覆盖回去的按钮。
 //!
 //! ## 为什么不用临时 overlay（ADR-0025 原方案，机制已退役）
 //!
@@ -115,13 +119,13 @@ fn looks_like_path(section: &str) -> bool {
 
 /// 记账：进入安全模式时"我们写进去了什么、进入前那份配置在哪"。
 ///
-/// 这是**一键恢复的唯一依据**：退出时按 `patch_backup` 覆盖回去，绝不按文件名猜最新一份
-/// （用户进入安全模式后又改过插件时，"最新一份"是安全模式之后的状态）。
+/// 它的用途（2026-09-16 第三次裁定后）：把"安全模式停掉的行"与"用户自己停掉的行"区分开——
+/// 横幅只统计前者，且与当前配置求交集。**不再承载任何恢复动作**。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Journal {
+    /// 进入安全模式时我们写下的停用行（横幅据此把"安全模式停的"与"用户自己停的"区分开）。
     pub disabled_rows: Vec<String>,
-    pub patch_backup: String,
     /// 进入时的 dsh home（绝对路径）。**跨 home 不认账**：开发档（`~/.dsh-dock-dev`）与正式档
     /// （`~/.dsh`）用的是**同一份壳设置/数据目录**，只按 profile 名记账会让另一侧显示"安全模式中"
     /// 且给一个必然失败的恢复按钮（2026-09-16 独立复核）。
@@ -140,17 +144,6 @@ pub struct EnterOutcome {
     pub backup: Option<PathBuf>,
 }
 
-/// 退出（一键恢复）的结果。
-#[derive(Debug, Clone)]
-pub struct ExitOutcome {
-    /// 是否真的恢复了（false = 本就不在安全模式）。
-    pub restored: bool,
-    /// 被用来覆盖回去的那份备份（进入安全模式前的那份）。
-    pub backup_used: Option<PathBuf>,
-    /// 恢复前对"当前配置"补做的备份（安全模式期间的改动不会无迹可寻）。
-    pub current_backup: Option<PathBuf>,
-}
-
 /// 安全模式状态（给前端的**只读**快照：横幅/文案用）。
 ///
 /// 边界：只报"壳的记账文件在不在、记了哪些行、那份备份还在不在"——**不报运行态**。
@@ -158,11 +151,11 @@ pub struct ExitOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafeModeState {
+    /// 是否仍处于安全模式：见 [`state`]（记账在 + 其中至少一行现在仍是停用态）。
     pub active: bool,
+    /// **此刻**仍处于停用态、且是我们进入安全模式时停的那些行 id（用户逐个打开后会变少；
+    /// 全打开 → `active=false`，横幅自动消失）。
     pub disabled_rows: Vec<String>,
-    /// 一键恢复当前可用吗（记账里那份备份**还在**）。`false` = 备份被手动删了/挪了，
-    /// 前端据此**不承诺**一键恢复（宁可不给按钮，也不给一个点了会报错的按钮）。
-    pub restorable: bool,
 }
 
 /// 读记账（无文件 / 解析失败 → `None`：它是壳自己写的文件，损坏时按"未开安全模式"处理）。
@@ -178,17 +171,24 @@ fn journal_belongs_to(journal: &Journal, home: &Path) -> bool {
 
 /// 读当前安全模式状态（无记账 / 属于别的 home = 未启用）。
 pub fn state(data_dir: &Path, profile: &str, home: &Path) -> SafeModeState {
-    match read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home)) {
-        Some(journal) => SafeModeState {
-            active: true,
-            restorable: Path::new(&journal.patch_backup).is_file(),
-            disabled_rows: journal.disabled_rows,
-        },
-        None => SafeModeState {
+    let Some(journal) = read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home))
+    else {
+        return SafeModeState {
             active: false,
             disabled_rows: Vec::new(),
-            restorable: false,
-        },
+        };
+    };
+    // 与**当前**配置求交集：用户在面板上逐个打开后数字随之下降；全开 → 不再报"安全模式中"
+    // （否则横幅会一直挂着一个已经没意义的提醒）。
+    let live = crate::plugins::disabled_row_ids(&profile_patch_path(home, profile));
+    let disabled_rows: Vec<String> = journal
+        .disabled_rows
+        .into_iter()
+        .filter(|id| live.contains(id))
+        .collect();
+    SafeModeState {
+        active: !disabled_rows.is_empty(),
+        disabled_rows,
     }
 }
 
@@ -243,7 +243,6 @@ pub fn enter(
     }
     let journal = Journal {
         disabled_rows: ids.to_vec(),
-        patch_backup: backup.display().to_string(),
         dsh_home: home.display().to_string(),
         applied_at: now_unix(),
     };
@@ -255,63 +254,6 @@ pub fn enter(
     })
 }
 
-/// **一键恢复**（维护者 2026-09-16 口径："就是把备份好的配置文件覆盖回去"）。
-///
-/// 逐字节覆盖，**不重新解析**：这样即使当前配置已经写坏也能恢复。
-/// 覆盖前把**当前**配置再备份一份——用户在安全模式期间改动过的插件配置不会被无声抹掉。
-pub fn exit(home: &Path, data_dir: &Path, profile: &str) -> Result<ExitOutcome, String> {
-    crate::profiles::validate_profile_name(profile)?;
-    let Some(journal) = read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home))
-    else {
-        return Ok(ExitOutcome {
-            restored: false,
-            backup_used: None,
-            current_backup: None,
-        });
-    };
-    let patch_path = profile_patch_path(home, profile);
-    let backup = PathBuf::from(&journal.patch_backup);
-    validate_backup_path(&patch_path, &backup)?;
-    let text = std::fs::read_to_string(&backup).map_err(|e| {
-        format!(
-            "备份已不在或读不出来（{}）：{e}\n\
-             ——安全模式仍生效；请手动把该 profile 的 cordis.patch.yml 改回原样\
-             （这几行是我们加进去的停用桩：{}）。",
-            backup.display(),
-            journal.disabled_rows.join("、")
-        )
-    })?;
-    let current_backup = crate::fs_backup::backup_before_overwrite_path(&patch_path)?;
-    crate::plugins::atomic_replace(&patch_path, &text)?;
-    remove_journal(data_dir, profile);
-    remove_legacy_overlay(data_dir, profile);
-    Ok(ExitOutcome {
-        restored: true,
-        backup_used: Some(backup),
-        current_backup,
-    })
-}
-
-/// 备份路径必须是**同一个 profile 目录下**的 `cordis.patch.yml.bak-*`。
-///
-/// 记账文件理论上可能被改坏；恢复是破坏性动作，故**先验证再覆盖**——宁可报错，
-/// 也不拿一个指向别处的路径去覆盖配置。
-fn validate_backup_path(patch_path: &Path, backup: &Path) -> Result<(), String> {
-    let same_dir = patch_path.parent() == backup.parent();
-    let name = backup
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if !same_dir || !name.starts_with("cordis.patch.yml.bak-") {
-        return Err(format!(
-            "记账里的备份路径不可信（{}）：只接受同目录的 cordis.patch.yml.bak-*，\
-             拒绝用它覆盖配置。",
-            backup.display()
-        ));
-    }
-    Ok(())
-}
-
 fn write_journal(data_dir: &Path, profile: &str, journal: &Journal) -> Result<(), String> {
     let path = journal_path(data_dir, profile);
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -319,10 +261,6 @@ fn write_journal(data_dir: &Path, profile: &str, journal: &Journal) -> Result<()
     let text = serde_json::to_string_pretty(journal)
         .map_err(|e| format!("序列化安全模式记账失败：{e}"))?;
     crate::plugins::atomic_replace(&path, &format!("{text}\n"))
-}
-
-fn remove_journal(data_dir: &Path, profile: &str) {
-    let _ = std::fs::remove_file(journal_path(data_dir, profile));
 }
 
 /// 清掉 ADR-0025 时代的临时 overlay（机制已退役）：留着只会误导排障。
@@ -486,9 +424,10 @@ mod tests {
         assert!(ids.is_empty() && elsewhere.is_empty());
     }
 
-    /// 进入 → 记账 → 一键恢复 的完整往返：配置回到进入前**逐字节**相同，注释保真。
+    /// 进入安全模式：写入停用桩、**原文与注释保真**、留一份**逐字节**备份（手工恢复用），
+    /// 且状态与当前配置**实时**联动（用户逐个打开 → 数字降 → 全开即不再报"安全模式中"）。
     #[test]
-    fn enter_then_exit_restores_the_exact_previous_config() {
+    fn enter_writes_stubs_keeps_backup_and_tracks_live_state() {
         let home = tmp("rt-home");
         let data = tmp("rt-data");
         let patch = profile_with_patch(&home, PATCH);
@@ -502,7 +441,11 @@ mod tests {
         .unwrap();
         assert!(outcome.changed);
         let backup = outcome.backup.clone().expect("覆写必须留下备份");
-        assert!(backup.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            PATCH,
+            "备份必须是进入前那份**逐字节**原样（用户手工取用的唯一依据）"
+        );
 
         let after = std::fs::read_to_string(&patch).unwrap();
         assert!(after.contains("dsh-dock--a"), "原有条目必须保留：{after}");
@@ -511,23 +454,20 @@ mod tests {
             after.contains("# 用户注释（必须保真）"),
             "注释必须保真：{after}"
         );
-        // 两条都停了：insert 行就地置 disabled；未出现的 id 追加双键条目
         assert_eq!(after.matches("disabled: true").count(), 2, "{after}");
 
         let snapshot = state(&data, "web", &home);
-        assert!(snapshot.active && snapshot.restorable);
+        assert!(snapshot.active);
         assert_eq!(snapshot.disabled_rows.len(), 2);
 
-        // 一键恢复 = 用备份覆盖回去
-        let exit = exit(&home, &data, "web").unwrap();
-        assert!(exit.restored);
-        assert_eq!(exit.backup_used.as_deref(), Some(backup.as_path()));
-        assert_eq!(
-            std::fs::read_to_string(&patch).unwrap(),
-            PATCH,
-            "恢复后必须与进入前逐字节一致"
-        );
-        assert!(!state(&data, "web", &home).active, "恢复后记账必须清掉");
+        // 用户逐个打开插件（= 删除相应停用桩）：状态实时下降，全开即自动退出"安全模式"
+        crate::plugins::set_plugin_disabled(&home, "web", "agent-team", false).unwrap();
+        let after_one = state(&data, "web", &home);
+        assert_eq!(after_one.disabled_rows, vec!["dsh-dock--a".to_string()]);
+        crate::plugins::set_plugin_disabled(&home, "web", "dsh-dock--a", false).unwrap();
+        let after_all = state(&data, "web", &home);
+        assert!(!after_all.active, "全部打开后不应再报安全模式中");
+        assert!(after_all.disabled_rows.is_empty());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&data);
     }
@@ -575,66 +515,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    /// 未进入安全模式时点恢复：幂等，报"本就不在安全模式"，不动文件。
-    #[test]
-    fn exit_without_journal_is_a_no_op() {
-        let home = tmp("noop2-home");
-        let data = tmp("noop2-data");
-        let patch = profile_with_patch(&home, PATCH);
-        let outcome = exit(&home, &data, "web").unwrap();
-        assert!(!outcome.restored);
-        assert_eq!(std::fs::read_to_string(&patch).unwrap(), PATCH);
-        let _ = std::fs::remove_dir_all(&home);
-        let _ = std::fs::remove_dir_all(&data);
-    }
-
-    /// 备份被用户删掉：状态里 `restorable=false`（前端不承诺一键恢复），
-    /// 点恢复时明确报错并给出"我们加过哪几行"，不静默瞎恢复。
-    #[test]
-    fn missing_backup_is_reported_not_guessed() {
-        let home = tmp("miss-home");
-        let data = tmp("miss-data");
-        profile_with_patch(&home, PATCH);
-        enter(&home, &data, "web", &["dsh-dock--a".to_string()]).unwrap();
-        let backup = PathBuf::from(&read_journal(&data, "web").unwrap().patch_backup);
-        std::fs::remove_file(&backup).unwrap();
-
-        let snapshot = state(&data, "web", &home);
-        assert!(snapshot.active);
-        assert!(!snapshot.restorable, "备份没了就不能承诺一键恢复");
-
-        let err = exit(&home, &data, "web").unwrap_err();
-        assert!(err.contains("备份已不在"), "{err}");
-        assert!(
-            err.contains("dsh-dock--a"),
-            "要告诉用户我们加过哪几行：{err}"
-        );
-        let _ = std::fs::remove_dir_all(&home);
-        let _ = std::fs::remove_dir_all(&data);
-    }
-
-    /// 记账里的备份路径不可信（指向别处 / 不是 .bak-*）→ 拒绝覆盖（破坏性动作先验证）。
-    #[test]
-    fn untrusted_backup_path_is_refused() {
-        let home = tmp("evil-home");
-        let data = tmp("evil-data");
-        let patch = profile_with_patch(&home, PATCH);
-        let outside = home.join("elsewhere.yml");
-        std::fs::write(&outside, "[]\n").unwrap();
-        let journal = Journal {
-            disabled_rows: vec!["dsh-dock--a".to_string()],
-            patch_backup: outside.display().to_string(),
-            dsh_home: home.display().to_string(),
-            applied_at: 1,
-        };
-        write_journal(&data, "web", &journal).unwrap();
-        let err = exit(&home, &data, "web").unwrap_err();
-        assert!(err.contains("不可信"), "{err}");
-        assert_eq!(std::fs::read_to_string(&patch).unwrap(), PATCH, "拒绝覆盖");
-        let _ = std::fs::remove_dir_all(&home);
-        let _ = std::fs::remove_dir_all(&data);
-    }
-
     /// 无三方行 → 明确报错（命令层不空转启动）。
     #[test]
     fn enter_without_rows_reports_instead_of_pretending() {
@@ -675,11 +555,10 @@ mod tests {
         std::fs::write(&legacy, "- id: whatever\n  disabled: true\n").unwrap();
 
         enter(&home, &data, "web", &["dsh-dock--a".to_string()]).unwrap();
-        assert!(!legacy.exists(), "进入安全模式时应清掉旧 overlay");
-
-        std::fs::write(&legacy, "- id: whatever\n  disabled: true\n").unwrap();
-        exit(&home, &data, "web").unwrap();
-        assert!(!legacy.exists(), "退出时同样清掉");
+        assert!(
+            !legacy.exists(),
+            "进入安全模式时应清掉旧 overlay（机制已换代）"
+        );
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&data);
     }

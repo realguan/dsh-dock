@@ -29,11 +29,12 @@
 `switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
 
 **插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
-`update_plugin` `get_plugin_rows` `get_safe_mode_state`（2026-09-16 立，ADR-0026 第二版口径：安全模式的
-只读状态——是否处于安全模式 + 在配置里停用了哪些行 id + 一键恢复是否可用。**只读壳自有记账**
-（`<app_data>/safe-mode/<profile>.json`；`restorable` 由"进入前那份备份还在不在"算出），
-**不读运行态**：运行态另由回环快照给，两源禁混。安全模式本身改的是 profile 的
-`cordis.patch.yml`（走 `PatchFile` 既有写入纪律），故配置层即真相源） `set_plugin_disabled` `check_plugin_updates`
+`update_plugin` `get_plugin_rows` `get_safe_mode_state`（2026-09-16 立，ADR-0026 第三版口径：安全模式的
+只读状态——是否仍处于安全模式 + **此刻**仍停用着的行 id（记账里的集合 ∩ 当前配置的停用桩，
+故用户逐个打开开关后数字随之下降，全开即 `active=false`）。**只读壳自有记账**
+（`<app_data>/safe-mode/<profile>.json`）＋profile 自家 patch，**不读运行态**：运行态另由回环
+快照给，两源禁混。安全模式本身改的是 profile 的 `cordis.patch.yml`（走 `PatchFile` 既有写入
+纪律），故配置层即真相源；**命令不再提供任何恢复动作**——恢复已按维护者裁定移除） `set_plugin_disabled` `check_plugin_updates`
 `list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
 2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
 三级事实视图，状态含 `off/on/disabled/partial/conflict`，由后端按「包 × 挂载行 × disabled」

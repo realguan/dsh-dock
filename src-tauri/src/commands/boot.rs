@@ -133,10 +133,10 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     });
     Ok(())
 }
-/// 安全模式状态（ADR-0026）：是否处于安全模式、在配置里停用了哪些行、能否一键恢复。
+/// 安全模式状态（ADR-0026）：是否仍处于安全模式 + 此刻仍停用着的行（与配置实时联动）。
 ///
 /// 只读、零副作用（读壳自有记账 + 查那份备份在不在）；**不读运行态**——那是回环快照的职责。
-/// 前端用它渲染控制中心横幅与「一键恢复插件配置并重启」入口（`terminal_action("safe_mode_exit")`）。
+/// 前端用它渲染控制中心横幅（只说"停用了几个、去哪儿打开开关"；**没有恢复动作**）。
 #[tauri::command]
 pub async fn get_safe_mode_state(
     app: tauri::AppHandle,
@@ -223,13 +223,10 @@ pub fn terminal_action(
                 return;
             }
         }
-        // ---- 安全模式（ADR-0026：写配置 + 一键恢复）----
-        // 三个动作都只动**用户自己的配置文件**（或读壳自有记账），随后一律走下面的
+        // ---- 安全模式（ADR-0026：写配置；恢复动作已按维护者第三次裁定移除）----
+        // 两个动作都只动**用户自己的配置文件**（或读壳自有记账），随后一律走下面的
         // "重新解析链 + 启动"，因此失败不会留下半截状态。
-        if matches!(
-            action.as_str(),
-            "safe_mode" | "safe_mode_exit" | "safe_mode_reset"
-        ) {
+        if matches!(action.as_str(), "safe_mode" | "safe_mode_reset") {
             // 用**启动目标**而不是会话槽：失败路径已 teardown，会话槽恒空（2026-09-16
             // 真机：拿不到 profile → 点了"像没反应"，且隔离按钮同时消失）。
             let profile = crate::boot::boot_target_profile(&handle);
@@ -324,8 +321,8 @@ pub fn terminal_action(
                     crate::safe_mode::enter(&home, &data_dir, &profile, &ids).map(|outcome| {
                         if outcome.changed {
                             format!(
-                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）{partial}；配置已备份为 {}，\
-                                 可在控制中心一键恢复",
+                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）{partial}；\
+                                 配置已备份为 {}——想用哪个插件，到「实验能力」里打开哪个开关即可",
                                 ids.len(),
                                 kept,
                                 outcome
@@ -338,33 +335,13 @@ pub fn terminal_action(
                             // 幂等：本次没改配置。**之前**进入过时记账仍在（横幅同屏可见），
                             // 故不能说"没有可恢复的备份"（2026-09-16 独立复核 P4）。
                             format!(
-                                "这 {} 行早在停用态（本次未改动配置）{partial}；若之前进入过安全模式，\
-                                 控制中心横幅里的恢复入口仍然可用",
+                                "这 {} 行早在停用态（本次未改动配置）{partial}；想用哪个插件，\
+                                 到「实验能力」里打开哪个开关即可",
                                 ids.len()
                             )
                         }
                     })
                 }),
-                // 一键恢复：把进入前那份备份**原样覆盖回去**（维护者 2026-09-16 口径）。
-                "safe_mode_exit" => {
-                    crate::safe_mode::exit(&home, &data_dir, &profile).map(|outcome| {
-                        if outcome.restored {
-                            let used = outcome
-                                .backup_used
-                                .as_deref()
-                                .map(|p| p.display().to_string())
-                                .unwrap_or_default();
-                            let current = outcome
-                                .current_backup
-                                .as_deref()
-                                .map(|p| format!("；恢复前的配置也留了备份 {}", p.display()))
-                                .unwrap_or_default();
-                            format!("已一键恢复：用备份覆盖回配置（{used}）{current}")
-                        } else {
-                            "本就未处于安全模式".to_string()
-                        }
-                    })
-                }
                 // 兜底：配置写坏、行都枚举不出来时，备份 + 放空（前端须二次确认）。
                 _ => crate::safe_mode::quarantine_patch(&home, &profile)
                     .map(|path| format!("已备份并放空 {}", path.display())),

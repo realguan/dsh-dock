@@ -76,10 +76,9 @@ export type TerminalAction =
   | "retry"
   | "upgrade"
   | "upgrade_only"
-  // 安全模式（ADR-0026）：在 profile 配置里把三方插件写成 disabled / 一键用备份恢复 /
-  // 配置已写坏时备份并放空。
+  // 安全模式（ADR-0026）：在 profile 配置里把三方插件写成 disabled / 配置已写坏时备份并放空。
+  // （`safe_mode_exit` 已随"一键恢复"移除——恢复会把坏配置搬回来，启动照样失败。）
   | "safe_mode"
-  | "safe_mode_exit"
   | "safe_mode_reset"
 
 // ---------- Profile 管理器（4.3；形状锚定 src-tauri/src/profiles.rs 的 serde 序列化） ----------
@@ -558,11 +557,9 @@ export interface Capability {
 export interface SafeModeState {
   /// 本轮是否以安全模式启动（= 壳的记账文件在，配置里已写入停用桩）。
   active: boolean
-  /// 被写进配置的停用行 id（空 = 未启用）。
+  /// **此刻**仍处于停用态、且是安全模式写入的那些行 id（用户逐个打开后会变少；
+  /// 全打开 → `active=false`，横幅自动消失）。
   disabledRows: string[]
-  /// 一键恢复当前可用吗（进入安全模式前那份配置备份**还在**）。
-  /// false = 备份被手动删了/挪了 ⇒ 前端**不承诺**一键恢复（不给点了会报错的按钮）。
-  restorable: boolean
 }
 
 /// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。
