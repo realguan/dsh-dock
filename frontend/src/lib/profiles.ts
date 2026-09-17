@@ -35,17 +35,24 @@ export function summarizeCreateOutcome(o: {
 
 // ---------- 插件运行态合并（4.4①，Spike B / 复现点 11） ----------
 
-/** fiber phase 的中文标签；null = 已停用（disposed）。 */
-export function phaseLabel(phase: string | null): string {
-  if (phase === null) return "已停用"
-  const map: Record<string, string> = {
-    active: "运行中",
-    loading: "加载中",
-    pending: "等待中",
-    failed: "失败",
-    unloading: "卸载中",
-  }
-  return map[phase] ?? phase
+/**
+ * 运行态徽标**种类**（文案在 content 字典，避免中文硬编码漏出 en）。
+ *
+ * 2026-09-17 维护者实机提问「为什么既有已禁用又有已停用」后的裁定：这两个词在中文里
+ * 近乎同义，用户无法分辨，必须按**真相源**拆开：
+ *   - `已禁用`（配置侧，`PluginRowState.shell_disabled`）= 壳写进该 Profile
+ *     `cordis.patch.yml` 的意图：这一行不该加载；
+ *   - 运行态徽标（`pluginInventory/list` 的观测）：`运行中 / 加载中 / 失败`，
+ *     以及两个"开关拨了但运行中的 dsh 还没到位"的诚实状态——
+ *     `unloaded`（配置启用但会话里没有实例）与 `notApplied`（会话里这一行仍是禁用：
+ *     热载尚未落地，或该 Profile 的 `patchReload: startup` 需重启）。
+ */
+export type RuntimeChipKind = "active" | "loading" | "failed" | "unloaded" | "notApplied"
+
+export interface RuntimeChip {
+  kind: RuntimeChipKind
+  /** 同相位的条目数（>1 时 UI 显示 `×N`）。 */
+  count: number
 }
 
 /**
@@ -103,15 +110,11 @@ function validateTarballBody(rest: string): string | null {
   return null
 }
 
-export interface RuntimeChip {
-  label: string
-  failed: boolean
-}
-
 /**
  * 某插件的运行态徽标：按 moduleName 匹配条目后取「最坏相位」——
  * failed 优先（警示色），其次 loading/pending/unloading，再 active（enabled=false
- * 的行不算 active——禁用行报「运行中」是误导），全停用兜底。
+ * 的行不算 active——禁用行报「运行中」是误导），全无实例时区分「没实例」与
+ * 「运行中的 dsh 还没应用这次开关」（见 {@link RuntimeChipKind}）。
  * 无匹配条目返回 null（内置 bundle 多不以此名出现，无徽标即无运行态可显）。
  */
 export function runtimeChipFor(
@@ -121,17 +124,38 @@ export function runtimeChipFor(
   const mine = entries.filter((e) => e.module_name === moduleName)
   if (mine.length === 0) return null
   const failed = mine.filter((e) => e.fiber_phase === "failed").length
-  if (failed > 0) return { label: `${phaseLabel("failed")}×${failed}`, failed: true }
+  if (failed > 0) return { kind: "failed", count: failed }
   const loading = mine.filter(
     (e) =>
       e.fiber_phase === "loading" ||
       e.fiber_phase === "pending" ||
       e.fiber_phase === "unloading",
   ).length
-  if (loading > 0) return { label: `${phaseLabel("loading")}×${loading}`, failed: false }
+  if (loading > 0) return { kind: "loading", count: loading }
   const active = mine.filter((e) => e.fiber_phase === "active" && e.enabled).length
-  if (active > 0) return { label: `${phaseLabel("active")}×${active}`, failed: false }
-  return { label: phaseLabel(null), failed: false }
+  if (active > 0) return { kind: "active", count: active }
+  // 无 fiber：全部条目 enabled=false ⇒ 运行中的 dsh 仍认为这一行被禁用（开关未生效）；
+  // 否则（至少一条 enabled=true 却没 fiber）⇒ 该包在本次会话里没有实例。
+  const offNow = mine.filter((e) => !e.enabled).length
+  if (offNow === mine.length) {
+    return { kind: "notApplied", count: offNow }
+  }
+  return { kind: "unloaded", count: mine.length }
+}
+
+/**
+ * 开关是否**已在运行中的 dsh 里落地**（`pluginInventory/list` 的 `enabled` 是
+ * 配置级生效值，不是 fiber 存活）：目标态出现即算落地——装配本身可能还要几百毫秒
+ * （MCP 类插件更久），那是 `loading`，不该让用户等成"没生效"。
+ *
+ * 会话未运行 / 该包无条目 ⇒ false（轮询超时即按「重启后生效」如实回报）。
+ */
+export function runtimeToggleApplied(
+  entries: RuntimeEntry[],
+  moduleName: string,
+  wantEnabled: boolean,
+): boolean {
+  return entries.some((e) => e.module_name === moduleName && e.enabled === wantEnabled)
 }
 
 export interface RuntimeSummary {

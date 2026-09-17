@@ -397,9 +397,45 @@ export const t = {
       "该 Profile 正在运行的话，重启后生效；再次使用需重新安装",
     ],
     pluginUpdate: "更新",
-    pluginDisable: "禁用（重启后生效）",
-    pluginEnable: "启用（重启后生效）",
+    // 开关文案（2026-09-17 维护者实机提问「为什么既有已禁用又有已停用」后重写）：
+    // 旧文案把「重启后生效」写死在开关标签上，**实测不成立**——web 形态 profile 的
+    // `dsh.profile.patchReload = live`，dsh 用 chokidar 盯 cordis.patch.yml，克隆实机
+    // 实测：改文件后 0.43s 内 fiber 注销、0.44s 内重建。现在标签只讲动作；是否已生效
+    // 由行内运行态徽标如实呈现（生效中 → 已生效 / 未生效 → 重启后生效），不再许一个
+    // 可能与事实相反的承诺。
+    pluginDisable: "禁用",
+    pluginEnable: "启用",
+    pluginToggleHint:
+      "开关写入该 Profile 的 cordis.patch.yml：运行中的会话会自动重载（实测约半秒）；若未生效，重启该 Profile。",
     pluginDisabled: "已禁用",
+    pluginDisabledHint:
+      "配置里已禁用（写入该 Profile 的 cordis.patch.yml）——dsh 不会加载这一行。",
+    // 运行态徽标：只描述「运行中的 dsh 现在是什么样」，与配置侧徽标（已禁用）分家
+    chip: {
+      active: "运行中",
+      loading: "加载中",
+      failed: "失败",
+      unloaded: "未加载",
+      notApplied: "未生效",
+      applying: "生效中",
+    },
+    chipHint: {
+      active: "运行中的 dsh 里这一行已装好并处于活动状态。",
+      loading: "正在装载（装好后自动变「运行中」）。",
+      failed: "装载失败：插件没跑起来（常见原因：包不可解析、apply 抛错）。",
+      unloaded:
+        "配置里是启用的，但本次会话里没有它的实例——多因导入失败（包名/依赖不可解析）。",
+      notApplied:
+        "运行中的 dsh 还没应用这次改动（这个 Profile 采用「启动时生效」的重载策略）：重启该 Profile 后生效。",
+      applying: "配置已写入，正在等运行中的 dsh 应用这次开关（实测约半秒）。",
+    },
+    toggleApplied: (pkg: string, on: boolean) =>
+      `${on ? "已启用" : "已禁用"} ${pkg}（已生效）`,
+    toggleRestart: (pkg: string, on: boolean) =>
+      `${on ? "已启用" : "已禁用"} ${pkg}（重启该 Profile 后生效）`,
+    // 无可观测运行态的行（补丁包：贡献行用的是各自的 name，包名不成条目）：观测不到
+    // 就不许承诺生效时机，只报"配置已写入"。
+    toggleDone: (pkg: string, on: boolean) => `${on ? "已启用" : "已禁用"} ${pkg}（配置已写入）`,
     // 安全模式横幅（ADR-0026，2026-09-16 第四版交互，维护者按 PM 口径重写）：
     // ① 只在"确实以安全模式进入过"时出现（记账驱动），且可关闭、关后同轮不再打扰；
     // ② 文案只讲**发生了什么 + 去哪儿开回来**：不提备份（不做整份恢复，提它全是噪音），
@@ -426,7 +462,7 @@ export const t = {
     hiddenLayersHint: (n: number) => `另有 ${n} 个外挂插件层，见下方外挂插件清单`,
     pluginWithDsh: "版本随 dsh",
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
-      `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行停用` : ""}`,
+      `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行未运行` : ""}`,
     runtimeUnavailable: "该 profile 当前未运行，仅显示静态清单",
     // 官方桌面运行时说明（2026-09-11）：原内联「内含 240+ 项本地预置底座服务」——
     // 数字随 dsh 版本漂移且无壳侧事实源（本机 desktop-packages.json 为 239 项），

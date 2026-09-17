@@ -390,9 +390,48 @@ export const enUS: AppCopy = {
       "If the profile is running, this takes effect after a restart; reinstalling is required to use it again",
     ],
     pluginUpdate: "Update",
-    pluginDisable: "Disable (Requires Restart)",
-    pluginEnable: "Enable (Requires Restart)",
+    // Toggle copy (rewritten 2026-09-17 after a live question: "why do I see both
+    // Disabled and Stopped?"). The old labels hardcoded "(Requires Restart)" — measured
+    // false for web profiles: `dsh.profile.patchReload = live` makes dsh watch
+    // cordis.patch.yml via chokidar; a clone measured fiber disposal 0.43s and
+    // re-creation 0.44s after the file change. Labels now name the action only; whether it
+    // took effect is reported by the row's runtime chip (Applying → Applied / Not applied).
+    pluginDisable: "Disable",
+    pluginEnable: "Enable",
+    pluginToggleHint:
+      "The switch writes this profile's cordis.patch.yml: a running session reloads it automatically (about half a second in our measurements); if it does not apply, restart the profile.",
     pluginDisabled: "Disabled",
+    pluginDisabledHint:
+      "Disabled in config (written to this profile's cordis.patch.yml) — dsh will not load this row.",
+    // Runtime chip: describes only "what the running dsh looks like right now", kept
+    // deliberately distinct from the config-side Disabled badge above.
+    chip: {
+      active: "Running",
+      loading: "Loading",
+      failed: "Failed",
+      unloaded: "Not loaded",
+      notApplied: "Not applied",
+      applying: "Applying",
+    },
+    chipHint: {
+      active: "This row is mounted and active inside the running dsh.",
+      loading: "Still mounting (turns into \"Running\" once done).",
+      failed: "Failed to mount: the plugin never came up (often an unresolvable package or a throwing apply).",
+      unloaded:
+        "Enabled in config, but this session has no instance of it — usually an import failure (package/dependency not resolvable).",
+      notApplied:
+        "The running dsh has not applied this change yet (this profile applies patches on startup): restart the profile to apply it.",
+      applying: "Config written; waiting for the running dsh to apply this switch (about half a second in our measurements).",
+    },
+    toggleApplied: (pkg: string, on: boolean) =>
+      `${on ? "Enabled" : "Disabled"} ${pkg} (applied)`,
+    toggleRestart: (pkg: string, on: boolean) =>
+      `${on ? "Enabled" : "Disabled"} ${pkg} (applies after restarting the profile)`,
+    // Rows with no observable runtime entry (bundle-patch rows: their contributed rows carry
+    // their own names, so the bundle name is never an entry): never promise a timing we cannot
+    // observe — report only that the config was written.
+    toggleDone: (pkg: string, on: boolean) =>
+      `${on ? "Enabled" : "Disabled"} ${pkg} (config written)`,
     // Safe-mode banner (ADR-0026, fourth revision — rewritten from a PM standpoint):
     // ① shown only after the user actually entered via safe mode (journal-driven), dismissible,
     //    and stays dismissed for that entry; ② the copy states what happened and where to undo it
@@ -421,7 +460,7 @@ export const enUS: AppCopy = {
     hiddenLayersHint: (n: number) => `There are ${n} additional plugin layers below`,
     pluginWithDsh: "Version follows DSH",
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
-      `Session active · ${s.active} active${s.failed ? ` · ${s.failed} failed` : ""}${s.loading ? ` · ${s.loading} loading` : ""}${s.disabled ? ` · ${s.disabled} disabled` : ""}`,
+      `Session active · ${s.active} active${s.failed ? ` · ${s.failed} failed` : ""}${s.loading ? ` · ${s.loading} loading` : ""}${s.disabled ? ` · ${s.disabled} not running` : ""}`,
     runtimeUnavailable: "Profile is not currently running; showing static manifest",
     // Official desktop runtime note (2026-09-11): see zh-CN.ts for the ruling —
     // no hardcoded service count. Split into plain-text segments around the two

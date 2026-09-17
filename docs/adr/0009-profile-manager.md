@@ -189,6 +189,13 @@ dsh 没有 profile 全生命周期的官方命令：列出/创建/复制/重命�
 > 生效后的运行态变化经回环快照可见。**生效状态真相**：壳写入的 toggle 条目是
 > 禁用意图的真相（读自家 patch 文件），dump-config 的 `disabled:`（可能是 `!!js`
 > 表达式）只作展示佐证不作解析目标。
+> **⚠ 2026-09-17 更正（见台账复现点 21）**：上句「不热生效、重启后生效」对基线
+> v0.1.1-rc.2 成立，对 dsh 0.1.6-alpha.1 的 **`patchReload: live` profile 不成立**——
+> 出厂 `web` 模板即 live，启动器装 chokidar 监视 `cordis.patch.yml` 并**热应用到
+> 运行中的树**（克隆实机实测：追加 `disabled: true` 后 0.43s 内 fiber 注销，删除后
+> 0.44s 内重建）。故壳侧文案**不得写死「重启后生效」**：开关写完后短轮询运行态，
+> 按观测结果回报「已生效 / 重启后生效」（`ProfileDetailPane` + `runtimeToggleApplied`）；
+> `headless`/`acp`/`sdk`/`sdk-minimal` 模板仍是 `startup`（无监视器），走「重启后生效」。
 > **2026-08-30 第五次执行细则修订（范围扩展：跨 profile 插件聚合 + 从其他
 > profile 安装，4.4「跨 profile 复制」收口）——patch 写入例外 #4**。维护者
 > 裁定把路线图原「跨 profile 复制（整条目搬移）」重定义为两个更贴使用场景的

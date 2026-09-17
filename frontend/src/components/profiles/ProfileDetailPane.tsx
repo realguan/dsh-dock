@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUpCircle,
   Boxes,
@@ -18,7 +18,8 @@ import {
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
-import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
+import { runtimeChipFor, runtimeSummary, runtimeToggleApplied, validatePluginSpec } from "@/lib/profiles"
+import type { RuntimeChip } from "@/lib/profiles"
 import { pluginToggleTargets } from "@/lib/pluginToggle"
 import type {
   PluginEntry,
@@ -39,6 +40,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+
+// 开关落定轮询（2026-09-17）：dsh 对 web 形态 profile 是 `patchReload: live`
+// （chokidar 盯 cordis.patch.yml），克隆实机实测改文件后 0.43s 内 fiber 注销 /
+// 0.44s 内重建；8×400ms ≈ 3.2s 留足余量，到点未落定即如实报「重启后生效」。
+const TOGGLE_SETTLE_ATTEMPTS = 8
+const TOGGLE_SETTLE_INTERVAL_MS = 400
 
 export function ProfileDetailPane({
   name,
@@ -77,6 +84,12 @@ export function ProfileDetailPane({
 
   // 操作状态
   const [opBusy, setOpBusy] = useState<string | null>(null)
+  // 开关已写入、运行态尚未落定的行（行内显示「生效中」，见 settleToggle）
+  const [pendingToggle, setPendingToggle] = useState<{ pkg: string; on: boolean } | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  // 落定回调里比对"当前还在看的 profile"（切换后旧轮询静默收尾，不播结论）
+  const nameRef = useRef(name)
+  nameRef.current = name
   const [installOpen, setInstallOpen] = useState(false)
   const [installSpec, setInstallSpec] = useState("")
   const [installError, setInstallError] = useState<string | null>(null)
@@ -102,6 +115,21 @@ export function ProfileDetailPane({
   // 卸载确认（2026-09-08，U9）：卸载不可撤销，先过确认对话框再执行。
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
 
+  // 运行态快照（回环 pluginInventory/list）：开关落定轮询与整页 reload 共用同一取数
+  // 口径，避免两处各自拼一份（2026-09-17）。返回该 profile 的条目（不匹配则空表）。
+  const refreshRuntime = useCallback((profile: string) => {
+    return api
+      .getPluginRuntime()
+      .then((s) => {
+        setRuntime(s)
+        return s.profile !== null && s.profile === profile ? s.entries : []
+      })
+      .catch(() => {
+        setRuntime({ profile: null, entries: [] })
+        return []
+      })
+  }, [])
+
   const reload = useCallback(() => {
     if (!name) return
     api
@@ -112,15 +140,12 @@ export function ProfileDetailPane({
       .listProfilePlugins(name)
       .then((p) => setPlugins(p))
       .catch(() => setPlugins([]))
-    api
-      .getPluginRuntime()
-      .then((s) => setRuntime(s))
-      .catch(() => setRuntime({ profile: null, entries: [] }))
+    refreshRuntime(name).catch(() => {})
     api
       .getPluginRows(name)
       .then((r) => setRows(r))
       .catch(() => setRows([]))
-  }, [name])
+  }, [name, refreshRuntime])
 
   useEffect(() => {
     if (!name) return
@@ -135,8 +160,22 @@ export function ProfileDetailPane({
     setSearchQuery("")
     setUpdateMap(null)
     setCheckState("idle")
+    setPendingToggle(null)
+    // 换 profile 也要收掉上一轮的落定轮询（否则旧实例的快照/toast 会串到新页面）
+    if (settleTimer.current !== null) {
+      window.clearTimeout(settleTimer.current)
+      settleTimer.current = null
+    }
     reload()
   }, [name, reload])
+
+  // 卸载即收掉待定轮询（切页不残留定时器）
+  useEffect(
+    () => () => {
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+    },
+    [],
+  )
 
   // 卸载 / 更新插件
   const runOp = (op: "remove" | "update", pkg: string) => {
@@ -191,30 +230,75 @@ export function ProfileDetailPane({
 
   // 启停插件（通过现代 Switch 切换）；补丁包（ADR 第七次修订）= 全部贡献行，
   // 同一 patch 文件读改写必须串行（并发 invoke 相互覆盖，2026-09-08）。
+  //
+  // 2026-09-17（维护者实机报「刚打开插件却还显示停用，切标签页回来才变运行中」）：
+  // 旧实现写完成功后**只重取行表**（配置），运行态快照一直停在进入页面那一刻 ⇒
+  // 同一行出现"开关是开的 / 徽标说停用"的自相矛盾，直到切页重挂才自愈。
+  // 现在：写完后立刻拉一次运行态，并短轮询到落定（实测热载 0.43s 内完成，故 400ms×8
+  // 足够；到点仍未落定 = 该 Profile 的 patchReload 不是 live 或未运行 → 如实报"重启后生效"）。
+  const settleToggle = (profile: string, pkg: string, on: boolean, attempt: number) => {
+    settleTimer.current = window.setTimeout(() => {
+      settleTimer.current = null
+      refreshRuntime(profile)
+        .then((entries) => {
+          // 已切走/已换 profile：静默收尾，别把上一页的结论播到新页面
+          if (nameRef.current !== profile) {
+            setPendingToggle(null)
+            return
+          }
+          if (runtimeToggleApplied(entries, pkg, on)) {
+            setPendingToggle(null)
+            onNotice(t.profiles.toggleApplied(pkg, on), "ok")
+          } else if (attempt + 1 >= TOGGLE_SETTLE_ATTEMPTS) {
+            setPendingToggle(null)
+            onNotice(t.profiles.toggleRestart(pkg, on), "ok")
+          } else {
+            settleToggle(profile, pkg, on, attempt + 1)
+          }
+        })
+        .catch(() => setPendingToggle(null))
+    }, TOGGLE_SETTLE_INTERVAL_MS)
+  }
+
   const toggleDisabled = (pkg: string) => {
     if (!name || opBusy) return
     const row = rows?.find((r) => r.pkg_name === pkg)
     if (!row) return
     const targets = pluginToggleTargets(row)
     if (targets.length === 0) return
-    setOpBusy(`toggle:${pkg}`)
+    const profile = name
     const next = !row.shell_disabled
+    if (settleTimer.current !== null) {
+      window.clearTimeout(settleTimer.current)
+      settleTimer.current = null
+    }
+    setPendingToggle(null)
+    setOpBusy(`toggle:${pkg}`)
     targets
       .reduce<Promise<void>>(
-        (acc, id) => acc.then(() => api.setPluginDisabled(name, id, next)),
+        (acc, id) => acc.then(() => api.setPluginDisabled(profile, id, next)),
         Promise.resolve(),
       )
       .then(() => {
-        onNotice(
-          row.shell_disabled
-            ? `已启用 ${pkg}（重启该 Profile 后生效）`
-            : `已禁用 ${pkg}（重启该 Profile 后生效）`,
-          "ok",
-        )
+        // 配置已落盘：行表（配置侧徽标/开关）与运行态（运行侧徽标）都要立刻刷新。
         api
-          .getPluginRows(name)
+          .getPluginRows(profile)
           .then((r) => setRows(r))
-          .catch(() => {})
+          .catch((e) => onNotice(String(e), "warn"))
+        refreshRuntime(profile).catch(() => {})
+        if (runtime?.profile !== profile) {
+          // 会话没在跑：配置写完即完成，生效只能等下次启动——不空转轮询
+          onNotice(t.profiles.toggleRestart(pkg, next), "ok")
+          return
+        }
+        if (runtimeChipFor(pkg, liveEntries) === null) {
+          // 该行没有可观测的运行态条目（补丁包：贡献行用的是各自的 name，包名不成条目）
+          // ——观测不到就不许承诺时机，只报"配置已写入"。
+          onNotice(t.profiles.toggleDone(pkg, next), "ok")
+          return
+        }
+        setPendingToggle({ pkg, on: next })
+        settleToggle(profile, pkg, next, 0)
       })
       .catch((e) => onNotice(String(e), "warn"))
       .finally(() => setOpBusy(null))
@@ -286,6 +370,21 @@ export function ProfileDetailPane({
     runtime !== null && runtime.profile !== null && runtime.profile === name
       ? runtime.entries
       : []
+
+  // 运行态徽标文案与配色（2026-09-17）：文案走字典（en 不再漏中文）；
+  // 配色只有 failed 用警示色、「运行中/加载中」用 ok 色，两个"还没到位"的状态
+  // 用中性灰——旧版把「已停用」也刷成 ok 绿，是这次实机困惑的一部分。
+  const chipText = (chip: RuntimeChip) =>
+    chip.count > 1
+      ? `${t.profiles.chip[chip.kind]}×${chip.count}`
+      : t.profiles.chip[chip.kind]
+  const chipTone = (chip: RuntimeChip) =>
+    chip.kind === "failed"
+      ? "bg-warn-soft text-warn"
+      : chip.kind === "active" || chip.kind === "loading"
+        ? "bg-ok-soft text-ok font-medium"
+        : "bg-line-soft text-dim"
+
   const deps = useMemo(
     () => plugins?.filter((p) => p.kind === "dependency") ?? [],
     [plugins],
@@ -602,6 +701,7 @@ export function ProfileDetailPane({
                 {filteredDeps.map((p) => {
                   const spec = detail?.dependencies[p.name]
                   const chip = runtimeChipFor(p.name, liveEntries)
+                  const isPending = pendingToggle?.pkg === p.name
                   const rowBusy =
                     opBusy === `remove:${p.name}` ||
                     opBusy === `update:${p.name}` ||
@@ -647,21 +747,32 @@ export function ProfileDetailPane({
                             </button>
                           )}
 
-                          {/* 运行态徽标 */}
-                          {!shellDisabled && chip && (
-                            <span
-                              className={`rounded-md px-1.5 py-0.5 text-meta leading-none ${
-                                chip.failed
-                                  ? "bg-warn-soft text-warn"
-                                  : "bg-ok-soft text-ok font-medium"
-                              }`}
-                            >
-                              {chip.label}
-                            </span>
-                          )}
+                          {/* 运行态徽标（运行中的 dsh 视角；配置侧「已禁用」是另一个徽标，
+                              两者语义与配色都不同——2026-09-17 维护者实机提问后拆开） */}
+                          {!shellDisabled &&
+                            (isPending ? (
+                              <span
+                                title={t.profiles.chipHint.applying}
+                                className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta leading-none"
+                              >
+                                {t.profiles.chip.applying}
+                              </span>
+                            ) : (
+                              chip && (
+                                <span
+                                  title={t.profiles.chipHint[chip.kind]}
+                                  className={`rounded-md px-1.5 py-0.5 text-meta leading-none ${chipTone(chip)}`}
+                                >
+                                  {chipText(chip)}
+                                </span>
+                              )
+                            ))}
 
                           {shellDisabled && (
-                            <span className="border border-line text-faint rounded-md px-1.5 py-0.5 text-meta leading-none">
+                            <span
+                              title={t.profiles.pluginDisabledHint}
+                              className="border border-line text-faint rounded-md px-1.5 py-0.5 text-meta leading-none"
+                            >
                               {t.profiles.pluginDisabled}
                             </span>
                           )}
@@ -686,11 +797,7 @@ export function ProfileDetailPane({
                             {row && (
                               <div
                                 className="flex items-center gap-1.5"
-                                title={
-                                  shellDisabled
-                                    ? t.profiles.pluginEnable
-                                    : t.profiles.pluginDisable
-                                }
+                                title={t.profiles.pluginToggleHint}
                               >
                                 <Switch
                                   aria-label={`${p.name}：${
@@ -795,11 +902,10 @@ export function ProfileDetailPane({
 
                     {chip && (
                       <span
-                        className={`rounded-md px-2 py-0.5 text-meta font-medium leading-none ${
-                          chip.failed ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"
-                        }`}
+                        title={t.profiles.chipHint[chip.kind]}
+                        className={`rounded-md px-2 py-0.5 text-meta font-medium leading-none ${chipTone(chip)}`}
                       >
-                        {chip.label}
+                        {chipText(chip)}
                       </span>
                     )}
                   </div>
