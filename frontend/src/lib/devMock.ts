@@ -459,6 +459,10 @@ export function setupDevMock() {
         const caps = [
           {
             id: "agent-team",
+            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 管；
+            // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
+            shippedByDsh: true,
+            legacyCopy: true,
             labelZh: "多智能体协同",
             summaryZh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
             unlocksZh:
@@ -507,6 +511,10 @@ export function setupDevMock() {
           },
           {
             id: "browser-use",
+            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 管；
+            // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
+            shippedByDsh: false,
+            legacyCopy: false,
             labelZh: "浏览器操作",
             summaryZh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
             unlocksZh: "模型多出一组浏览器工具；同一时刻只允许一个后端生效。",
@@ -592,6 +600,10 @@ export function setupDevMock() {
           },
           {
             id: "computer-use",
+            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 管；
+            // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
+            shippedByDsh: false,
+            legacyCopy: false,
             labelZh: "桌面控制",
             summaryZh: "让模型操作你的桌面：鼠标、键盘、窗口",
             unlocksZh:
@@ -649,6 +661,10 @@ export function setupDevMock() {
           },
           {
             id: "auto-review",
+            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 管；
+            // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
+            shippedByDsh: false,
+            legacyCopy: false,
             labelZh: "自动安全审查",
             summaryZh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
             unlocksZh:

@@ -393,3 +393,41 @@ describe("⑩ 动作互斥：一次只能跑一个动作（2026-09-17 独立复�
     )
   })
 })
+
+describe("⑪ dsh 自带的能力：dock 不代管（2026-09-17 立）", () => {
+  // 上游事实：dsh 0.1.6-alpha.2 起把 Agent Teams 两个 bundle 作为 **optional bundle**
+  // 随安装包下发（`packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＋
+  // `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`）：
+  // 用户在自己的插件页开关，dsh 视其为 not-removable。该设计笔记同时**否决**了
+  // "由某个面板按名字从 registry 装官方 bundle"这条路——那正是本模块原来在做的事。
+  const shipped = slice("function ShippedPane(", "function FailureBlock(")
+
+  it("自带的能力没有开关、没有安装/替换入口（免得与 dsh 抢同一份插件）", () => {
+    expect(src, "自带行必须走 ShippedPane").toContain("selected.shippedByDsh && (")
+    expect(src, "自带能力不得进普通详情面").toContain("selected && !selected.shippedByDsh && (")
+    expect(shipped, "自带面里不得有开关").not.toContain("<Switch")
+    expect(shipped, "自带面里不得出现安装/替换/修复").not.toMatch(/planReplace|capRepair|capOtherActive/)
+    // 动作入口也要有防御式早退：计划层不该算（界面藏了按钮、动作还在跑 = 半吊子）。
+    expect(src, "handleSwitch 必须先挡掉自带能力").toMatch(
+      /if \(cap\.shippedByDsh\) return/,
+    )
+  })
+
+  it("三个事实都在一屏里：归 dsh 管、自带哪些包、遗留副本怎么清", () => {
+    expect(shipped, "要说明开关在哪（指路）").toContain("t.market.capShippedNote")
+    expect(shipped, "要列出随 dsh 自带的包名").toContain("capShippedPackages")
+    expect(shipped, "遗留副本要如实说明并给清理出路").toContain("t.market.capLegacyCopy")
+    expect(shipped).toContain("t.market.capLegacyCleanupBtn")
+    // 清理必须走既有的破坏性确认链：只置起待确认态，不直接执行。
+    expect(src, "清理走 ConfirmDialog 的待确认态").toMatch(
+      /onCleanup=\{\(v\) => setPending\(\{ kind: "remove"/,
+    )
+  })
+
+  it("遗留副本只在该 Profile 真的还持有包时出现（没装过就不该出现清理按钮）", () => {
+    expect(shipped, "清理区必须受 legacyCopy 守护").toMatch(/\{cap\.legacyCopy && legacyVariant && \(/)
+    expect(shipped, "清理目标要选真的还装着东西的那一档").toMatch(
+      /cap\.variants\.find\(\(v\) => v\.steps\.some\(\(s\) => s\.installed \|\| s\.rowPresent \|\| s\.disabled\)\)/,
+    )
+  })
+})

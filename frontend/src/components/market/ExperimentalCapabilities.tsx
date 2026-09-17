@@ -315,6 +315,9 @@ export function ExperimentalCapabilities({
   }
 
   const handleSwitch = (cap: Capability, variant: CapabilityVariant, next: boolean) => {
+    // dsh 自带的能力一律不代管（2026-09-17）：连计划都不该算——界面藏了按钮、动作还在跑
+    // 就是"半吊子"。计划层的护栏见 `resolve_capabilities` 的 shipped_by_dsh。
+    if (cap.shippedByDsh) return
     if (next) {
       // 已就位（被停用）或只差补几步行 → 免确认直接做：这正是"关而不卸"要换来的体验，
       // 也是"修复"该有的手感（要装新包才需要确认）。
@@ -503,7 +506,14 @@ export function ExperimentalCapabilities({
 
           {/* 详情面：常驻，没有展开/收起。`key` = 换能力时重新入场（轻淡入，不动高度）。 */}
           <div className={drilled ? "" : "hidden lg:block"}>
-            {selected && (
+            {selected && selected.shippedByDsh && (
+              <ShippedPane
+                cap={selected}
+                onCleanup={(v) => setPending({ kind: "remove", cap: selected, variantId: v.id })}
+                t={t}
+              />
+            )}
+            {selected && !selected.shippedByDsh && (
               <CapabilityPane
                 key={selected.id}
                 cap={selected}
@@ -743,7 +753,19 @@ function CapabilityRow({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className="truncate text-label font-medium text-ink">{cap.labelZh}</span>
-            <StateBadge cap={cap} variant={variant} t={t} />
+            {cap.shippedByDsh ? (
+              // 自带的徽标只说一次：原来"随 dsh 自带"与右侧"dsh 已内置"同时出现，
+              // 一块行里两个徽标讲同一件事＝噪音（维护者一贯口径：多此一举）。
+              <Badge
+                variant="outline"
+                className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-1.5 text-micro font-normal text-brand-deep"
+              >
+                <BadgeCheck className="size-3" />
+                {t.market.capStateShipped}
+              </Badge>
+            ) : (
+              <StateBadge cap={cap} variant={variant} t={t} />
+            )}
             {running && <LoaderCircle className="size-3 shrink-0 animate-spin text-brand-deep" />}
             {!running && failed && <TriangleAlert className="size-3 shrink-0 text-danger" />}
           </span>
@@ -755,7 +777,7 @@ function CapabilityRow({
               不占高度——它们的完整说明在详情面里（且经 `aria-describedby` 可被读屏听到）。 */}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5">
             <span className="break-words font-mono text-meta leading-snug text-faint">
-              {name}
+              {cap.shippedByDsh ? t.market.capShippedMeta : name}
             </span>
             {subsumedBy && <Check className="size-3 shrink-0 text-faint" />}
             {blocked && <TriangleAlert className="size-3 shrink-0 text-danger" />}
@@ -776,6 +798,13 @@ function CapabilityRow({
           </span>
         </span>
       </button>
+      {/* dsh 自带的能力**没有开关**：dsh 自己的插件页才是它的开关处，
+          我们在这里点一下只会（a）被 dsh 拒（not-removable）或（b）装出第二份同名包。 */}
+      {cap.shippedByDsh ? (
+        // 没有可操作的控件：这一行的右边只留"点进去看详情"的指示（它没有开关，
+        // 因为开关在 dsh 自己的插件页里）。窄窗口下由下面那个箭头负责，不重复画。
+        <ChevronRight className="hidden size-3.5 shrink-0 text-faint lg:block" />
+      ) : (
       <Switch
         aria-label={t.market.capSwitchLabel(`${cap.labelZh} · ${name}`)}
         aria-describedby={why.length > 0 ? descId : undefined}
@@ -784,12 +813,15 @@ function CapabilityRow({
         onCheckedChange={(next) => onToggle(cap, variant, next)}
         className="shrink-0"
       />
+      )}
       {why.length > 0 && (
         <span id={descId} className="sr-only">
           {why.join(t.market.capWhyJoin)}
         </span>
       )}
-      <ChevronRight className="size-3.5 shrink-0 text-faint lg:hidden" />
+      {!cap.shippedByDsh && (
+        <ChevronRight className="size-3.5 shrink-0 text-faint lg:hidden" />
+      )}
     </motion.li>
   )
 }
@@ -1323,6 +1355,108 @@ function CapabilityPane({
               </Button>
             </section>
           )}
+      </div>
+    </motion.section>
+  )
+}
+
+/** **dsh 自带能力的详情面**（2026-09-17 立）：只说明、不代管。
+ *
+ * 为什么单独一块而不是复用 `CapabilityPane`：一个"能力"由 dsh 自带之后，**语义变了**——
+ * 它不再是"我们策展的一组互斥后端"，而是 **dsh 官方的若干独立插件**（Agent Teams 的宿主层与
+ * Web 层在 dsh 的插件页里是两个各自可开关的 Beta 插件，Web 层依赖宿主层但不互斥）。
+ * 硬塞进变体单选组会把"三选一"的模型套到一个并非如此的东西上。
+ *
+ * 三个事实必须都在这一屏里：① 它现在归 dsh 管、开关在哪；② 随 dsh 自带的是哪些包；
+ * ③ 本 Profile 里是否还有我们早期装的副本（它会遮蔽自带的那一份），以及怎么清掉。 */
+function ShippedPane({
+  cap,
+  onCleanup,
+  t,
+}: {
+  cap: Capability
+  /** 清理遗留副本（走既有的破坏性确认链，不新增路径）。 */
+  onCleanup: (variant: CapabilityVariant) => void
+  t: ReturnType<typeof useI18n>["t"]
+}) {
+  const reduceMotion = useReducedMotion()
+  const Icon = ICONS[cap.id] ?? Bot
+  // 一个包可能被多个变体共用：去重后按变体顺序展示（顺序仍是"宿主层在前"的语义）。
+  const packages = [...new Set(cap.variants.flatMap((v) => v.steps.map((s) => s.package)))]
+  // 清理目标 = **真的还装着东西**的那个变体（遗留副本可能只是一档）
+  const legacyVariant =
+    cap.variants.find((v) => v.steps.some((s) => s.installed || s.rowPresent || s.disabled)) ??
+    cap.variants[0]
+
+  return (
+    <motion.section
+      id={PANE_ID}
+      tabIndex={-1}
+      aria-label={t.market.capPaneLabel(cap.labelZh)}
+      initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className="flex flex-col rounded-xl border border-line bg-panel shadow-2xs"
+    >
+      <div className="flex items-start gap-3 border-b border-line/70 px-4 py-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-brand/25 bg-brand/5 text-brand-deep">
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 className="text-note font-semibold text-ink">{cap.labelZh}</h3>
+            <Badge
+              variant="outline"
+              className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-1.5 text-micro font-normal text-brand-deep"
+            >
+              <BadgeCheck className="size-3" />
+              {t.market.capStateShipped}
+            </Badge>
+          </div>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summaryZh}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <p className="text-label leading-relaxed text-dim">{t.market.capShippedNote}</p>
+
+        <div>
+          <span className="text-meta font-medium tracking-wider text-faint">
+            {t.market.capShippedPackages}
+          </span>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {packages.map((pkg) => (
+              <li key={pkg} className="flex items-start gap-1.5">
+                <Check className="mt-0.5 size-3 shrink-0 text-ok" />
+                <span className="break-all font-mono text-label text-ink">{pkg}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <section className="border-t border-line/70 pt-3">
+          <span className="text-meta font-medium tracking-wider text-faint">
+            {t.market.capUnlocks}
+          </span>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocksZh}</p>
+        </section>
+
+        {/* 遗留副本：只有真的还在时才出现——平时这一屏就只有上面三块。 */}
+        {cap.legacyCopy && legacyVariant && (
+          <section className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5">
+            <span className="min-w-0 flex-1 text-label leading-relaxed text-warn">
+              {t.market.capLegacyCopy}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 shrink-0 border-danger/40 px-2 text-meta text-danger"
+              onClick={() => onCleanup(legacyVariant)}
+            >
+              {t.market.capLegacyCleanupBtn}
+            </Button>
+          </section>
+        )}
       </div>
     </motion.section>
   )

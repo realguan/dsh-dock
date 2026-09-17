@@ -946,10 +946,17 @@ export function ProfileDetailPane({
                           </span>
                         )}
                       </div>
-                      <p className="text-faint mt-0.5 text-xs font-mono">
+                      {/* `layerBundles` 只含**不是本 Profile 依赖**的层（见上方 filter）：
+                          它们都随 dsh 安装自带（dsh 的模型：不在 profile 依赖里、却在
+                          `dsh.profile.bundles` 里 = 安装提供的层）。所以只有确实认识的那两层
+                          才具体描述，其余给中性说明——旧代码对每一层都写"Web 界面与交互控制台
+                          渲染器"，把 agent-team 两个层也说成了渲染器（2026-09-17 截图抓到）。 */}
+                      <p className="text-faint mt-0.5 text-xs">
                         {isBase
-                          ? "Cordis 底座与通用服务插件集合"
-                          : "Web 界面与交互控制台渲染器"}
+                          ? t.profiles.bundleDescBase
+                          : b === "@deepseek-ai/dsh-web-app"
+                            ? t.profiles.bundleDescWebApp
+                            : t.profiles.bundleDescShipped}
                       </p>
                     </div>
 

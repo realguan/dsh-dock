@@ -197,6 +197,23 @@ pub struct Capability {
     pub variants: &'static [Variant],
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 「dsh 自带的能力，dock 不代管」（2026-09-17 立，ADR-0020 §7.2 第三次修订）
+//
+// dsh 0.1.6-alpha.2 起把官方实验层作为 **optional bundle** 随安装包下发（上游依据：
+// `packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＋ 设计笔记
+// `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`）：随包下载、
+// 默认关、在 **dsh 自己的插件页**里开关、**永不卸载**。该笔记同时**明确否决**了"由某个
+// 面板按名字从 registry 安装官方 bundle"这条替代路径——那正是本模块原来在做的事。
+//
+// 判据是**这次安装实测出来的事实**，不是写在目录里的旗标：某个能力的**每个包**都能在
+// `<engines>/dsh-runtime/node_modules/<包>` 找到 ⇒ 这个安装自带它（见 `PackageFacts::shipped`）。
+// 为什么不写旗标：同一台机器上 dev 档引擎 0.1.6-alpha.1 **不带**、正式档 0.1.6-alpha.2 **带**
+// ——写死的旗标必然在其中一边说谎。实测判据还会**自动跟上** dsh 后续把更多实验能力内置的节奏：
+// 升级复核点 = 安装包 `@deepseek-ai/dsh` 的 `dependencies` 里出现新的
+// `@deepseek-ai/dsh-experimental-*`（＝ `OPTIONAL_BUNDLES` 增项），届时无需改代码。
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// 策展集（**dsh-dock 策展，非"官方首批"**——上游无该概念，为全量发布 16 包，
 /// ADR-0020 §1.1）。变体顺序 = 推荐顺序（UI 默认选中首个）。
 ///
@@ -470,6 +487,17 @@ pub struct CapabilityView {
     pub state: CapabilityState,
     /// 当前生效（或已就位但停用）的变体 id；`None` = 未启用。
     pub active_variant: Option<String>,
+    /// **dsh 安装包自带这项能力** → 前端不渲染开关/安装/移除，只做说明与指路。
+    pub shipped_by_dsh: bool,
+    /// 该能力**还有 dock 能清掉的东西**留在本 Profile 里：profile 在册的包、我们写过的
+    /// `InsertRow` 挂载行、或我们写下的停用桩。
+    ///
+    /// 与 `shipped_by_dsh` 同时为真 = 历史遗留：dock 早期按 profile 装过一份，它会遮蔽
+    /// dsh 自带的那一份。此时**唯一**允许的动作是"清理旧副本"。
+    ///
+    /// 判据刻意与 `planRemove` 的能力面对齐：bundle 类包贡献的行（`AutoBundle`）我们既没写
+    /// 也不能删，算进来只会得到一个点了没反应的假按钮。
+    pub legacy_copy: bool,
 }
 
 /// `apply_official_patch_row` 的处理结果（**写行前当场重判**的分类结论）。
@@ -502,6 +530,28 @@ pub struct PackageFacts {
     /// 已装包的官方 `description`（包名 → 简介）。同样由调用方读好后填入，
     /// 让本函数保持纯（不碰文件系统）。缺包/包没写 description = 不在表里。
     pub descriptions: std::collections::BTreeMap<String, String>,
+    /// **这个 dsh 安装自带**的包名（调用方探测 `<engines>/dsh-runtime/node_modules/` 后填入）。
+    ///
+    /// 非空且覆盖某能力的**全部**包 ⇒ 该能力归 dsh 管，dock 不代管（见上方模块注释）。
+    /// 探测失败/目录不存在 = 空表 = 一切照旧由 dock 策展（保守方向：宁可多管，也不谎称自带）。
+    pub shipped: Vec<String>,
+}
+
+/// **这个安装自带**策展清单里的哪些包（纯函数，只做"目录里有没有"的判断）。
+///
+/// 判据 = `<dsh-runtime>/node_modules/<包>/package.json` 存在。dsh 自带的 optional bundle
+/// 是安装包的运行时依赖（`apps/cli` 的 `dependencies`），因而必然落在这一层 node_modules 里；
+/// 而**用户自己装进 profile** 的包在 `<profile>/node_modules`，不会被算成"自带"。
+///
+/// 保守方向：目录不存在 / 读不到 → 返回空表 ⇒ 一切照旧由 dock 策展（**宁可多管，
+/// 也不谎称"dsh 已内置"**——那会让用户彻底没有打开它的入口）。
+pub fn installation_shipped(runtime_dir: &std::path::Path, packages: &[String]) -> Vec<String> {
+    let root = runtime_dir.join("node_modules");
+    packages
+        .iter()
+        .filter(|pkg| root.join(pkg.as_str()).join("package.json").is_file())
+        .cloned()
+        .collect()
 }
 
 /// 判断某能力的某变体现在处于什么状态，以及开/关/移除各需要哪些行级目标。
@@ -517,6 +567,8 @@ pub fn resolve_capabilities(
         facts.installed.iter().map(String::as_str).collect();
     let declared: std::collections::HashSet<&str> =
         facts.declared_bundles.iter().map(String::as_str).collect();
+    let shipped: std::collections::HashSet<&str> =
+        facts.shipped.iter().map(String::as_str).collect();
 
     CAPABILITIES
         .iter()
@@ -682,6 +734,26 @@ pub fn resolve_capabilities(
                 (CapabilityState::Off, None)
             };
 
+            // **这个安装自带它** ⇔ 该能力的每个包都能在安装的 `node_modules` 里找到。
+            // 全部包都在才算（少一个就是要装，不能让"自带"把缺的那步吞掉）。
+            let shipped_by_dsh =
+                !all_packages.is_empty() && all_packages.iter().all(|p| shipped.contains(*p));
+
+            // 「遗留副本」= 本 Profile 里**真能清掉**的东西：profile 在册的包、我们写过的挂载行
+            //（`InsertRow` 且行在）、或我们写下的停用桩。与 `shipped_by_dsh` 同时为真 = 它遮蔽了
+            // dsh 自带的那一份，唯一允许的动作是清理。
+            //
+            // **判据必须与 `planRemove` 的能力面对齐**（2026-09-17 自查）：bundle 类包的行由
+            // 包自身的 patch 贡献（`AutoBundle`），我们既没写也不能删它们——若把它们算进来，
+            // 「清理旧副本」就会变成一个**点了什么都不做**的假按钮。
+            let legacy_copy = variants.iter().any(|v| {
+                v.steps.iter().any(|s| {
+                    s.installed
+                        || s.disabled
+                        || (s.activation == Activation::InsertRow && s.row_present)
+                })
+            });
+
             CapabilityView {
                 id: capability.id.to_string(),
                 label_zh: capability.label_zh.to_string(),
@@ -690,6 +762,8 @@ pub fn resolve_capabilities(
                 variants,
                 state,
                 active_variant,
+                shipped_by_dsh,
+                legacy_copy,
             }
         })
         .collect()
@@ -771,6 +845,7 @@ mod tests {
             declared_bundles: bundles.iter().map(|s| pkg(s)).collect(),
             missing_commands: Vec::new(),
             descriptions: Default::default(),
+            shipped: Vec::new(),
         }
     }
 
@@ -962,7 +1037,138 @@ mod tests {
         }
     }
 
-    /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
+    /// **dsh 自带的能力，dock 不代管**（2026-09-17 立）。
+    ///
+    /// 真机事实：dsh 0.1.6-alpha.2 起把 Agent Teams 两个 bundle 作为 optional bundle 随安装包
+    /// 下发（`<dsh-runtime>/node_modules/@deepseek-ai/` 实测在册），由 dsh 自己的插件页开关，
+    /// 且 dsh 视其为 `not-removable`。于是：全部包都由安装自带 ⇒ dock 不代管（无开关、无安装、
+    /// 无移除）；**残留副本**（profile 自己还持有）则只给"清理"这一条出路。
+    ///
+    /// 判据刻意取**安装实测**而不是写死旗标——同一台机器上 dev 档引擎（0.1.6-alpha.1）不带、
+    /// 正式档（0.1.6-alpha.2）带，旗标必然在其中一边说谎；实测判据还会自动跟上 dsh 后续
+    /// 把更多实验能力内置的节奏。
+    #[test]
+    fn dsh_shipped_capability_is_not_managed_by_dock() {
+        let agent_team = CAPABILITIES.iter().find(|c| c.id == "agent-team").unwrap();
+        let packages: Vec<String> = agent_team
+            .variants
+            .iter()
+            .flat_map(|v| v.packages.iter().map(|p| (*p).to_string()))
+            .collect();
+
+        // ① 安装自带（正式档 0.1.6-alpha.2 的形态）→ shipped，且**没有**任何"安装"该做的事。
+        let mut facts = PackageFacts {
+            shipped: packages.clone(),
+            ..PackageFacts::default()
+        };
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
+        assert!(view.shipped_by_dsh, "安装自带该能力的全部包 → 归 dsh 管");
+        assert!(!view.legacy_copy, "profile 没有这些包 → 没有遗留副本可清");
+
+        // ② 老引擎（0.1.6-alpha.1 的形态：不带）→ 仍由 dock 策展，否则用户没有任何入口打开它。
+        facts.shipped.clear();
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"));
+        let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
+        assert!(
+            !view.shipped_by_dsh,
+            "安装不带它时**不得**谎称自带（那会把唯一入口也关掉）"
+        );
+
+        // ③ 只自带到一半（少一个包）不算自带：缺的那步仍要装。
+        let partial: Vec<String> = packages.iter().take(1).cloned().collect();
+        let facts = PackageFacts {
+            shipped: partial,
+            ..PackageFacts::default()
+        };
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        assert!(
+            !caps
+                .iter()
+                .find(|c| c.id == "agent-team")
+                .unwrap()
+                .shipped_by_dsh
+        );
+
+        // ④ 遗留副本：profile 里还留着包 → 给一条"清理"出路（且必须**真能清掉**东西）。
+        let facts = PackageFacts {
+            installed: packages.clone(),
+            shipped: packages.clone(),
+            ..PackageFacts::default()
+        };
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        assert!(
+            caps.iter()
+                .find(|c| c.id == "agent-team")
+                .unwrap()
+                .legacy_copy
+        );
+    }
+
+    /// 安装探测：只看**安装目录**里有没有这些包（profile 里装的不算"自带"）。
+    #[test]
+    fn installation_probe_reads_only_the_installation() {
+        let root = std::env::temp_dir().join(format!("dsh-dock-shipped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let nm = root.join("node_modules");
+        for pkg in [
+            "@deepseek-ai/dsh-experimental-agent-team-profile",
+            "@deepseek-ai/dsh-base",
+        ] {
+            let dir = nm.join(pkg);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("package.json"), "{}").unwrap();
+        }
+        // 只建目录、不写 package.json 的包**不算**在册（半个包不叫自带）。
+        std::fs::create_dir_all(nm.join("@deepseek-ai/dsh-experimental-auto-review")).unwrap();
+
+        let ask = |names: &[&str]| {
+            let owned: Vec<String> = names.iter().map(|s| (*s).to_string()).collect();
+            installation_shipped(&root, &owned)
+        };
+        assert_eq!(
+            ask(&[
+                "@deepseek-ai/dsh-experimental-agent-team-profile",
+                "@deepseek-ai/dsh-base",
+            ]),
+            vec![
+                "@deepseek-ai/dsh-experimental-agent-team-profile".to_string(),
+                "@deepseek-ai/dsh-base".to_string()
+            ]
+        );
+        assert!(ask(&["@deepseek-ai/dsh-experimental-auto-review"]).is_empty());
+        // 安装目录不存在（引擎还没装）→ 空表，一切照旧由 dock 策展。
+        assert!(
+            installation_shipped(&root.join("nope"), &["@deepseek-ai/dsh-base".to_string()])
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 「清理旧副本」不能是假按钮：`legacy_copy` 的判据必须与 `planRemove` 的能力面对齐——
+    /// bundle 类包的行由包自身的 patch 贡献，我们既没写也不能删，**不算**可清理的痕迹。
+    #[test]
+    fn legacy_copy_counts_only_what_we_can_remove() {
+        // 该 bundle 贡献的行（`AutoBundle` 通道：行由包自身的 patch 插入，壳删不掉）
+        let rows = vec![bundle_row(
+            "@deepseek-ai/dsh-experimental-agent-team-profile",
+            &["agent-team", "tool-agent-team"],
+            false,
+        )];
+        // 行在、但由包的 patch 贡献（`AutoBundle`）且包不在 profile 依赖里 → 无可清理之物。
+        let facts = PackageFacts {
+            shipped: vec!["@deepseek-ai/dsh-experimental-agent-team-profile".to_string()],
+            ..PackageFacts::default()
+        };
+        let caps = resolve_capabilities(&facts, &rows, None);
+        let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
+        assert!(
+            !view.legacy_copy,
+            "bundle 贡献的行不属于壳，删不掉——算进来就是假按钮"
+        );
+    }
+
+    /// 面向用户的文案不得含 Markdown 反引号    /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
     #[test]
     fn user_facing_copy_has_no_markdown_markup() {
         for cap in CAPABILITIES {

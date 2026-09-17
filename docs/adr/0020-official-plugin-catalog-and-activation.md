@@ -344,6 +344,39 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
    > `openDetail` / 内联展开 / `AnimatePresence` 高度动画，必须两栏、行内不得有块级段落、
    > 长描述与实现细节不得进清单行。
 
+   > **2026-09-17 第三次修订（维护者：「dsh 新版本已经把智能体团队插件内置了，我们的实验性功能
+   > 可以把那儿撤了吧」）——确立「dsh 自带的能力，dock 不代管」**：
+   > dsh **0.1.6-alpha.2** 起把官方实验层作为 **optional bundle** 随安装包下发（上游依据：
+   > `packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＋ 设计笔记
+   > `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`）：随包下载、
+   > 默认关、在 **dsh 自己的插件页**里开关、且被 dsh 视为 **`not-removable`**。该笔记同时
+   > **明确否决**了"由某个面板按名字从 registry 安装官方 bundle"这条替代路径——那正是本模块
+   > 原来在做的事。2026-09-17 实测（本机正式档 `dsh 0.1.6-alpha.2`）：Agent Teams 两个 bundle
+   > 已在 `<dsh>/node_modules/@deepseek-ai/` 在册，且出现在该 Profile 的 `dsh.profile.bundles`
+   > 里（由 dsh 自己的插件页开启，**不在** profile 依赖中）。
+   >
+   > 规则（三条理由：dsh 会拒卸载；profile 里再装一份会**遮蔽**自带的那一份且版本可能不同；
+   > 一份能力两套开关必然互相打脸）：
+   > · **不安装、不钉版本、不写挂载行、不卸载**——动作面整体退出；
+   > · 界面只做三件事：说清"现在归 dsh 管、开关在哪"、列出**随 dsh 自带的包名**、
+   >   在没有遗留副本时**不出现任何按钮**；
+   > · **遗留副本例外**：本 Profile 自己还持有那些包（dock 早期装的）时，给**唯一**一个动作
+   >   「清理旧副本」（走既有的破坏性确认链）——不清理它会持续遮蔽 dsh 自带的那一份。
+   >
+   > 落地：**判据取"这次安装实测"而不是写死的旗标**——某能力的**每个包**都能在
+   > `<engines>/dsh-runtime/node_modules/<包>` 找到 ⇒ 这个安装自带它
+   > （`official_catalog.rs::installation_shipped`，纯函数 + 单测）。理由：同一台机器上
+   > dev 档引擎 0.1.6-alpha.1 **不带**、正式档 0.1.6-alpha.2 **带**，旗标必然在其中一边说谎；
+   > 实测判据还会**自动跟上** dsh 后续把更多实验能力内置的节奏（无需改代码）。
+   > 视图加 `shippedByDsh` / `legacyCopy`；自带的走**独立详情面**（不套"互斥变体"模型——
+   > dsh 侧是两个**各自可开关**的官方插件，宿主层与 Web 层并不互斥）；
+   > `legacyCopy` 的判据与 `planRemove` 的能力面对齐——bundle 贡献的行我们删不掉，**不能**
+   > 算成可清理的痕迹（否则「清理旧副本」是个点了没反应的假按钮）。
+   > 探测不到安装目录 = 空表 ⇒ 一切照旧由 dock 策展（**宁可多管，也不谎称"dsh 已内置"**）。
+   > **每次 dsh 升级的复核点**：安装包 `@deepseek-ai/dsh` 的 `dependencies` 里有没有新的
+   > `@deepseek-ai/dsh-experimental-*`（＝ `OPTIONAL_BUNDLES` 增项）。今天仍是"要装才有"的
+   > 发布包：`auto-review` / `browser-use`（三档）/ `computer-use`（两档）。
+
 6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言）。
    > **2026-09-17 补**：**不得含任何 markdown 标记**——面板没有 markdown 渲染器，
    > 反引号与 `**` 都会原样显示（D6 只挡住了反引号，`unlocks_zh` 里的 `**权限最高**`

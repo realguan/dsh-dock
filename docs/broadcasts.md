@@ -32,6 +32,44 @@
 
 ## 三、记录
 
+### 2026-09-17 裁决 · dsh 0.1.6-alpha.2 起自带 Agent Teams：实验能力页「dsh 自带的、dock 不代管」 —— guan（AI 协作）
+
+- **触发**（维护者给了两张截图）：「dsh 新版本已经把智能体团队插件内置了，我们的实验性功能可以把
+  那儿撤了吧，我看他会显示在系统基底上了」，并要求"看看 dsh 最新的代码，看这个模块该怎么调整才
+  最合理，也要考虑 dsh 后续发展（可能逐渐都把实验性的功能内置）"。
+- **先读上游，再定方案**（依据都可复核）：
+  · `packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＝ 两个 Agent Teams bundle；
+  · 设计笔记 `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`：
+    随安装包下发、默认关、dsh 自己插件页开关、**永不卸载**；并**否决**了"面板按名字从 registry
+    装官方 bundle"这条路（＝本模块原来的做法）；
+  · 真机实测（本机正式档引擎）：`dsh 0.1.6-alpha.2` 的 `node_modules/@deepseek-ai/` 下确有
+    `dsh-experimental-agent-team-profile` / `-web-profile`，且用户 `~/.dsh/profiles/web` 的
+    `dsh.profile.bundles` 里已有它们（**不在** profile 依赖里 → 由 dsh 提供）；dev 档引擎是
+    `0.1.6-alpha.1`，没有这两个包——**这正是"随 dsh 版本而变"的实证**。
+- **落地**（ADR-0020 §7.2 第三次修订）：
+  · **判据 = 这次安装实测**（不写死旗标）：某能力的每个包都在
+    `<engines>/dsh-runtime/node_modules/` 里 ⇒ 这个安装自带它（`installation_shipped`，纯函数
+    + 单测）。理由是同日实测到的分叉：dev 档引擎 `0.1.6-alpha.1` **不带**、正式档 `0.1.6-alpha.2`
+    **带**——旗标必然在其中一边说谎；实测判据还会自动跟上 dsh 后续内置的节奏；
+    `auto-review` / `browser-use` / `computer-use` 三边都没自带，继续由 dock 策展；
+  · 视图加 `shippedByDsh` / `legacyCopy`；自带能力走**独立详情面**（不套"互斥变体"模型——
+    dsh 侧是两个各自可开关的官方插件，宿主层与 Web 层并不互斥），界面**无开关、无安装、无移除**，
+    只说明"归 dsh 管、开关在 dsh 插件页" + 列出随 dsh 自带的包名；
+  · **遗留副本**：本 Profile 还持有那些包时（dock 早期按 profile 装的），给**唯一**动作
+    「清理旧副本」（走既有破坏性确认链）——不清理会持续遮蔽 dsh 自带的那一份；
+  · `handleSwitch` 加防御式早退（界面藏了按钮、计划还在跑就是半吊子）。
+- **顺手修掉的相邻 bug**：Profile 详情「底座组合」把**每一层**都描述成"Web 界面与交互控制台
+  渲染器"（截图里 agent-team 两层就是这么显示的）——原来是个二元判断；现已改成"只有确实认识的
+  两层才具体描述"，其余给中性说明，文案进字典。
+- **影响**：用户可见——实验能力页少一项可操作项，多一块"dsh 已内置"的说明面；动作语义其余不变。
+  **dsh 升级复核点**已写进 ADR：安装包 `@deepseek-ai/dsh` 的 `dependencies` 里一旦出现新的
+  `@deepseek-ai/dsh-experimental-*`，就把对应能力标为自带（这是我们这套策展集**必然逐步收缩**
+  的机制）。
+- **凭据**：Rust `fmt` / `clippy -D warnings` / `cargo test` **504 passed / 7 ignored**；
+  前端 `tsc` 0 错 / `oxlint` 0 warning（153 文件）/ `vitest` **498 passed** / `pnpm build` 通过；
+  浏览器侧 CDP 实测：清单行第一项**没有开关**且显示「dsh 已内置」、自带面列出两个包名、
+  「清理旧副本」走既有破坏性确认框（确认框内容已核对）、整页仍 820px=视口。
+
 ### 2026-09-17 补记 · 实验能力页再重做：**清单/详情分栏**（维护者验收打回）—— guan（AI 协作）
 
 - **原委**：上一条（同日）交付的 v2 卡片版被验收打回——「进去占用的空间也太多了，一屏只能

@@ -263,12 +263,23 @@ pub async fn list_experimental_capabilities(
             })
             .collect();
 
+        // 「这个安装自带哪些策展包」（2026-09-17）：dsh 0.1.6-alpha.2 起把官方实验层作为
+        // optional bundle 随包下发。判据是**安装目录实测**而非写死的旗标——同一台机器上
+        // dev 档引擎（0.1.6-alpha.1）不带、正式档（0.1.6-alpha.2）带，旗标必然在其中一边说谎。
+        let catalog_pkgs: Vec<String> =
+            catalog_packages().into_iter().map(str::to_string).collect();
+        let shipped = crate::official_catalog::installation_shipped(
+            &crate::engines::dsh_runtime_dir(&data_dir),
+            &catalog_pkgs,
+        );
+
         Ok(crate::official_catalog::resolve_capabilities(
             &crate::official_catalog::PackageFacts {
                 installed,
                 declared_bundles,
                 missing_commands,
                 descriptions,
+                shipped,
             },
             &rows,
             runtime_version.as_deref(),

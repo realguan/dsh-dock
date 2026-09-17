@@ -566,6 +566,11 @@ export const t = {
     searchAllPluginsPlaceholder: "搜索全域插件名称、描述或 Profile...",
     tabPlugins: "外挂插件",
     tabBundles: "底座组合",
+    // 底座组合里每一层的说明。**只有确实知道的那两层才具体说**——原来这里是个二元判断，
+    // 于是 agent-team 这类层也被写成「Web 界面与交互控制台渲染器」（2026-09-17 真机截图抓到）。
+    bundleDescBase: "Cordis 底座与通用服务插件集合",
+    bundleDescWebApp: "Web 界面与交互控制台渲染器",
+    bundleDescShipped: "随 dsh 安装自带的一层：在 dsh 自己的插件页里开关",
     tabPatch: "Patch YAML",
     tabMcp: "MCP 扩展",
     mcpTitle: "MCP 服务器管理器",
@@ -901,6 +906,15 @@ export const t = {
     capListLabel: "能力清单",
     capPaneLabel: (name: string) => `${name}的详情`,
     capBack: "返回清单",
+    // dsh 自带（optional bundle）那一档：dock 不代管，只说明 + 指路 + 清理遗留副本。
+    capStateShipped: "dsh 已内置",
+    capShippedPackages: "随 dsh 自带",
+    capShippedMeta: "随 dsh 安装自带 · 开关在 dsh 的插件页",
+    capShippedNote:
+      "这项能力现在由 dsh 安装包自带（官方实验功能）：它是 dsh 自己的插件，开关在 dsh 的插件页里，且 dsh 视其为不可卸载。dsh-dock 不再代管它——不安装、不卸载、也不写配置行，免得与你手上的 dsh 抢同一份插件。",
+    capLegacyCopy:
+      "本 Profile 里还留着 dsh-dock 早期按 profile 装的副本：它会遮蔽 dsh 自带的那一份（版本还可能不同）。建议清理掉，然后在 dsh 的插件页里打开内置的那一份。",
+    capLegacyCleanupBtn: "清理旧副本",
     capPluginsLabel: "插件",
     // 单选组的可访问名：组里选的是"哪个插件提供这个能力"，用「插件」当组名会与节标混。
     capBackendLabel: "后端插件",

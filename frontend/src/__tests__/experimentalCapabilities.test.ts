@@ -90,6 +90,9 @@ function capability(over: Partial<Capability> = {}): Capability {
     variants: [variant()],
     state: "off",
     activeVariant: null,
+    // 默认"由 dock 策展"；dsh 自带那一档另有专门的闸门（`official_catalog::dsh_shipped_...`）。
+    shippedByDsh: false,
+    legacyCopy: false,
     ...over,
   }
 }

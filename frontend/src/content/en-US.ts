@@ -553,6 +553,9 @@ export const enUS: AppCopy = {
     searchAllPluginsPlaceholder: "Search plugins across all profiles...",
     tabPlugins: "Plugins",
     tabBundles: "Base Bundles",
+    bundleDescBase: "The Cordis base and its shared service plugins",
+    bundleDescWebApp: "The web UI and interaction console renderer",
+    bundleDescShipped: "A layer shipped with the dsh installation: switch it on the dsh plugins page",
     tabPatch: "Patch YAML",
     tabMcp: "MCP Extensions",
     mcpTitle: "MCP Server Manager",
@@ -890,6 +893,15 @@ export const enUS: AppCopy = {
     capListLabel: "Capabilities",
     capPaneLabel: (name: string) => `${name} details`,
     capBack: "Back to list",
+    // Shipped by dsh (optional bundle): dsh-dock does not manage it — explain, point, clean up.
+    capStateShipped: "Built into dsh",
+    capShippedPackages: "Shipped with dsh",
+    capShippedMeta: "ships with the dsh installation · switch it on the dsh plugins page",
+    capShippedNote:
+      "This capability now ships with the dsh installation (an official experimental feature): it is dsh's own plugin, switched on from the dsh plugins page, and dsh treats it as non-removable. dsh-dock no longer manages it — no install, no uninstall, no config rows — so the two never fight over the same plugin.",
+    capLegacyCopy:
+      "This profile still holds a copy dsh-dock installed earlier. It shadows the one that ships with dsh (possibly at a different version). Clean it up, then switch the built-in one on from the dsh plugins page.",
+    capLegacyCleanupBtn: "Clean up the old copy",
     capPluginsLabel: "Plugins",
     capBackendLabel: "Backend plugin",
     capPrereqCommon: "Shared prerequisites",

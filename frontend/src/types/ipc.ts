@@ -553,6 +553,12 @@ export interface Capability {
   state: CapabilityState
   /// 当前生效（或已就位但停用）的变体 id；`null` = 未启用 / 冲突。
   activeVariant: string | null
+  /// **dsh 安装包自带这项能力**（2026-09-17 起：官方实验层作为 optional bundle 随产品下发）。
+  /// 为真时界面**不渲染开关/安装/移除**——dsh 自己管，且视其为"永不卸载"。
+  shippedByDsh: boolean
+  /// 该能力的包**仍被本 Profile 自己持有**（dsh-dock 早期按 profile 装过的一份）。
+  /// 与 `shippedByDsh` 同时为真 = 历史遗留副本（会遮蔽 dsh 自带的那一份）：只给"清理"。
+  legacyCopy: boolean
 }
 
 /// 安全模式状态（ADR-0026，`get_safe_mode_state`）。安全模式改的是** profile 配置本身**，
