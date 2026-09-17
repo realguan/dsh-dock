@@ -60,13 +60,12 @@ ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并
 `save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`
 `probe_mcp_server`（2026-09-15，ADR-0022：探测 MCP 能力；**stdio 分支**经 `lifecycle`
 seam 起子进程，http 分支为条目级网络豁免，WSL 客体档显式报错）。
-`list_ssh_hosts` `probe_ssh_target` `generate_ssh_profile`（2026-09-15，ADR-0023：
-SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `BatchMode` 非交互预检 /
-建 profile 并写四行 ssh 注册行"。读取面边界见 §三，网络面见 §二）。
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 65**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+**当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-09-17 净减 3：SSH 远程工作区整体移除，`list_ssh_hosts` / `probe_ssh_target` /
+`generate_ssh_profile` 三条命令与对应权限一并退役——**未随任何版本发布**（见 ADR-0023 状态）；
 2026-09-16 净增 3：`list_official_plugins` → `list_experimental_capabilities` 属改名，
 新增 `remove_official_patch_row`、`get_safe_mode_state` 与 `dismiss_safe_mode_notice`）。
 
@@ -99,7 +98,6 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 | 引擎引导（ADR-0010） | `engines.rs` | 网络在 pnpm 子进程内：`runtime set node` 下载 node、经 `pnpm add`（**project 内安装，非 `-g`**：Windows 免符号链接特权，ADR-0017）下载 dsh（镜像 env 注入）；WSL 客体仍同源 `add -g` |
 | WSL 客体投递与管理面（ADR-0016） | `executor.rs`；客体插件装卸/更新在客体 `dsh plugin`（客体 pnpm）子进程内 | 更新检查仍走 `updates.rs`，**壳不新增网络客户端** |
 | 插件装卸/更新的**源选择**（ADR-0006 §6，2026-09-16） | `commands/plugin.rs::install_plugin` → `dsh plugin add … --registry <url>`（宿主；客体暂用其自身配置） | 网络仍在 **pnpm 子进程内**；壳只按次传 `--registry`，**不改写用户 npm 配置**、无 in-process 客户端；machine projection 不变 |
-| SSH 非交互预检（ADR-0023 §2.5） | `ssh_remote.rs::probe_ssh_target`（2026-09-15） | 网络在**系统 `ssh` 子进程内**（壳无 in-process 客户端）；参数锁死 `BatchMode=yes` / `ForwardAgent=no` / `StrictHostKeyChecking=yes` / `ConnectTimeout=10`；整轮 30s；**只读回读**（uname / node / helper 摘要 / workspace），不写远端 |
 
 ### 进程内触网（条目级豁免；`Kind::Exempt` + `item`）
 
@@ -126,8 +124,5 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 
 | 域 | 落点 | 边界（读什么 / 不外传什么） |
 |:---|:---|:---|
-| 用户 SSH 配置 `~/.ssh/config` | `ssh_config.rs::load_ssh_hosts`（2026-09-15，ADR-0023 §2.7） | **只读这一个文件**，**不跟随 `Include`**（跟随会把读取面扩张成"任意路径"）；**1 MiB 上限**，超限截断并在 `notes` 如实告知；只取**非机密**字段——alias、`HostName`/`User`/`Port`/`ProxyJump`、`IdentityFile` 的**路径**；**私钥内容不在该文件内，且结构体没有能承载它的字段**；非法 UTF-8 用替换字符兜住，不 panic |
-
-**触发登记的两条事实**：① 这是本仓库**首个** `$DSH_HOME` / `app_data_dir()` 之外的读取面；
-② 前端**不得**发起该读取（ADR-0023 §3 方案 D 否决）——解析固定在 Rust 后端，经
-`list_ssh_hosts` 一条 IPC 供前端消费。
+（当前为空：2026-09-15 登记过的「用户 SSH 配置 `~/.ssh/config`」随 SSH 远程工作区整体
+移除于 2026-09-17 退役——该功能未随任何版本发布，这段登记史保留在 ADR-0023 的「状态」里。）

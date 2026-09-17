@@ -400,25 +400,6 @@ pub fn create_command_args(profile: &str) -> Vec<String> {
 /// `PROFILE_TEMPLATES` @ 323）。
 const WEBUI_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 
-/// SSH 远程工作区 profile 的 app bundle（2026-09-15，ADR-0023 §1.3）。
-///
-/// **刻意不是** [`WEBUI_BUNDLE`]：Web 工作台的视图假定**宿主本地文件系统**，上游明写
-/// "replacing providers alone does **not** make those views remote-aware"
-/// （`docs/subsystems/ssh.md`；ADR-0023 §1.3 原文）。给 SSH profile 声明 web-app
-/// 等于承诺一个 ADR-0023 §3 方案 C **已否决**的形态（"透明进入远程开发模式"）。
-/// 上游把该家族的范围限定为 **POSIX headless 与自建 profile**，
-/// `@deepseek-ai/dsh-headless` 正是"无 Host / HTTP / 浏览器层"的那个组合
-/// （其 `dsh.bundle.patch` 头部原文）。
-const SSH_APP_BUNDLE: &str = "@deepseek-ai/dsh-headless";
-
-/// [`SSH_APP_BUNDLE`] 的公开取值（2026-09-15，ADR-0023 §1.3）。
-///
-/// 由 `ssh_profile.rs` 传给 [`create_profile_with_app_bundle_blocking`]：让"用哪个
-/// bundle"这一决定**只有一处字面量**，而不是调用方各自写字符串。
-pub fn ssh_app_bundle() -> &'static str {
-    SSH_APP_BUNDLE
-}
-
 /// 向 manifest 文本的 `dsh.profile.bundles` 追加一条声明（纯函数，幂等——
 /// 已存在返回 None）。JSON 往返后 2 空格缩进 + 尾换行，与 dsh initProfile 的
 /// `JSON.stringify(manifest, null, 2) + "\n"` 逐字同构（app-boot index.js @ 353）。
@@ -808,27 +789,15 @@ fn output_tail(text: &str) -> String {
 /// 仅作引擎未就绪时的回退）-> spawn 转发链 -> 分类。pnpm 防御检测随工具链
 /// 档内聚在 run_toolchain_forward（系统档可见性与 spawn 同源 dsh_child_path；
 /// 引擎档捆绑 pnpm 恒在，免检测）。
+///
+/// app bundle 恒为 [`WEBUI_BUNDLE`]：2026-09-17 起只有一个调用方——SSH 远程工作区
+/// （唯一需要 `@deepseek-ai/dsh-headless` 的形态）整体移除后，"指定 bundle"这一
+/// 参数化随之失去存在理由，收回单一路径。
 pub fn create_profile_blocking(
     profile: &str,
     data_dir: &Path,
 ) -> Result<CreateProfileOutcome, String> {
-    create_profile_with_app_bundle_blocking(profile, data_dir, WEBUI_BUNDLE)
-}
-
-/// 创建 profile 并声明**指定** app bundle（2026-09-15，ADR-0023 §1.3）。
-///
-/// 与 [`create_profile_blocking`] 唯一差别是 bundle 取值：Web 管理器路径用
-/// [`WEBUI_BUNDLE`]，SSH 远程工作区用 [`SSH_APP_BUNDLE`]。抽出参数而非复制函数体
-/// ——后半段（物化判定 / build policy / 结果分类）是**同一套生命周期逻辑**，
-/// 复制一份就多一处会与 dsh 侧漂移的影子实现。
-///
-/// `bundle` 传空串表示**不声明** app bundle（当前无调用方；保留是为了让"自定义
-/// profile"这一 ADR-0023 §1.3 明列的范围有落点，而不是让调用方去 hack）。
-pub fn create_profile_with_app_bundle_blocking(
-    profile: &str,
-    data_dir: &Path,
-    bundle: &str,
-) -> Result<CreateProfileOutcome, String> {
+    let bundle = WEBUI_BUNDLE;
     let home = crate::resolve::user_dsh_home();
     creation_blocker(&home, profile)?;
     let toolchain = crate::engines::resolve_toolchain(data_dir)?;

@@ -504,6 +504,10 @@ export interface CapabilityStep {
   toggleTargets: string[]
   /// 版本错配提示（如 registry `latest` 落后于运行时）；`null` = 无需打扰用户。
   versionNotice: string | null
+  /// **该包自己的** `description`（2026-09-17 裁定「描述以官方为主」）：装好后从
+  /// `<profile>/node_modules/<包>/package.json` 读本地文件，**不转述不翻译**；
+  /// 未装时 `null`（界面如实说"装好后显示它自带的官方简介"）。
+  description: string | null
 }
 
 /// 能力下的一个可选后端。同能力的变体**互斥**（同一时刻只应有一个生效）。
@@ -573,61 +577,3 @@ export interface RowWriteOutcome {
   autoActivated: boolean
 }
 
-// ---------- SSH 远程工作区向导（ADR-0023，2026-09-15） ----------
-
-/** 一个可选择的 SSH 主机（`~/.ssh/config` 的一个具体 alias）。
- *  **只含非机密字段**：alias、HostName/User/Port/ProxyJump、IdentityFile 的**路径**。
- *  私钥内容从不在此文件里，这里也没有能承载它的字段。 */
-export interface SshHost {
-  /** `Host` 里的具体别名（不含通配/取反）——即可以当 `host` 用的名字。 */
-  alias: string
-  hostname: string | null
-  user: string | null
-  port: number | null
-  proxyJump: string | null
-  identityFiles: string[]
-}
-
-/** 一次 `list_ssh_hosts` 的结果。 */
-export interface SshHosts {
-  hosts: SshHost[]
-  /** 解析期的降级说明（未跟随的 `Include` / 忽略的 `Match` / 畸形行 / 非法端口）。
-   *  空 = 无降级。有值即表示**下面的列表可能不完整**，UI 必须显示。 */
-  notes: string[]
-}
-
-/** `dsh-ssh` 的五个必填配置键（ADR-0023 §2.3）。
- *  字段名与 Rust 侧 `ssh_remote::SshTarget` 的 camelCase 序列化一一对应。 */
-export interface SshTarget {
-  /** `~/.ssh/config` 里**已存在**的别名（不是任意 hostname）。 */
-  host: string
-  /** 远端 Node 绝对路径。 */
-  node: string
-  /** 远端 helper 入口绝对路径。 */
-  helper: string
-  /** helper 的 SHA-256（小写 64 位十六进制）；不符即拒绝连接。 */
-  helperHash: string
-  /** 远端默认工作区绝对路径。 */
-  workspace: string
-}
-
-/** 一项预检结论。`key` 是稳定的机器可读键（UI 不解析文案）。 */
-export interface SshProbeCheck {
-  key: string
-  ok: boolean
-  detail: string
-}
-
-/** 一次预检结果。`ok === false` 即**不得生成 profile**（ADR-0023 §2.5）。 */
-export interface SshProbe {
-  ok: boolean
-  checks: SshProbeCheck[]
-}
-
-/** `generate_ssh_profile` 的结果。 */
-export interface SshProfileOutcome {
-  /** 本次是否**新建**了 profile（false = 复用已存在的同名 profile）。 */
-  created: boolean
-  /** 是否**改动了** `cordis.patch.yml`（false = 四行本就齐全，零写入）。 */
-  changed: boolean
-}

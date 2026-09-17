@@ -380,22 +380,7 @@ cd src-tauri && cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D 
 | F8 | WSL 客体档口径 | 切到 WSL 客体档后点「探测」 | 报「暂不支持 WSL 客体档…请在本地档使用」，**不静默回落宿主本地** |
 | F9 | 会话 Cookie 无关性 | 在 Host **未运行**时探测 stdio 服务器 | 探测仍成功（本探测不经 `/api`，不依赖 `workbench_cookie`）——反证与回环面确实分离 |
 
-### SSH 远程工作区实机清单（2026-09-15，§7 R4 落地时补写，**待跑**）
+### ~~SSH 远程工作区实机清单~~（2026-09-15 补写 → **2026-09-17 整体退役**）
 
-> 依据 ADR-0023 §2.10："无上游范本"⇒ 正确性**完全依赖本清单**，不能靠"照抄模板"的确定性。
-> 两端须 Linux/macOS（上游 `ssh/src/index.ts:75` 的硬错）。未跑项保持「待跑」。
-
-| # | 项 | 操作 | 通过判据 |
-|:--|:--|:--|:--|
-| G1 | 主机枚举 | 在 `~/.ssh/config` 里写 2 个 alias（其中一个带 `HostName`/`User`/`Port`），打开向导 | 下拉列出两个 alias，显示 `alias → user@host:port` 形态 |
-| G2 | 降级如实告知 | 配置里加 `Include ~/.ssh/config.d/*` 与一个 `Match` 段 | 向导显示"未跟随 Include"与"忽略 Match"两条说明；**不得**静默少列主机 |
-| G3 | 非交互预检成功 | 对一个真可达的 Linux/macOS 主机填齐五键（helper 已部署、摘要正确） | 五项全绿；`node`/`helperHash` 显示**实际观测值** |
-| G4 | 摘要不符被拒 | 把 `helperHash` 改成全 `0`（64 位） | 该项转红并同时显示远端与配置的两个摘要；**生成按钮不出现** |
-| G5 | 不可达不生成 | 填一个不可达 alias（或错的 node 路径） | 预检报错带 ssh 的 stderr（`Permission denied` / `Connection refused` 等原样透出）；**不得**创建 profile |
-| G6 | Windows 宿主不可用 | 在 Windows 上打开向导 | 显示"POSIX 客户端"提示；预检按钮禁用；**不得**尝试起 ssh |
-| G7 | 生成结果 | 预检全绿后点「生成并安装」 | 等分钟级完成；`profiles/<名>/package.json` 的 `dsh.profile.bundles` 含 `@deepseek-ai/dsh-headless`（**不含** web-app）；`cordis.patch.yml` 出现四条 `insert` 行，行 id 为 `dsh-dock-ssh`/`-fs-ssh`/`-subprocess-ssh`/`-sandbox-ssh`，**只有第一行带 `config` 且恰五键** |
-| G8 | 版本钉住 | 生成后看 profile `package.json` 的 dependencies | 四个 ssh 包版本 = 运行期 dsh 版本（**不是** registry `latest`） |
-| G9 | 幂等重跑 | 再点一次「生成并安装」 | 报"复用已有 profile"且"挂载行本就齐全，未改动文件"；`cordis.patch.yml` 的 mtime 不变 |
-| G10 | 用户 patch 保真 | 先往 `cordis.patch.yml` 写一条带行间注释的用户条目，再生成 | 用户条目与其注释**原文保真**，未被序列化重排 |
-| G11 | 远端真生效 | `dsh --profile <名> --dump-config` | 四条 ssh 行都在，`dsh-ssh` 的 config 五键与向导输入一致 |
-| G12 | 反向：Web 视图**不**远端感知 | 用生成的 profile 起 Web 工作台（若另行声明 web-app） | 文件树显示的仍是**宿主**文件系统——这正是本向导**不**声明 web-app 的原因；若观察到远端感知，说明上游 §1.3 的范围限定已变，须按 ADR-0023 §6 重开复审 |
+> 该节原有的 G1–G12 十二项实机清单随 SSH 远程工作区功能**整体移除**（ADR-0023 状态：已撤回，
+> 未随任何版本发布）。清单不再可执行，故整节删除；决策史见 ADR-0023。

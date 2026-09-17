@@ -222,16 +222,6 @@ const EXEMPTIONS: &[NetworkEntry] = &[
         date: "2026-09-11",
     },
     NetworkEntry {
-        file: "src/ssh_remote.rs",
-        // 2026-09-15（ADR-0023 §2.5）：非交互预检用系统 `ssh` —— 网络在**子进程内**，
-        // 本文件不得出现 in-process 客户端。`(item: None)` 整文件登记是刻意的：
-        // 这个文件将来若长出第二个触网入口（例如端口隧道探测），仍然必须是子进程。
-        item: None,
-        kind: Kind::Registered,
-        reason: "SSH 预检（AGENTS §7 2026-09-15）：`ssh -o BatchMode=yes` 子进程，网络在 ssh 进程内；整轮 30s、redirects 面无关（ssh 自带）",
-        date: "2026-09-15",
-    },
-    NetworkEntry {
         file: "src/executor.rs",
         item: None,
         kind: Kind::Registered,

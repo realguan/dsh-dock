@@ -43,8 +43,7 @@
 | **S2** | 安全模式横幅 + 「退出安全模式并重启」（ADR-0025 补完） | 点两下 |
 | **S3** | 插件行开关：打开/关掉后行内徽标**自己**追平（不再切页才自愈）；两个徽标各带 tooltip | 点两下 |
 | **C4** | WSL 档点一次「探测」，应报「暂不支持 WSL 客体档」 | 点一下 |
-| **D3 / D4 / D5** | 需要**真实 Linux/macOS 远端主机**（helper + SHA-256）与 **Windows** 机器 | 你的环境 |
-| — | `docs/executor.md` 的 **F1–F9 / G1–G11** 全表（真实 MCP 服务器 / 真实远端主机） | 你的环境 |
+| — | `docs/executor.md` 的 **F1–F9** 全表（真实 MCP 服务器） | 你的环境 |
 | — | （可选）F1 滑动手感、C1/C2/C3/E1 的 UI 点按 | 可选 |
 
 **✅ 我已验收（不需要你操作；想抽查按 §1.5 的复跑命令）**
@@ -75,7 +74,7 @@ A2 · A3 · A4 · A5 · A7 · C1 · C2 · C3 · D1 · D2 · E1 · E2 · F1 · F2
 
 | Tab | 用途 |
 |:---|:---|
-| **Profile 列表** | Profile 管理；右侧 `SSH 远程工作区向导` 按钮（D 组） |
+| **Profile 列表** | Profile 管理（2026-09-17：SSH 远程工作区向导按钮已随功能移除） |
 | **插件中心** | 内部三个子 Tab：`插件市场` / `已安装` / **`实验能力`**（A 组） |
 | **会话维护** | 会话列表；`已归档` 档位里有 `取消归档`（B 组） |
 | **系统控制台** | 内部子 Tab `偏好与守护` → Preferences 的 **`插件安装源`** 区块（E 组） |
@@ -116,8 +115,8 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 **机器闸门覆盖的契约**（漏一处即红，不需要人记）：
 
 - IPC 四处同步（`ipc.rs::COMMANDS` → `lib.rs` handler → `capabilities/default.json` → `lib/tauri.ts`），
-  现 **65 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `list_ssh_hosts` /
-  `probe_ssh_target` / `generate_ssh_profile` / `apply_official_patch_row` / `remove_official_patch_row`）；
+  现 **62 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `apply_official_patch_row` /
+  `remove_official_patch_row`；2026-09-17 三条 SSH 命令随功能移除，65 → 62）；
 - IPC 结构体形状 Rust↔TS（`ipc-shapes.json`）——本次 `BootErrorPayload` 加字段就是被它抓到的；
 - 网络面登记（`network_gate.rs`：MCP 探测的 streamable-http 为**条目级**豁免，非整文件）；
 - 前端禁双源/禁裸中文/禁直呼 `invoke`/破坏性操作确认等既有门禁。
@@ -164,7 +163,7 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 | **C4** | 后端显式报错分支存在（`commands/console.rs:248`「暂不支持 WSL 客体档…」），**无回落本地**分支 | 🖐 待你验收 |
 | **D1** | 文案原文即「Web 工作台的文件树、编辑器与终端**不会**因此变成远端感知——上游明确不支持该形态」 | ✅ 我已验收 |
 | **D2** | **真机通过**：本机 `~/.ssh/config` 解析出 **13 个 alias**，且 `Include` 的降级说明如实给出（新增可复跑 `#[ignore]` 测试） | ✅ 我已验收（可选抽查：下拉里看一眼） |
-| **D3 / D4 / D5** | 需要**真实 Linux/macOS 远端主机**（helper 部署 + SHA-256）／Windows 机器 | 🖐 待你验收 |
+| ~~D3 / D4 / D5~~ | ~~需要真实 Linux/macOS 远端主机 / Windows 机器~~ | ❌ 已撤销（功能移除，未发布） |
 | **E1** | 三选项键齐备（`PreferencesPane` 7 处引用）+ `settings.rs` 两键 + 默认 `auto` | ✅ 我已验收（可选抽查） |
 | **E2** | **真机证据**：`plugin-op.log` 今日 **6 次**安装全部带 `--registry https://registry.npmjs.org`；`~/.npmrc` **未被改写**（仍 npmmirror + `@moresec` 私有源 + `strict-ssl=false`） | ✅ 我已验收 |
 | **F1** | 全仓 `content-visibility` 命中 **0**；`injected/memory-policy.js` 已删；ADR-0002 已记修订 | ✅ 我已验收（可选抽查：滑动手感） |
@@ -184,8 +183,8 @@ DSH_MCP_E2E_ARGS=/abs/path/node_modules/@modelcontextprotocol/server-everything/
 # C2：不可达端点有界失败
 cargo test --lib mcp_probe::tests::unreachable_http -- --ignored --nocapture
 
-# D2：本机真实 ~/.ssh/config 解析 + 诚实降级
-DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored --nocapture
+# （原 D2 复跑命令 `DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config` 已失效：
+#  SSH 远程工作区整体移除，`ssh_config.rs` 及其 #[ignore] 真机用例同日退役——2026-09-17）
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
@@ -217,8 +216,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 | 2 | **A1 四张卡**完整过一眼 | 面板渲染与文案的观感（你只发了其中两张卡） |
 | 3 | **B1 / B2** 取消归档（有活跃 Host 时点；无 Host 时应报错而非改文件） | 需要活跃 Host + 点击 |
 | 4 | **C4** WSL 档点一次「探测」 | 需要 WSL 运行档 |
-| 5 | **D3 / D4 / D5** | 需要真实 Linux/macOS 远端主机（helper + SHA-256）／Windows 机器 |
-| 6 | **`docs/executor.md` 的 F1–F9 / G1–G11 全表** | 真实 MCP 服务器 / 真实远端主机，逐项判据在那张表里 |
+| 5 | **`docs/executor.md` 的 F1–F9 全表** | 真实 MCP 服务器，逐项判据在那张表里 |
 | 7 | （可选）**F1 滑动手感**、C1/C2/C3/E1 的 UI 点按 | 我已验逻辑，你想眼见为实再点 |
 
 其余全部 **✅ 我已验收**（A2–A5 / A7 / C1–C3 / D1–D2 / E1–E2 / F1–F2 / G1–G5），
@@ -374,11 +372,12 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 
 ---
 
-## 5. D 组 · SSH 远程工作区向导（I4，ADR-0023）
+## 5. D 组 · ~~SSH 远程工作区向导（I4，ADR-0023）~~ ❌ 已整体撤销（2026-09-17）
 
-> 入口：**控制中心 → Profile 列表 → 右侧「SSH 远程工作区向导」**。
-> 完整 11 项清单在 [`docs/executor.md`](./executor.md) 的「SSH 远程工作区实机清单 G1–G11」（**待跑**）。
-> 无远端 Linux/macOS 主机时，D1/D2/D5 仍可验；D3/D4 需要有主机。
+> **本组不再可验**：维护者裁定 SSH 远程工作区功能整体移除（ADR-0023 状态 = 已撤回，
+> **未随任何版本发布**）——入口按钮、向导、三条 IPC 命令与实机清单（`docs/executor.md` 的 G1–G12）
+> 同日全部退役。下方 D1–D5 条目保留作**当时的验收记录**（D1/D2 的结论与 OpenSSH 语义仍可复用），
+> 但请**跳过不与本组交互**。
 
 ### D1 ✅ 范围声明不许过度承诺
 
@@ -580,8 +579,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 | 坏行来自**三方 bundle 插件包**（`dsh.bundle.patch` 形态，如 Agent Teams） | **已经能停**（ADR-0026 更正了旧结论：当年 `exit 1` 是枚举过宽，把被用户 patch 过的随包行也算成了三方行）；现在按**段落主段**判随包与否，三方 bundle 行一并写 `disabled: true` |
 | 取消归档的「在 Web 设置页打开」次级入口 | 未做（可选项） |
 | MCP 探测的 `resources/read` 预览、SSRF 策略 | 未做（ADR-0022 明确不解决 SSRF，只限影响面） |
-| SSH 远程工作区的会话级 capability 收敛 | 继承 `docs/roadmap.md` §4.8，未做 |
-| `docs/executor.md` 的 B1–B7 / C2 / D / F1–F9 / G1–G11 | **待跑**（真实网络与实机项，本批未跑） |
+| `docs/executor.md` 的 B1–B7 / C2 / F1–F9 | **待跑**（真实网络与实机项，本批未跑） |
 
 ---
 
@@ -592,7 +590,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 | A | A1–A7 | A2–A5、A7 ✅ 我已验收；A1、A6 🖐 待你 | |
 | B | B1–B2 | 🖐 待你（需活跃 Host） | |
 | C | C1–C4 | C1–C3 ✅ 我已验收；C4 🖐 待你（WSL 档） | |
-| D | D1–D5 | D1、D2 ✅ 我已验收；D3–D5 🖐 待你（远端主机 / Windows） | |
+| D | ~~D1–D5~~ | ❌ 已整体撤销（SSH 功能移除，未发布） | |
 | E | E1–E2 | ✅ 我已验收 | |
 | F | F1–F2 | ✅ 我已验收（F1 手感可选抽查） | |
 | S | S1–S3 | S1 ✅ 我已验收；S2 / S3 🖐 待你（各点两下） | |

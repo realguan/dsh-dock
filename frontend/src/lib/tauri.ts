@@ -33,10 +33,6 @@ import type {
   RepairOutcome,
   SessionItem,
   ShellSettings,
-  SshHosts,
-  SshProbe,
-  SshProfileOutcome,
-  SshTarget,
   SystemDiagnosticsReport,
   TerminalAction,
   UpdateStatus,
@@ -159,20 +155,6 @@ export const api = {
    *  无活跃 Host 时 reject（需 DSH 在线，壳不直接改磁盘状态）。 */
   unarchiveSession: (sessionId: string) =>
     invoke<string[]>("unarchive_session", { sessionId }),
-
-  // SSH 远程工作区向导（ADR-0023）
-  /** 列出 `~/.ssh/config` 里**可选**的主机 alias。
-   *  **不跟随 `Include`**、只含非机密字段；降级情况在 `notes` 里如实透出。 */
-  listSshHosts: () => invoke<SshHosts>("list_ssh_hosts"),
-  /** 非交互预检一个 SSH 目标（ADR-0023 §2.5）：一次 `ssh -o BatchMode=yes` 往返，
-   *  回读远端 uname / node / helper / 摘要 / workspace。**不通过即不得生成 profile**。 */
-  probeSshTarget: (target: SshTarget) =>
-    invoke<SshProbe>("probe_ssh_target", { target }),
-  /** 生成 SSH 远程工作区 profile（ADR-0023）：建 profile（如缺，app bundle 取
-   *  **headless** 而非 web-app）＋ 写四行 ssh 注册行 ＋ 写后自证。
-   *  **不装包**——四个包经既有 `installPlugin` 队列安装，装完再调本命令。 */
-  generateSshProfile: (profile: string, target: SshTarget) =>
-    invoke<SshProfileOutcome>("generate_ssh_profile", { profile, target }),
 
   // 系统设置与诊断（4.11 / 4.12 / 4.13）
   getShellSettings: () => invoke<ShellSettings>("get_shell_settings"),

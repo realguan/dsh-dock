@@ -213,7 +213,13 @@ DSH Dock 是 dsh（@deepseek-ai/dsh）的**桌面管理面板**（Tauri v2 壳�
 - **壳的独特性**：executor 抽象的自然完成，让 dsh 可以运行在远程服务器上
 - **依赖**：无强依赖；但需要设计会话级 capability 收敛（远端会话拒绝 upgrade 类动作，`docs/executor.md` 已标注安全边界）
 - **注意**：用户覆盖面较窄（需要远程服务器）；SSH 配置管理（保存 host/user/port）属于设置扩展，需要配置面板
-- **落地记录（2026-09-15 补注，ADR-0023）**：⚠️ **范围被上游收窄**，与本项原文的"端口隧道 / TCP 健康探测定就绪"不同——上游把 ssh 家族限定为 **POSIX headless 与自建 profile**，且明写 Web 视图**不会**因此远端感知，故本项以"SSH 远程工作区向导"形态落地：`ssh_config.rs`（`~/.ssh/config` 解析）＋ `ssh_remote.rs`（五键校验 + `BatchMode` 非交互预检）＋ `ssh_profile.rs`（headless profile + 四包钉版本安装 + 四条 `insert` 注册行 + 写后自证）；IPC `list_ssh_hosts` / `probe_ssh_target` / `generate_ssh_profile`。**未落地**（见 ADR-0023 §5「明确不在本 ADR 范围」）：① **放开 `Mode::parse("ssh")` / 把 `ExecutorKind::Ssh` 接入启动路径**——本项只产出 profile，宿主/客体择源逻辑（ADR-0016 的 `World`）未动；② **会话级 capability 收敛**（本项原文要求的"远端会话拒绝 upgrade 类动作"）**仍未设计**；③ SSH 配置的**持久化设置面板**（保存 host/user/port）未做。实机清单见 `docs/executor.md` G1–G12（**待跑**）。
+- **落地记录（2026-09-17 更新）**：❌ **本项回到"未实施"**。2026-09-15 曾以「SSH 远程工作区向导」形态
+  落地（`ssh_config.rs` / `ssh_remote.rs` / `ssh_profile.rs` ＋ 三条 IPC），但**未随任何版本发布**即由
+  维护者裁定整体移除（ADR-0023 状态：已撤回；登记册对应命令/网络面/读取域已销记，AGENTS §6 的
+  app-bundle 写入例外一并回收）。本项原文的目标（executor 的 SSH 变体 + 端口隧道 + TCP 健康探测**接入
+  启动路径**）**始终没有实现**：`Mode::parse("ssh")` 仍未放开（`ExecutorKind::Ssh` 仅为预留位）、
+  会话级 capability 收敛未设计、SSH 配置持久化面板未做。若将来重启本项，需重新立 ADR（ADR-0023 的
+  上游范围结论仍可复用：POSIX headless / 自建 profile 限定、五键契约、Web 视图非远端感知）。
 
 #### 4.9 WSL 迭代 v2
 

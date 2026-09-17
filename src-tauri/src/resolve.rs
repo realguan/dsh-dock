@@ -60,14 +60,6 @@ fn user_home_dir() -> Option<PathBuf> {
     }
 }
 
-/// 用户 home（**公开访问器**，2026-09-15 §7 R4）。
-///
-/// 用途：`~/.ssh/config` 等 `$DSH_HOME` 之外的读取面要解析 `~`。**不复制**上面的
-/// Windows/USERPROFILE 分支——两处各写一遍就是两套口径，而这类差异只在平台上暴露。
-pub fn user_home() -> Option<PathBuf> {
-    user_home_dir()
-}
-
 /// 终端在 system 档 boot 用户世界：$DSH_HOME 或 ~/.dsh。
 ///
 /// **2026-09-10 裁定（ADR-0015 §1.2 放大器 / §5 行动项）**：`dev` 构建改用

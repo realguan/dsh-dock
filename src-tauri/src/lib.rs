@@ -44,9 +44,6 @@ mod resolve;
 mod sessions;
 mod settings;
 mod shell;
-mod ssh_config;
-mod ssh_profile;
-mod ssh_remote;
 mod ui;
 mod updater;
 mod updates;
@@ -442,9 +439,6 @@ pub fn run() {
             commands::console::probe_mcp_server,
             commands::session::delete_session,
             commands::session::unarchive_session,
-            commands::ssh::list_ssh_hosts,
-            commands::ssh::probe_ssh_target,
-            commands::ssh::generate_ssh_profile,
             commands::market::fetch_market_registry,
             commands::window::open_profiles_window,
             commands::window::focus_main_window,

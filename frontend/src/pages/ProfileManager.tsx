@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Plus,
-  Terminal,
   RefreshCw,
   X,
   Search,
@@ -27,7 +26,6 @@ import type { SafeModeState } from "@/types/ipc"
 import { SessionManager } from "@/components/profiles/SessionManager"
 import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
-import { SshWorkspaceWizard } from "@/components/profiles/SshWorkspaceWizard"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
 import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
 import { ProfileSwitchDialog } from "@/components/profiles/ProfileSwitchDialog"
@@ -72,7 +70,6 @@ export function ProfileManager() {
   })
 
   // 对话框状态
-  const [sshOpen, setSshOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(() => {
     return new URLSearchParams(window.location.search).get("dialog") === "create"
   })
@@ -485,17 +482,6 @@ export function ProfileManager() {
               <span>{t.profiles.createBtn}</span>
             </Button>
 
-            {/* SSH 远程工作区向导（ADR-0023）。**刻意是次级按钮**：范围窄
-                （仅 headless/自建 profile、仅 POSIX 宿主），不该与「新建」争主位。 */}
-            <Button
-              variant="outline"
-              onClick={() => setSshOpen(true)}
-              className="w-full gap-1.5 text-xs h-9 rounded-xl font-medium"
-            >
-              <Terminal className="size-4" />
-              <span>{t.profiles.sshWizardTitle}</span>
-            </Button>
-
             {/* 搜索框 */}
             <div className="relative">
               <Search className="text-faint absolute inset-y-0 left-2.5 my-auto size-3.5" />
@@ -611,13 +597,6 @@ export function ProfileManager() {
         open={createOpen}
         existing={list}
         onClose={() => setCreateOpen(false)}
-        onRefresh={refreshAll}
-      />
-
-      <SshWorkspaceWizard
-        open={sshOpen}
-        profileName="ssh-remote"
-        onClose={() => setSshOpen(false)}
         onRefresh={refreshAll}
       />
 
