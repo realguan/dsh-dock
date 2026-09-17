@@ -554,10 +554,13 @@ export interface Capability {
 /// 安全模式状态（ADR-0025，`get_safe_mode_state`）。**只报壳自有 overlay 的状态**，
 /// 不报运行态——运行态由回环快照给，两源禁混（否则又会出现"配置说启用、运行说停用"的假象）。
 export interface SafeModeState {
-  /// 本轮是否以安全模式启动。
+  /// 本轮是否以安全模式启动（= 壳的记账文件在，配置里已写入停用桩）。
   active: boolean
-  /// 被临时停用的行 id（空 = 未启用）。
+  /// 被写进配置的停用行 id（空 = 未启用）。
   disabledRows: string[]
+  /// 一键恢复当前可用吗（进入安全模式前那份配置备份**还在**）。
+  /// false = 备份被手动删了/挪了 ⇒ 前端**不承诺**一键恢复（不给点了会报错的按钮）。
+  restorable: boolean
 }
 
 /// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。

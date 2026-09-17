@@ -11,8 +11,17 @@ use std::path::Path;
 
 /// 覆写前备份 `target`：目标不存在 → 无需备份（Ok）；备份失败 → Err（调用方须中止）。
 pub fn backup_before_overwrite(target: &Path) -> Result<(), String> {
+    backup_before_overwrite_path(target).map(|_| ())
+}
+
+/// 同 [`backup_before_overwrite`]，但**返回刚创建的那份备份路径**（目标不存在 → `None`）。
+///
+/// 为什么需要它（2026-09-16，安全模式改"写配置"）：一键恢复的语义是"把进入安全模式前的
+/// 配置文件覆盖回去"，因此调用方必须**记住是哪一份备份**——按文件名猜"最新一份"会在用户
+/// 进入安全模式后又改过插件时指错（那时最新备份是"安全模式之后"的状态）。
+pub fn backup_before_overwrite_path(target: &Path) -> Result<Option<std::path::PathBuf>, String> {
     if !target.exists() {
-        return Ok(());
+        return Ok(None);
     }
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -32,7 +41,7 @@ pub fn backup_before_overwrite(target: &Path) -> Result<(), String> {
     // copy 保留源文件权限位：凭据备份同样 0600，不因备份而放松。
     std::fs::copy(target, &backup)
         .map_err(|e| format!("备份 {} 失败（已中止写入）：{e}", backup.display()))?;
-    Ok(())
+    Ok(Some(backup))
 }
 
 #[cfg(test)]
@@ -54,6 +63,35 @@ mod tests {
             .collect();
         assert!(entries.is_empty(), "目标不存在时不应产生备份：{entries:?}");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 返回路径的版本：调用方（安全模式记账）必须拿到**这一份**备份的确切路径。
+    #[test]
+    fn backup_returns_the_created_path() {
+        let dir = std::env::temp_dir().join(format!("dsh-fsbak-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("cordis.patch.yml");
+        std::fs::write(&target, "v1\n").unwrap();
+
+        let first = backup_before_overwrite_path(&target)
+            .unwrap()
+            .expect("应产生备份");
+        assert!(first.exists());
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "v1\n");
+        // 第二次：拿到的是**新的**那一份（不是第一份）——否则"一键恢复"会指错文件。
+        std::fs::write(&target, "v2\n").unwrap();
+        let second = backup_before_overwrite_path(&target)
+            .unwrap()
+            .expect("应产生备份");
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "v2\n");
+
+        // 目标不存在 → 无备份，也不报错。
+        assert!(backup_before_overwrite_path(&dir.join("nope.yml"))
+            .unwrap()
+            .is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

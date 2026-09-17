@@ -107,25 +107,18 @@ pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     Ok(DshProcess { child, log_path })
 }
 
-/// dsh **启动器参数**（纯函数，可测）：`--profile <p> --port 0 [--patch <overlay>] [--no-open]`。
+/// dsh **启动器参数**（纯函数，可测）：`--profile <p> --port 0 [--no-open]`。
 ///
-/// 抽成纯函数是因为顺序与开关都是契约：启动器 flag 必须在 app 参数边界之前
-///（`apps/cli/src/args.ts:8-11,137-143`），而 `--patch` 只在安全模式生效时出现
-///（ADR-0025）——这条一旦写错，症状是"安全模式按钮点了没反应"或"dsh 秒退"，
-/// 都不是单测能靠"看起来对"抓住的。
+/// 抽成纯函数是因为**顺序是契约**：启动器 flag 必须在 app 参数边界之前
+///（`apps/cli/src/args.ts:8-11,137-143`）——这条一旦写错，症状是"按钮点了没反应"或
+/// "dsh 秒退"，都不是单测能靠"看起来对"抓住的。
 ///
-/// `--no-open` 的版本适配沿用旧口径（system 档旧版 dsh 收到未知参数会直接秒退）；
-/// `--patch` 同理只在 Engine 档由 `LaunchSpec::patch_overlay` 给出。
+/// **顺序是契约**（2026-09-16 真机 `error: unknown option '--patch'` 的根因）：启动器只认
+/// 自己那几个 flag，遇到 app 的参数（如 `--port`）就会把**其后全部**交给 app。
+/// ADR-0026 起壳**不再传 `--patch`**（安全模式改为写配置文件），故本函数只拼启动器 flag +
+/// app 参数两段；"绝不出现 `--patch`"由 `launcher_args_never_pass_patch_and_keep_the_documented_order` 钉住。
 pub fn dsh_launcher_args(launch: &LaunchSpec) -> Vec<String> {
     let mut args = vec!["--profile".to_string(), launch.profile.clone()];
-    // **顺序是契约**（2026-09-16 真机 `error: unknown option '--patch'` 的根因）：
-    // 启动器只认自己那几个 flag，遇到 app 的参数（如 `--port`）就会把**其后全部**交给
-    // app。故 `--patch` 必须在 app 参数之前——位置写错时 dsh 不会说"顺序错了"，
-    // 而是由 web app 报"未知选项 --patch"，看起来像上游不支持这个 flag。
-    if let Some(overlay) = &launch.patch_overlay {
-        args.push("--patch".to_string());
-        args.push(overlay.display().to_string());
-    }
     args.push("--port".to_string());
     args.push("0".to_string());
     if launch.no_open {
@@ -496,7 +489,7 @@ mod tests {
     /// 启动器参数契约（ADR-0025）：安全模式 overlay 必须出现在 app 参数边界之前，
     /// 且**只在有 overlay 时**出现——写错的症状是"按钮点了没反应"或"dsh 秒退"。
     #[test]
-    fn launcher_args_include_patch_only_in_safe_mode() {
+    fn launcher_args_never_pass_patch_and_keep_the_documented_order() {
         let base = LaunchSpec {
             node_bin: std::path::PathBuf::from("/n"),
             dsh_entry: crate::resolve::DshEntry::Launcher {
@@ -507,30 +500,41 @@ mod tests {
             tier: crate::manifest::TierKind::Engine,
             no_open: true,
             first_bootstrap: false,
-            patch_overlay: None,
         };
         assert_eq!(
             dsh_launcher_args(&base),
             vec!["--profile", "web", "--port", "0", "--no-open"],
-            "无 overlay 时保持原有顺序"
+            "启动器 flag 必须排在 app 参数之前，且顺序固定（--profile → --port → --no-open）"
         );
+        // ADR-0026：安全模式改为**写配置文件**后，壳**不再传 `--patch`**。
+        // 这条同时是 2026-09-16 那次真机缺陷（`error: unknown option '--patch'`）的回归锚：
+        // 只要有人把 --patch 加回来，这里立刻红。
+        assert!(
+            !dsh_launcher_args(&base).iter().any(|a| a == "--patch"),
+            "壳不得再向 dsh 传 --patch（安全模式走配置写入）"
+        );
+    }
 
-        let safe = LaunchSpec {
-            patch_overlay: Some(std::path::PathBuf::from("/data/safe-mode/web.yml")),
-            ..base
+    #[test]
+    fn launcher_args_are_stable_across_specs() {
+        let spec = |profile: &str, no_open: bool| LaunchSpec {
+            node_bin: std::path::PathBuf::from("/n"),
+            dsh_entry: crate::resolve::DshEntry::Launcher {
+                bin: std::path::PathBuf::from("/dsh"),
+            },
+            dsh_home: std::path::PathBuf::from("/home"),
+            profile: profile.to_string(),
+            tier: crate::manifest::TierKind::Engine,
+            no_open,
+            first_bootstrap: false,
         };
         assert_eq!(
-            dsh_launcher_args(&safe),
-            vec![
-                "--profile",
-                "web",
-                "--patch",
-                "/data/safe-mode/web.yml",
-                "--port",
-                "0",
-                "--no-open",
-            ],
-            "`--patch` 必须在 app 参数（--port/--no-open）之前，否则被 app 判成未知选项"
+            dsh_launcher_args(&spec("web", false)),
+            vec!["--profile", "web", "--port", "0"]
+        );
+        assert_eq!(
+            dsh_launcher_args(&spec("ssh-x", true)),
+            vec!["--profile", "ssh-x", "--port", "0", "--no-open"]
         );
     }
 
@@ -820,7 +824,6 @@ mod tests {
             tier: crate::manifest::TierKind::Engine,
             no_open: true,
             first_bootstrap: false,
-            patch_overlay: None,
         };
         let mut proc = spawn_dsh(&launch, &data_dir).expect("spawn_dsh");
         let pid = proc.child.id();

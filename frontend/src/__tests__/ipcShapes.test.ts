@@ -72,6 +72,7 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
     expectShape<SafeModeState>("SafeModeState", {
       active: true,
       disabledRows: true,
+      restorable: true,
     })
   })
 

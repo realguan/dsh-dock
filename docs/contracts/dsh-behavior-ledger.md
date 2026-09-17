@@ -223,3 +223,15 @@
   实测两条：`--dump-config − --dump-default-config` 的 id 差集恰为用户层行；语法坏时
   `--dump-config` exit 1（故需"备份并放空"兜底）。**升级复核触发**：上游提供官方安全模式开关 /
   loader 构建口径变化 / `--dump-*` 输出格式变更。
+
+- 2026-09-16 **复现点 22 的更正**（ADR-0026 §2 实测）：旧结论「三方 **bundle 层**行停不掉、
+  整层摘掉必 `exit 1`」**不成立**。克隆体（`~/.dsh-dock-dev` 副本，未动现场）逐条复测：
+  ① 在 `cordis.patch.yml` 里给**9 条三方行**（5 用户 patch 行 + 4 三方 bundle 行
+  `agent-team`/`tool-agent-team`/`ui-agent-team`/`auto-review`）写 `- id: x` + `disabled: true`
+  → **8.2s 正常就绪**；② 同一 9 行改用 `--patch` overlay → 7.9s 就绪（两种写法等价）；
+  ③ 再多停**一条随包行** `tools` → `exit 1`：`required startup failure: 1 entry did not activate`
+  + `agent-loop (@deepseek-ai/dsh-agent-loop): pending (waiting for service: tools)`
+  ——**这正是当年那次 `exit 1` 的签名**，真因是判据把"被用户 patch 过的随包行"也算成三方行
+  （dump 段落标签形如 `@deepseek-ai/dsh-base, patched by …/cordis.patch.yml`）。
+  ④ 判定随包与否必须取**段落主段**（`, patched by` 之前），见 `safe_mode::primary_section`。
+  **升级复核触发**：`--dump-*` 的段落标签格式变更（判据依赖 `, patched by` 与主段形态）。

@@ -31,7 +31,8 @@ mod mcp_probe;
 mod mgmt;
 mod official_catalog;
 mod plugin_registry;
-/// 启动失败的安全模式（ADR-0025）：临时 `--patch` overlay 停用非随包层行。
+/// 启动失败的安全模式（ADR-0026）：在 profile 配置里把三方插件写成 `disabled: true`
+/// （覆写前备份）＋ 一键用备份覆盖回去。
 mod safe_mode;
 // 「唯一网络面」（AGENTS §7 / ADR-0006）的机器闸门。**只存在于测试构建**：它没有
 // 任何运行时职责，全部内容 = 源码扫描 + 豁免表 + 单测（2026-09-11，A2）。

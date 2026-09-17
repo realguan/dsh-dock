@@ -13,16 +13,12 @@ interface PluginHubProps {
   onNotice?: (text: string, kind?: "ok" | "warn") => void
   /** 重启该 Profile（实验能力的"改动后生效"入口，复用 ProfileManager 的既有确认链）。 */
   onRestart?: (profile: string) => void
-  /// 本轮是否以安全模式启动（ADR-0025）：透传给「实验能力」面板，用于说明
-  /// "配置层已启用 ≠ 本轮已生效"——安全模式只写壳自有 overlay，不改配置。
-  safeModeActive?: boolean
 }
 
 export function PluginHub({
   refreshKey,
   onNotice,
   onRestart,
-  safeModeActive = false,
 }: PluginHubProps) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState<"market" | "installed" | "official">("market")
@@ -92,7 +88,6 @@ export function PluginHub({
           <MarketplaceView onNotice={onNotice} />
         ) : subTab === "official" ? (
           <ExperimentalCapabilities
-            safeModeActive={safeModeActive}
             refreshKey={refreshKey}
             onNotice={onNotice}
             onRestart={onRestart}

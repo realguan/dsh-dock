@@ -1,81 +1,70 @@
-//! safe_mode.rs —— 启动失败的**安全模式**（ADR-0025，2026-09-16 维护者裁定）。
+//! safe_mode.rs —— 启动失败的**安全模式**（ADR-0026，2026-09-16 维护者裁定）。
 //!
-//! ## 解决什么
+//! ## 一句话
 //!
-//! 一条坏的插件行会让**整棵 plugin tree 拒绝加载**：真机两次实测 dsh 在 34s / 44s 后
-//! 退出码 1，用户**进不去应用界面**，只能手工改 `cordis.patch.yml` 才能恢复。
-//! 「点名出错行 + 移除该行并重启」只在报错确实点名了某一行时可用；多点坏行、YAML
-//! 语法坏、或用户只想"先能用起来"时，需要一条**不依赖定位到具体行**的退路。
+//! 安全模式 = **在 profile 的 `cordis.patch.yml` 里，把所有"非随包（三方）挂载行"写成
+//! `disabled: true`**（覆写前备份），然后**正常启动**；「一键恢复」= 用那份备份**原样覆盖
+//! 回去**。用户的插件开关（配置层）从此就是安全模式的真相源，不再有第二套状态。
 //!
-//! ## 机制（上游既有能力，零 dsh 文件改动）
+//! ## 为什么不用临时 overlay（ADR-0025 原方案，机制已退役）
 //!
-//! `dsh --patch <overlay>` 是**最高优先级**的 patch overlay（层栈
-//! `bundle → profile 层 → home 层 → --patch`，各层挂载前拍平成单列表），因此可用
-//! `- id: <行>` + `disabled: true` 停用**任何更早层**的行；overlay 里匹配不到的 id
-//! 上游只 warning 不报错（`vendor/include/src/index.ts:110-112`），故"能禁就禁"是安全的。
+//! `--patch` overlay 落在壳自有目录、不动配置，代价是**两个真相源**：配置说"已启用"、
+//! 运行态说"已停用"——维护者真机看到「开关全开、徽标却是已停用」的自相矛盾界面。
+//! 维护者 2026-09-16 裁定：「安全模式就该是所有三方插件在配置文件里 disable，后面用户
+//! 自己选择启动哪个插件」。改配置之后：开关、徽标、下次启动三者同源。
 //!
-//! overlay 落在**壳自有数据目录**（`<app_data>/safe-mode/<profile>.yml`），**不写进
-//! profile 目录、不改任何 dsh 文件**；「退出安全模式」= 删掉该文件（原子回退）。
+//! ## 停用范围（判据单源；2026-09-16 更正了 ADR-0025 的一条错误结论）
 //!
-//! ## 停用范围（**只停用户层行**——A+ 口径已被实测推翻）
+//! **非随包行** = 段落标签的主段**不是** `dsh-base` / `dsh-web-app` 的行：
+//! 用户 patch 行的主段是**文件路径**，三方 bundle 层行的主段是**包名**——两者都停；
+//! 随包行**一律保留**，即使它被用户 patch 过（标签形如
+//! `@deepseek-ai/dsh-base, patched by …/cordis.patch.yml`）。
 //!
-//! 只停"用户自己加的东西"：profile 层 / home 层 patch 行（`contributed_by` 是文件路径
-//! 或无段落归属）。随包层与**第三方 bundle 层**一律保留，详见 [`should_disable`] 的
-//! 判据说明与 ADR-0025 §4 的实测记录（整层摘掉 ⇒ `exit 1`）。官方桌面 app 的等价按钮
-//! 只重置 `dsh.profile.bundles`（`apps/desktop/src/project-manager.ts:335-344`）——
-//! **治不了 `cordis.patch.yml` 的 insert 行**，即本仓库这次踩的病，故不能照搬。
-//!
-//! ## 分层兜底（方案 B）
-//!
-//! YAML 语法坏时 `--dump-config` 直接 exit 1（实测），**枚举不出行** → 只能把
-//! `cordis.patch.yml` **备份后放空**（[`quarantine_patch`]）。这是本模块唯一会碰用户
-//! 文件的分支，且必须由用户在确认框里显式同意（调用方职责）。
+//! > **更正**：ADR-0025 §4 曾记"三方 bundle 层行停不掉，整层摘掉 ⇒ dsh `exit 1`"。
+//! > 2026-09-16 复测推翻：真因是**判据把"被 patch 过的随包行"也算成了三方行**。只停
+//! > 9 条三方行（5 用户 + 4 bundle）→ **8.2s 就绪**；多停一条随包行 `tools` →
+//! > `required startup failure: 1 entry did not activate … pending (waiting for service: tools)`
+//! > （正是当初那条错误结论的来源）。
 use std::path::{Path, PathBuf};
 
-/// overlay 存放目录（壳自有数据目录下，绝不写进 profile）。
-pub fn overlay_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("safe-mode")
+/// 随包发布的两层：安全模式**永不**停它们（停任一即启动失败，2026-09-16 实测）。
+pub const SHIPPED_BUNDLES: &[&str] = &["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"];
+
+/// 某 profile 的 patch 路径（安全模式唯一会改的 dsh 文件）。
+pub fn profile_patch_path(home: &Path, profile: &str) -> PathBuf {
+    home.join("profiles").join(profile).join("cordis.patch.yml")
 }
 
-/// 某 profile 的 overlay 路径。`profile` 必须已经过调用方校验（本函数只拼路径）。
-pub fn overlay_path(data_dir: &Path, profile: &str) -> PathBuf {
-    overlay_dir(data_dir).join(format!("{profile}.yml"))
+/// 记账文件路径（壳自有数据目录；**不是** dsh 文件）。
+pub fn journal_path(data_dir: &Path, profile: &str) -> PathBuf {
+    data_dir.join("safe-mode").join(format!("{profile}.json"))
+}
+
+/// 段落标签 → **主段**（去掉 upstream 的 `, patched by <标签…>` 尾巴）。
+///
+/// 为什么必须去掉尾巴：随包行被用户 patch 之后标签会变成
+/// `@deepseek-ai/dsh-base, patched by …/cordis.patch.yml`——按整串判"是不是用户行"会把
+/// 随包行误判成用户行（这正是 2026-09-16 那次 `exit 1` 的成因）。
+pub fn primary_section(section: &str) -> &str {
+    section
+        .split(", patched by")
+        .next()
+        .unwrap_or(section)
+        .trim()
 }
 
 /// 该行是否应在安全模式下停用（**纯函数，判据单源**）。
-///
-/// 口径 = **只停用户层行**（profile 层 / home 层）；bundle 层行（随包与第三方）一律保留。
-///
-/// **为什么不是"连第三方 bundle 层行一起停"**（2026-09-16 实测推翻更猛的 A+ 口径）：
-/// 真机 profile 上停 33 行（含第三方层行）→ dsh **exit 1**，stderr 报
-/// `6 entries did not activate` + 若干 `pending (waiting for service: tools)` ——
-/// 第三方层的行并非孤立插件，与被保留层之间存在服务依赖，整层摘掉会让依赖悬空。
-/// 同一 profile 只停用户层 5 行 → **正常就绪**。故安全模式只停"用户自己加的东西"，
-/// 不碰随包与第三方**层**结构；单点坏行仍由「只移除出错的那一行并重启」处理
-/// （2026-09-16 维护者反馈后：首屏一个按钮，这一条在错误卡"展开详情 → 其它出路"里）。
-///
-/// 判据：`contributed_by` 为 `None`（无段落归属）或指向**文件**（用户 patch 行的段落头
-/// 是文件路径，如 `/Users/…/profiles/web/cordis.patch.yml`）。
 pub fn should_disable(contributed_by: Option<&str>) -> bool {
     match contributed_by {
+        // 无归属 = 用户 patch 行（模板外的行）。
         None => true,
-        Some(section) => looks_like_file_section(section),
+        Some(section) => !SHIPPED_BUNDLES.contains(&primary_section(section)),
     }
 }
 
-/// 段落头是不是**文件路径**（用户层的标志），而不是包名。
-fn looks_like_file_section(section: &str) -> bool {
-    section.starts_with('/') || section.contains(".yml") || section.contains('\\')
-}
-
-/// 安全模式的**停放计划**（纯函数，判据单源）：给定全部挂载行的归属，算出要停用的 id 表。
+/// 安全模式的**停放计划**（纯函数，判据单源）：给定全部挂载行归属，算出要停用的 id 表。
 ///
-/// **空表 ≠ "没什么可停"这么简单**：它意味着**本机制管辖不到这次失败**——坏行来自
-/// 随包 / 第三方**插件包**（不在用户 patch 层）。调用方（`commands/boot.rs` 的
-/// `safe_mode` 分支）必须据此**拒绝空转启动**并如实报错（2026-09-16 诚实门）；
-/// 起了也是同一张错误卡，只会把"点过按钮却回到原点"变成新的困惑。
-///
-/// 抽成纯函数是为了能机测这条判据：命令分支本身要 `AppHandle` 且在线程里跑，单测够不着。
+/// **空表 = 这个 profile 没有三方插件行**（全是随包行）：命令层据此如实报错，不空转启动。
 pub fn disable_plan(rows: &[crate::plugins::RowAttribution]) -> Vec<String> {
     rows.iter()
         .filter(|r| should_disable(r.contributed_by.as_deref()))
@@ -83,111 +72,217 @@ pub fn disable_plan(rows: &[crate::plugins::RowAttribution]) -> Vec<String> {
         .collect()
 }
 
-/// 生成 overlay 文本（纯函数；上游要求顶层 YAML 数组，每项是 mapping）。
-pub fn overlay_text(ids: &[String]) -> String {
-    let mut out = String::from(
-        "# dsh-dock 安全模式（ADR-0025，临时文件，删除即退出安全模式）\n\
-         # 由「实验能力」错误卡生成：停用全部非随包层行，只保留 dsh-base / dsh-web-app。\n",
-    );
-    for id in ids {
-        out.push_str(&format!("- id: {id}\n  disabled: true\n"));
-    }
-    out
-}
-
-/// 写入 overlay（原子：同目录 tmp + rename；先建目录）。返回落盘路径。
+/// 记账：进入安全模式时"我们写进去了什么、进入前那份配置在哪"。
 ///
-/// 空 `ids` 也会写（一个只含注释的文件 = 合法 YAML 数组的"空"形态？不是——
-/// 上游要求顶层数组，故空表写成 `[]`，避免"注释文件解析失败"这种自伤）。
-pub fn write_overlay(data_dir: &Path, profile: &str, ids: &[String]) -> Result<PathBuf, String> {
-    let dir = overlay_dir(data_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败：{e}", dir.display()))?;
-    let path = overlay_path(data_dir, profile);
-    let body = if ids.is_empty() {
-        format!(
-            "{}\n[]\n",
-            overlay_text(&[])
-                .lines()
-                .take(2)
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    } else {
-        overlay_text(ids)
-    };
-    let tmp = dir.join(format!("{profile}.yml.tmp"));
-    std::fs::write(&tmp, body).map_err(|e| format!("写 {} 失败：{e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("替换 {} 失败：{e}", path.display()))?;
-    Ok(path)
+/// 这是**一键恢复的唯一依据**：退出时按 `patch_backup` 覆盖回去，绝不按文件名猜最新一份
+/// （用户进入安全模式后又改过插件时，"最新一份"是安全模式之后的状态）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Journal {
+    pub disabled_rows: Vec<String>,
+    pub patch_backup: String,
+    #[serde(default)]
+    pub applied_at: u64,
 }
 
-/// 读回 overlay 里已停用的行 id（无文件 → 空表）。解析失败按空表处理并**不报错**：
-/// 它是壳自己写的文件，损坏时最合理的动作是"当作没开安全模式"。
-pub fn disabled_rows(data_dir: &Path, profile: &str) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(overlay_path(data_dir, profile)) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let line = line.trim_start();
-        if let Some(rest) = line.strip_prefix("- id:") {
-            let id = rest.trim();
-            if !id.is_empty() {
-                out.push(id.to_string());
-            }
-        }
-    }
-    out
+/// 进入安全模式的结果。
+#[derive(Debug, Clone)]
+pub struct EnterOutcome {
+    /// 是否真的改了配置（false = 全部行已是停用态 → 零写入）。
+    pub changed: bool,
+    /// 本次覆写前留下的备份（`changed=false` 时为 `None`：没覆写就没备份）。
+    pub backup: Option<PathBuf>,
+}
+
+/// 退出（一键恢复）的结果。
+#[derive(Debug, Clone)]
+pub struct ExitOutcome {
+    /// 是否真的恢复了（false = 本就不在安全模式）。
+    pub restored: bool,
+    /// 被用来覆盖回去的那份备份（进入安全模式前的那份）。
+    pub backup_used: Option<PathBuf>,
+    /// 恢复前对"当前配置"补做的备份（安全模式期间的改动不会无迹可寻）。
+    pub current_backup: Option<PathBuf>,
 }
 
 /// 安全模式状态（给前端的**只读**快照：横幅/文案用）。
 ///
-/// 边界：只报"壳自己的 overlay 文件在不在、停了哪些行"——**不报运行态**。
-/// 运行态由回环快照（`plugins::fetch_runtime_snapshot`）负责，两者禁止混一条数据。
+/// 边界：只报"壳的记账文件在不在、记了哪些行、那份备份还在不在"——**不报运行态**。
+/// 运行态由回环快照（`plugins::fetch_runtime_snapshot`）负责。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafeModeState {
-    /// 本轮是否以安全模式启动。
     pub active: bool,
-    /// 被临时停用的行 id（空 = 未启用安全模式）。
     pub disabled_rows: Vec<String>,
+    /// 一键恢复当前可用吗（记账里那份备份**还在**）。`false` = 备份被手动删了/挪了，
+    /// 前端据此**不承诺**一键恢复（宁可不给按钮，也不给一个点了会报错的按钮）。
+    pub restorable: bool,
 }
 
-/// 读当前安全模式状态（无文件 = 未启用）。
+/// 读记账（无文件 / 解析失败 → `None`：它是壳自己写的文件，损坏时按"未开安全模式"处理）。
+pub fn read_journal(data_dir: &Path, profile: &str) -> Option<Journal> {
+    let text = std::fs::read_to_string(journal_path(data_dir, profile)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// 读当前安全模式状态（无记账 = 未启用）。
 pub fn state(data_dir: &Path, profile: &str) -> SafeModeState {
-    SafeModeState {
-        active: is_active(data_dir, profile),
-        disabled_rows: disabled_rows(data_dir, profile),
+    match read_journal(data_dir, profile) {
+        Some(journal) => SafeModeState {
+            active: true,
+            restorable: Path::new(&journal.patch_backup).is_file(),
+            disabled_rows: journal.disabled_rows,
+        },
+        None => SafeModeState {
+            active: false,
+            disabled_rows: Vec::new(),
+            restorable: false,
+        },
     }
 }
 
-/// 安全模式当前是否生效。
-pub fn is_active(data_dir: &Path, profile: &str) -> bool {
-    overlay_path(data_dir, profile).is_file()
-}
-
-/// 生效时返回 overlay 路径（供 `resolve_launch` 决定是否给 dsh 传 `--patch`）。
-pub fn active_overlay(data_dir: &Path, profile: &str) -> Option<PathBuf> {
-    is_active(data_dir, profile).then(|| overlay_path(data_dir, profile))
-}
-
-/// 退出安全模式：删除 overlay（幂等；返回是否真的删掉了文件）。
-pub fn clear(data_dir: &Path, profile: &str) -> Result<bool, String> {
-    let path = overlay_path(data_dir, profile);
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(format!("删除 {} 失败：{e}", path.display())),
-    }
-}
-
-/// **方案 B**：把 `cordis.patch.yml` 备份后放空（YAML 语法坏、行枚举不出来时的唯一出路）。
+/// 进入安全模式：把 `ids` 全部写成 `disabled: true`（**一次覆写、一次备份**）并记账。
 ///
-/// 备份走既有的 [`crate::fs_backup::backup_before_overwrite`]（`.bak-<unix秒>`，AGENTS §6
-/// 已登记资产），放空写 `[]`（dsh 模板的"空 patch 层"形态）。**调用方必须先经用户确认**。
+/// 幂等：已经处于停用态的行**不改写**（保住既有条目原文，含行间注释）；
+/// 若全部行都已是停用态（`changed=false`）→ **零写入、不写记账**：没有覆写就没有备份，
+/// 也就没有"一键恢复"可言——此时如实告诉调用方"本就没有需要改的"。
+pub fn enter(
+    home: &Path,
+    data_dir: &Path,
+    profile: &str,
+    ids: &[String],
+) -> Result<EnterOutcome, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    if ids.is_empty() {
+        return Err(
+            "没有可停用的三方挂载行（该 profile 的挂载行全部来自随包插件）——\
+             这类失败不是安全模式能解决的。"
+                .to_string(),
+        );
+    }
+    let patch_path = profile_patch_path(home, profile);
+    let text = std::fs::read_to_string(&patch_path).map_err(|e| {
+        format!(
+            "读取 {} 失败：{e}（profile 尚未初始化？壳不代 dsh 生成三件套）",
+            patch_path.display()
+        )
+    })?;
+    let mut patch = crate::plugins::PatchFile::from_text(&text)?;
+    let mut changed = false;
+    for id in ids {
+        crate::plugins::validate_row_id(id)?;
+        changed |= crate::plugins::apply_disabled_toggle(&mut patch, id, true);
+    }
+    if !changed {
+        return Ok(EnterOutcome {
+            changed: false,
+            backup: None,
+        });
+    }
+    let backup = patch
+        .write_with_backup(&patch_path)?
+        .ok_or_else(|| format!("{} 不存在，无法备份", patch_path.display()))?;
+    let journal = Journal {
+        disabled_rows: ids.to_vec(),
+        patch_backup: backup.display().to_string(),
+        applied_at: now_unix(),
+    };
+    write_journal(data_dir, profile, &journal)?;
+    remove_legacy_overlay(data_dir, profile);
+    Ok(EnterOutcome {
+        changed: true,
+        backup: Some(backup),
+    })
+}
+
+/// **一键恢复**（维护者 2026-09-16 口径："就是把备份好的配置文件覆盖回去"）。
+///
+/// 逐字节覆盖，**不重新解析**：这样即使当前配置已经写坏也能恢复。
+/// 覆盖前把**当前**配置再备份一份——用户在安全模式期间改动过的插件配置不会被无声抹掉。
+pub fn exit(home: &Path, data_dir: &Path, profile: &str) -> Result<ExitOutcome, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let Some(journal) = read_journal(data_dir, profile) else {
+        return Ok(ExitOutcome {
+            restored: false,
+            backup_used: None,
+            current_backup: None,
+        });
+    };
+    let patch_path = profile_patch_path(home, profile);
+    let backup = PathBuf::from(&journal.patch_backup);
+    validate_backup_path(&patch_path, &backup)?;
+    let text = std::fs::read_to_string(&backup).map_err(|e| {
+        format!(
+            "备份已不在或读不出来（{}）：{e}\n\
+             ——安全模式仍生效；请手动把该 profile 的 cordis.patch.yml 改回原样\
+             （这几行是我们加进去的停用桩：{}）。",
+            backup.display(),
+            journal.disabled_rows.join("、")
+        )
+    })?;
+    let current_backup = crate::fs_backup::backup_before_overwrite_path(&patch_path)?;
+    crate::plugins::atomic_replace(&patch_path, &text)?;
+    remove_journal(data_dir, profile);
+    remove_legacy_overlay(data_dir, profile);
+    Ok(ExitOutcome {
+        restored: true,
+        backup_used: Some(backup),
+        current_backup,
+    })
+}
+
+/// 备份路径必须是**同一个 profile 目录下**的 `cordis.patch.yml.bak-*`。
+///
+/// 记账文件理论上可能被改坏；恢复是破坏性动作，故**先验证再覆盖**——宁可报错，
+/// 也不拿一个指向别处的路径去覆盖配置。
+fn validate_backup_path(patch_path: &Path, backup: &Path) -> Result<(), String> {
+    let same_dir = patch_path.parent() == backup.parent();
+    let name = backup
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if !same_dir || !name.starts_with("cordis.patch.yml.bak-") {
+        return Err(format!(
+            "记账里的备份路径不可信（{}）：只接受同目录的 cordis.patch.yml.bak-*，\
+             拒绝用它覆盖配置。",
+            backup.display()
+        ));
+    }
+    Ok(())
+}
+
+fn write_journal(data_dir: &Path, profile: &str, journal: &Journal) -> Result<(), String> {
+    let path = journal_path(data_dir, profile);
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建 {} 失败：{e}", dir.display()))?;
+    let text = serde_json::to_string_pretty(journal)
+        .map_err(|e| format!("序列化安全模式记账失败：{e}"))?;
+    crate::plugins::atomic_replace(&path, &format!("{text}\n"))
+}
+
+fn remove_journal(data_dir: &Path, profile: &str) {
+    let _ = std::fs::remove_file(journal_path(data_dir, profile));
+}
+
+/// 清掉 ADR-0025 时代的临时 overlay（机制已退役）：留着只会误导排障。
+fn remove_legacy_overlay(data_dir: &Path, profile: &str) {
+    let _ = std::fs::remove_file(data_dir.join("safe-mode").join(format!("{profile}.yml")));
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// **兜底（配置已写坏）**：把 `cordis.patch.yml` 备份后放空。
+///
+/// YAML 语法坏时行枚举不出来（`--dump-config` exit 1），连停用桩都写不进去；此时唯一的
+/// 出路是"备份 + 放空"。**调用方必须先经用户确认**（前端 ConfirmDialog）。
 pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    let path = profile_patch_path(home, profile);
     if !path.is_file() {
         return Err(format!(
             "{} 不存在（该 profile 尚未初始化？）",
@@ -195,7 +290,7 @@ pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
         ));
     }
     crate::fs_backup::backup_before_overwrite(&path)?;
-    std::fs::write(&path, "[]\n").map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
+    crate::plugins::atomic_replace(&path, "[]\n")?;
     Ok(path)
 }
 
@@ -203,159 +298,299 @@ pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    fn tmp() -> PathBuf {
+    fn tmp(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "dsh-safe-mode-{}-{:?}",
+            "dsh-safe-mode-{tag}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    /// 停用判据（**只停用户层行**）：任何 bundle 层行（含第三方层）都保留。
+    /// 造一个最小 profile 目录（含 patch 文件原文：注释与既有条目都要能保真）。
+    fn profile_with_patch(home: &Path, body: &str) -> PathBuf {
+        let dir = home.join("profiles").join("web");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cordis.patch.yml");
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    const PATCH: &str = "# 用户注释（必须保真）\n- insert:\n  - id: dsh-dock--a\n    name: '@deepseek-ai/dsh-browser-use'\n";
+
+    /// 停用判据：**非随包行一律停**（用户 patch 行 + 三方 bundle 层行），随包行永不停——
+    /// 哪怕它被用户 patch 过（标签带 `, patched by <文件>`）也不能停。
     #[test]
-    fn only_user_layer_rows_are_disabled() {
+    fn disables_non_shipped_rows_and_keeps_shipped_ones() {
+        // 随包两层：保留（这是 2026-09-16 exit 1 的教训：随包行停一条都起不来）
         assert!(!should_disable(Some("@deepseek-ai/dsh-base")));
         assert!(!should_disable(Some("@deepseek-ai/dsh-web-app")));
         assert!(
-            !should_disable(Some("@deepseek-ai/dsh-experimental-agent-team-profile")),
-            "第三方 bundle 层行不得停：整层摘掉会让服务依赖悬空（2026-09-16 实测 exit 1）"
+            !should_disable(Some(
+                "@deepseek-ai/dsh-base, patched by /Users/x/.dsh-dock-dev/profiles/web/cordis.patch.yml"
+            )),
+            "被用户 patch 过的随包行**不得**停：停掉 tools 这类行会让 agent-loop 悬空（实测 exit 1）"
         );
+        // 三方 bundle 层：停（2026-09-16 复测：9 行全停 → 8.2s 正常就绪）
+        assert!(should_disable(Some(
+            "@deepseek-ai/dsh-experimental-agent-team-profile"
+        )));
+        assert!(should_disable(Some(
+            "@deepseek-ai/dsh-experimental-auto-review"
+        )));
+        // 用户 patch 行（段落头是文件路径）与无归属行：停
         assert!(should_disable(Some(
             "/Users/x/.dsh-dock-dev/profiles/web/cordis.patch.yml"
         )));
-        assert!(should_disable(Some("/Users/x/.dsh/cordis.patch.yml")));
-        assert!(should_disable(None), "无归属 = 用户 patch 行，必须停");
+        assert!(should_disable(None));
     }
 
-    /// **停放计划 + 诚实门**（2026-09-16）：只停用户层行；**全是 bundle 层行时计划为空**
-    /// ——命令层据此拒绝空转启动（否则用户点完按钮会回到同一张错误卡）。
+    /// 主段解析：`patched by` 尾巴必须去掉（否则随包行会被误判成用户行）。
     #[test]
-    fn disable_plan_covers_user_rows_and_flags_bundle_only_profiles() {
+    fn primary_section_drops_patched_by_tail() {
+        assert_eq!(
+            primary_section("@deepseek-ai/dsh-base, patched by /x/cordis.patch.yml"),
+            "@deepseek-ai/dsh-base"
+        );
+        assert_eq!(
+            primary_section("@deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app"),
+            "@deepseek-ai/dsh-base"
+        );
+        assert_eq!(
+            primary_section("@deepseek-ai/dsh-web-app"),
+            "@deepseek-ai/dsh-web-app"
+        );
+    }
+
+    /// 停放计划（纯函数）：真机形态 9 行（5 用户 + 4 三方 bundle）；随包行一条都不进。
+    #[test]
+    fn disable_plan_covers_user_and_third_party_bundle_rows() {
         let row = |id: &str, by: Option<&str>| crate::plugins::RowAttribution {
             id: id.to_string(),
             contributed_by: by.map(str::to_string),
         };
-        // 混合（真机形态）：只挑用户层两行，bundle 层一行保留。
-        let mixed = vec![
+        let rows = vec![
+            row("timer", Some("@deepseek-ai/dsh-base")),
             row(
-                "dsh-dock--a",
-                Some("/Users/x/.dsh-dock-dev/profiles/web/cordis.patch.yml"),
+                "tools",
+                Some("@deepseek-ai/dsh-base, patched by /x/profiles/web/cordis.patch.yml"),
             ),
-            row("dsh-dock--b", None),
             row(
-                "agent-team-profile",
-                Some("@deepseek-ai/dsh-experimental-agent-team-profile"),
-            ),
-        ];
-        assert_eq!(disable_plan(&mixed), vec!["dsh-dock--a", "dsh-dock--b"]);
-
-        // 全 bundle 层（坏行来自第三方插件包）→ **空计划 = 本机制管辖不到**。
-        let bundle_only = vec![
-            row(
-                "agent-team-profile",
+                "agent-team",
                 Some("@deepseek-ai/dsh-experimental-agent-team-profile"),
             ),
             row(
                 "auto-review",
                 Some("@deepseek-ai/dsh-experimental-auto-review"),
             ),
+            row("dsh-dock--a", Some("/x/profiles/web/cordis.patch.yml")),
+            row("dsh-dock--b", None),
         ];
+        assert_eq!(
+            disable_plan(&rows),
+            vec!["agent-team", "auto-review", "dsh-dock--a", "dsh-dock--b"]
+        );
+        // 只有随包行 → 空计划（命令层据此如实报错，不空转）
+        let shipped_only = vec![row("timer", Some("@deepseek-ai/dsh-base"))];
+        assert!(disable_plan(&shipped_only).is_empty());
+    }
+
+    /// 进入 → 记账 → 一键恢复 的完整往返：配置回到进入前**逐字节**相同，注释保真。
+    #[test]
+    fn enter_then_exit_restores_the_exact_previous_config() {
+        let home = tmp("rt-home");
+        let data = tmp("rt-data");
+        let patch = profile_with_patch(&home, PATCH);
+
+        let outcome = enter(
+            &home,
+            &data,
+            "web",
+            &["dsh-dock--a".to_string(), "agent-team".to_string()],
+        )
+        .unwrap();
+        assert!(outcome.changed);
+        let backup = outcome.backup.clone().expect("覆写必须留下备份");
+        assert!(backup.is_file());
+
+        let after = std::fs::read_to_string(&patch).unwrap();
+        assert!(after.contains("dsh-dock--a"), "原有条目必须保留：{after}");
+        assert!(after.contains("disabled: true"), "应写入停用桩：{after}");
         assert!(
-            disable_plan(&bundle_only).is_empty(),
-            "全 bundle 层时必须给空计划，好让命令层拒绝空转启动"
+            after.contains("# 用户注释（必须保真）"),
+            "注释必须保真：{after}"
         );
-        // 反向：一条用户行就足以让计划非空（别把可用场景误判成"管辖不到"）。
-        let one_user = vec![row("dsh-dock--x", None)];
-        assert_eq!(disable_plan(&one_user), vec!["dsh-dock--x"]);
-    }
+        // 两条都停了：insert 行就地置 disabled；未出现的 id 追加双键条目
+        assert_eq!(after.matches("disabled: true").count(), 2, "{after}");
 
-    /// overlay 文本形态：顶层数组 + 每行 `- id:` / `disabled: true`（上游要求）。
-    #[test]
-    fn overlay_text_is_a_top_level_patch_array() {
-        let text = overlay_text(&["a".to_string(), "b".to_string()]);
-        assert!(text.starts_with('#'), "带注释头：{text}");
-        assert!(text.contains("- id: a\n  disabled: true\n"), "{text}");
-        assert!(text.contains("- id: b\n  disabled: true\n"), "{text}");
-        assert!(!text.contains("insert"), "安全模式不插行：{text}");
-    }
+        let snapshot = state(&data, "web");
+        assert!(snapshot.active && snapshot.restorable);
+        assert_eq!(snapshot.disabled_rows.len(), 2);
 
-    /// 写 → 读 → 生效 → 退出 的往返；空表写成合法 YAML 数组而不是纯注释。
-    #[test]
-    fn write_read_clear_round_trip() {
-        let dir = tmp();
-        assert!(!is_active(&dir, "web"));
-        assert!(disabled_rows(&dir, "web").is_empty());
-
-        let ids = vec!["dsh-dock-a".to_string(), "tool-agent-team".to_string()];
-        let path = write_overlay(&dir, "web", &ids).unwrap();
-        assert!(path.is_file());
-        assert!(is_active(&dir, "web"));
-        assert_eq!(disabled_rows(&dir, "web"), ids);
+        // 一键恢复 = 用备份覆盖回去
+        let exit = exit(&home, &data, "web").unwrap();
+        assert!(exit.restored);
+        assert_eq!(exit.backup_used.as_deref(), Some(backup.as_path()));
         assert_eq!(
-            active_overlay(&dir, "web").as_deref(),
-            Some(path.as_path()),
-            "生效时要把路径交给 spawn 侧"
+            std::fs::read_to_string(&patch).unwrap(),
+            PATCH,
+            "恢复后必须与进入前逐字节一致"
         );
-
-        assert!(clear(&dir, "web").unwrap());
-        assert!(!is_active(&dir, "web"));
-        assert!(!clear(&dir, "web").unwrap(), "退出是幂等的");
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(!state(&data, "web").active, "恢复后记账必须清掉");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
     }
 
-    /// 空 id 表：必须写成 `[]`（顶层数组），否则上游解析报错、安全模式反而起不来。
+    /// 幂等：第二次进入**零写入**（不动 mtime、不留多余备份），也不覆盖已有记账——
+    /// 否则"一键恢复"会指向"安全模式之后"的状态。
     #[test]
-    fn empty_overlay_is_still_a_valid_array() {
-        let dir = tmp();
-        let path = write_overlay(&dir, "web", &[]).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.trim_end().ends_with("[]"), "{text}");
-        assert!(disabled_rows(&dir, "web").is_empty());
-        std::fs::remove_dir_all(&dir).ok();
-    }
+    fn second_enter_is_a_no_op_and_keeps_the_original_backup() {
+        let home = tmp("idem-home");
+        let data = tmp("idem-data");
+        profile_with_patch(&home, PATCH);
+        let ids = vec!["dsh-dock--a".to_string()];
 
-    /// 状态快照：未启用 = `active:false` + 空表；启用后行数与停用集合一致。
-    #[test]
-    fn state_reports_active_and_rows() {
-        let dir = tmp();
+        let first = enter(&home, &data, "web", &ids).unwrap();
+        let first_backup = first.backup.clone().unwrap();
+        let journal_first = read_journal(&data, "web").unwrap();
+
+        let second = enter(&home, &data, "web", &ids).unwrap();
+        assert!(!second.changed, "已是停用态 → 零写入");
+        assert!(second.backup.is_none());
         assert_eq!(
-            state(&dir, "web"),
-            SafeModeState {
-                active: false,
-                disabled_rows: Vec::new()
-            }
+            read_journal(&data, "web").unwrap(),
+            journal_first,
+            "记账必须仍指向第一份备份（进入安全模式前的状态）"
         );
-        let ids = vec!["dsh-dock-a".to_string()];
-        write_overlay(&dir, "web", &ids).unwrap();
-        let s = state(&dir, "web");
-        assert!(s.active);
-        assert_eq!(s.disabled_rows, ids);
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(first_backup.is_file());
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
     }
 
-    /// 方案 B：备份 + 放空；备份文件必须存在（用户可随时还原）。
+    /// 幂等反向断言：进入前若**没有**覆写（changed=false）就不该写记账——
+    /// 没有备份就没有"一键恢复"，不能凭空承诺。
+    #[test]
+    fn no_write_means_no_journal() {
+        let home = tmp("noop-home");
+        let data = tmp("noop-data");
+        profile_with_patch(
+            &home,
+            &format!("{PATCH}- id: dsh-dock--a\n  disabled: true\n"),
+        );
+        let outcome = enter(&home, &data, "web", &["dsh-dock--a".to_string()]).unwrap();
+        assert!(!outcome.changed);
+        assert!(read_journal(&data, "web").is_none());
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 未进入安全模式时点恢复：幂等，报"本就不在安全模式"，不动文件。
+    #[test]
+    fn exit_without_journal_is_a_no_op() {
+        let home = tmp("noop2-home");
+        let data = tmp("noop2-data");
+        let patch = profile_with_patch(&home, PATCH);
+        let outcome = exit(&home, &data, "web").unwrap();
+        assert!(!outcome.restored);
+        assert_eq!(std::fs::read_to_string(&patch).unwrap(), PATCH);
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 备份被用户删掉：状态里 `restorable=false`（前端不承诺一键恢复），
+    /// 点恢复时明确报错并给出"我们加过哪几行"，不静默瞎恢复。
+    #[test]
+    fn missing_backup_is_reported_not_guessed() {
+        let home = tmp("miss-home");
+        let data = tmp("miss-data");
+        profile_with_patch(&home, PATCH);
+        enter(&home, &data, "web", &["dsh-dock--a".to_string()]).unwrap();
+        let backup = PathBuf::from(&read_journal(&data, "web").unwrap().patch_backup);
+        std::fs::remove_file(&backup).unwrap();
+
+        let snapshot = state(&data, "web");
+        assert!(snapshot.active);
+        assert!(!snapshot.restorable, "备份没了就不能承诺一键恢复");
+
+        let err = exit(&home, &data, "web").unwrap_err();
+        assert!(err.contains("备份已不在"), "{err}");
+        assert!(
+            err.contains("dsh-dock--a"),
+            "要告诉用户我们加过哪几行：{err}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 记账里的备份路径不可信（指向别处 / 不是 .bak-*）→ 拒绝覆盖（破坏性动作先验证）。
+    #[test]
+    fn untrusted_backup_path_is_refused() {
+        let home = tmp("evil-home");
+        let data = tmp("evil-data");
+        let patch = profile_with_patch(&home, PATCH);
+        let outside = home.join("elsewhere.yml");
+        std::fs::write(&outside, "[]\n").unwrap();
+        let journal = Journal {
+            disabled_rows: vec!["dsh-dock--a".to_string()],
+            patch_backup: outside.display().to_string(),
+            applied_at: 1,
+        };
+        write_journal(&data, "web", &journal).unwrap();
+        let err = exit(&home, &data, "web").unwrap_err();
+        assert!(err.contains("不可信"), "{err}");
+        assert_eq!(std::fs::read_to_string(&patch).unwrap(), PATCH, "拒绝覆盖");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 无三方行 → 明确报错（命令层不空转启动）。
+    #[test]
+    fn enter_without_rows_reports_instead_of_pretending() {
+        let home = tmp("empty-home");
+        let data = tmp("empty-data");
+        profile_with_patch(&home, PATCH);
+        let err = enter(&home, &data, "web", &[]).unwrap_err();
+        assert!(err.contains("没有可停用"), "{err}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 兜底：备份 + 放空（配置已写坏时用；调用方必须先经用户确认）。
     #[test]
     fn quarantine_backs_up_then_empties() {
-        let home = tmp();
-        let profile = "web";
-        let dir = home.join("profiles").join(profile);
-        std::fs::create_dir_all(&dir).unwrap();
-        let patch = dir.join("cordis.patch.yml");
-        std::fs::write(&patch, "- insert:\n    - id: bad\n      name: 'x'\n").unwrap();
-
-        quarantine_patch(&home, profile).unwrap();
+        let home = tmp("quar-home");
+        let patch = profile_with_patch(&home, "- insert:\n  - id: bad\n");
+        quarantine_patch(&home, "web").unwrap();
         assert_eq!(std::fs::read_to_string(&patch).unwrap(), "[]\n");
-        let backups: Vec<_> = std::fs::read_dir(&dir)
+        let backups: Vec<_> = std::fs::read_dir(patch.parent().unwrap())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains(".bak-"))
             .collect();
         assert_eq!(backups.len(), 1, "必须留下恰好一份备份");
-
-        // 不存在的 profile 目录：明确报错，不静默建目录。
         assert!(quarantine_patch(&home, "nope").is_err());
-        std::fs::remove_dir_all(&home).ok();
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 退役的临时 overlay 文件：进入/退出都顺手清掉（留着只会误导排障）。
+    #[test]
+    fn legacy_overlay_is_cleaned_up() {
+        let home = tmp("legacy-home");
+        let data = tmp("legacy-data");
+        profile_with_patch(&home, PATCH);
+        let legacy = data.join("safe-mode").join("web.yml");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "- id: whatever\n  disabled: true\n").unwrap();
+
+        enter(&home, &data, "web", &["dsh-dock--a".to_string()]).unwrap();
+        assert!(!legacy.exists(), "进入安全模式时应清掉旧 overlay");
+
+        std::fs::write(&legacy, "- id: whatever\n  disabled: true\n").unwrap();
+        exit(&home, &data, "web").unwrap();
+        assert!(!legacy.exists(), "退出时同样清掉");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
     }
 }

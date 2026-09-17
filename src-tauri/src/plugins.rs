@@ -15,7 +15,7 @@
 //!   禁用写入的 id 以 `--dump-config` 行 id 为准，本模块不提供写入。
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 清单条目：官方内置 bundle 或第三方依赖插件。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1877,9 +1877,18 @@ impl PatchFile {
 
     /// 写回：渲染 → 覆写前**备份**（fail-closed）→ **原子替换**。
     pub(crate) fn write(&self, path: &Path) -> Result<(), String> {
+        self.write_with_backup(path).map(|_| ())
+    }
+
+    /// 同 [`Self::write`]，但**返回刚创建的备份路径**（供"一键恢复"记账）。
+    ///
+    /// 安全模式（ADR-0026）要记住"进入前那份配置"，退出时按记录**原样覆盖回去**——
+    /// 因此备份路径必须由写入方回传，不能事后按文件名猜最新一份。
+    pub(crate) fn write_with_backup(&self, path: &Path) -> Result<Option<PathBuf>, String> {
         let out = self.render()?;
-        crate::fs_backup::backup_before_overwrite(path)?;
-        atomic_replace(path, &out)
+        let backup = crate::fs_backup::backup_before_overwrite_path(path)?;
+        atomic_replace(path, &out)?;
+        Ok(backup)
     }
 }
 
@@ -1923,7 +1932,11 @@ fn serialize_patch_item(v: &serde_yaml::Value) -> Result<String, String> {
 }
 
 /// 原子替换：同目录临时文件 + rename（与 settings / credentials 同口径）。
-fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
+/// 原子替换：同目录临时文件 + rename（跨平台；`rename` 覆盖语义在目标已存在时成立）。
+///
+/// `pub(crate)` 是给安全模式（ADR-0026）用的：一键恢复要**逐字节**把备份覆盖回去，
+/// 走这里而不是重新解析-渲染（配置已坏时也能恢复，且不引入任何改写）。
+pub(crate) fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
@@ -2235,7 +2248,7 @@ pub fn verify_catalog_row(
     }
 }
 
-fn validate_row_id(row_id: &str) -> Result<(), String> {
+pub(crate) fn validate_row_id(row_id: &str) -> Result<(), String> {
     if row_id.is_empty() || row_id.contains(['/', '\n']) {
         return Err("行 id 非法".to_string());
     }
@@ -2404,10 +2417,14 @@ fn remove_disabled_stub(patch: &mut PatchFile, row_id: &str) -> bool {
 
 /// 纯变换（宿主 / 客体共用）：禁用 → id 条目仅置 `disabled` 键（不存在则追加
 /// `{id, disabled}` 双键条目）；启用 → 移除 `disabled` 键，条目只剩 id 则整条移除。
-fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) {
+///
+/// 返回**是否真的改动了内容**（幂等判据）：安全模式（ADR-0026）据此决定"要不要覆写、
+/// 要不要留备份"——已是目标态时零写入，不产生多余备份与 mtime 抖动。
+pub(crate) fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) -> bool {
     let id_key = serde_yaml::Value::String("id".into());
     let disabled_key = serde_yaml::Value::String("disabled".into());
     let mut found = false;
+    let mut modified = false;
     // 走 `for_each_entry_mut`：**只有真正被改写的条目**才失去原文保真，其余条目
     // 连同其行间注释逐字节回填（旧内核整数组重序列化 ⇒ 全文件注释丢失）。
     patch.for_each_entry_mut(|_, entry| {
@@ -2423,9 +2440,12 @@ fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) {
                 return false; // 已是目标态：不改写，保住本条目原文
             }
             m.insert(disabled_key.clone(), serde_yaml::Value::Bool(true));
+            modified = true;
             true
         } else {
-            m.remove(&disabled_key).is_some()
+            let removed = m.remove(&disabled_key).is_some();
+            modified |= removed;
+            removed
         }
     });
     if !found && disabled {
@@ -2436,18 +2456,22 @@ fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) {
         );
         m.insert(disabled_key, serde_yaml::Value::Bool(true));
         patch.push(serde_yaml::Value::Mapping(m));
+        modified = true;
     }
     // 启用后只剩 `id` 键的条目整条移除（恢复原状）——**分支既有语义，必须保留**：
     // 本函数曾因只在 `for_each_entry_mut` 里 remove 键而丢掉这一步，
     // 被 `patch_toggle_kernel_is_shared_by_host_and_guest` 与基线
     // `disable_appends_entry_enabling_removes_it` 双双抓住。
     if !disabled {
+        let before = patch.entries.len();
         patch.retain(|e| {
             e.as_mapping()
                 .map(|m| m.len() > 1 || !m.contains_key(&id_key))
                 .unwrap_or(true)
         });
+        modified |= patch.entries.len() != before;
     }
+    modified
 }
 
 #[cfg(test)]

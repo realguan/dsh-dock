@@ -255,6 +255,8 @@ describe("首屏只留一个按钮，其它出路收进详情（2026-09-16）", 
     }
     // 首屏按钮的文案必须说清"会发生什么"（不许用"安全模式"这种要用户先懂的名词当唯一线索）
     expect(zhCN.error.actions["safe_mode"]).toContain("插件")
-    expect(zhCN.error.impacts["safe_mode"]).toMatch(/不改任何文件|可一键恢复/)
+    // ADR-0026：影响必须说清"改的是配置 + 先备份 + 可一键恢复"（用户据此判断要不要点）
+    expect(zhCN.error.impacts["safe_mode"]).toMatch(/配置/)
+    expect(zhCN.error.impacts["safe_mode"]).toMatch(/备份|恢复/)
   })
 })

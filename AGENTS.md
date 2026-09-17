@@ -128,9 +128,10 @@
   抢同一 profile；可丢失可重建）。
 - 已登记落盘资产（2026-09-11 补登记，判据 `docs/team/文档一致性巡检-2026-09-11.md`）：
   `node-map.json` / `.sig`（`updates.rs:339`，签名校验过的 node 版本映射缓存，
-  1 MiB 上限、校验失败回退内置基线）· `<app_data>/safe-mode/<profile>.yml` 安全模式 overlay
-  （ADR-0025，2026-09-16：临时 `--patch` 覆盖层，退出安全模式即删；可丢失可重建，
-  壳自有目录，**不写进 profile**）· `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
+  1 MiB 上限、校验失败回退内置基线）· `<app_data>/safe-mode/<profile>.json` 安全模式记账
+  （ADR-0026，2026-09-16：记"写进配置的停用行 id + 进入前那份配置备份的路径"，供一键恢复；
+  可丢失：丢了就只是少个恢复入口，配置与备份仍在；旧的 `.yml` overlay 已退役并在进入/恢复时清理）
+  · `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
   PID 锁登记表）· `<文件名>.bak-<unix秒>` 覆写前备份族（`fs_backup.rs`，2026-09-08 U9）·
   MCP / 插件配置对 profile `cordis.patch.yml` 的写入：**统一走 `plugins.rs::PatchFile`**
   （宿主/客体同一内核：未改条目原文保真含行间注释 + 覆写前备份 + 原子替换；2026-09-11 统一）。

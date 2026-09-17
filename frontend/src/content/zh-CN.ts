@@ -86,15 +86,15 @@ export const t = {
       // 契约：`boot_failure.rs::with_quarantine`（下发到 `advancedActions`，**首屏不展示**）；
       // 无此键会兜底成英文 id。
       quarantine_plugin_row: "只移除出错的那一行并重启",
-      // ADR-0025 安全模式（2026-09-16 维护者反馈后：首屏**只剩这一个**动作）：
-      // 前者零文件改动、点一次就能回到应用；后者会备份并放空 patch，收进「其它出路」。
-      safe_mode: "停用全部插件并启动",
+      // ADR-0026 安全模式（2026-09-16 第二版裁定）：首屏**只剩这一个**动作，
+      // 语义 = 在 profile 配置里把所有三方插件写成 disabled（覆写前备份），随后正常启动。
+      safe_mode: "停用全部三方插件并启动",
       safe_mode_reset: "备份并放空插件配置后启动",
     } as Record<string, string>,
     // 动作 → **它会造成什么**（首屏与按钮并排显示；2026-09-16 维护者裁定）。
     // 与 `ErrorCard.tsx` 的 ACTION_IPC 集合一一对应：新增动作必须同时补两侧文案。
     impacts: {
-      safe_mode: "临时关掉全部插件开关再启动；不改任何文件，进应用后可一键恢复",
+      safe_mode: "在配置里停用全部三方插件（先备份），进应用后可一键用备份恢复",
       safe_mode_reset: "插件配置已写坏（连行都读不出来）时用：先备份为 .bak-<时间戳>，再放空该文件",
       quarantine_plugin_row: "从 cordis.patch.yml 删掉出错的那一行（覆写前自动备份）",
       retry: "重新走一遍同样的启动流程",
@@ -400,13 +400,16 @@ export const t = {
     pluginDisable: "禁用（重启后生效）",
     pluginEnable: "启用（重启后生效）",
     pluginDisabled: "已禁用",
-    // 安全模式横幅（ADR-0025，2026-09-16）：必须解释"配置说启用、列表说停用"为何并存——
-    // 安全模式只写壳自有 overlay、不碰配置，两个真相源必然不同。
+    // 安全模式横幅（ADR-0026，2026-09-16 第二版）：配置层就是唯一真相源——
+    // 三方插件已在配置里 disable，故下面的开关状态本来就是"关"，不再需要解释两个真相源。
     safeModeTitle: "安全模式",
     safeModeBody: (n: number) =>
-      `本轮已临时停用 ${n} 个插件的挂载行——配置文件未改动（所以列表里的开关仍是开）。退出安全模式并重启即恢复。`,
-    safeModeExit: "退出安全模式并重启",
-    safeModeExitFailed: (msg: string) => `退出安全模式失败：${msg}`,
+      `已在配置文件里停用 ${n} 个三方插件（进入前已备份）。想用哪个就打开哪个开关；` +
+      `一键恢复 = 用备份覆盖回配置。`,
+    safeModeExit: "一键恢复插件配置并重启",
+    safeModeRestoreHint: "恢复会覆盖进入安全模式之后对该配置的改动（那份改动也会先被备份）",
+    safeModeNotRestorable: "进入安全模式前的那份备份不在了，无法一键恢复——可手动改配置。",
+    safeModeExitFailed: (msg: string) => `恢复失败：${msg}`,
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
     // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择
@@ -872,8 +875,6 @@ export const t = {
     // 文案纪律：第一阅读层只出现**用户视角**的东西（价值 / 前置 / 状态 / 后果）；
     // 包名、钉版本、激活方式、行 id 一律进「详情」折叠区。
     capTab: "实验能力",
-    capSafeModeNote:
-      "本轮处于安全模式：下表的「已启用」指**配置文件**状态；这些能力的挂载行本轮被临时停用，重启退出安全模式后才会真正生效。",
 
     capTitle: "实验能力",
     capDesc: "上游标记为实验的 dsh 能力：开启即安装并挂载，随时可以关掉。",

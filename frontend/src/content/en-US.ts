@@ -84,13 +84,13 @@ export const enUS: AppCopy = {
       // ADR-0025 safe mode. 2026-09-16 (maintainer feedback): the first screen keeps
       // exactly one action -- the one that gets you back into the app; the reset
       // variant moved into "Other ways out".
-      safe_mode: "Turn off all plugins & start",
+      safe_mode: "Turn off all third-party plugins & start",
       safe_mode_reset: "Back up & empty the plugin config, then start",
     } as Record<string, string>,
     // Action -> **what it does** (shown next to each button on the first screen).
     // Mirrors `ErrorCard.tsx`'s ACTION_IPC set: a new action must add copy on both sides.
     impacts: {
-      safe_mode: "Temporarily turns every plugin switch off and restarts; no file is touched, one click to undo",
+      safe_mode: "Disables every third-party plugin in the profile config (backed up first); one-click restore afterwards",
       safe_mode_reset: "For an unparsable plugin config: backs it up as .bak-<timestamp>, then empties the file",
       quarantine_plugin_row: "Deletes that row from cordis.patch.yml (auto-backed up first)",
       retry: "Runs the exact same startup flow again",
@@ -393,12 +393,18 @@ export const enUS: AppCopy = {
     pluginDisable: "Disable (Requires Restart)",
     pluginEnable: "Enable (Requires Restart)",
     pluginDisabled: "Disabled",
-    // Safe-mode banner (ADR-0025, 2026-09-16): explains why the config layer still says enabled.
+    // Safe-mode banner (ADR-0026): the profile config is now the single source of truth —
+    // third-party plugins are disabled there, so the toggles below read as off.
     safeModeTitle: "Safe mode",
     safeModeBody: (n: number) =>
-      `${n} plugin mount rows are temporarily off this run — your configuration file is untouched (so the toggles below stay on). Quit safe mode and restart to restore them.`,
-    safeModeExit: "Quit safe mode & restart",
-    safeModeExitFailed: (msg: string) => `Could not quit safe mode: ${msg}`,
+      `${n} third-party plugins are disabled in your profile config (backed up before the change). ` +
+      `Turn on whichever ones you want; one-click restore overwrites the config with that backup.`,
+    safeModeExit: "Restore plugin config & restart",
+    safeModeRestoreHint:
+      "Restoring overwrites any plugin changes made while in safe mode (those are backed up first)",
+    safeModeNotRestorable:
+      "The pre-safe-mode backup is gone, so one-click restore is unavailable — edit the config manually.",
+    safeModeExitFailed: (msg: string) => `Restore failed: ${msg}`,
     pluginOpBusyRemove: "Uninstalling…",
     pluginOpBusyUpdate: "Updating…",
     checkUpdatesBtn: "Check Updates",
@@ -853,8 +859,6 @@ export const enUS: AppCopy = {
     // state / consequences); package names, pinned versions, activation mode and row ids
     // all live under Details.
     capTab: "Experimental",
-    capSafeModeNote:
-      "Safe mode is on: “Enabled” below describes the configuration file. These capabilities’ mount rows are disabled for this run and take effect only after quitting safe mode.",
 
     capTitle: "Experimental Capabilities",
     capDesc: "dsh capabilities that upstream marks as experimental. Turn one on to install and mount it; you can turn it off at any time.",

@@ -329,6 +329,35 @@
     （153 文件）· `vitest` **453 passed / 52 文件** · `pnpm run build` 通过；
     契约面新增 `advancedActions`（Rust struct ↔ `ipc-shapes.json` ↔ TS 两侧接口，四处同步）
     与 `QuarantineRow` 形状条目。
+- **真机第 5 轮反馈（2026-09-16）：安全模式机制换代 —— `--patch` overlay → 写配置（ADR-0026）**。
+  维护者原话：「所谓安全模式应该是在配置文件里面把所有三方插件都设置为 disable 就行了，这样就能
+  正常启动，后面可以有用户自己选择启动哪个插件，我们做好用户提醒这些用户体验就好了」；
+  「可以一键恢复，就是把备份好的配置文件覆盖回去」。
+  - **推翻了 ADR-0025 §4 的一条错误结论**：旧记「三方 bundle 层行停不掉，整层摘掉必 `exit 1`」——
+    **不成立**。克隆体（`~/.dsh-dock-dev` 副本，未动现场）复测：9 条三方行（5 用户行 + 4 三方
+    bundle 行）写 `disabled: true` → **8.2s 正常就绪**；同一组走 `--patch` → 7.9s 就绪（等价）；
+    再多停一条**随包行** `tools` → `exit 1`（`1 entry did not activate` +
+    `agent-loop: pending (waiting for service: tools)`）——**这就是当年那次失败的签名**，真因是
+    判据过宽：dump 段落标签形如 `@deepseek-ai/dsh-base, patched by …/cordis.patch.yml`，按"含 `.yml`
+    即用户行"会把**被用户 patch 过的随包行**也算进停用集合。现在判据取**段落主段**（`, patched by`
+    之前），随包行永不停（`safe_mode::primary_section`）。
+  - **新机制**：进入 = 在 profile 的 `cordis.patch.yml` 里给全部三方行写 `disabled: true`
+    （复用 `PatchFile` + `apply_disabled_toggle`：未改条目原文保真、幂等零写入；覆写前备份
+    `fs_backup::backup_before_overwrite_path`）→ 正常启动；退出 = 按**记账**里记下的那份备份
+    **逐字节覆盖回去**（`atomic_replace`，不重新解析；覆盖前再备份当前态）。
+    记账 = `<app_data>/safe-mode/<profile>.json`（`{disabled_rows, patch_backup, applied_at}`），
+    它是"恢复回哪一份"的唯一依据（不按文件名猜"最新一份"）；`restorable` = 那份备份还在不在，
+    不在则**不渲染**恢复按钮（不给点了必然报错的按钮）。
+  - **删除**：`--patch` 注入、overlay 读写、`LaunchSpec.patch_overlay`、以及那条"解释两个真相源"的
+    横幅/面板说明（配置层现在是唯一真相源：开关、徽标、下次启动同源）。旧的
+    `<app_data>/safe-mode/<profile>.yml` 在进入/恢复时清理。回归锚：`shell::
+    launcher_args_never_pass_patch…`（壳**永不**再传 `--patch`）。
+  - **凭据**：Rust `cargo fmt --check` / `clippy --all-targets -D warnings` 干净、`cargo test`
+    **550 passed** / 0 failed / 8 ignored（safe_mode 13 项：进入-恢复**逐字节**往返、幂等零写入、
+    备份缺失如实报错、备份路径不可信拒绝覆盖、旧 overlay 清理）；前端 `tsc -b` 0 错误、
+    `oxlint` 0 warning（153 文件）、`vitest` **454 passed / 52 文件**、`pnpm run build` 通过。
+  - **仍未做（诚实留白）**：WSL 客体档的安全模式（缺客体侧写原语，仍显式报错不回落宿主）；
+    `plugin_row_failed` 的中英字典文案（en 用户仍看到中文标题/建议，见 ADR-0025 §7 末）。
 - **诚实留白**：WSL 客体档三个命令仍**显式报错**（不回落宿主）；`inspector` /
   `ptc-runtime-python` / 三个库包**有意不在策展集内**（理由见 ADR-0020 §7.5 末）；
   「改完重启该 Profile 才生效」依赖用户点「立即重启」（复用既有重启确认链，不自动重启）。

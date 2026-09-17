@@ -221,9 +221,9 @@ pub fn terminal_action(
                 return;
             }
         }
-        // ---- 安全模式（ADR-0025）----
-        // 三个动作都只动**壳自有数据目录**或（reset 分支）经备份后放空 patch，
-        // 随后一律走下面的"重新解析链 + 启动"，因此失败不会留下半截状态。
+        // ---- 安全模式（ADR-0026：写配置 + 一键恢复）----
+        // 三个动作都只动**用户自己的配置文件**（或读壳自有记账），随后一律走下面的
+        // "重新解析链 + 启动"，因此失败不会留下半截状态。
         if matches!(
             action.as_str(),
             "safe_mode" | "safe_mode_exit" | "safe_mode_reset"
@@ -255,58 +255,68 @@ pub fn terminal_action(
                 );
                 return;
             }
+            let home = crate::resolve::user_dsh_home();
             let outcome: Result<String, String> = match action.as_str() {
+                // 进入：把**所有非随包（三方）挂载行**在配置文件里写成 `disabled: true`
+                // （一次覆写、一次备份），然后正常启动——开关/徽标/下次启动同源。
                 "safe_mode" => crate::plugins::row_attributions_blocking(
                     &profile, &data_dir, &world,
                 )
                 .and_then(|rows| {
                     let ids = crate::safe_mode::disable_plan(&rows);
                     let kept = rows.len() - ids.len();
-                    // **无可停行 = 这条失败不在本按钮管辖范围内**（2026-09-16 维护者反馈后
-                    // 补的诚实门，判据在 `safe_mode::disable_plan`，单测钉住）：坏行若来自
-                    // **随包 / 第三方插件包**，它们不在用户 patch 层（`should_disable` 为假），
-                    // 安全模式停不了。此时**不启动**——起了也是同一张错误卡，只会把
-                    // "点过按钮却回到原点"变成新的困惑。
+                    // **无可停行 = 这个 profile 没有三方插件行**（全随包）：如实报错、
+                    // 不空转启动。判据在 `safe_mode::disable_plan`（单测钉住）。
                     if ids.is_empty() {
-                        // 文案只陈述**这里真正知道的事实**（独立复核 #7）：行表为空时
-                        // 不能说"全部来自随包/第三方插件包"（0 条行当然一条都不是）。
-                        let why = if rows.is_empty() {
-                            "这个 profile 当前一条挂载行都没有，没有可临时停用的行".to_string()
-                        } else {
-                            format!(
-                                "当前 profile 的 {} 条挂载行全部来自随包 / 第三方插件包，临时停用\
-                                 无从下手（实测整层摘掉会让服务依赖悬空）",
-                                rows.len()
-                            )
-                        };
                         return Err(format!(
-                            "这条失败不在「实验能力」开关的管辖内（本按钮未做任何改动，也没有启动）：{why}。\
-                             出路是处理那个插件本身：在控制中心 → 插件页卸载它，或在该 profile 的清单里\
-                             （`package.json` 的 `dsh.profile.bundles`）去掉它，然后重试。"
+                            "这个 profile 的 {} 条挂载行全部来自随包插件，没有可停用的三方插件——\
+                             这类失败不是安全模式能解决的（本按钮未做任何改动，也没有启动）。",
+                            rows.len()
                         ));
                     }
-                    crate::safe_mode::write_overlay(&data_dir, &profile, &ids).map(|_| {
-                        format!(
-                            "已启用安全模式：停用 {} 行、保留 {} 行（随包两层）",
-                            ids.len(),
-                            kept
-                        )
+                    crate::safe_mode::enter(&home, &data_dir, &profile, &ids).map(|outcome| {
+                        if outcome.changed {
+                            format!(
+                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）；配置已备份为 {}，\
+                                 可在控制中心一键恢复",
+                                ids.len(),
+                                kept,
+                                outcome
+                                    .backup
+                                    .as_deref()
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_default()
+                            )
+                        } else {
+                            format!(
+                                "这些行早已是停用态（{} 行）——没有改动配置，也没有可恢复的备份",
+                                ids.len()
+                            )
+                        }
                     })
                 }),
-                "safe_mode_exit" => crate::safe_mode::clear(&data_dir, &profile).map(|changed| {
-                    if changed {
-                        "已退出安全模式".to_string()
-                    } else {
-                        "本就未处于安全模式".to_string()
-                    }
-                }),
-                _ => crate::safe_mode::clear(&data_dir, &profile)
-                    .and_then(|_| {
-                        crate::safe_mode::quarantine_patch(
-                            &crate::resolve::user_dsh_home(),
-                            &profile,
-                        )
+                // 一键恢复：把进入前那份备份**原样覆盖回去**（维护者 2026-09-16 口径）。
+                "safe_mode_exit" => {
+                    crate::safe_mode::exit(&home, &data_dir, &profile).map(|outcome| {
+                        if outcome.restored {
+                            let used = outcome
+                                .backup_used
+                                .as_deref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default();
+                            let current = outcome
+                                .current_backup
+                                .as_deref()
+                                .map(|p| format!("；恢复前的配置也留了备份 {}", p.display()))
+                                .unwrap_or_default();
+                            format!("已一键恢复：用备份覆盖回配置（{used}）{current}")
+                        } else {
+                            "本就未处于安全模式".to_string()
+                        }
                     })
+                }
+                // 兜底：配置写坏、行都枚举不出来时，备份 + 放空（前端须二次确认）。
+                _ => crate::safe_mode::quarantine_patch(&home, &profile)
                     .map(|path| format!("已备份并放空 {}", path.display())),
             };
             match outcome {
@@ -315,13 +325,12 @@ pub fn terminal_action(
                     tracing::info!(action = %action, profile = %profile, "安全模式动作完成");
                 }
                 Err(e) => {
-                    // 枚举失败（典型：patch 文件 YAML 语法坏，`--dump-config` exit 1）→
-                    // 如实报错，并**在这张新卡上**给出唯一还能走的那一步：「备份并放空」。
-                    // 为什么必须显式带上动作（2026-09-16 独立复核）：emit_boot_error 是**替换**
-                    // 语义，旧卡（带其它出路）当场消失；不给新卡指定动作，提示就是死指针。
+                    // 失败必须**换一张卡**（emit_boot_error 是替换语义），并在这张新卡上给出
+                    // 唯一还能走的那一步：「备份并放空插件配置后启动」（2026-09-16 独立复核：
+                    // 不给新卡指定动作，提示就是死指针）。
                     let payload = crate::boot_failure::BootErrorPayload::classify(
                         &format!(
-                            "安全模式执行失败：{e}\n——行都枚举不出来，通常是该 profile 的 cordis.patch.yml 语法已坏。\
+                            "安全模式执行失败：{e}\n——若该 profile 的 cordis.patch.yml 语法已坏（连行都枚举不出来），\
                              下一步：备份并放空插件配置后再启动（会先留下 .bak-<时间戳> 备份）。"
                         ),
                         "",
