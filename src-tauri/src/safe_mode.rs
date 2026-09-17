@@ -27,8 +27,20 @@
 //! > （正是当初那条错误结论的来源）。
 use std::path::{Path, PathBuf};
 
-/// 随包发布的两层：安全模式**永不**停它们（停任一即启动失败，2026-09-16 实测）。
-pub const SHIPPED_BUNDLES: &[&str] = &["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"];
+/// 随包发布的 bundle（上游 `PROFILE_TEMPLATES` + 安装期归一化 tuple 的全表，2026-09-16 补齐）：
+/// 安全模式**永不**停它们的行——任一被停都可能让服务依赖悬空（实测：停 `tools` 即 exit 1）。
+///
+/// 为什么是 6 个而不是"本机在用的 2 个"：headless / acp / sdk 档虽不由本壳 boot，但用户的
+/// 历史或手工清单里可能同时含 `dsh-web-app` 与 `dsh-headless`（上游安装期 owned tuple 就是
+/// 这种组合）；把它们误判成三方行会主动制造 exit 1（2026-09-16 独立复核实测指出）。
+pub const SHIPPED_BUNDLES: &[&str] = &[
+    "@deepseek-ai/dsh-base",
+    "@deepseek-ai/dsh-web-app",
+    "@deepseek-ai/dsh-headless",
+    "@deepseek-ai/dsh-acp-app",
+    "@deepseek-ai/dsh-sdk-app",
+    "@deepseek-ai/dsh-sdk-minimal",
+];
 
 /// 某 profile 的 patch 路径（安全模式唯一会改的 dsh 文件）。
 pub fn profile_patch_path(home: &Path, profile: &str) -> PathBuf {
@@ -56,20 +68,49 @@ pub fn primary_section(section: &str) -> &str {
 /// 该行是否应在安全模式下停用（**纯函数，判据单源**）。
 pub fn should_disable(contributed_by: Option<&str>) -> bool {
     match contributed_by {
-        // 无归属 = 用户 patch 行（模板外的行）。
-        None => true,
+        // **无归属 = 不当成可停行**（失效方向的选择，2026-09-16 独立复核对口径的修正）：
+        // 当前 dump 每条行都有段落标签，`None` 只在**格式漂移/解析退化**时出现；那时
+        // "当成用户行"会把随包行一起停掉 ⇒ 主动制造 `exit 1`。反过来少停只是"安全模式没救到
+        // 那几行"，交给空计划诚实门如实报错即可。**宁可不救，不可救坏**。
+        None => false,
         Some(section) => !SHIPPED_BUNDLES.contains(&primary_section(section)),
     }
 }
 
-/// 安全模式的**停放计划**（纯函数，判据单源）：给定全部挂载行归属，算出要停用的 id 表。
+/// 按**层序**切分停放计划（纯函数）：profile 层的停用桩只能停"同层或更早层"的行。
 ///
-/// **空表 = 这个 profile 没有三方插件行**（全是随包行）：命令层据此如实报错，不空转启动。
-pub fn disable_plan(rows: &[crate::plugins::RowAttribution]) -> Vec<String> {
-    rows.iter()
-        .filter(|r| should_disable(r.contributed_by.as_deref()))
-        .map(|r| r.id.clone())
-        .collect()
+/// 用户 patch 有两个文件：profile 层 `profiles/<p>/cordis.patch.yml`（我们写桩的地方）与
+/// **home 层** `$DSH_HOME/cordis.patch.yml`（层序在 profile 之后）。因此：
+/// - 归属为**包名**（bundle 层，更早）或**本 profile 的 patch 文件** → 可停；
+/// - 归属为**别的文件路径**（home 层，更晚）或 `None` → **停不掉**（id 在写桩那一层还不存在）。
+///
+/// 返回值 = `(可停, 停不掉)`。调用方必须把后者**如实告诉用户**，不能报"已全部停用"
+/// （2026-09-16 独立复核指出：home 层 insert 行会走成"报成功、再点一次改口早已停用"）。
+pub fn split_by_layer(
+    rows: &[crate::plugins::RowAttribution],
+    profile_patch: &Path,
+) -> (Vec<String>, Vec<String>) {
+    let mut disableable = Vec::new();
+    let mut elsewhere = Vec::new();
+    for row in rows {
+        match row.contributed_by.as_deref() {
+            // 随包行：本就不该停（正常保留，不算"够不到"）
+            Some(section) if !should_disable(Some(section)) => {}
+            // 本 profile 的 patch（写入目标本身）或包名（更早的 bundle 层）→ 可停
+            Some(section) if Path::new(section) == profile_patch => {
+                disableable.push(row.id.clone())
+            }
+            Some(section) if !looks_like_path(section) => disableable.push(row.id.clone()),
+            // home 层（层序更晚）或**无归属**（格式漂移）：够不到 → 如实上报，不静默跳过
+            _ => elsewhere.push(row.id.clone()),
+        }
+    }
+    (disableable, elsewhere)
+}
+
+/// 段落标签是不是**文件路径**（区分"用户 patch 行"与"bundle 包名"）。
+fn looks_like_path(section: &str) -> bool {
+    section.starts_with('/') || section.contains(".yml") || section.contains('\\')
 }
 
 /// 记账：进入安全模式时"我们写进去了什么、进入前那份配置在哪"。
@@ -81,6 +122,11 @@ pub fn disable_plan(rows: &[crate::plugins::RowAttribution]) -> Vec<String> {
 pub struct Journal {
     pub disabled_rows: Vec<String>,
     pub patch_backup: String,
+    /// 进入时的 dsh home（绝对路径）。**跨 home 不认账**：开发档（`~/.dsh-dock-dev`）与正式档
+    /// （`~/.dsh`）用的是**同一份壳设置/数据目录**，只按 profile 名记账会让另一侧显示"安全模式中"
+    /// 且给一个必然失败的恢复按钮（2026-09-16 独立复核）。
+    #[serde(default)]
+    pub dsh_home: String,
     #[serde(default)]
     pub applied_at: u64,
 }
@@ -125,9 +171,14 @@ pub fn read_journal(data_dir: &Path, profile: &str) -> Option<Journal> {
     serde_json::from_str(&text).ok()
 }
 
-/// 读当前安全模式状态（无记账 = 未启用）。
-pub fn state(data_dir: &Path, profile: &str) -> SafeModeState {
-    match read_journal(data_dir, profile) {
+/// 记账是否属于这个 dsh home（旧格式没有 `dsh_home` → 视为不属于，宁可少认也不误认）。
+fn journal_belongs_to(journal: &Journal, home: &Path) -> bool {
+    !journal.dsh_home.is_empty() && Path::new(&journal.dsh_home) == home
+}
+
+/// 读当前安全模式状态（无记账 / 属于别的 home = 未启用）。
+pub fn state(data_dir: &Path, profile: &str, home: &Path) -> SafeModeState {
+    match read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home)) {
         Some(journal) => SafeModeState {
             active: true,
             restorable: Path::new(&journal.patch_backup).is_file(),
@@ -182,9 +233,18 @@ pub fn enter(
     let backup = patch
         .write_with_backup(&patch_path)?
         .ok_or_else(|| format!("{} 不存在，无法备份", patch_path.display()))?;
+    // 已有记账且属于**别的 dsh home** → 先归档，别静默抹掉那一侧的恢复指针（它还能用）。
+    if let Some(existing) = read_journal(data_dir, profile) {
+        if !journal_belongs_to(&existing, home) {
+            let path = journal_path(data_dir, profile);
+            let archived = path.with_file_name(format!("{profile}.json.other-home-{}", now_unix()));
+            let _ = std::fs::rename(&path, &archived);
+        }
+    }
     let journal = Journal {
         disabled_rows: ids.to_vec(),
         patch_backup: backup.display().to_string(),
+        dsh_home: home.display().to_string(),
         applied_at: now_unix(),
     };
     write_journal(data_dir, profile, &journal)?;
@@ -201,7 +261,8 @@ pub fn enter(
 /// 覆盖前把**当前**配置再备份一份——用户在安全模式期间改动过的插件配置不会被无声抹掉。
 pub fn exit(home: &Path, data_dir: &Path, profile: &str) -> Result<ExitOutcome, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let Some(journal) = read_journal(data_dir, profile) else {
+    let Some(journal) = read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home))
+    else {
         return Ok(ExitOutcome {
             restored: false,
             backup_used: None,
@@ -340,11 +401,23 @@ mod tests {
         assert!(should_disable(Some(
             "@deepseek-ai/dsh-experimental-auto-review"
         )));
-        // 用户 patch 行（段落头是文件路径）与无归属行：停
+        // 随包全表（上游 6 个模板 bundle）都不得停
+        for shipped in [
+            "@deepseek-ai/dsh-base",
+            "@deepseek-ai/dsh-web-app",
+            "@deepseek-ai/dsh-headless",
+            "@deepseek-ai/dsh-acp-app",
+            "@deepseek-ai/dsh-sdk-app",
+            "@deepseek-ai/dsh-sdk-minimal",
+        ] {
+            assert!(!should_disable(Some(shipped)), "{shipped} 是随包层，不得停");
+        }
+        // 用户 patch 行（段落头是文件路径）：停
         assert!(should_disable(Some(
             "/Users/x/.dsh-dock-dev/profiles/web/cordis.patch.yml"
         )));
-        assert!(should_disable(None));
+        // 无归属（格式漂移/解析退化）：**不停**——失效方向选"宁可不救，不可救坏"
+        assert!(!should_disable(None));
     }
 
     /// 主段解析：`patched by` 尾巴必须去掉（否则随包行会被误判成用户行）。
@@ -366,7 +439,7 @@ mod tests {
 
     /// 停放计划（纯函数）：真机形态 9 行（5 用户 + 4 三方 bundle）；随包行一条都不进。
     #[test]
-    fn disable_plan_covers_user_and_third_party_bundle_rows() {
+    fn split_by_layer_covers_user_and_third_party_bundle_rows() {
         let row = |id: &str, by: Option<&str>| crate::plugins::RowAttribution {
             id: id.to_string(),
             contributed_by: by.map(str::to_string),
@@ -388,13 +461,29 @@ mod tests {
             row("dsh-dock--a", Some("/x/profiles/web/cordis.patch.yml")),
             row("dsh-dock--b", None),
         ];
+        let profile_patch = Path::new("/x/profiles/web/cordis.patch.yml");
+        let (ids, elsewhere) = split_by_layer(&rows, profile_patch);
+        assert_eq!(ids, vec!["agent-team", "auto-review", "dsh-dock--a"]);
         assert_eq!(
-            disable_plan(&rows),
-            vec!["agent-team", "auto-review", "dsh-dock--a", "dsh-dock--b"]
+            elsewhere,
+            vec!["dsh-dock--b"],
+            "无归属行（格式漂移/解析退化）不停，但要**如实上报**够不到，不能静默跳过"
         );
+
+        // home 层（层序更晚）的行：profile 层的桩够不到 → 归入"停不掉"，如实上报
+        let with_home = vec![
+            row("dsh-dock--p", Some("/x/profiles/web/cordis.patch.yml")),
+            row("dsh-dock--h", Some("/x/cordis.patch.yml")),
+            row("orphan", None),
+        ];
+        let (ids, elsewhere) = split_by_layer(&with_home, profile_patch);
+        assert_eq!(ids, vec!["dsh-dock--p"]);
+        assert_eq!(elsewhere, vec!["dsh-dock--h", "orphan"]);
+
         // 只有随包行 → 空计划（命令层据此如实报错，不空转）
         let shipped_only = vec![row("timer", Some("@deepseek-ai/dsh-base"))];
-        assert!(disable_plan(&shipped_only).is_empty());
+        let (ids, elsewhere) = split_by_layer(&shipped_only, profile_patch);
+        assert!(ids.is_empty() && elsewhere.is_empty());
     }
 
     /// 进入 → 记账 → 一键恢复 的完整往返：配置回到进入前**逐字节**相同，注释保真。
@@ -425,7 +514,7 @@ mod tests {
         // 两条都停了：insert 行就地置 disabled；未出现的 id 追加双键条目
         assert_eq!(after.matches("disabled: true").count(), 2, "{after}");
 
-        let snapshot = state(&data, "web");
+        let snapshot = state(&data, "web", &home);
         assert!(snapshot.active && snapshot.restorable);
         assert_eq!(snapshot.disabled_rows.len(), 2);
 
@@ -438,7 +527,7 @@ mod tests {
             PATCH,
             "恢复后必须与进入前逐字节一致"
         );
-        assert!(!state(&data, "web").active, "恢复后记账必须清掉");
+        assert!(!state(&data, "web", &home).active, "恢复后记账必须清掉");
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&data);
     }
@@ -510,7 +599,7 @@ mod tests {
         let backup = PathBuf::from(&read_journal(&data, "web").unwrap().patch_backup);
         std::fs::remove_file(&backup).unwrap();
 
-        let snapshot = state(&data, "web");
+        let snapshot = state(&data, "web", &home);
         assert!(snapshot.active);
         assert!(!snapshot.restorable, "备份没了就不能承诺一键恢复");
 
@@ -535,6 +624,7 @@ mod tests {
         let journal = Journal {
             disabled_rows: vec!["dsh-dock--a".to_string()],
             patch_backup: outside.display().to_string(),
+            dsh_home: home.display().to_string(),
             applied_at: 1,
         };
         write_journal(&data, "web", &journal).unwrap();

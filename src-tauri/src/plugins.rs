@@ -1867,7 +1867,16 @@ impl PatchFile {
             out.push_str(&self.preamble);
             for (i, e) in self.entries.iter().enumerate() {
                 match self.raw.get(i).and_then(|r| r.as_deref()) {
-                    Some(raw) => out.push_str(raw),
+                    // 原文保真片段必须**以换行收尾**：末段来自 `body[s..len]`，文件末行没有换行时
+                    // 它也不带换行，紧接着追加的 `- id: …` 会拼成
+                    // `name: '@x'- id: X`（`Nested mappings are not allowed in compact mappings`）。
+                    // 2026-09-16 独立复核实测该缺陷（救援路径上等于"把配置写坏"）。
+                    Some(raw) => {
+                        out.push_str(raw);
+                        if !raw.ends_with('\n') {
+                            out.push('\n');
+                        }
+                    }
                     None => out.push_str(&serialize_patch_item(e)?),
                 }
             }
@@ -1885,10 +1894,23 @@ impl PatchFile {
     /// 安全模式（ADR-0026）要记住"进入前那份配置"，退出时按记录**原样覆盖回去**——
     /// 因此备份路径必须由写入方回传，不能事后按文件名猜最新一份。
     pub(crate) fn write_with_backup(&self, path: &Path) -> Result<Option<PathBuf>, String> {
-        let out = self.render()?;
+        let out = self.render_checked()?;
         let backup = crate::fs_backup::backup_before_overwrite_path(path)?;
         atomic_replace(path, &out)?;
         Ok(backup)
+    }
+
+    /// 渲染 + **自证**：写出去之前先把它读回来解析一次（`from_text`）。
+    ///
+    /// 为什么必须有（2026-09-16 独立复核）：本内核是"原文保真 + 追加条目"的拼接器，
+    /// 拼接边界出错时会产出非法 YAML；而这些写入**改的是用户的 profile 配置**——
+    /// 在安全模式这条救援路径上，写坏配置等于把"进不去应用"升级成"配置也坏了"。
+    /// 自证失败即中止（fail-closed），备份与原文都还在。
+    pub(crate) fn render_checked(&self) -> Result<String, String> {
+        let out = self.render()?;
+        Self::from_text(&out)
+            .map_err(|e| format!("渲染自证失败（拒绝覆写 {}）：{e}", "cordis.patch.yml"))?;
+        Ok(out)
     }
 }
 
@@ -2498,6 +2520,27 @@ mod patch_tests {
 
     const HEADER: &str =
         "# Your patch layer for this dsh profile\n# applied after every bundle layer\n";
+
+    /// **复现先行**（2026-09-16 独立复核）：文件**末行无换行**时，追加 `- id: …` 必须仍然
+    /// 是可解析 YAML——改前拼成 `name: '@x'- id: X`，dsh 直接解析失败（救援路径 = 把配置写坏）。
+    #[test]
+    fn append_after_a_file_without_trailing_newline_stays_parsable() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        // 刻意**不带**尾换行（用户用某些编辑器保存后的形态）
+        std::fs::write(&patch, "- insert:\n  - id: keep\n    name: '@x'").unwrap();
+        set_plugin_disabled(&home, "p", "dsh-dock--new", true).unwrap();
+
+        let text = std::fs::read_to_string(&patch).unwrap();
+        PatchFile::from_text(&text).expect("写出的 patch 必须能被读回（YAML 合法）");
+        assert!(text.contains("- id: keep"), "原有条目保真：{text}");
+        assert!(text.contains("- id: dsh-dock--new"), "{text}");
+        assert!(
+            !text.contains("'@x'- id:"),
+            "条目边界必须落在行首（否则是 compact mapping 语法错）：{text}"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
 
     #[test]
     fn disable_appends_entry_enabling_removes_it() {

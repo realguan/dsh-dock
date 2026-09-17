@@ -170,6 +170,11 @@ pub(crate) struct ShellState {
     /// 与「安全模式启动」双双失效（真机症状：点了像没反应、只剩一个必然失败的重试）。
     /// 在 **spawn 成功时**记账，是最可靠的来源。
     pub(crate) last_boot_profile: Mutex<Option<String>>,
+    /// 本次启动**实际使用**的 dsh home（与 `last_boot_profile` 同时记账）。
+    ///
+    /// 安全模式要据此决定"改哪个 profile 目录"：快照档的 home 每次启动被重同步覆写，
+    /// 按用户 home 写等于改错文件（2026-09-16 独立复核 P1）。
+    pub(crate) last_boot_home: Mutex<Option<std::path::PathBuf>>,
     /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
     pub(crate) client_update: Mutex<Option<crate::updater::ClientUpdate>>,
     /// 崩溃历史时间戳（4.12 崩溃守护与熔断，记录最近 60s 内异常退出次数）。
@@ -340,6 +345,7 @@ pub(crate) fn run_executor_session(
     let epoch = state.session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
     // spawn 成功即记账：这是"本轮到底起了哪个 profile"的权威来源（见字段文档）。
     *state.last_boot_profile.lock().unwrap() = executor.active_profile().map(String::from);
+    *state.last_boot_home.lock().unwrap() = executor.dsh_home();
     *state.session.lock().unwrap() = Some(executor);
     state.advance_handoff(HandoffPhase::Waiting);
 
@@ -727,6 +733,15 @@ pub(crate) fn boot_target_profile(app: &tauri::AppHandle) -> Option<String> {
         .lock()
         .ok()
         .and_then(|guard| guard.clone())
+}
+
+/// 本次启动**实际使用**的 dsh home（`None` = 本进程还没起过会话 / 该档位未记账）。
+///
+/// 安全模式据此决定改哪个 profile 目录；快照档（`<data_dir>/runtimes/fallback-home`）与用户
+/// home 不同，调用方必须**显式拒绝**而不是回落宿主（2026-09-16 独立复核 P1）。
+pub(crate) fn boot_target_home(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let state = app.try_state::<Arc<ShellState>>()?;
+    state.last_boot_home.lock().ok().and_then(|g| g.clone())
 }
 
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi

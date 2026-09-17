@@ -98,6 +98,17 @@ pub trait Executor: Send {
         None
     }
 
+    /// 本次启动实际使用的 dsh home（安全模式据此判断"改哪个 profile 目录"）。
+    ///
+    /// 为什么需要它（2026-09-16 独立复核 P1）：安全模式写的是 `profiles/<p>/cordis.patch.yml`，
+    /// 而**快照档**的 home 是 `<data_dir>/runtimes/fallback-home`（每次启动由 `sync_fallback_home`
+    /// 重同步覆写）。按"用户 home"写会**改错文件**（写用户的 `~/.dsh` 同名 profile）且不可能生效，
+    /// 故必须用本次实际 home 判定，不认的档位显式报错（不回落宿主）。
+    /// 默认 `None`：WSL / SSH 档由调用方另行拦截。
+    fn dsh_home(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// WSL 档：本次启动**实际选中**的发行版（ADR-0016 §4 管理面世界择源）。
     /// 本地档 / 未探测完成 = None。probe 成功后由 `launch_executor_after_probe`
     /// 落进 `ShellState.active_wsl_distro`，控制中心据此与运行中会话同源。
@@ -347,6 +358,10 @@ impl Executor for LocalExecutor {
         self.launch.as_ref().map(|l| l.profile.as_str())
     }
 
+    fn dsh_home(&self) -> Option<std::path::PathBuf> {
+        self.launch.as_ref().map(|l| l.dsh_home.clone())
+    }
+
     fn start(&mut self, sink: BootSink<'_>) -> Result<(), String> {
         let launch = self
             .launch
@@ -363,14 +378,21 @@ impl Executor for LocalExecutor {
         // 而后发的 step3/4 done 会让时间线出现「后步完成、前步 loading」的倒挂。
         sink(2, "done", &format!("「{}」工作台已启动", launch.profile));
         // 安全模式可见性（ADR-0026）：进入安全模式时把"在配置里停用了多少行"写进时间线
-        // ——否则用户只会觉得"插件怎么都没了"。恢复入口在控制中心横幅（一键用备份覆盖回去）。
-        let safe_mode_state = crate::safe_mode::state(&self.data_dir, &launch.profile);
+        // ——否则用户只会觉得"插件怎么都没了"。**只有真的还能恢复**才承诺恢复入口
+        // （restorable=false 时那样说会把用户引到一个点了必然报错的地方，2026-09-16 独立复核 P4）。
+        let safe_mode_state =
+            crate::safe_mode::state(&self.data_dir, &launch.profile, &launch.dsh_home);
         if safe_mode_state.active {
+            let tail = if safe_mode_state.restorable {
+                "（可在控制中心一键恢复）"
+            } else {
+                "（进入前那份备份已不在，需手动改配置）"
+            };
             sink(
                 2,
                 "done",
                 &format!(
-                    "安全模式：已在配置里停用 {} 个插件行（可在控制中心一键恢复）",
+                    "安全模式：已在配置里停用 {} 个插件行{tail}",
                     safe_mode_state.disabled_rows.len()
                 ),
             );

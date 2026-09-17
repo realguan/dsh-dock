@@ -76,7 +76,8 @@ export type TerminalAction =
   | "retry"
   | "upgrade"
   | "upgrade_only"
-  // 安全模式（ADR-0025）：临时 overlay 停用非随包层行 / 退出 / 备份并放空 patch 文件。
+  // 安全模式（ADR-0026）：在 profile 配置里把三方插件写成 disabled / 一键用备份恢复 /
+  // 配置已写坏时备份并放空。
   | "safe_mode"
   | "safe_mode_exit"
   | "safe_mode_reset"
@@ -551,8 +552,9 @@ export interface Capability {
   activeVariant: string | null
 }
 
-/// 安全模式状态（ADR-0025，`get_safe_mode_state`）。**只报壳自有 overlay 的状态**，
-/// 不报运行态——运行态由回环快照给，两源禁混（否则又会出现"配置说启用、运行说停用"的假象）。
+/// 安全模式状态（ADR-0026，`get_safe_mode_state`）。安全模式改的是** profile 配置本身**，
+/// 故配置层即真相源；这里只报壳的**记账**（是否在安全模式、停了哪些行、能否一键恢复），
+/// 不报运行态——运行态由回环快照给，两源禁混。
 export interface SafeModeState {
   /// 本轮是否以安全模式启动（= 壳的记账文件在，配置里已写入停用桩）。
   active: boolean

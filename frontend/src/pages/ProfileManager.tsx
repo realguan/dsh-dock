@@ -99,8 +99,8 @@ export function ProfileManager() {
     return "list"
   })
   const [overviewTick, setOverviewTick] = useState(0)
-  // 安全模式状态（ADR-0025）：**只报壳自有 overlay**（配置层未被改动），运行态另有其源。
-  // 没有它就会出现维护者 2026-09-16 报的那种假象：已装列表「已停用」而开关全开。
+  // 安全模式状态（ADR-0026）：三方插件已在**配置里** disable，故开关与徽标本就同源；
+  // 这里报的是"停了几行 + 能不能一键恢复"（记账里的备份还在不在），运行态另有其源。
   const [safeMode, setSafeMode] = useState<SafeModeState | null>(null)
 
   // 语言初始化已于 2026-09-11（task-24）**收敛到 App.tsx**：该处对所有窗口统一

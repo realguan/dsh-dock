@@ -104,7 +104,7 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 |:---|:---|:---|
 | Rust 格式 | `cd src-tauri && cargo fmt --check` | 干净 |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | 0 警告 |
-| Rust 测试 | `cargo test` | **550 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
+| Rust 测试 | `cargo test` | **551 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
 | 前端类型 | `cd frontend && node node_modules/typescript/bin/tsc -b` | 0 错误 |
 | 前端 lint | `pnpm run lint` | 0 警告（153 文件） |
 | 前端测试 | `pnpm run test` | **454 passed / 52 文件** |
@@ -166,7 +166,7 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 | **E2** | **真机证据**：`plugin-op.log` 今日 **6 次**安装全部带 `--registry https://registry.npmjs.org`；`~/.npmrc` **未被改写**（仍 npmmirror + `@moresec` 私有源 + `strict-ssl=false`） | ✅ 我已验收 |
 | **F1** | 全仓 `content-visibility` 命中 **0**；`injected/memory-policy.js` 已删；ADR-0002 已记修订 | ✅ 我已验收（可选抽查：滑动手感） |
 | **F2** | 失败复现时 `dsh-shell.log` **非空（20565 字节栈）**；正常启动未被拖慢（你 15:37 那次 12s 就绪）；`stall_grace` 回归单测 | ✅ 我已验收 |
-| **S1** | 安全模式（**ADR-0026 第二版机制**）：改为**在 profile 配置里把全部三方插件写成 `disabled: true`**（覆写前备份）＋**一键用备份覆盖回去**。证据：13 项 `safe_mode` 单测（进入/恢复**逐字节**往返、幂等零写入、备份缺失如实报错、备份路径不可信拒绝覆盖、旧 overlay 清理）＋ **克隆体真机 A/B**（9 条三方行 disable → **8.2s 就绪**；原样启动 → exit 1/37.5s；同一组用 overlay → 7.9s 就绪；**多停一条随包行 `tools` → 复现旧 `exit 1` 签名**，证明旧结论的真因是枚举过宽）＋ 前端门禁 `safeModeBanner.test.ts`（横幅/`restorable` 门控/文案双侧）。首屏**恰好一个**修复类动作「停用全部三方插件并启动」（`plugin_row_failure_first_screen_has_exactly_one_action`）；`--patch` 注入已删除且有"绝不再传"回归锚 | ✅ 我已验收 |
+| **S1** | 安全模式（**ADR-0026 第二版机制**）：改为**在 profile 配置里把全部三方插件写成 `disabled: true`**（覆写前备份）＋**一键用备份覆盖回去**。证据：12 项 `safe_mode` 单测（进入/恢复**逐字节**往返、幂等零写入、备份缺失如实报错、备份路径不可信拒绝覆盖、旧 overlay 清理、层序切分、随包全表）＋ **克隆体真机 A/B**（9 条三方行 disable → **8.2s 就绪**；原样启动 → exit 1/37.5s；同一组用 overlay → 7.9s 就绪；**多停一条随包行 `tools` → 复现旧 `exit 1` 签名**，证明旧结论的真因是枚举过宽）＋ 前端门禁 `safeModeBanner.test.ts`（横幅/`restorable` 门控/文案双侧）。首屏**恰好一个**修复类动作「停用全部三方插件并启动」（`plugin_row_failure_first_screen_has_exactly_one_action`）；`--patch` 注入已删除且有"绝不再传"回归锚 | ✅ 我已验收 |
 | **S2** | 补完可见性：控制中心横幅 + 「退出安全模式并重启」+ 实验能力面板两源说明 + 只读 IPC `get_safe_mode_state`（四处同步/登记册 64）+ 门禁 `safeModeBanner.test.ts` | 🖐 待你验收（点两下） |
 | **G1–G5** | ADR 0020–0025 全在且 `docs/adr/README.md` 索引含一行结论；登记册 **64** 条；复现点 20/21/22；`AGENTS.md` **221** 行（≤250） | ✅ 我已验收（抽查项） |
 
@@ -186,7 +186,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
-**550 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **454 passed**、生产构建通过。
+**551 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **454 passed**、生产构建通过。
 
 ### 你三张截图给出的结论（2026-09-16 第二轮）
 

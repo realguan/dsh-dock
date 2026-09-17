@@ -211,6 +211,7 @@ pub fn run() {
                 workbench_cookie: Mutex::new(None),
                 forced_profile: Mutex::new(None),
                 last_boot_profile: Mutex::new(None),
+                last_boot_home: Mutex::new(None),
                 client_update: Mutex::new(None),
                 crash_timestamps: Mutex::new(Vec::new()),
                 // 启动轮次状态（代际令牌 + 可见缓存）：首启代际从 0 起，

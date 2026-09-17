@@ -353,9 +353,24 @@
     `<app_data>/safe-mode/<profile>.yml` 在进入/恢复时清理。回归锚：`shell::
     launcher_args_never_pass_patch…`（壳**永不**再传 `--patch`）。
   - **凭据**：Rust `cargo fmt --check` / `clippy --all-targets -D warnings` 干净、`cargo test`
-    **550 passed** / 0 failed / 8 ignored（safe_mode 13 项：进入-恢复**逐字节**往返、幂等零写入、
+    **551 passed** / 0 failed / 8 ignored（safe_mode 12 项：进入-恢复**逐字节**往返、幂等零写入、
     备份缺失如实报错、备份路径不可信拒绝覆盖、旧 overlay 清理）；前端 `tsc -b` 0 错误、
     `oxlint` 0 warning（153 文件）、`vitest` **454 passed / 52 文件**、`pnpm run build` 通过。
+  - **独立复核（第三方子 agent 反方核查）确认机制成立，并抓到四处需加固（已全修）**：
+    ① **档位意识丢失**（真缺陷）：原实现固定写 `user_dsh_home()`，而**快照档**的 home 是
+    `<data_dir>/runtimes/fallback-home`（每次启动被重同步覆写）⇒ 会**改错文件**（动用户 `~/.dsh`
+    的同名 profile）且不可能生效；旧机制本有档位意识（`--patch` 只在引擎档传），换代时丢了。
+    修：`Executor::dsh_home()` 在 spawn 时记账，安全模式用**本次实际 home**，与用户 home 不同即
+    显式拒绝（口径同 WSL）。② **记账按 home 键**：dev/正式档共用同一份壳数据目录，只按 profile
+    名记账会让另一侧显示"安全模式中"+必然失败的恢复按钮 ⇒ `Journal.dsh_home` + 归属校验，且进入时
+    把**别的 home** 的记账归档而不是抹掉。③ **内核既有缺陷落在救援路径**：`PatchFile::render`
+    逐字拼接原文片段，**文件末行无换行**时追加条目会拼成 `name: '@x'- id: X`（非法 YAML）⇒
+    片段补行尾换行 + 新增 `render_checked()`（覆写前读回解析自证，fail-closed）；复现先行单测
+    已验证"撤掉修复即红"。④ **判据口径两处修正**：随包 bundle 取**全表 6 个**（含 headless /
+    acp / sdk，避免同时含 web-app+headless 的清单被误停）；**无归属行改为"不停"**（格式漂移时
+    "当成用户行"会连随包行一起停 ⇒ 主动制造 exit 1；反方向只是没救到，由空计划诚实门报错）。
+    另：`profile` 层停不到 **home 层** insert 行（层序更晚）——现已如实归入"够不到"并在提示里点名，
+    根治（写两个文件/两份备份）**记档未做**，见 ADR-0026 §5。
   - **仍未做（诚实留白）**：WSL 客体档的安全模式（缺客体侧写原语，仍显式报错不回落宿主）；
     `plugin_row_failed` 的中英字典文案（en 用户仍看到中文标题/建议，见 ADR-0025 §7 末）。
 - **诚实留白**：WSL 客体档三个命令仍**显式报错**（不回落宿主）；`inspector` /

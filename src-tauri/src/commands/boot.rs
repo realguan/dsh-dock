@@ -133,10 +133,10 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     });
     Ok(())
 }
-/// 安全模式状态（ADR-0025）：本轮是否以安全模式启动、停用了哪些行。
+/// 安全模式状态（ADR-0026）：是否处于安全模式、在配置里停用了哪些行、能否一键恢复。
 ///
-/// 只读、零副作用（读壳自有 overlay 文件）；**不读运行态**——那是回环快照的职责。
-/// 前端用它渲染控制中心横幅与「退出安全模式并重启」入口（`terminal_action("safe_mode_exit")`）。
+/// 只读、零副作用（读壳自有记账 + 查那份备份在不在）；**不读运行态**——那是回环快照的职责。
+/// 前端用它渲染控制中心横幅与「一键恢复插件配置并重启」入口（`terminal_action("safe_mode_exit")`）。
 #[tauri::command]
 pub async fn get_safe_mode_state(
     app: tauri::AppHandle,
@@ -144,7 +144,9 @@ pub async fn get_safe_mode_state(
 ) -> Result<crate::safe_mode::SafeModeState, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::profiles::validate_profile_name(&profile)?;
-    Ok(crate::safe_mode::state(&data_dir, &profile))
+    // home 判定同 `terminal_action` 的口径：**本次启动实际用的那个**（缺记录时退用户 home）。
+    let home = crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+    Ok(crate::safe_mode::state(&data_dir, &profile, &home))
 }
 
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
@@ -255,29 +257,74 @@ pub fn terminal_action(
                 );
                 return;
             }
-            let home = crate::resolve::user_dsh_home();
+            // **改哪个 home 必须用本次启动的实际值**（2026-09-16 独立复核 P1）：快照档的
+            // home 是 `<data_dir>/runtimes/fallback-home`，每次启动被重同步覆写；按用户 home
+            // 写会改错文件（动用户的 `~/.dsh` 同名 profile）且不可能生效。故显式拒绝该档，
+            // 口径同 WSL：宁可报错，不回落宿主。
+            let user_home = crate::resolve::user_dsh_home();
+            let home = crate::boot::boot_target_home(&handle).unwrap_or_else(|| user_home.clone());
+            if home != user_home {
+                emit_boot_error(
+                    &handle,
+                    &format!(
+                        "安全模式暂不支持当前档位：本次启动用的工作区是 {}（快照档的 home 每次启动\
+                         都会被重新同步覆盖，写进去不会生效）。为避免改错 profile，壳不回落用户 home。",
+                        home.display()
+                    ),
+                    "",
+                );
+                return;
+            }
             let outcome: Result<String, String> = match action.as_str() {
-                // 进入：把**所有非随包（三方）挂载行**在配置文件里写成 `disabled: true`
+                // 进入：把**所有可停的三方挂载行**在配置文件里写成 `disabled: true`
                 // （一次覆写、一次备份），然后正常启动——开关/徽标/下次启动同源。
                 "safe_mode" => crate::plugins::row_attributions_blocking(
                     &profile, &data_dir, &world,
                 )
                 .and_then(|rows| {
-                    let ids = crate::safe_mode::disable_plan(&rows);
-                    let kept = rows.len() - ids.len();
-                    // **无可停行 = 这个 profile 没有三方插件行**（全随包）：如实报错、
-                    // 不空转启动。判据在 `safe_mode::disable_plan`（单测钉住）。
+                    // 层序：profile 层的停用桩停不到 **home 层**（更晚层）的行——如实区分，
+                    // 否则会出现"报成功、再点一次改口早已停用"（2026-09-16 独立复核 P5）。
+                    let (ids, unreachable) = crate::safe_mode::split_by_layer(
+                        &rows,
+                        &crate::safe_mode::profile_patch_path(&home, &profile),
+                    );
+                    let kept = rows.len() - ids.len() - unreachable.len();
+                    // **无可停行**：如实报错、不空转启动。文案只陈述已知事实（0 条行时不能说
+                    // "全部来自随包插件"）。
                     if ids.is_empty() {
+                        let why = if rows.is_empty() {
+                            "这个 profile 当前一条挂载行都没有".to_string()
+                        } else if unreachable.is_empty() {
+                            format!(
+                                "这个 profile 的 {} 条挂载行全部来自随包插件，没有可停用的三方插件",
+                                rows.len()
+                            )
+                        } else {
+                            format!(
+                                "可停用的行一条都没有，只有 {} 行够不到（不在本 profile 的 patch 层，\
+                                 或在 home 层）：{}",
+                                unreachable.len(),
+                                unreachable.join("、")
+                            )
+                        };
                         return Err(format!(
-                            "这个 profile 的 {} 条挂载行全部来自随包插件，没有可停用的三方插件——\
-                             这类失败不是安全模式能解决的（本按钮未做任何改动，也没有启动）。",
-                            rows.len()
+                            "{why}——这类失败不是安全模式能解决的（本按钮未做任何改动，也没有启动）。"
                         ));
                     }
+                    // 够不到的行必须说清（不能报"已全部停用"）。
+                    let partial = if unreachable.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "；另有 {} 行够不到（不在本 profile 的 patch 层，或在 home 层）：{}，未处理",
+                            unreachable.len(),
+                            unreachable.join("、")
+                        )
+                    };
                     crate::safe_mode::enter(&home, &data_dir, &profile, &ids).map(|outcome| {
                         if outcome.changed {
                             format!(
-                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）；配置已备份为 {}，\
+                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）{partial}；配置已备份为 {}，\
                                  可在控制中心一键恢复",
                                 ids.len(),
                                 kept,
@@ -288,8 +335,11 @@ pub fn terminal_action(
                                     .unwrap_or_default()
                             )
                         } else {
+                            // 幂等：本次没改配置。**之前**进入过时记账仍在（横幅同屏可见），
+                            // 故不能说"没有可恢复的备份"（2026-09-16 独立复核 P4）。
                             format!(
-                                "这些行早已是停用态（{} 行）——没有改动配置，也没有可恢复的备份",
+                                "这 {} 行早在停用态（本次未改动配置）{partial}；若之前进入过安全模式，\
+                                 控制中心横幅里的恢复入口仍然可用",
                                 ids.len()
                             )
                         }

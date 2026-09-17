@@ -92,7 +92,36 @@ ADR-0025 §4 曾记「三方 **bundle 层**行停不掉：真机停 33 行 → `
 - 恢复会**覆盖**进入安全模式之后对该配置的改动（维护者明确接受；那份改动也会先备份）。
 - WSL 客体档仍不支持（缺客体侧写原语，与本条同口径：**显式报错，不回落宿主**）。
 
-## 5. 复审条件
+## 5. 独立复核后的加固（同日，第三方子 agent 反方核查）
+
+复核确认了机制（枚举判据、进入/恢复、单一真相源与回开路径、旧机制拆除），并抓到四处需要加固：
+
+1. **档位意识（P1，真缺陷）**：原实现固定用 `resolve::user_dsh_home()`，而**快照档**的 home 是
+   `<data_dir>/runtimes/fallback-home`（每次启动由 `sync_fallback_home` 重同步覆写）。按用户 home
+   写会**改错文件**（动用户的 `~/.dsh` 同名 profile）且不可能生效——旧机制本有档位意识（`--patch`
+   只在引擎档传），换代时丢了。修：`Executor::dsh_home()` 在 spawn 时记账（`ShellState::last_boot_home`），
+   `terminal_action` 用它；**与用户 home 不同即显式拒绝**（口径同 WSL：宁可报错，不回落宿主）。
+2. **记账按 home 键（P2）**：dev / 正式档共用同一份壳数据目录，只按 profile 名记账会让另一侧显示
+   "安全模式中"并给一个必然失败的恢复按钮。修：`Journal.dsh_home` + `state()/exit()` 归属校验
+   （不属于本 home → 视为未启用）；进入时若发现**别的 home** 的记账，先归档为
+   `<profile>.json.other-home-<ts>`，不静默抹掉那一侧的恢复指针。
+3. **写坏配置的风险（P3，内核既有缺陷落在救援路径）**：`PatchFile::render` 逐字拼接原文片段，
+   而末段来自 `body[s..len]`——**文件末行无换行**时追加 `- id: …` 会拼成 `name: '@x'- id: X`
+   （`Nested mappings are not allowed in compact mappings`）。修：① 每个原文片段补行尾换行；
+   ② 新增 `render_checked()`（渲染后**读回解析一次**再写，fail-closed），`write_with_backup` 一律走它。
+   复现先行：`append_after_a_file_without_trailing_newline_stays_parsable`（撤掉修复即红，已验）。
+4. **判据的两处口径修正**：① 随包 bundle 取**全表 6 个**（上游 `PROFILE_TEMPLATES` + 安装期
+   owned tuple：base / web-app / headless / acp-app / sdk-app / sdk-minimal）——只列 2 个时，
+   同时含 web-app 与 headless 的清单会把 headless 行误停；② **无归属行（`None`）改为"不停"**：
+   它只在 dump 格式漂移时出现，那时"当成用户行"会连随包行一起停 ⇒ 主动制造 `exit 1`；
+   反方向最多是"没救到那几行"，由空计划诚实门报错。**宁可不救，不可救坏**。
+5. **层序边界（已记档，未实现）**：profile 层的停用桩停不到 **home 层**
+   （`$DSH_HOME/cordis.patch.yml`，层序更晚）的 insert 行。现在 `split_by_layer` 会把这部分
+   如实归入"够不到"并在提示里点名（不再报"已全部停用"）；**根治要把桩写进 home 层文件**
+   （两个文件、两份备份、恢复要还两份），触发条件 = 用户报"安全模式没救到某个插件"且其
+   `$DSH_HOME/cordis.patch.yml` 里确有 insert 行（本机无该文件）。
+
+## 6. 复审条件
 
 - 上游提供官方"安全模式 / 跳过用户层启动"开关 → 本方案整体退役；
 - `--dump-*` 的**段落标签格式**变更（判据依赖 `, patched by` 与主段是路径/包名）→ 枚举复评；
