@@ -34,7 +34,11 @@
 故用户逐个打开开关后数字随之下降，全开即 `active=false`）。**只读壳自有记账**
 （`<app_data>/safe-mode/<profile>.json`）＋profile 自家 patch，**不读运行态**：运行态另由回环
 快照给，两源禁混。安全模式本身改的是 profile 的 `cordis.patch.yml`（走 `PatchFile` 既有写入
-纪律），故配置层即真相源；**命令不再提供任何恢复动作**——恢复已按维护者裁定移除） `set_plugin_disabled` `check_plugin_updates`
+纪律），故配置层即真相源；**命令不再提供任何恢复动作**——恢复已按维护者裁定移除）
+`dismiss_safe_mode_notice`（2026-09-16 立，维护者裁定：安全模式横幅只在"确实以安全模式进入过"时
+出现，且**必须可关闭**——用户看过一次就够；它只改壳自有记账里的 `dismissed_at`（**不碰 dsh 配置**），
+同一轮再启动不打扰，**下一次进入安全模式会重新提示**；不是本 home 的记账一律不动）
+`set_plugin_disabled` `check_plugin_updates`
 `list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
 2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
 三级事实视图，状态含 `off/on/disabled/partial/conflict`，由后端按「包 × 挂载行 × disabled」
@@ -62,9 +66,9 @@ SSH 远程工作区向导——分别是"读 `~/.ssh/config` 可选主机 / `Bat
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 64**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
-2026-09-16 净增 2：`list_official_plugins` → `list_experimental_capabilities` 属改名，
-新增 `remove_official_patch_row` 与 `get_safe_mode_state`）。
+**当前条数 = 65**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-09-16 净增 3：`list_official_plugins` → `list_experimental_capabilities` 属改名，
+新增 `remove_official_patch_row`、`get_safe_mode_state` 与 `dismiss_safe_mode_notice`）。
 
 ---
 

@@ -41,6 +41,7 @@ pub const COMMANDS: &[&str] = &[
     "update_plugin",
     "get_plugin_rows",
     "get_safe_mode_state",
+    "dismiss_safe_mode_notice",
     "set_plugin_disabled",
     "check_plugin_updates",
     "list_plugin_versions",
@@ -442,6 +443,7 @@ mod gate_tests {
             crate::safe_mode::SafeModeState {
                 active: false,
                 disabled_rows: Vec::new(),
+                notice_dismissed: false,
             }
         );
         assert_shape!(

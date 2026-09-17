@@ -560,6 +560,9 @@ export interface SafeModeState {
   /// **此刻**仍处于停用态、且是安全模式写入的那些行 id（用户逐个打开后会变少；
   /// 全打开 → `active=false`，横幅自动消失）。
   disabledRows: string[]
+  /// 本轮安全模式的横幅是否已被用户关掉（"不再提示"）——前端据此不渲染横幅。
+  /// **每次以安全模式进入都会重置为 false**（新事件值得再说一次）。
+  noticeDismissed: boolean
 }
 
 /// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。

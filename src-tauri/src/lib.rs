@@ -413,6 +413,7 @@ pub fn run() {
             commands::plugin::update_plugin,
             commands::plugin::get_plugin_rows,
             commands::boot::get_safe_mode_state,
+            commands::boot::dismiss_safe_mode_notice,
             commands::plugin::set_plugin_disabled,
             commands::plugin::check_plugin_updates,
             commands::plugin::list_plugin_versions,

@@ -133,6 +133,10 @@ pub struct Journal {
     pub dsh_home: String,
     #[serde(default)]
     pub applied_at: u64,
+    /// 用户点过横幅上的关闭（"不再提示"）的时间。**每次进入安全模式都会写新记账 ⇒ 自动清零**
+    /// ——新的安全模式事件值得再说一次，同一轮的重复启动不打扰（2026-09-16 维护者裁定）。
+    #[serde(default)]
+    pub dismissed_at: Option<u64>,
 }
 
 /// 进入安全模式的结果。
@@ -156,6 +160,8 @@ pub struct SafeModeState {
     /// **此刻**仍处于停用态、且是我们进入安全模式时停的那些行 id（用户逐个打开后会变少；
     /// 全打开 → `active=false`，横幅自动消失）。
     pub disabled_rows: Vec<String>,
+    /// 本轮安全模式的横幅是否已被用户关掉（"不再提示"）。前端据此不渲染横幅。
+    pub notice_dismissed: bool,
 }
 
 /// 读记账（无文件 / 解析失败 → `None`：它是壳自己写的文件，损坏时按"未开安全模式"处理）。
@@ -176,6 +182,7 @@ pub fn state(data_dir: &Path, profile: &str, home: &Path) -> SafeModeState {
         return SafeModeState {
             active: false,
             disabled_rows: Vec::new(),
+            notice_dismissed: false,
         };
     };
     // 与**当前**配置求交集：用户在面板上逐个打开后数字随之下降；全开 → 不再报"安全模式中"
@@ -189,7 +196,25 @@ pub fn state(data_dir: &Path, profile: &str, home: &Path) -> SafeModeState {
     SafeModeState {
         active: !disabled_rows.is_empty(),
         disabled_rows,
+        notice_dismissed: journal.dismissed_at.is_some(),
     }
+}
+
+/// 关闭本轮的横幅（"不再提示"）：只改壳自有记账，**不碰 dsh 配置**。
+///
+/// 幂等；不是本 home 的记账 → `Ok(false)`（不做任何事，也不报错）。
+pub fn dismiss_notice(data_dir: &Path, profile: &str, home: &Path) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let Some(mut journal) = read_journal(data_dir, profile).filter(|j| journal_belongs_to(j, home))
+    else {
+        return Ok(false);
+    };
+    if journal.dismissed_at.is_some() {
+        return Ok(true); // 已是关闭态：零写入
+    }
+    journal.dismissed_at = Some(now_unix());
+    write_journal(data_dir, profile, &journal)?;
+    Ok(true)
 }
 
 /// 进入安全模式：把 `ids` 全部写成 `disabled: true`（**一次覆写、一次备份**）并记账。
@@ -245,6 +270,8 @@ pub fn enter(
         disabled_rows: ids.to_vec(),
         dsh_home: home.display().to_string(),
         applied_at: now_unix(),
+        // 新的安全模式事件 → 横幅重新出现（关闭只对"本轮"生效）。
+        dismissed_at: None,
     };
     write_journal(data_dir, profile, &journal)?;
     remove_legacy_overlay(data_dir, profile);
@@ -470,6 +497,45 @@ mod tests {
         assert!(after_all.disabled_rows.is_empty());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// 横幅关闭：持久（同轮不再出现）＋ 幂等零写入 ＋ **下次进入安全模式重新提示**
+    /// ＋ 不是本 home 的记账一律不动（2026-09-16 维护者按 PM 口径裁定）。
+    #[test]
+    fn dismiss_notice_persists_for_the_entry_and_resets_on_the_next_one() {
+        let home = tmp("dismiss-home");
+        let data = tmp("dismiss-data");
+        profile_with_patch(&home, PATCH);
+        let ids = vec!["dsh-dock--a".to_string()];
+        enter(&home, &data, "web", &ids).unwrap();
+
+        assert!(
+            !state(&data, "web", &home).notice_dismissed,
+            "刚进入时应提示"
+        );
+        assert!(dismiss_notice(&data, "web", &home).unwrap());
+        assert!(
+            state(&data, "web", &home).notice_dismissed,
+            "关闭后同轮不再提示"
+        );
+        // 幂等：再次关闭零写入
+        assert!(dismiss_notice(&data, "web", &home).unwrap());
+
+        // 重新进入安全模式（新事件）→ 重新提示
+        crate::plugins::set_plugin_disabled(&home, "web", "dsh-dock--a", false).unwrap();
+        enter(&home, &data, "web", &ids).unwrap();
+        assert!(
+            !state(&data, "web", &home).notice_dismissed,
+            "下一次进入安全模式必须重新提示"
+        );
+
+        // 别的 home 的记账：不动、不报错、返回 false
+        let other = tmp("dismiss-other");
+        assert!(!dismiss_notice(&data, "web", &other).unwrap());
+        assert!(!state(&data, "web", &home).notice_dismissed); // 仍是"未关闭"
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&data);
+        let _ = std::fs::remove_dir_all(&other);
     }
 
     /// 幂等：第二次进入**零写入**（不动 mtime、不留多余备份），也不覆盖已有记账——

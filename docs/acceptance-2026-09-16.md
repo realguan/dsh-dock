@@ -106,7 +106,7 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 |:---|:---|:---|
 | Rust 格式 | `cd src-tauri && cargo fmt --check` | 干净 |
 | Rust lint | `cargo clippy --all-targets -- -D warnings` | 0 警告 |
-| Rust 测试 | `cargo test` | **551 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
+| Rust 测试 | `cargo test` | **549 passed / 0 failed / 8 ignored**（8 = 真机项，见 §1.5）|
 | 前端类型 | `cd frontend && node node_modules/typescript/bin/tsc -b` | 0 错误 |
 | 前端 lint | `pnpm run lint` | 0 警告（153 文件） |
 | 前端测试 | `pnpm run test` | **454 passed / 52 文件** |
@@ -115,7 +115,7 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 **机器闸门覆盖的契约**（漏一处即红，不需要人记）：
 
 - IPC 四处同步（`ipc.rs::COMMANDS` → `lib.rs` handler → `capabilities/default.json` → `lib/tauri.ts`），
-  现 **64 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `list_ssh_hosts` /
+  现 **65 条命令**（含本批新增 `unarchive_session` / `probe_mcp_server` / `list_ssh_hosts` /
   `probe_ssh_target` / `generate_ssh_profile` / `apply_official_patch_row` / `remove_official_patch_row`）；
 - IPC 结构体形状 Rust↔TS（`ipc-shapes.json`）——本次 `BootErrorPayload` 加字段就是被它抓到的；
 - 网络面登记（`network_gate.rs`：MCP 探测的 streamable-http 为**条目级**豁免，非整文件）；
@@ -169,8 +169,8 @@ MCP 探测（C 组）在 **Profile 列表 → 选中一个 profile → 详情里
 | **F1** | 全仓 `content-visibility` 命中 **0**；`injected/memory-policy.js` 已删；ADR-0002 已记修订 | ✅ 我已验收（可选抽查：滑动手感） |
 | **F2** | 失败复现时 `dsh-shell.log` **非空（20565 字节栈）**；正常启动未被拖慢（你 15:37 那次 12s 就绪）；`stall_grace` 回归单测 | ✅ 我已验收 |
 | **S1** | 安全模式（**ADR-0026 第二版机制**）：改为**在 profile 配置里把全部三方插件写成 `disabled: true`**（覆写前备份）＋**一键用备份覆盖回去**。证据：12 项 `safe_mode` 单测（进入/恢复**逐字节**往返、幂等零写入、备份缺失如实报错、备份路径不可信拒绝覆盖、旧 overlay 清理、层序切分、随包全表）＋ **克隆体真机 A/B**（9 条三方行 disable → **8.2s 就绪**；原样启动 → exit 1/37.5s；同一组用 overlay → 7.9s 就绪；**多停一条随包行 `tools` → 复现旧 `exit 1` 签名**，证明旧结论的真因是枚举过宽）＋ 前端门禁 `safeModeBanner.test.ts`（横幅/`restorable` 门控/文案双侧）。首屏**恰好一个**修复类动作「停用全部三方插件并启动」（`plugin_row_failure_first_screen_has_exactly_one_action`）；`--patch` 注入已删除且有"绝不再传"回归锚 | ✅ 我已验收 |
-| **S2** | 补完可见性：控制中心横幅 + 「退出安全模式并重启」+ 实验能力面板两源说明 + 只读 IPC `get_safe_mode_state`（四处同步/登记册 64）+ 门禁 `safeModeBanner.test.ts` | 🖐 待你验收（点两下） |
-| **G1–G5** | ADR 0020–0025 全在且 `docs/adr/README.md` 索引含一行结论；登记册 **64** 条；复现点 20/21/22；`AGENTS.md` **221** 行（≤250） | ✅ 我已验收（抽查项） |
+| **S2** | 安全模式横幅（**第四版交互**）：只在"确实以安全模式进入过"时出现；文案 = "为让 DSH 能正常启动，全部三方插件已停用（当前 N 个）→ 到「插件」页重新打开"（**不提备份、不指向「实验能力」**）；右侧 X 可关闭（新 IPC `dismiss_safe_mode_notice`，只写壳自有记账），关后同轮不再出现、**下次进入安全模式重新提示**；数字与配置**实时**联动（2026-09-16 维护者按 PM 口径裁定）+ 门禁 `safeModeBanner.test.ts`（含反向断言） | 🖐 待你验收（点两下） |
+| **G1–G5** | ADR 0020–0025 全在且 `docs/adr/README.md` 索引含一行结论；登记册 **65** 条；复现点 20/21/22；`AGENTS.md` **221** 行（≤250） | ✅ 我已验收（抽查项） |
 
 **本节新增的可复跑真机项**（`#[ignore]`，缺环境变量即跳过）：
 
@@ -188,7 +188,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 ```
 
 **闸门复核（本轮改动后）**：Rust `fmt` / `clippy -D warnings` 干净、`cargo test`
-**551 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **454 passed**、生产构建通过。
+**549 passed / 0 failed / 8 ignored**；前端 `tsc` / `oxlint` 干净（153 文件）、`vitest` **454 passed**、生产构建通过。
 
 ### 你三张截图给出的结论（2026-09-16 第二轮）
 
@@ -515,14 +515,17 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 > 就在「实验能力」里打开哪个开关。
 
 - **步骤**：① 在失败卡点「停用全部三方插件并启动」→ 应真的起来，启动时间线出现
-  「安全模式：配置里有 N 个插件行处于停用（想用哪个就到「实验能力」打开）」；
-  ② 打开控制中心：顶部有**安全模式横幅**，只说明"已在配置文件里停用 N 个三方插件（进入前已备份）"，
-  **没有按钮**；
-  ③ 到「实验能力」把你要用的能力打开（例如"浏览器操作 / Playwright"），按提示重启该 Profile。
+  「安全模式：为保证启动，已停用全部三方插件（当前 N 个）——需要的插件到「插件」页重新打开」；
+  ② 打开控制中心：顶部有**安全模式横幅**（文案：**为让 DSH 能正常启动，全部三方插件已停用
+  （当前 N 个）。把你需要的插件到「插件」页重新打开即可。**），右侧**一个 X 关闭 icon**；
+  ③ 到「插件」页把你需要的插件重新打开（例如"浏览器操作 / Playwright"），按提示重启该 Profile；
+  ④ 回控制中心点横幅上的 **X** → 横幅消失；重启应用（不再进入安全模式）→ **不再出现**。
 - **期望**：
-  - 横幅在四个 Tab 都可见；**开关状态是"关"**（配置层写的 disable，与徽标同源，不再自相矛盾）；
+  - 横幅**只在"确实以安全模式进入过"时出现**（普通启动、没进过安全模式 → 不出现）；
+  - 文案**不提"备份"、也不指向「实验能力」**（那里只有策展能力，而这里停的是全部三方插件）；
   - **没有任何"恢复/回退"按钮**（点了也没有意义：那只会把坏行搬回来）；
-  - 打开某个能力后，横幅里的数字**随之下降**；全部打开后横幅消失（状态与配置实时联动）；
+  - 打开某个插件后，横幅里的数字**随之下降**；全部打开后横幅自动消失（状态与配置实时联动）；
+  - **关闭 icon 生效且持久**：关掉后同一次安全模式内不再出现；**但下一次再以安全模式进入会重新提示**；
   - `cordis.patch.yml` 同目录会留 `.bak-<时间戳>` 备份（覆写前备份纪律），需要时**手工**取用。
 - **判定**：☐ 待你验收
 
@@ -531,7 +534,7 @@ DSH_SSH_E2E=1 cargo test --lib ssh_config::tests::real_user_config -- --ignored 
 | # | 项 | 看什么 | 判定 |
 |:--|:--|:--|:--|
 | G1 | ADR 立项 | `docs/adr/0020`…`0024` 五份 + `docs/adr/README.md` 索引（含一行结论） | ☐ |
-| G2 | 登记册 | `docs/contracts/ipc-and-network-register.md`：**64** 条命令、网络面用途（含 MCP streamable-http 的**条目级**豁免） | ☐ |
+| G2 | 登记册 | `docs/contracts/ipc-and-network-register.md`：**65** 条命令、网络面用途（含 MCP streamable-http 的**条目级**豁免） | ☐ |
 | G3 | 复现台账 | `docs/contracts/dsh-behavior-ledger.md` 复现点 13–21（新增 21 = 本次插件树事故） | ☐ |
 | G4 | 广播留档 | `docs/broadcasts.md` 顶部：本批各条（能力开关重构 / 安装源策略 / 插件行修复 / 本次合并） | ☐ |
 | G5 | AGENTS 变更 | `AGENTS.md` §6 持久化键（`pluginRegistry` 等）、§7 登记册迁出、行数仍在 250 内 | ☐ |

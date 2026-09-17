@@ -90,7 +90,7 @@ export const enUS: AppCopy = {
     // Action -> **what it does** (shown next to each button on the first screen).
     // Mirrors `ErrorCard.tsx`'s ACTION_IPC set: a new action must add copy on both sides.
     impacts: {
-      safe_mode: "Disables every third-party plugin in the profile config (backed up first); one-click restore afterwards",
+      safe_mode: "Disables every third-party plugin in the profile config (backed up first); re-enable what you need from the Plugins page",
       safe_mode_reset: "For an unparsable plugin config: backs it up as .bak-<timestamp>, then empties the file",
       quarantine_plugin_row: "Deletes that row from cordis.patch.yml (auto-backed up first)",
       retry: "Runs the exact same startup flow again",
@@ -393,14 +393,18 @@ export const enUS: AppCopy = {
     pluginDisable: "Disable (Requires Restart)",
     pluginEnable: "Enable (Requires Restart)",
     pluginDisabled: "Disabled",
-    // Safe-mode banner (ADR-0026, third revision): the profile config is the single source of
-    // truth — third-party plugins are disabled there, so the toggles read as off. There is NO
-    // restore button (2026-09-16 ruling: restoring brings the broken config back, so startup
-    // fails again); the way forward is turning capabilities back on one by one.
+    // Safe-mode banner (ADR-0026, fourth revision — rewritten from a PM standpoint):
+    // ① shown only after the user actually entered via safe mode (journal-driven), dismissible,
+    //    and stays dismissed for that entry; ② the copy states what happened and where to undo it
+    //    one plugin at a time — no mention of backups (we offer no bulk restore) and no pointer to
+    //    Experimental Capabilities (that lists curated capabilities only, while safe mode disables
+    //    ALL third-party plugins).
     safeModeTitle: "Safe mode",
     safeModeBody: (n: number) =>
-      `${n} third-party plugins are disabled in your profile config (backed up before the change). ` +
-      `To use one, turn it back on under Experimental Capabilities.`,
+      `All third-party plugins were disabled so DSH could start (${n} currently off). ` +
+      `Turn the ones you need back on from the Plugins page.`,
+    safeModeDismiss: "Don't show again",
+    safeModeDismissFailed: (msg: string) => `Could not save "don't show again": ${msg}`,
     pluginOpBusyRemove: "Uninstalling…",
     pluginOpBusyUpdate: "Updating…",
     checkUpdatesBtn: "Check Updates",

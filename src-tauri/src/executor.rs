@@ -387,7 +387,7 @@ impl Executor for LocalExecutor {
                 2,
                 "done",
                 &format!(
-                    "安全模式：配置里有 {} 个插件行处于停用（想用哪个就到「实验能力」打开）",
+                    "安全模式：为保证启动，已停用全部三方插件（当前 {} 个）——需要的插件到「插件」页重新打开",
                     safe_mode_state.disabled_rows.len()
                 ),
             );

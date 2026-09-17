@@ -43,6 +43,7 @@
     "allow-update-plugin",
     "allow-get-plugin-rows",
     "allow-get-safe-mode-state",
+    "allow-dismiss-safe-mode-notice",
     "allow-set-plugin-disabled",
     "allow-check-plugin-updates",
     "allow-list-plugin-versions",

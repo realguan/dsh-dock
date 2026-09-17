@@ -149,6 +149,22 @@ pub async fn get_safe_mode_state(
     Ok(crate::safe_mode::state(&data_dir, &profile, &home))
 }
 
+/// 关掉本轮的安全模式横幅（"不再提示"）：只写壳自有记账，**不碰 dsh 配置**。
+///
+/// 为什么要有它（2026-09-16 维护者裁定）：安全模式横幅只在"用户确实以安全模式进入过"时出现，
+/// 且必须**可关闭**——用户看过一次就够了；同一轮再启动不打扰，**下一次进入安全模式会重新提示**
+/// （新记账 = 新事件）。
+#[tauri::command]
+pub async fn dismiss_safe_mode_notice(
+    app: tauri::AppHandle,
+    profile: String,
+) -> Result<bool, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::profiles::validate_profile_name(&profile)?;
+    let home = crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+    crate::safe_mode::dismiss_notice(&data_dir, &profile, &home)
+}
+
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
 /// `version`（2026-09-09 版本选择器）：upgrade / upgrade_only 的显式目标版本
