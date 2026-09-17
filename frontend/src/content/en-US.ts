@@ -872,9 +872,10 @@ export const enUS: AppCopy = {
     noDescription: "No description",
     officialCoreTitle: "DSH official core plugin",
     // Experimental capability switches (2026-09-16, ADR-0020 §7: catalog rows -> capability switches)
-    // Copy discipline: the first reading layer stays user-facing (value / prerequisites /
-    // state / consequences); package names, pinned versions, activation mode and row ids
-    // all live under Details.
+    // Copy discipline (after the 2026-09-17 v3 layout rework): the left-hand list row carries only
+    // what must be known at a glance (name / state / providing plugin / switch). Value, plugin
+    // list, prerequisites, pinned versions and row ids all live in the right-hand always-on
+    // detail pane — nothing there needs expanding any more, so it is no longer "collapsed copy".
     capTab: "Experimental",
 
     capTitle: "Experimental Capabilities",
@@ -884,10 +885,17 @@ export const enUS: AppCopy = {
     capOfficialBadge: "DSH Official",
     capOfficialNote:
       "These are dsh experimental capabilities published by DeepSeek (@deepseek-ai/* packages): dsh-dock only curates them and flips the switch — they are not community plugins.",
+    // Two-pane layout (list / detail pane): list heading, detail-pane accessible name, and the
+    // back control used by the narrow-window drill-down.
+    capListLabel: "Capabilities",
+    capPaneLabel: (name: string) => `${name} details`,
+    capBack: "Back to list",
     capPluginsLabel: "Plugins",
+    capBackendLabel: "Backend plugin",
     capPrereqCommon: "Shared prerequisites",
+    capBasePackages: (pkgs: string) => `shared base ${pkgs}`,
     capAlsoInstalls: (pkgs: string) => `also installs shared ${pkgs}`,
-    capOfficialDesc: "Official description",
+    capOfficialDesc: "Official description: ",
     capOfficialDescPending: "The package's own description appears here once installed",
     capDesc: "dsh capabilities that upstream marks as experimental. Turn one on to install and mount it; you can turn it off at any time.",
     capTargetProfile: "Target Profile",
@@ -895,7 +903,9 @@ export const enUS: AppCopy = {
     capLoadFailed: "Failed to load experimental capabilities",
     capReload: "Retry",
     capSummary: (on: number, total: number) => `${on} of ${total} enabled`,
-    capSummaryNeedsWork: (n: number) => `Attention needed: ${n}`,
+    capSummaryNeedsWork: (n: number) => `${n} need attention`,
+    // "Disabled" is a state the user chose (turned off without uninstalling) — not a problem.
+    capSummaryDisabled: (n: number) => `${n} disabled`,
     capSummaryOff: (n: number) => `${n} not enabled`,
     capRestartHint: "Configuration changed. Restart this Profile to apply it.",
     capRestartNow: "Restart Now",
@@ -931,9 +941,9 @@ export const enUS: AppCopy = {
     capQueueHint: "Package downloads and retries live in Downloads",
     capRepair: "Repair",
     capReadyToEnable: "Ready to turn on",
-    capDetailToggle: "Details",
     capUnlocks: "What happens when you turn it on",
     capImplTitle: "Implementation details (for troubleshooting)",
+    capImplPackages: (n: number) => `${n} packages`,
     capPinned: (spec: string) => `Pinned to ${spec}`,
     capActivationAuto: "Activated automatically by dsh",
     capActivationInsert: "Needs a config row",
@@ -956,9 +966,21 @@ export const enUS: AppCopy = {
     capRemoveNoteLayer: "This capability comes from a profile layer, so turning it off means removing that layer; its packages get uninstalled.",
     capRemoveConfirm: "Remove",
     capRemovePointPackages: (n: number) => `Uninstalls ${n} packages (turning it back on downloads them again)`,
+    capReplaceDisplaced: (pkgs: string) =>
+      `The installed backend packages are removed first: ${pkgs} (not reinstalled automatically)`,
     capRemovePointRows: "Deletes the config rows written by dsh-dock (leaving them behind would strand rows pointing at missing packages)",
     capRemovePointLayer: "Removes this layer from the profile layer list",
     capDone: "Applied",
+    // Punctuation and whole sentences live in the dictionary too: the component must not carry
+    // full-width CJK punctuation (2026-09-17 independent review: switching to English showed
+    // strings such as `Could not read experimental capabilities：…`).
+    capValueSep: ": ",
+    capWhyJoin: "; ",
+    capDoneFor: (name: string) => `${name}: applied`,
+    capPartialFor: (name: string, done: number, total: number) =>
+      `${name}: ${done}/${total} done, the remaining steps can be resumed`,
+    capFailedOn: (name: string) => `failed on ${name}`,
+    capRowHasFailure: "This capability has an unresolved failure — the detail pane shows why",
     capPartial: (done: number, total: number) => `Finished ${done} of ${total}; you can continue the remaining steps`,
     installModalTitle: (pkg: string) => `Install Plugin "${pkg}"`,
     installModalDesc: "Choose target profile. It will be added to package.json and built via pnpm automatically.",

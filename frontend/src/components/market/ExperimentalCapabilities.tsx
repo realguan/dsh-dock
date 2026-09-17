@@ -1,28 +1,46 @@
 // ExperimentalCapabilities.tsx —— 「实验能力」开关面板（2026-09-16，ADR-0020 §7）。
 //
-// ## 为什么推倒重来
+// ## 为什么推倒重来（v1 → v2，2026-09-16）
 //
-// v1（`OfficialLab.tsx`）以**包**为呈现单位，结果是：同一能力的三个互斥后端成了三张
-// 等价卡片（用户看不出"现在用的是哪一个"）；唯一动作是"安装"，**关掉这件事在面板里
-// 根本不存在**；状态只到"包装没装"（挂载行缺没缺、有没有被停用都看不见）；而
-// "钉版本 / 需写入挂载行 / 由 dsh 自动激活"这些维护者信息占着第一阅读层。
+// v1（`OfficialLab.tsx`）以**包**为呈现单位：同一能力的三个互斥后端成了三张等价卡片
+// （用户看不出"现在用的是哪一个"）；唯一动作是"安装"，**关掉这件事在面板里根本不存在**；
+// 状态只到"包装没装"。v2 确立的语义（仍然成立）：
 //
-// ## 现在的语义
+// 1. **呈现单位 = 能力**；互斥后端 = 能力内的变体（换后端是选择，不是让用户理解三选一）。
+// 2. **开关是真开关**：关闭 = 写行级 `disabled`（**不卸载**、秒级可逆）；移除是独立动作。
+//    含 profile 层的变体不能纯行级关闭（层 patch 带副作用），此时关闭动作即移除并说明原因。
+// 3. **状态如实**：`未启用 / 已启用 / 已停用 / 需要修复 / 后端冲突` 由后端算全，本组件不猜。
 //
-// 1. **呈现单位 = 能力**：四项（多智能体协同 / 浏览器操作 / 桌面控制 / 自动安全审查），
-//    互斥后端降级为**能力内的变体**——"换后端"成了同一张卡内的一个选择，而不是让用户
-//    去理解"三选一"。
-// 2. **开关是真开关**：关闭 = 写行级 `disabled`（**不卸载**、秒级可逆）；移除是独立的
-//    次要动作（清停用桩 → 删壳写的行 → 逆序卸包）。含 profile 层的变体不能纯行级关闭
-//    （层 patch 带副作用），此时开关的关闭动作就是移除，并在文案里说明原因。
-// 3. **状态如实**：`未启用 / 已启用 / 已停用 / 需要修复 / 后端冲突` 由后端算全
-//    （「包 × 行 × disabled」的函数），本组件不猜。
-// 4. **实现细节折叠**：包名 / 钉版本 / 激活方式 / 行 id 收进「详情」，第一阅读层只留
-//    价值、前置与状态。
+// ## 为什么第二次重做（v2 → v3，2026-09-17）
+//
+// 维护者验收 v2 的判词："进去占用的空间也太多了，一屏只能看到一个工具；点击详情还又加长
+// 卡片内容。"（真机实测：1280×820 默认窗口下整页 **1897px**，四张卡 341/530/360/278px，
+// 一屏只装得下 **1** 张。）
+//
+// 病根不是"卡片里字太多"，而是**把清单与详情塞进同一个纵向流**——于是详情只有两条路：
+// 内联展开（卡片越长越长，点一次详情把第二张卡推出屏幕）或藏起来（用户看不到）。两条都错。
+//
+// v3 = **清单 / 详情分栏**（macOS 系统设置、VS Code 设置同款形态）：
+//   · 左栏：一能力一行，**恒为紧凑态**（图标 · 名称 · 状态徽标 · 当前插件名 · 开关），
+//     四项一屏全见；行的作用只有两个——看状态、切走/开。
+//   · 右栏：**选中能力的常驻详情面**（插件与后端切换 · 前置 · 排障细节 · 移除）。
+//     **没有"展开"这件事**：点左栏的行只是换右栏内容。量出来的边界要说清——
+//     **左栏恒不动**（1280×820 下四行 66/66/66/52px），右栏内容多的能力（三后端那一项）
+//     仍会让整页长出约 70px（820 → 889）并出现轻微滚动：右栏是流式列，不裁剪内容。
+//   · 窄窗口（<1024，应用最小 960）降级为**下钻**：列表 → 详情 + 返回。
+//
+// 一并保留的既有裁定（都是真机/评审换来的，别删）：
+//   · 插件名（官方 npm 包名）进第一阅读层，我们发明的「Web 档」这类名字一律不出现
+//     （2026-09-17 裁定，见 `variantPackageRoles` / `variantDisplayName`）；
+//   · 宿主前置缺失是**硬门**：开关禁用 + 原因用警示色原样展示（后端文案，前端不自造）；
+//   · 品牌色只承担"选中 / 主操作"，状态色只承担状态（v2 曾把两者画成同一个点）；
+//   · 用户可见文案里不得出现 markdown 标记（面板没有渲染器）；
+//   · 动效克制：入场上浮 4px、换详情面淡入；`prefers-reduced-motion` 全关。
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { motion, useReducedMotion } from "framer-motion"
 import {
+  ArrowLeft,
   BadgeCheck,
   Bot,
   Check,
@@ -53,6 +71,8 @@ import { api } from "@/lib/tauri"
 import {
   capabilityIO,
   commonPrerequisites,
+  commonSharedPackages,
+  offMeansRemove,
   planDisable,
   planRemove,
   planReplace,
@@ -78,6 +98,35 @@ const ICONS: Record<string, typeof Bot> = {
   "auto-review": ShieldCheck,
 }
 
+/** 详情面的 DOM id：左栏的行用 `aria-controls` 指向它（屏幕阅读器知道"这行控制谁"）。 */
+const PANE_ID = "cap-pane"
+
+/** 清单行的 DOM id（窄窗口"返回清单"时把焦点还给刚才那一行）。 */
+const rowId = (capId: string) => `cap-row-${capId}`
+
+/** 是否走**下钻**形态（<1024：应用最小窗口 960，此时清单与详情面互斥显示）。
+ *  只用于焦点管理——版面切换本身由 Tailwind 的 `lg:` 类完成，不靠 JS 量宽度。 */
+function isDrillLayout(): boolean {
+  // 与 Tailwind v4 的 `lg` 同口径（默认 64rem）——写死 1024px 会在根字号非 16px 时
+  // 与版面的断点分叉：清单已经 `display:none`、焦点却按"宽窗口"不搬。
+  return typeof window !== "undefined" && !window.matchMedia("(min-width: 64rem)").matches
+}
+
+/** 状态色（图标底 / 徽标同源）：off 保持中性，不制造噪音。 */
+function stateTone(state: Capability["state"] | CapabilityVariant["state"]): string {
+  switch (state) {
+    case "on":
+      return "border-ok/30 bg-ok-soft text-ok"
+    case "disabled":
+      return "border-warn/30 bg-warn-soft text-warn"
+    case "partial":
+    case "conflict":
+      return "border-danger/30 bg-danger-soft text-danger"
+    default:
+      return "border-line bg-wash text-dim"
+  }
+}
+
 interface Props {
   refreshKey: number
   onNotice?: (message: string, tone?: "ok" | "warn") => void
@@ -87,10 +136,14 @@ interface Props {
   /// 本轮实际未生效"——否则它会与已装插件列表的运行态徽标自相矛盾。
 }
 
-/** 正在执行的一次动作（进度导轨的数据源）。 */
+/** 正在执行的一次动作（进度导轨的数据源）。
+ *
+ *  单槽是**有意的**：行写（写/删/停用挂载行）不入队，`plugins.rs` 侧也没有互斥，
+ *  两条编排行交错会丢配置写入（界面报"已完成"，文件里那行没写上），同族两次 teardown
+ *  还会打乱"先删行再卸包"的顺序（悬空行 = dsh 起不来）。所以 `run !== null` 期间
+ *  **所有**动作入口都必须关掉——见下方 `busy` 的传法（2026-09-17 独立复核）。 */
 interface RunState {
   capId: string
-  variantId: string
   ops: readonly CapabilityOp[]
   index: number
 }
@@ -117,6 +170,10 @@ export function ExperimentalCapabilities({
   const [picked, setPicked] = useState<Record<string, string>>({})
   /** 每次成功动作后置位：提示"重启后生效"。 */
   const [dirty, setDirty] = useState(false)
+  /** 详情面正在看哪个能力（`null` = 用第一个）。点左栏的行 = 换详情面内容。 */
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  /** 窄窗口下的下钻态：为真时只显示详情面（列表被"返回"带走）。宽窗口无影响。 */
+  const [drilled, setDrilled] = useState(false)
 
   // 待确认的动作（启用 / 移除都走确认；停用可逆，不拦）。
   const [pending, setPending] = useState<PendingAction | null>(null)
@@ -141,17 +198,27 @@ export function ExperimentalCapabilities({
     })()
   }, [refreshKey])
 
+  /** 最新一次回读的令牌：只接受**最后一次**请求的结果。
+   *
+   *  为什么需要（2026-09-17 独立复核）：在途动作的 `finally` 会用它**发起时**那个闭包里的
+   *  profile 回读一遍。若期间用户换了档，那次回读会把**旧档**的清单写进 `caps`——下拉显示 B、
+   *  清单却是 A 的事实，之后按 A 的 `installed/rowPresent` 算出的计划会装进 B。 */
+  const loadSeq = useRef(0)
   const load = useCallback(async () => {
     if (!profile) return
+    const seq = (loadSeq.current += 1)
     setLoading(true)
     setError(null)
     try {
-      setCaps(await api.listExperimentalCapabilities(profile))
+      const next = await api.listExperimentalCapabilities(profile)
+      if (seq === loadSeq.current) setCaps(next)
     } catch (e) {
-      setCaps(null)
-      setError(`${t.market.capLoadFailed}：${String(e)}`)
+      if (seq === loadSeq.current) {
+        setCaps(null)
+        setError(`${t.market.capLoadFailed}${t.market.capValueSep}${String(e)}`)
+      }
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
   }, [profile, t])
 
@@ -160,6 +227,11 @@ export function ExperimentalCapabilities({
     // profile 的变体、失败详情挂在别的档上）。
     setPicked({})
     setFailures({})
+    setSelectedId(null)
+    setDrilled(false)
+    // 换档必须连 `dirty` 一起清：它是**按档**的事实（哪个档的配置被改过），
+    // 留着会让"立即重启"打在没改过的那个档上，真正被改的档永远不会被重启。
+    setDirty(false)
     void load()
   }, [load])
 
@@ -171,7 +243,12 @@ export function ExperimentalCapabilities({
   const selectedVariant = useCallback(
     (cap: Capability): CapabilityVariant => {
       const id = picked[cap.id] ?? cap.activeVariant ?? undefined
-      return cap.variants.find((v) => v.id === id) ?? cap.variants[0]
+      const found = id ? cap.variants.find((v) => v.id === id) : undefined
+      if (found) return found
+      // 兜底**跳过被前置门挡住的档**（2026-09-17 独立复核）：选它没有任何可用动作
+      // （开关必然灰），于是"清单里那个开关"对桌面控制这类能力形同虚设——用户得先去
+      // 右栏换一档才能开。落到第一个可用档上，清单的开关才是真的可用；全被挡才退回首个。
+      return cap.variants.find((v) => !v.prerequisiteMissing && !v.subsumedBy) ?? cap.variants[0]
     },
     [picked],
   )
@@ -179,11 +256,18 @@ export function ExperimentalCapabilities({
   /** 统一执行入口：跑计划 → 回读状态 → 记成败。 */
   const execute = useCallback(
     async (cap: Capability, variantId: string, ops: readonly CapabilityOp[]) => {
+      // 动作一发起就把详情面切到该能力：进度与失败都在用户正看着的那一栏里出现
+      // （v3 的分栏形态下，"就地呈现"= 选中它，而不是把卡片往下长）。
+      setSelectedId(cap.id)
+      setDrilled(true)
+      if (isDrillLayout()) {
+        requestAnimationFrame(() => document.getElementById(PANE_ID)?.focus())
+      }
       if (ops.length === 0) {
         await load()
         return
       }
-      setRun({ capId: cap.id, variantId, ops, index: 0 })
+      setRun({ capId: cap.id, ops, index: 0 })
       setFailures((prev) => {
         const next = { ...prev }
         delete next[cap.id]
@@ -195,7 +279,7 @@ export function ExperimentalCapabilities({
         )
         if (result.ok) {
           setDirty(true)
-          onNotice?.(`${cap.labelZh}：${t.market.capDone}`, "ok")
+          onNotice?.(t.market.capDoneFor(cap.labelZh), "ok")
         } else {
           // 失败**不回滚**：已完成的步处于一致态，就地保留原因供续跑。
           const detail = result.failedAt?.error ?? ""
@@ -210,7 +294,7 @@ export function ExperimentalCapabilities({
           // 只有**真的改过什么**才提示重启：0/N 步就失败时文件一个字节都没动，
           // 此时报"配置已变更"是谎报，会把用户骗去重启一个没变的 Profile。
           if (result.completedOps > 0) setDirty(true)
-          onNotice?.(`${cap.labelZh}：${t.market.capPartial(result.completedOps, result.totalOps)}`, "warn")
+          onNotice?.(t.market.capPartialFor(cap.labelZh, result.completedOps, result.totalOps), "warn")
         }
       } finally {
         setRun(null)
@@ -249,7 +333,7 @@ export function ExperimentalCapabilities({
     setPending({ kind: "remove", cap, variantId: variant.id })
   }
 
-  // 确认后**先关框再执行**：进度与失败都在卡片里就地呈现（模态不遮住它们）。
+  // 确认后**先关框再执行**：进度与失败都在详情面里就地呈现（模态不遮住它们）。
   // 失败不留在框里，故框没有 busy/error 状态需要维护。
   const confirmPending = async () => {
     if (!pending) return
@@ -269,7 +353,10 @@ export function ExperimentalCapabilities({
     return {
       on: all.filter((c) => c.state === "on").length,
       off: all.filter((c) => c.state === "off").length,
-      other: all.filter((c) => c.state !== "on" && c.state !== "off").length,
+      // 「需要处理」只数真的坏了/冲突的；「已停用」是**用户自己关的**（关而不卸），
+      // 算进"需要处理"等于面板对自己造成的状态报警（2026-09-17 独立复核实测）。
+      other: all.filter((c) => c.state === "partial" || c.state === "conflict").length,
+      disabled: all.filter((c) => c.state === "disabled").length,
     }
   }, [caps])
 
@@ -277,34 +364,47 @@ export function ExperimentalCapabilities({
     return <p className="px-1 py-6 text-center text-label text-dim">{t.market.capPickProfile}</p>
   }
 
+  // 详情面归属：显式选中 → 第一项。列表随 profile 变化时 selectedId 已被清空。
+  const selected = caps?.find((c) => c.id === selectedId) ?? caps?.[0] ?? null
+  /** 点清单行 = 换详情面内容。窄窗口下这一步会隐藏整个清单，所以焦点必须跟着搬到
+   *  详情面（否则它留在一个 `display:none` 的按钮上，键盘用户从此失踪）。 */
+  const select = (cap: Capability) => {
+    setSelectedId(cap.id)
+    setDrilled(true)
+    if (isDrillLayout()) {
+      requestAnimationFrame(() => document.getElementById(PANE_ID)?.focus())
+    }
+  }
+
+  /** 窄窗口的「返回清单」：把焦点还给刚才那一行（下钻的对称动作）。 */
+  const backToList = (capId: string | null) => {
+    setDrilled(false)
+    if (isDrillLayout() && capId) {
+      requestAnimationFrame(() => document.getElementById(rowId(capId))?.focus())
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-3">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
-            {/* DSH 官方标记（2026-09-17 维护者裁定）：这些是上游官方实验包，
-                不是社区插件——来源必须在第一阅读层说清。 */}
-            <Badge
-              variant="outline"
-              className="h-4.5 gap-1 rounded-full border-brand/25 bg-brand/5 px-2 text-meta font-normal text-brand-deep"
-            >
-              <BadgeCheck className="size-3" />
-              {t.market.capOfficialBadge}
-            </Badge>
-          </div>
-          <p className="mt-1 max-w-prose text-label leading-relaxed text-dim">
-            {t.market.capDesc}
-          </p>
-          <p className="mt-0.5 max-w-prose text-label leading-relaxed text-faint">
-            {t.market.capOfficialNote}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className="whitespace-nowrap text-meta text-faint">
-            {t.market.capTargetProfile}
-          </span>
-          <Select value={profile} onValueChange={setProfile}>
+    <div className="flex flex-col gap-2.5">
+      {/* 页头压成两行：身份 + 目标 Profile 同一行，说明各一行（v2 这里是 4 行 + 一条汇总条）。
+          官方来源说明（capOfficialNote）留在页头：它是"这不是社区插件"的口径，不能挪进详情。 */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
+        <Badge
+          variant="outline"
+          className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-2 text-meta font-normal text-brand-deep"
+        >
+          <BadgeCheck className="size-3" />
+          {t.market.capOfficialBadge}
+        </Badge>
+        <span className="min-w-0 flex-1 basis-56 text-label leading-relaxed text-dim">
+          {t.market.capDesc}
+        </span>
+        {/* 用 div 而不是 label：可聚焦元素是 Radix 的 trigger（一个 button），
+            它已经用 aria-label 报了同一个名字；再套一层 label 只会多一条重复的关联路径。 */}
+        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-meta text-faint">
+          {t.market.capTargetProfile}
+          <Select value={profile} onValueChange={setProfile} disabled={run !== null}>
             <SelectTrigger
               aria-label={t.market.capTargetProfile}
               className="h-7 min-w-[132px] rounded-md border-line bg-panel font-mono text-label"
@@ -321,41 +421,10 @@ export function ExperimentalCapabilities({
           </Select>
         </div>
       </header>
-
-      {caps && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-line bg-wash px-3 py-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-label">
-            <span className="text-ink">{t.market.capSummary(summary.on, caps.length)}</span>
-            {summary.other > 0 && (
-              <span className="text-warn">{t.market.capSummaryNeedsWork(summary.other)}</span>
-            )}
-            {summary.off > 0 && (
-              <span className="text-faint">{t.market.capSummaryOff(summary.off)}</span>
-            )}
-          </div>
-          {/* 状态轨：一卡一点，颜色只表状态（与卡片图标底同源）。纯装饰，文字已给全信息。 */}
-          <div aria-hidden className="ml-auto flex items-center gap-1.5">
-            {caps.map((c) => (
-              <span
-                key={c.id}
-                title={c.labelZh}
-                className={`block size-2 rounded-full ${
-                  c.state === "on"
-                    ? "bg-ok"
-                    : c.state === "conflict" || c.state === "partial"
-                      ? "bg-danger"
-                      : c.state === "disabled"
-                        ? "bg-warn"
-                        : "bg-line"
-                }`}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <p className="-mt-1 text-meta leading-relaxed text-faint">{t.market.capOfficialNote}</p>
 
       {dirty && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-label text-warn">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-1.5 text-label text-warn">
           <Info className="size-3.5 shrink-0" />
           <span>{t.market.capRestartHint}</span>
           {onRestart && (
@@ -379,7 +448,7 @@ export function ExperimentalCapabilities({
       )}
 
       {error && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-label text-danger">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-1.5 text-label text-danger">
           <TriangleAlert className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
           <Button
@@ -393,30 +462,74 @@ export function ExperimentalCapabilities({
         </div>
       )}
 
-      {caps?.map((cap, i) => (
-        <CapabilityCard
-          key={cap.id}
-          index={i}
-          cap={cap}
-          variant={selectedVariant(cap)}
-          run={run?.capId === cap.id ? run : null}
-          failure={failures[cap.id]?.error ?? null}
-          failureKind={failures[cap.id]?.failureKind ?? null}
-          failedVariantId={failures[cap.id]?.variantId ?? null}
-          onPick={(id) => setPicked((prev) => ({ ...prev, [cap.id]: id }))}
-          onToggle={handleSwitch}
-          onRepair={(v) => runEnable(cap, v)}
-          // 续跑目标 = **失败时那个变体**（不是此刻选中的那个）：`planReplace` 会按
-          // 回读到的真实状态补缺口，重跑同一个变体才是"继续剩余步骤"。
-          onResume={(v) => {
-            const id = failures[cap.id]?.variantId
-            const target = id ? cap.variants.find((x) => x.id === id) : undefined
-            runEnable(cap, target ?? v)
-          }}
-          onRemove={(v) => setPending({ kind: "remove", cap, variantId: v.id })}
-          t={t}
-        />
-      ))}
+      {caps && (
+        // 两栏：[清单 | 详情面]。窄窗口（<1024）退化为下钻——列表与详情面互斥显示。
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(21rem,25rem)_minmax(0,1fr)]">
+          <section
+            aria-label={t.market.capListLabel}
+            className={drilled ? "hidden lg:block" : ""}
+          >
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 px-0.5 text-meta text-faint">
+              <span className="font-medium tracking-wider">{t.market.capListLabel}</span>
+              <span className="text-ink">{t.market.capSummary(summary.on, caps.length)}</span>
+              {summary.other > 0 && (
+                <span className="text-warn">{t.market.capSummaryNeedsWork(summary.other)}</span>
+              )}
+              {/* 「已停用」用中性色：它是**用户自己关的**（关而不卸），拿警示色等于
+                  给一个正常状态报警（2026-09-17 独立复核）。 */}
+              {summary.disabled > 0 && (
+                <span className="text-dim">{t.market.capSummaryDisabled(summary.disabled)}</span>
+              )}
+              {summary.off > 0 && <span>{t.market.capSummaryOff(summary.off)}</span>}
+            </div>
+            <ul className="flex flex-col gap-1.5">
+              {caps.map((cap, i) => (
+                <CapabilityRow
+                  key={cap.id}
+                  index={i}
+                  cap={cap}
+                  variant={selectedVariant(cap)}
+                  selected={selected?.id === cap.id}
+                  running={run?.capId === cap.id}
+                  busy={run !== null}
+                  failed={Boolean(failures[cap.id])}
+                  onSelect={select}
+                  onToggle={handleSwitch}
+                  t={t}
+                />
+              ))}
+            </ul>
+          </section>
+
+          {/* 详情面：常驻，没有展开/收起。`key` = 换能力时重新入场（轻淡入，不动高度）。 */}
+          <div className={drilled ? "" : "hidden lg:block"}>
+            {selected && (
+              <CapabilityPane
+                key={selected.id}
+                cap={selected}
+                variant={selectedVariant(selected)}
+                run={run?.capId === selected.id ? run : null}
+                busy={run !== null}
+                failure={failures[selected.id]?.error ?? null}
+                failureKind={failures[selected.id]?.failureKind ?? null}
+                failedVariantId={failures[selected.id]?.variantId ?? null}
+                onPick={(id) => setPicked((prev) => ({ ...prev, [selected.id]: id }))}
+                onRepair={(v) => runEnable(selected, v)}
+                onBack={() => backToList(selected.id)}
+                // 续跑目标 = **失败时那个变体**（不是此刻选中的那个）：`planReplace` 会按
+                // 回读到的真实状态补缺口，重跑同一个变体才是"继续剩余步骤"。
+                onResume={(v) => {
+                  const id = failures[selected.id]?.variantId
+                  const target = id ? selected.variants.find((x) => x.id === id) : undefined
+                  runEnable(selected, target ?? v)
+                }}
+                onRemove={(v) => setPending({ kind: "remove", cap: selected, variantId: v.id })}
+                t={t}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={pending !== null}
@@ -496,7 +609,7 @@ type PendingAction =
 function pendingRemoveIsLayer(pending: PendingAction | null): boolean {
   if (!pending || pending.kind !== "remove") return false
   const variant = pending.cap.variants.find((v) => v.id === pending.variantId)
-  return variant ? !variant.toggleOffSupported : false
+  return variant ? offMeansRemove(variant) : false
 }
 
 /** 确认框的要点清单：启用给前置与替换警告，移除给不可逆影响面。 */
@@ -511,509 +624,714 @@ function confirmPoints(
     if (pending.cap.activeVariant && pending.cap.activeVariant !== variant.id) {
       const from = pending.cap.variants.find((v) => v.id === pending.cap.activeVariant)
       points.push(t.market.capReplaceFrom(from?.labelZh ?? ""))
+    } else if (variant.displaced.length > 0) {
+      // 没有"当前生效"的档、但别的档已经有包就位（**冲突态**或装了一半）：`planReplace`
+      // 仍会先把它们拆掉。后端早把要拆的包算在 `displaced` 里了，这里如实说出来——
+      // 否则用户在冲突态点"启用"只看到"将安装下列包"，不知道还会卸掉别的东西。
+      points.push(t.market.capReplaceDisplaced(variant.displaced.join(" · ")))
     }
     return points.length > 0 ? points : [t.market.capNoPrereq]
   }
+  // 数字要按**真会卸的包**数：`teardownOps` 只对 `installed` 的步发 remove，
+  // 装到一半（partial）时报总步数是谎报（2026-09-17 独立复核）。
+  const installed = variant.steps.filter((s) => s.installed).length
   return [
-    t.market.capRemovePointPackages(variant.steps.length),
+    ...(installed > 0 ? [t.market.capRemovePointPackages(installed)] : []),
     t.market.capRemovePointRows,
-    ...(variant.toggleOffSupported ? [] : [t.market.capRemovePointLayer]),
+    ...(offMeansRemove(variant) ? [t.market.capRemovePointLayer] : []),
   ]
 }
 
-/** 单张能力卡：身份（这是谁）→ 状态 → 插件（哪几个包 / 选哪一档）→ 动作 → 详情。
+/** **清单行**：一能力一行，恒为紧凑态（图标 · 名称 · 状态 · 当前插件名 · 开关）。
  *
- * 2026-09-17 重做（维护者裁定：**命名直接用插件名** ＋「这一页 UI/UX 要规范」）：
- *   · **一档一行、行首就是插件名**：不再有"后端 chips ＋ 官方包清单"两套并行表达，
- *     也不再出现「Web 档 / 复用已装的 cua-driver」这类我们发明的名字（见
- *     `variantPackageRoles`：标识包 = 该档独有，基座包 = 兄弟档共用）；
- *   · 刻度按仓库既有 token：正文 note(13) / 次要 label(11) / 节标 meta(10) / 角标 micro(9)；
- *   · 圆角按角色：面 xl(14)、可选行与控制件 md(10)、状态徽标胶囊；
- *   · 品牌色只承担"选中 / 主操作"，状态色只承担状态，两者不混用（旧版把选中与生效都
- *     画成同一个点，用户分不清"我选了它"与"它在跑"）；
- *   · 动效克制：入场上浮 4px（可关）、详情高度展开；`prefers-reduced-motion` 全关。
- */
-function CapabilityCard({
+ * 这一行是 v3 的核心取舍：**只放"扫一眼就要知道"的东西**——这是什么、现在什么状态、
+ * 由哪个插件提供、开还是关。价值描述、插件清单、前置、版本、行 id 全部归详情面；
+ * 行里再塞任何一条，"一屏四项"就崩了（v2 的教训）。
+ *
+ * 开关在行里（而不是详情面）是**有意**的：这块面板的本职是"看一眼四项、随手开关"，
+ * 把开关埋进右栏会让每次开关都多一次点击。它操作的是**该能力当前选中的变体**
+ * （`selectedVariant`：用户显式选择 → 当前生效 → 首个**可用**档），行内的插件名就是它。 */
+function CapabilityRow({
+  cap,
+  variant,
+  selected,
+  running,
+  busy,
+  failed,
+  index,
+  onSelect,
+  onToggle,
+  t,
+}: {
+  cap: Capability
+  variant: CapabilityVariant
+  /** 是否是详情面正在展示的那一项（选中 ≠ 状态，用品牌色表达）。 */
+  selected: boolean
+  /** **本能力**正在跑一次动作（给行内转圈用）。 */
+  running: boolean
+  /** **任意能力**正在跑一次动作 → 关掉所有动作入口（`run` 是单槽，见 `RunState`）。 */
+  busy: boolean
+  /** 该能力有未处理的失败（行内给一个警示标记，免得用户只看得到"需要修复"却找不到原因）。 */
+  failed: boolean
+  /** 序号：只用于入场错峰（≤6 行，延迟封顶，不做长尾）。 */
+  index: number
+  onSelect: (cap: Capability) => void
+  onToggle: (cap: Capability, variant: CapabilityVariant, next: boolean) => void
+  t: ReturnType<typeof useI18n>["t"]
+}) {
+  const reduceMotion = useReducedMotion()
+  const Icon = ICONS[cap.id] ?? Bot
+  const on = variant.state === "on"
+  // 被超集档包含的档（如"自建档"之于"Web 档"）：不提供独立开关——它的包就是超集档的
+  // 基础层，单独关掉会把超集档一起拆坏。真机暴露于 2026-09-16。
+  // **用 Boolean() 而不是 `!== null`**：这两个字段在契约里是 `T | null`，但"字段缺省"
+  // 会静默变成 `undefined`，而 `undefined !== null` 为真 —— 2026-09-17 真机渲染复盘就是
+  // 被 dev mock 少写一个 `prerequisiteMissing` 撞出来的：四行全亮红灯、开关全灰。
+  const subsumedBy = Boolean(variant.subsumedBy)
+  // 宿主前置缺失（2026-09-16 真机事故）：开关必须**禁用**，原因原样展示。
+  // 只做提示是不够的——这类包装上去的代价是"工作台起不来"，用户根本没有回退余地。
+  const blocked = Boolean(variant.prerequisiteMissing)
+  // 选中的变体 ≠ 当前生效的变体时（用户在详情面点了另一个后端但还没开）：行内给
+  // 一个警示小图标 —— 此时"行里的插件名"与"状态徽标"说的是两件事，必须看得出区别。
+  const activeVariant =
+    cap.activeVariant !== null ? cap.variants.find((v) => v.id === cap.activeVariant) : undefined
+  const misaligned = activeVariant !== undefined && activeVariant.id !== variant.id
+  const name = variantDisplayName(cap, variant.id)
+  /** 开关为什么不可用 / 行内的额外事实：只挂在 aria-describedby 上。
+   *  图标（lucide）自带 `aria-hidden`，悬停 `title` 键盘也触发不了——不写这段，
+   *  读屏用户只会听到"开关，已禁用"，听不到"缺 cua-driver"这类真正的原因 */
+  const descId = `${rowId(cap.id)}-why`
+  const why = [
+    blocked ? variant.prerequisiteMissing : null,
+    subsumedBy ? t.market.capSubsumedBy(name) : null,
+    misaligned && activeVariant
+      ? activeVariant.state === "on"
+        ? t.market.capOtherActive(variantDisplayName(cap, activeVariant.id))
+        : t.market.capOtherReady(variantDisplayName(cap, activeVariant.id))
+      : null,
+    failed ? t.market.capRowHasFailure : null,
+  ].filter((x): x is string => Boolean(x))
+
+  return (
+    <motion.li
+      initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.2,
+        ease: "easeOut",
+        delay: reduceMotion ? 0 : Math.min(index, 6) * 0.03,
+      }}
+      className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-colors ${
+        selected ? "border-brand/40 bg-brand/5" : "border-line bg-panel hover:border-brand/25"
+      }`}
+    >
+      <button
+        id={rowId(cap.id)}
+        type="button"
+        aria-current={selected ? "true" : undefined}
+        aria-controls={PANE_ID}
+        onClick={() => onSelect(cap)}
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+      >
+        <span
+          className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${stateTone(
+            variant.state === "off" ? cap.state : variant.state,
+          )}`}
+        >
+          <Icon className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-label font-medium text-ink">{cap.labelZh}</span>
+            <StateBadge cap={cap} variant={variant} t={t} />
+            {running && <LoaderCircle className="size-3 shrink-0 animate-spin text-brand-deep" />}
+            {!running && failed && <TriangleAlert className="size-3 shrink-0 text-danger" />}
+          </span>
+          {/* 行内第二行只讲一件事：**哪个插件**在提供它。包名很长 → **折行完整显示**，
+              不截断：它是唯一要对得上 `node_modules` / `cordis.patch.yml` 的字符串，
+              截掉的正好是区分各档的尾部（`…cua-driver-mcp` 与 `…cua-driver-native`
+              会截成同一个前缀）。折行只让个别行多 14px，左栏总高仍远低于右栏。
+              被超集档包含 / 前置门挡住 / 与当前生效不一致，都只用一个小图标提示，
+              不占高度——它们的完整说明在详情面里（且经 `aria-describedby` 可被读屏听到）。 */}
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5">
+            <span className="break-words font-mono text-meta leading-snug text-faint">
+              {name}
+            </span>
+            {subsumedBy && <Check className="size-3 shrink-0 text-faint" />}
+            {blocked && <TriangleAlert className="size-3 shrink-0 text-danger" />}
+            {misaligned && activeVariant && (
+              // 悬停提示 + `aria-describedby`（见 why）：行里的插件名是"选中的那一档"，
+              // 徽标说的却是当前生效的那一档——这个区别不能只靠悬停。
+              <span
+                className="flex shrink-0"
+                title={
+                  activeVariant.state === "on"
+                    ? t.market.capOtherActive(variantDisplayName(cap, activeVariant.id))
+                    : t.market.capOtherReady(variantDisplayName(cap, activeVariant.id))
+                }
+              >
+                <Info className="size-3 text-warn" />
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+      <Switch
+        aria-label={t.market.capSwitchLabel(`${cap.labelZh} · ${name}`)}
+        aria-describedby={why.length > 0 ? descId : undefined}
+        checked={on}
+        disabled={busy || subsumedBy || blocked}
+        onCheckedChange={(next) => onToggle(cap, variant, next)}
+        className="shrink-0"
+      />
+      {why.length > 0 && (
+        <span id={descId} className="sr-only">
+          {why.join(t.market.capWhyJoin)}
+        </span>
+      )}
+      <ChevronRight className="size-3.5 shrink-0 text-faint lg:hidden" />
+    </motion.li>
+  )
+}
+
+/** **详情面**：选中能力的常驻详情——插件与后端切换 → 前置 → 排障细节 → 移除。
+ *
+ * 常驻是关键：这里的东西**不再需要"点详情"才能看到**，也永远不会把清单挤下去
+ * （v2 的病灶）。信息分组顺序 = 用户的问题顺序："能不能用（前置）→ 用哪个（插件）→
+ * 怎么做到的 / 出问题怎么查（实现细节）→ 怎么撤（移除）"。
+ *
+ * 它是一列**不裁剪内容**的面板：选到内容多的能力（如三后端那一项）时，整页会比视口
+ * 高出约 70px。这是有意的取舍——不引入 `max-h-[calc(100vh-…)]` 这类靠魔数对齐全站吸顶
+ * 头高度、并且在短窗口下会和多出一层的内部滚动条打架的做法。
+ *
+ * 2026-09-17 版面规范（沿用仓库既有 token，不另造风格）：
+ *   · 刻度：正文 note(13) / 次要 label(11) / 节标与元信息 meta(10) / 角标 micro(9)；
+ *   · 圆角按角色：面 xl(14)、行与控制件 md(10)、状态徽标胶囊；
+ *   · 品牌色只承担"选中 / 主操作"，状态色只承担状态；
+ *   · 官方包名（`roles.primary`）就是后端名，我们发明的「Web 档」这类名字一律不出现。 */
+function CapabilityPane({
   cap,
   variant,
   run,
+  busy,
   failure,
   failureKind,
   failedVariantId,
-  index,
   onPick,
-  onToggle,
   onRepair,
   onResume,
   onRemove,
+  onBack,
   t,
 }: {
   cap: Capability
   variant: CapabilityVariant
   run: RunState | null
+  /** **任意能力**在跑 → 关掉详情面的动作入口（`run` 是单槽，两个能力并发会丢配置写入）。 */
+  busy: boolean
   failure: string | null
   /** 失败分类（后端给）；`null` = 未知，按通用话术处理。 */
   failureKind: FailureKind | null
   /** 发起失败的那个变体（`null` = 无失败）。 */
   failedVariantId: string | null
-  /** 卡片序号：只用于入场错峰（≤6 张，延迟封顶，不做长尾）。 */
-  index: number
   onPick: (id: string) => void
-  onToggle: (cap: Capability, variant: CapabilityVariant, next: boolean) => void
   onRepair: (variant: CapabilityVariant) => void
   onResume: (variant: CapabilityVariant) => void
   onRemove: (variant: CapabilityVariant) => void
+  /** 窄窗口下钻态的返回（宽窗口不渲染这个按钮）。 */
+  onBack: () => void
   t: ReturnType<typeof useI18n>["t"]
 }) {
-  const [openDetail, setOpenDetail] = useState(false)
   const reduceMotion = useReducedMotion()
   const Icon = ICONS[cap.id] ?? Bot
-  const on = variant.state === "on"
-  const busy = run !== null
   const multi = cap.variants.length > 1
-  // 图标底 = 状态色（一眼看出这张卡是不是要处理；off 保持中性，不制造噪音）
-  const tile =
-    variant.state === "on"
-      ? "border-ok/30 bg-ok-soft text-ok"
-      : variant.state === "disabled"
-        ? "border-warn/30 bg-warn-soft text-warn"
-        : variant.state === "partial"
-          ? "border-danger/30 bg-danger-soft text-danger"
-          : "border-line bg-wash text-dim"
+  // 排障信息默认收起：它是"出问题时才看"的东西，铺在详情面里会让每次选能力都要多滚一屏。
+  // **注意与 v2 的「详情」区别**：这里的展开只增长右栏，左栏清单纹丝不动——v2 的病灶
+  // 是"详情内联展开把后面的卡片顶下去"，那才是被点名的问题。
+  const [showImpl, setShowImpl] = useState(false)
   // 层类能力：关闭 = 移除。这条**必须在按下开关之前就看得见**，否则用户以为能秒关。
   // 但只在"真的就位"（on/disabled）时才成立：`toggle_off_supported` 对**没装齐**的档
   // 也是 false（分类要读包自己的 manifest，没装就不知道），若照它判断，一次失败的安装
-  // 会让卡片谎称"本档由 profile 层提供"——真机 2026-09-16 暴露。
-  const offIsRemove =
-    !variant.toggleOffSupported &&
-    (variant.state === "on" || variant.state === "disabled")
-  // 被超集档包含的档（如"自建档"之于"Web 档"）：不提供独立开关——它的包就是超集档的
-  // 基础层，单独关掉会把超集档一起拆坏。真机暴露于 2026-09-16。名字统一用插件名。
+  // 会让面板谎称"本档由 profile 层提供"——真机 2026-09-16 暴露。
+  const offIsRemove = offMeansRemove(variant)
+  // 被超集档包含的档不是"可切换的后端"：不给交互，免得用户以为点它能单独开关
+  // （开关与移除统一由超集档控制，见 §⑤ 门禁）。
   const subsumedBy = variant.subsumedBy ? variantDisplayName(cap, variant.subsumedBy) : null
   const otherActive =
     cap.activeVariant !== null && cap.activeVariant !== variant.id
       ? cap.variants.find((v) => v.id === cap.activeVariant)
       : undefined
-  // 宿主前置缺失（2026-09-16 真机事故）：开关必须**禁用**，并把后端给的这句话原样展示。
-  // 只做提示是不够的——这类包装上去的代价是"工作台起不来"，用户根本没有回退余地。
-  const blocked = variant.prerequisiteMissing
-  const variantName = variantDisplayName(cap, variant.id)
-  const detailId = `cap-detail-${cap.id}`
-  // 各档共有的前置只讲一次（去掉 Chrome 系前置在三行里重复三遍的噪音）
+  const blocked = Boolean(variant.prerequisiteMissing)
+  // 单选组的 tab 停靠点（见下 focusTabIndex）
+  const selectableIds = cap.variants
+    .filter((v) => !v.subsumedBy && !v.prerequisiteMissing)
+    .map((v) => v.id)
+  const tabbableId = selectableIds.includes(variant.id) ? variant.id : (selectableIds[0] ?? null)
+  // 各档共有的前置 / 共用的基座包只讲一次（去掉 Chrome 前置与 dsh-browser-use 基座
+  // 在三条变体行里各重复三遍的噪音——重复把"真正区分各档的那行"淹掉了）
   const commonPrereqs = commonPrerequisites(cap)
+  const commonShared = commonSharedPackages(cap)
+  // 变体行里只留"这一档额外带的"共用包：全体共有的那句已经在下面统一讲过一次。
+  const extraShared = (shared: readonly string[]) =>
+    shared.filter((p) => !commonShared.includes(p))
 
   return (
-    <motion.article
+    <motion.section
+      id={PANE_ID}
+      tabIndex={-1}
+      aria-label={t.market.capPaneLabel(cap.labelZh)}
       initial={reduceMotion ? false : { opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.24,
-        ease: "easeOut",
-        delay: reduceMotion ? 0 : Math.min(index, 6) * 0.035,
-      }}
-      className="rounded-xl border border-line bg-panel p-4 shadow-2xs transition-shadow hover:shadow-xs"
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className="flex flex-col rounded-xl border border-line bg-panel shadow-2xs"
     >
-      {/* 身份 + 控制：一行读全"这是什么 / 现在怎样 / 能做什么"。 */}
-      <div className="flex items-start gap-3">
-        <div
-          className={`flex size-10 shrink-0 items-center justify-center rounded-md border ${tile}`}
+      {/* 身份 + 状态：一行读全"这是什么 / 现在怎样"。 */}
+      <div className="flex items-start gap-3 border-b border-line/70 px-4 py-3">
+        <span
+          className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${stateTone(
+            variant.state === "off" ? cap.state : variant.state,
+          )}`}
         >
-          <Icon className="size-4.5" />
-        </div>
-
+          <Icon className="size-4" />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3 className="text-note font-semibold text-ink">{cap.labelZh}</h3>
             <Badge
               variant="outline"
-              className="h-4.5 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-faint"
+              className="h-4.5 shrink-0 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-faint"
             >
               {t.market.capOfficialBadge}
             </Badge>
             <StateBadge cap={cap} variant={variant} t={t} />
           </div>
-          <p className="mt-1 max-w-prose text-label leading-relaxed text-dim">
-            {cap.summaryZh}
-          </p>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summaryZh}</p>
         </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <Switch
-            aria-label={t.market.capSwitchLabel(`${cap.labelZh} · ${variantName}`)}
-            checked={on}
-            disabled={busy || subsumedBy !== null || blocked !== null}
-            onCheckedChange={(next) => onToggle(cap, variant, next)}
-          />
-        </div>
-      </div>
-
-      {/* 插件：这一档是哪几个包 + 兄弟档怎么切。行首即插件名（官方名），
-          自己独有的包在前，共用的基座包随后如实标注。 */}
-      <div className="mt-3 border-t border-line/70 pt-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-meta font-medium tracking-wider text-faint">
-            {t.market.capPluginsLabel}
-          </span>
-          <button
-            type="button"
-            aria-expanded={openDetail}
-            aria-controls={detailId}
-            onClick={() => setOpenDetail((v) => !v)}
-            className="flex items-center gap-0.5 rounded-md border border-line bg-panel px-1.5 py-0.5 text-meta text-dim transition-colors hover:border-brand/30 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            {t.market.capDetailToggle}
-            <ChevronRight
-              className={`size-3 transition-transform ${openDetail ? "rotate-90" : ""}`}
-            />
-          </button>
-        </div>
-
-        <div
-          {...(multi
-            ? { role: "radiogroup", "aria-label": t.market.capPluginsLabel }
-            : {})}
-          className="mt-1.5 flex flex-col gap-1.5"
+        {/* 窄窗口：下钻态的唯一出口（宽窗口隐藏）。 */}
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex shrink-0 items-center gap-1 rounded-md border border-line bg-panel px-2 py-1 text-meta text-dim transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
         >
-          {cap.variants.map((v) => {
-            const roles = variantPackageRoles(cap, v.id)
-            const selected = v.id === variant.id
-            const isActive = cap.activeVariant === v.id
-            const vBlocked = v.prerequisiteMissing
-            // 被包含的档（它的包就是超集档的基础层）不是"可切换的后端"：不给交互，
-            // 免得用户以为点它能单独开关（开关与移除统一由超集档控制，见 §⑤ 门禁）。
-            const selectable = multi && !v.subsumedBy
-            const extras = v.prerequisitesZh.filter((p) => !commonPrereqs.includes(p))
-            const rowCls = [
-              "flex w-full items-start gap-2.5 rounded-md border px-3 py-2.5 text-left transition-colors",
-              selected
-                ? "border-brand/40 bg-brand/5"
-                : selectable
-                  ? "border-line bg-bg hover:border-brand/25 hover:bg-wash/60"
-                  : "border-line bg-bg",
-              selectable
-                ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-                : "",
-            ].join(" ")
-            const body = (
-              <>
-                {/* 选中点（品牌色）与"正在生效"（状态色徽标）是两件事，分开表达 */}
-                <span aria-hidden className="mt-1 shrink-0">
-                  <span
-                    className={`block size-2.5 rounded-full border transition-colors ${
-                      selectable
-                        ? selected
-                          ? "border-brand bg-brand"
-                          : "border-line bg-panel"
-                        : "border-line/70 bg-wash"
-                    }`}
-                  />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    {roles.primary.map((pkg) => (
-                      <span key={pkg} className="break-all font-mono text-label font-medium text-ink">
-                        {pkg}
-                      </span>
-                    ))}
-                    {/* 行内徽标只在多档时才需要（它回答"哪一档在跑"）；单档能力的卡片头
-                        已经说了同一件事，重复就是噪音。
-                        **必须按变体自己的状态取词**：后端契约里 `activeVariant` 的含义是
-                        "当前生效**或已就位但停用**的那一档"（`official_catalog.rs` 的
-                        Disabled 分支），照抄「已启用」会在卡片说「已停用」时自相矛盾
-                        ——2026-09-17 版面复盘在 mock 数据上真抓到了这一处。 */}
-                    {multi && isActive && (
-                      <Badge
-                        className={`h-4.5 rounded-full px-1.5 text-micro font-normal ${
-                          v.state === "on"
-                            ? "border-ok/30 bg-ok-soft text-ok"
-                            : v.state === "disabled"
-                              ? "border-warn/30 bg-warn-soft text-warn"
-                              : "border-danger/30 bg-danger-soft text-danger"
-                        }`}
-                      >
-                        {v.state === "on"
-                          ? t.market.capStateOn
-                          : v.state === "disabled"
-                            ? t.market.capStateDisabled
-                            : t.market.capStatePartial}
-                      </Badge>
-                    )}
-                    {v.subsumedBy && (
-                      <Badge
-                        variant="outline"
-                        className="h-4.5 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-dim"
-                      >
-                        {t.market.capStateSubsumed}
-                      </Badge>
-                    )}
-                  </span>
-                  {v.noteZh && (
-                    <span className="mt-1 block max-w-prose text-label leading-relaxed text-dim">
-                      {v.noteZh}
-                    </span>
-                  )}
-                  {roles.shared.length > 0 && (
-                    <span className="mt-1 block break-all font-mono text-meta text-faint">
-                      {t.market.capAlsoInstalls(roles.shared.join(" · "))}
-                    </span>
-                  )}
-                  {extras.length > 0 && (
-                    <span className="mt-1.5 flex flex-col gap-0.5">
-                      {extras.map((p) => (
-                        <span
-                          key={p}
-                          className="flex items-start gap-1.5 text-label leading-relaxed text-dim"
-                        >
-                          <Info className="mt-0.5 size-3 shrink-0 text-faint" />
-                          <span>{p}</span>
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                  {vBlocked && (
-                    <span className="mt-1.5 flex items-start gap-1.5 text-label leading-relaxed text-danger">
-                      <TriangleAlert className="mt-0.5 size-3 shrink-0" />
-                      <span>{vBlocked}</span>
-                    </span>
-                  )}
-                </span>
-              </>
-            )
-            return selectable ? (
-              <button
-                key={v.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={roles.primary.join(" + ")}
-                disabled={busy}
-                onClick={() => onPick(v.id)}
-                className={rowCls}
-              >
-                {body}
-              </button>
-            ) : (
-              <div key={v.id} className={rowCls}>
-                {body}
-              </div>
-            )
-          })}
-        </div>
-
-        {commonPrereqs.length > 0 && (
-          <span className="mt-2 flex flex-col gap-0.5">
-            <span className="text-meta text-faint">{t.market.capPrereqCommon}</span>
-            {commonPrereqs.map((p) => (
-              <span key={p} className="flex items-start gap-1.5 text-label leading-relaxed text-dim">
-                <Info className="mt-0.5 size-3 shrink-0 text-faint" />
-                <span>{p}</span>
-              </span>
-            ))}
-          </span>
-        )}
-
-        {/* 同族替换与"包含关系"：说清开关会连带动到谁（名字一律用插件名）。 */}
-        {subsumedBy ? (
-          <p className="mt-2 max-w-prose text-label leading-relaxed text-faint">
-            {t.market.capSubsumedBy(subsumedBy)}
-          </p>
-        ) : (
-          otherActive && (
-            <p className="mt-2 max-w-prose text-label leading-relaxed text-warn">
-              {otherActive.state === "on"
-                ? t.market.capOtherActive(variantDisplayName(cap, otherActive.id))
-                : t.market.capOtherReady(variantDisplayName(cap, otherActive.id))}
-            </p>
-          )
-        )}
-        {offIsRemove && (
-          <p className="mt-1 max-w-prose text-label leading-relaxed text-faint">
-            {t.market.capOffIsRemove}
-          </p>
-        )}
+          <ArrowLeft className="size-3" />
+          {t.market.capBack}
+        </button>
       </div>
 
-      {run && (
-        <div className="mt-3 rounded-md border border-brand/25 bg-brand/5 px-3 py-2.5">
-          <div className="flex items-center gap-2 text-label text-ink">
-            <LoaderCircle className="size-3.5 animate-spin text-brand-deep" />
-            <span>{t.market.capRunning(run.index + 1, run.ops.length)}</span>
+      <div className="flex flex-col gap-3 px-4 py-3">
+        {run && (
+          <div className="rounded-md border border-brand/25 bg-brand/5 px-3 py-2.5">
+            <div className="flex items-center gap-2 text-label text-ink">
+              <LoaderCircle className="size-3.5 animate-spin text-brand-deep" />
+              <span>{t.market.capRunning(run.index + 1, run.ops.length)}</span>
+            </div>
+            <Progress
+              value={run.ops.length === 0 ? 0 : (run.index / run.ops.length) * 100}
+              className="mt-2 h-1"
+            />
+            <ol className="mt-2 flex flex-col gap-1">
+              {run.ops.map((op, i) => (
+                <li
+                  key={`${op.kind}-${i}`}
+                  className={`flex items-center gap-1.5 font-mono text-meta ${
+                    i < run.index ? "text-ok" : i === run.index ? "text-ink" : "text-faint"
+                  }`}
+                >
+                  {i < run.index ? (
+                    <Check className="size-3 shrink-0" />
+                  ) : i === run.index ? (
+                    <LoaderCircle className="size-3 shrink-0 animate-spin" />
+                  ) : (
+                    <span className="inline-block size-3 shrink-0 text-center leading-none">·</span>
+                  )}
+                  <span className="min-w-0 break-all">{opLabel(op, t)}</span>
+                </li>
+              ))}
+            </ol>
           </div>
-          <Progress
-            value={run.ops.length === 0 ? 0 : (run.index / run.ops.length) * 100}
-            className="mt-2 h-1"
+        )}
+
+        {failure && !run && (
+          <FailureBlock
+            failure={failure}
+            failureKind={failureKind}
+            // 失败的是**哪个档**要说清：用户可能已经切到另一个档看详情了。
+            failedVariantLabel={
+              failedVariantId && failedVariantId !== variant.id
+                ? variantDisplayName(cap, failedVariantId)
+                : null
+            }
+            onResume={() => onResume(variant)}
+            t={t}
           />
-          <ol className="mt-2 flex flex-col gap-1">
-            {run.ops.map((op, i) => (
-              <li
-                key={`${op.kind}-${i}`}
-                className={`flex items-center gap-1.5 font-mono text-meta ${
-                  i < run.index ? "text-ok" : i === run.index ? "text-ink" : "text-faint"
-                }`}
-              >
-                {i < run.index ? (
-                  <Check className="size-3 shrink-0" />
-                ) : i === run.index ? (
-                  <LoaderCircle className="size-3 shrink-0 animate-spin" />
-                ) : (
-                  <span className="inline-block size-3 shrink-0 text-center leading-none">·</span>
-                )}
-                <span className="min-w-0 break-all">{opLabel(op, t)}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
+        )}
 
-      {failure && !run && (
-        <FailureBlock
-          failure={failure}
-          failureKind={failureKind}
-          // 失败的是**哪个档**要说清：用户可能已经切到另一个档看详情了。
-          failedVariantLabel={
-            failedVariantId && failedVariantId !== variant.id
-              ? variantDisplayName(cap, failedVariantId)
-              : null
-          }
-          onResume={() => onResume(variant)}
-          t={t}
-        />
-      )}
-
-      {/* 动作行只在**有事要做**时出现（没有它就整行不渲染，卡片因此更矮更静） */}
-      {!run && (variant.state === "partial" || cap.state === "conflict" || variant.state === "disabled") && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line/70 pt-2.5">
-          {/* 与错误块里的「继续剩余步骤」是同一个动作 → 只在没有失败块时出现，避免两个按钮
-              指向同一件事（真机 2026-09-16 暴露）。
-              **前置门挡住时不给「修复」**（同日真机暴露）：修复=装包+写行，而这两个动作
-              后端都会拒绝——按钮点下去必失败，属于"假按钮"。真正的出路写在红字里
-              （先装 cua-driver / 换自包含档）。 */}
-          {!subsumedBy &&
-            !blocked &&
-            !failure &&
-            (variant.state === "partial" || cap.state === "conflict") && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 gap-1 border-warn/40 px-2 text-meta text-warn"
-                onClick={() => onRepair(variant)}
-              >
-                <Wrench className="size-3" />
-                {t.market.capRepair}
-              </Button>
-            )}
-          {variant.state === "disabled" && (
-            <span className="text-label text-ok">{t.market.capReadyToEnable}</span>
-          )}
-        </div>
-      )}
-
-      <AnimatePresence initial={false}>
-        {openDetail && (
-          <motion.div
-            id={detailId}
-            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={reduceMotion ? { height: 0, opacity: 0 } : { height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: "easeOut" }}
-            className="overflow-hidden"
-          >
-            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-line bg-wash/60 px-3 py-3">
-              <section>
-                <h4 className="text-meta font-semibold tracking-wider text-ink">
-                  {t.market.capUnlocks}
-                </h4>
-                <p className="mt-1 max-w-prose text-label leading-relaxed text-dim">
-                  {cap.unlocksZh}
-                </p>
-              </section>
-              <section>
-                <h4 className="text-meta font-semibold tracking-wider text-ink">
-                  {t.market.capImplTitle}
-                </h4>
-                <ul className="mt-1.5 flex flex-col gap-2.5">
-                  {variant.steps.map((s) => (
-                    <li key={s.package} className="text-label">
-                      <div className="flex items-baseline gap-1.5 font-mono">
-                        <span className="text-micro text-faint">{s.ordinal}.</span>
-                        <span className="break-all text-ink">{s.package}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-4">
-                        <Badge
-                          variant="outline"
-                          className="h-4.5 rounded-full border-line bg-panel px-1.5 text-micro font-normal text-dim"
-                        >
-                          {s.activation === "auto_bundle"
-                            ? t.market.capActivationAuto
-                            : t.market.capActivationInsert}
-                        </Badge>
-                        <span
-                          className={
-                            s.installed && s.rowPresent && !s.disabled
-                              ? "text-ok"
-                              : s.installed || s.rowPresent
-                                ? "text-warn"
-                                : "text-faint"
-                          }
-                        >
-                          {stepStatus(s, t)}
-                        </span>
-                      </div>
-                      {s.description ? (
-                        <p className="mt-1 max-w-prose pl-4 text-label leading-relaxed text-dim">
-                          <span className="text-faint">{t.market.capOfficialDesc}：</span>
-                          {s.description}
-                        </p>
-                      ) : (
-                        <p className="mt-1 pl-4 text-label text-faint">
-                          {t.market.capOfficialDescPending}
-                        </p>
-                      )}
-                      <div className="mt-1 pl-4 font-mono text-meta text-faint">
-                        {t.market.capPinned(s.spec)}
-                        {s.activation === "insert_row" && ` · ${s.rowId}`}
-                      </div>
-                      {s.versionNotice && (
-                        <p className="mt-1 max-w-prose pl-4 text-label leading-relaxed text-warn">
-                          {s.versionNotice}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
+        {/* 动作行只在**有事要做**时出现（没有它就整行不渲染，详情面因此更静） */}
+        {!run &&
+          (variant.state === "partial" ||
+            cap.state === "conflict" ||
+            variant.state === "disabled") && (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 与错误块里的「继续剩余步骤」是同一个动作 → 只在没有失败块时出现，避免两个按钮
+                  指向同一件事（真机 2026-09-16 暴露）。
+                  **前置门挡住时不给「修复」**（同日真机暴露）：修复=装包+写行，而这两个动作
+                  后端都会拒绝——按钮点下去必失败，属于"假按钮"。真正的出路写在红字里
+                  （先装 cua-driver / 换自包含档）。 */}
               {!subsumedBy &&
-                (variant.state === "on" ||
-                  variant.state === "disabled" ||
-                  variant.state === "partial") && (
-                <section className="flex items-center justify-between gap-2 border-t border-line/70 pt-2.5">
-                  <span className="max-w-prose text-label leading-relaxed text-faint">
-                    {variant.toggleOffSupported
-                      ? t.market.capRemoveExplainedSoft
-                      : t.market.capRemoveExplainedLayer}
-                  </span>
+                !blocked &&
+                !failure &&
+                (variant.state === "partial" || cap.state === "conflict") && (
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 shrink-0 border-danger/40 px-2 text-meta text-danger"
-                    onClick={() => onRemove(variant)}
+                    className="h-6 gap-1 border-warn/40 px-2 text-meta text-warn"
+                    onClick={() => onRepair(variant)}
                   >
-                    {t.market.capRemoveBtn}
+                    <Wrench className="size-3" />
+                    {t.market.capRepair}
                   </Button>
-                </section>
+                )}
+              {variant.state === "disabled" && (
+                <span className="text-label text-ok">{t.market.capReadyToEnable}</span>
               )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.article>
+          )}
+
+        {/* 插件：这一档是哪几个包 + 兄弟档怎么切。行首即插件名（官方名），
+            自己独有的包在前，共用的基座包随后如实标注。 */}
+        <div>
+          <span className="text-meta font-medium tracking-wider text-faint">
+            {t.market.capPluginsLabel}
+          </span>
+          <div
+            {...(multi
+              ? {
+                  role: "radiogroup",
+                  "aria-label": t.market.capBackendLabel,
+                  onKeyDown: (e: React.KeyboardEvent) => {
+                    const ids = cap.variants
+                      .filter((x) => !x.subsumedBy && !x.prerequisiteMissing)
+                      .map((x) => x.id)
+                    if (ids.length === 0) return
+                    const cur = ids.indexOf(variant.id)
+                    const delta =
+                      e.key === "ArrowDown" || e.key === "ArrowRight"
+                        ? 1
+                        : e.key === "ArrowUp" || e.key === "ArrowLeft"
+                          ? -1
+                          : 0
+                    const next =
+                      delta !== 0
+                        ? ids[(cur + delta + ids.length) % ids.length]
+                        : e.key === "Home"
+                          ? ids[0]
+                          : e.key === "End"
+                            ? ids[ids.length - 1]
+                            : null
+                    if (!next) return
+                    e.preventDefault()
+                    onPick(next)
+                    // roving tabindex：焦点跟着选中项走，否则方向键之后键盘就掉队了
+                    requestAnimationFrame(() =>
+                      document.getElementById(`cap-radio-${cap.id}-${next}`)?.focus(),
+                    )
+                  },
+                }
+              : {})}
+            className="mt-1.5 flex flex-col gap-1.5"
+          >
+            {cap.variants.map((v) => {
+              const roles = variantPackageRoles(cap, v.id)
+              const selected = v.id === variant.id
+              const isActive = cap.activeVariant === v.id
+              const vBlocked = v.prerequisiteMissing
+              // 被包含的档（它的包就是超集档的基础层）不是"可切换的后端"：不给交互。
+              // **被前置门挡住的档同样不可选**（2026-09-17 独立复核）：选它没有任何可用动作，
+              // 却会把行开关的目标切成一个必然灰掉的档——"清单随手开关"的承诺被一次误点作废。
+              const selectable = multi && !v.subsumedBy && !v.prerequisiteMissing
+              // 单选组的键盘语义（roving tabindex + 方向键）：组的可访问名说"单选按钮组"，
+              // 就必须真的能用方向键切换，且组内**只能**有 radio（见下方非可选档的渲染）。
+              const radioId = `cap-radio-${cap.id}-${v.id}`
+              // roving tabindex：组里**只有一个** tab 停靠点——选中的那一档；
+              // 若选中的档不可选（全体被挡），停靠点落在第一个可选项上，
+              // 保证这一组仍然能被键盘进入。
+              const focusTabIndex = selectable && v.id === tabbableId ? 0 : -1
+              const extras = v.prerequisitesZh.filter((p) => !commonPrereqs.includes(p))
+              const rowCls = [
+                "flex w-full items-start gap-2.5 rounded-md border px-3 py-2 text-left transition-colors",
+                selected
+                  ? "border-brand/40 bg-brand/5"
+                  : selectable
+                    ? "border-line bg-panel hover:border-brand/25 hover:bg-wash/60"
+                    : "border-line bg-panel",
+                selectable
+                  ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                  : "",
+              ].join(" ")
+              const body = (
+                <>
+                  {/* 选中点（品牌色）与"正在生效"（状态色徽标）是两件事，分开表达 */}
+                  <span aria-hidden className="mt-1 shrink-0">
+                    <span
+                      className={`block size-2.5 rounded-full border transition-colors ${
+                        selectable
+                          ? selected
+                            ? "border-brand bg-brand"
+                            : "border-line bg-panel"
+                          : "border-line/70 bg-wash"
+                      }`}
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {roles.primary.map((pkg) => (
+                        <span
+                          key={pkg}
+                          className="break-all font-mono text-label font-medium text-ink"
+                        >
+                          {pkg}
+                        </span>
+                      ))}
+                      {/* 行内徽标只在多档时才需要（它回答"哪一档在跑"）；单档能力的面板头
+                          已经说了同一件事，重复就是噪音。
+                      **必须按变体自己的状态取词**：后端契约里 `activeVariant` 的含义是
+                      "当前生效**或已就位但停用**的那一档"（`official_catalog.rs` 的
+                      Disabled 分支），照抄「已启用」会在面板说「已停用」时自相矛盾
+                      ——2026-09-17 版面复盘在 mock 数据上真抓到了这一处。 */}
+                      {multi && isActive && (
+                        <Badge
+                          className={`h-4.5 rounded-full px-1.5 text-micro font-normal ${
+                            v.state === "on"
+                              ? "border-ok/30 bg-ok-soft text-ok"
+                              : v.state === "disabled"
+                                ? "border-warn/30 bg-warn-soft text-warn"
+                                : "border-danger/30 bg-danger-soft text-danger"
+                          }`}
+                        >
+                          {v.state === "on"
+                            ? t.market.capStateOn
+                            : v.state === "disabled"
+                              ? t.market.capStateDisabled
+                              : t.market.capStatePartial}
+                        </Badge>
+                      )}
+                      {v.subsumedBy && (
+                        <Badge
+                          variant="outline"
+                          className="h-4.5 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-dim"
+                        >
+                          {t.market.capStateSubsumed}
+                        </Badge>
+                      )}
+                    </span>
+                    {v.noteZh && (
+                      <span className="mt-1 block text-label leading-relaxed text-dim">
+                        {v.noteZh}
+                      </span>
+                    )}
+                    {extraShared(roles.shared).length > 0 && (
+                      <span className="mt-1 block break-all font-mono text-meta text-faint">
+                        {t.market.capAlsoInstalls(extraShared(roles.shared).join(" · "))}
+                      </span>
+                    )}
+                    {extras.length > 0 && (
+                      <span className="mt-1.5 flex flex-col gap-0.5">
+                        {extras.map((p) => (
+                          <span
+                            key={p}
+                            className="flex items-start gap-1.5 text-label leading-relaxed text-dim"
+                          >
+                            <Info className="mt-0.5 size-3 shrink-0 text-faint" />
+                            <span>{p}</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                    {vBlocked && (
+                      <span className="mt-1.5 flex items-start gap-1.5 text-label leading-relaxed text-danger">
+                        <TriangleAlert className="mt-0.5 size-3 shrink-0" />
+                        <span id={`cap-radio-${cap.id}-${v.id}-why`}>{vBlocked}</span>
+                      </span>
+                    )}
+                  </span>
+                </>
+              )
+              return (
+                <button
+                  key={v.id}
+                  id={radioId}
+                  type="button"
+                  role="radio"
+                  aria-checked={selectable ? selected : false}
+                  aria-disabled={!selectable || busy || undefined}
+                  aria-label={roles.primary.join(" + ")}
+                  aria-describedby={vBlocked ? `${radioId}-why` : undefined}
+                  tabIndex={focusTabIndex}
+                  disabled={selectable ? busy : false}
+                  onClick={selectable ? () => onPick(v.id) : undefined}
+                  className={rowCls}
+                >
+                  {body}
+                </button>
+              )
+            })}
+          </div>
+
+          {commonShared.length > 0 && (
+            <span className="mt-2 flex items-start gap-1.5 text-label text-dim">
+              <Info className="mt-0.5 size-3 shrink-0 text-faint" />
+              <span className="break-all font-mono text-meta text-faint">
+                {t.market.capBasePackages(commonShared.join(" · "))}
+              </span>
+            </span>
+          )}
+
+          {commonPrereqs.length > 0 && (
+            <span className="mt-2 flex flex-col gap-0.5">
+              <span className="text-meta text-faint">{t.market.capPrereqCommon}</span>
+              {commonPrereqs.map((p) => (
+                <span
+                  key={p}
+                  className="flex items-start gap-1.5 text-label leading-relaxed text-dim"
+                >
+                  <Info className="mt-0.5 size-3 shrink-0 text-faint" />
+                  <span>{p}</span>
+                </span>
+              ))}
+            </span>
+          )}
+
+          {/* 同族替换与"包含关系"：说清开关会连带动到谁（名字一律用插件名）。 */}
+          {subsumedBy ? (
+            <p className="mt-2 text-label leading-relaxed text-faint">
+              {t.market.capSubsumedBy(subsumedBy)}
+            </p>
+          ) : (
+            otherActive && (
+              <p className="mt-2 text-label leading-relaxed text-warn">
+                {otherActive.state === "on"
+                  ? t.market.capOtherActive(variantDisplayName(cap, otherActive.id))
+                  : t.market.capOtherReady(variantDisplayName(cap, otherActive.id))}
+              </p>
+            )
+          )}
+          {offIsRemove && (
+            <p className="mt-1 text-label leading-relaxed text-faint">{t.market.capOffIsRemove}</p>
+          )}
+        </div>
+
+        {/* 实现细节：常驻（不再折叠）——它在详情面里，展开/收起都不会挤动左栏的清单。
+            "启用后会发生什么"是用户视角，单独一节；逐包细节是排障视角，标为排障用。 */}
+        <section className="border-t border-line/70 pt-3">
+          <h4 className="text-meta font-semibold tracking-wider text-faint">
+            {t.market.capUnlocks}
+          </h4>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocksZh}</p>
+        </section>
+
+        <section className="border-t border-line/70 pt-3">
+          <button
+            type="button"
+            aria-expanded={showImpl}
+            aria-controls={`${PANE_ID}-impl`}
+            onClick={() => setShowImpl((v) => !v)}
+            className="flex w-full items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+          >
+            {/* 用 span 而不是 h4：button 只允许 phrasing content，标题元素会被浏览器从
+                按钮名里拆出来（读屏念不到完整按钮名）。视觉样式照旧。 */}
+            <span className="text-meta font-semibold tracking-wider text-faint">
+              {t.market.capImplTitle}
+            </span>
+            <span className="text-meta text-faint">{t.market.capImplPackages(variant.steps.length)}</span>
+            <ChevronRight
+              className={`ml-auto size-3 shrink-0 text-faint transition-transform ${
+                showImpl ? "rotate-90" : ""
+              }`}
+            />
+          </button>
+          {/* 列表**常驻**、用 `hidden` 收起：`aria-controls` 指向的 id 必须一直存在
+              （收起时引向不存在的 id 是无效引用）。 */}
+          <ul
+            id={`${PANE_ID}-impl`}
+            hidden={!showImpl}
+            className="mt-1.5 flex flex-col gap-2.5"
+          >
+            {variant.steps.map((s) => (
+              <li key={s.package} className="text-label">
+                <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-meta">
+                  <span className="text-faint">{s.ordinal}.</span>
+                  <span className="break-all text-ink">{s.package}</span>
+                  <span
+                    className={
+                      s.installed && s.rowPresent && !s.disabled
+                        ? "text-ok"
+                        : s.installed || s.rowPresent
+                          ? "text-warn"
+                          : "text-faint"
+                    }
+                  >
+                    {stepStatus(s, t)}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Badge
+                    variant="outline"
+                    className="h-4.5 rounded-full border-line bg-panel px-1.5 text-micro font-normal text-dim"
+                  >
+                    {s.activation === "auto_bundle"
+                      ? t.market.capActivationAuto
+                      : t.market.capActivationInsert}
+                  </Badge>
+                  <span className="break-all font-mono text-meta text-faint">
+                    {t.market.capPinned(s.spec)}
+                    {s.activation === "insert_row" && ` · ${s.rowId}`}
+                  </span>
+                </div>
+                {s.description ? (
+                  <p className="mt-1 text-label leading-relaxed text-dim">
+                    <span className="text-faint">{t.market.capOfficialDesc}</span>
+                    {s.description}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-label text-faint">{t.market.capOfficialDescPending}</p>
+                )}
+                {s.versionNotice && (
+                  <p className="mt-1 text-label leading-relaxed text-warn">{s.versionNotice}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {!subsumedBy &&
+          (variant.state === "on" ||
+            variant.state === "disabled" ||
+            variant.state === "partial") && (
+            <section className="flex flex-wrap items-center justify-between gap-2 border-t border-line/70 pt-3">
+              <span className="text-label leading-relaxed text-faint">
+                {offMeansRemove(variant)
+                  ? t.market.capRemoveExplainedLayer
+                  : t.market.capRemoveExplainedSoft}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 shrink-0 border-danger/40 px-2 text-meta text-danger"
+                onClick={() => onRemove(variant)}
+              >
+                {t.market.capRemoveBtn}
+              </Button>
+            </section>
+          )}
+      </div>
+    </motion.section>
   )
 }
 
 /** 失败块：**一句人话** + 可折叠的原始输出 + 唯一的续跑入口。
  *
  * 真机 2026-09-16 暴露两件事：① 原始输出（registry URL + pnpm 调用链 + TLS 细节）上百字符，
- * 直接铺开会把"我该怎么办"淹没；② 失败块里的「继续剩余步骤」与卡片底部「修复」是同一个动作，
+ * 直接铺开会把"我该怎么办"淹没；② 失败块里的「继续剩余步骤」与底部「修复」是同一个动作，
  * 并列出现等于给用户两个按钮干同一件事（「修复」在有失败块时已不再渲染）。 */
 function FailureBlock({
   failure,
@@ -1041,12 +1359,12 @@ function FailureBlock({
           ? t.market.capFailBuildApproval
           : t.market.capFailUnknown
   return (
-    <div className="mt-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2.5">
+    <div className="rounded-lg border border-danger/30 bg-danger-soft px-3 py-2.5">
       <p className="text-label font-semibold text-danger">
         {t.market.capFailed}
-        {failedVariantLabel && `（${failedVariantLabel}）`}
+        {failedVariantLabel && t.market.capFailedOn(failedVariantLabel)}
       </p>
-      <p className="mt-1 text-micro leading-relaxed text-dim">{hint}</p>
+      <p className="mt-1 text-label leading-relaxed text-dim">{hint}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -1088,14 +1406,17 @@ function StateBadge({
   // 被超集档包含的档先判：它确实是 On，但"已包含"才是用户需要知道的那件事。
   if (variant.subsumedBy) {
     return (
-      <Badge variant="outline" className="h-5 border-line bg-wash px-1.5 text-micro text-dim">
+      <Badge
+        variant="outline"
+        className="h-4.5 shrink-0 border-line bg-wash px-1.5 text-micro font-normal text-dim"
+      >
         {t.market.capStateSubsumed}
       </Badge>
     )
   }
   if (cap.state === "conflict") {
     return (
-      <Badge className="h-5 border-warn/40 bg-warn-soft px-1.5 text-micro text-warn">
+      <Badge className="h-4.5 shrink-0 border-warn/40 bg-warn-soft px-1.5 text-micro font-normal text-warn">
         {t.market.capStateConflict}
       </Badge>
     )
@@ -1106,14 +1427,17 @@ function StateBadge({
     partial: { text: t.market.capStatePartial, cls: "border-danger/30 bg-danger-soft text-danger" },
     off: { text: t.market.capStateOff, cls: "border-line bg-wash text-faint" },
   } as const
-  // 卡片头徽标说**能力**的实话，不说"当前选中的后端"的状态（2026-09-16 真机暴露）：
+  // 徽标说**能力**的实话，不说"当前选中的后端"的状态（2026-09-16 真机暴露）：
   // 桌面控制里「随包自带运行时」正在生效、用户点了被前置门挡住的「复用已装 cua-driver」，
-  // 旧写法照**选中档**渲染 → 整张卡报「需要修复」，而能力其实是好的（原生档在跑）。
-  // 选中档自身的状态由 chips 上的状态点 / ⚠ 表达。
+  // 旧写法照**选中档**渲染 → 整个面板报「需要修复」，而能力其实是好的（原生档在跑）。
+  // 选中档自身的状态由插件行上的徽标 / ⚠ 表达。
   // （`conflict` 已在上面的早退分支拦掉，TS 据此也把类型收窄了，故可直接索引。）
   const shown: keyof typeof map = cap.state
   return (
-    <Badge variant="outline" className={`h-5 px-1.5 text-micro ${map[shown].cls}`}>
+    <Badge
+      variant="outline"
+      className={`h-4.5 shrink-0 px-1.5 text-micro font-normal ${map[shown].cls}`}
+    >
       {map[shown].text}
     </Badge>
   )

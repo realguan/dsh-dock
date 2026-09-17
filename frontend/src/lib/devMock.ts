@@ -1,5 +1,6 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks"
 import sampleMarket from "./market-sample.json"
+import type { Capability } from "@/types/ipc"
 
 export function setupDevMock() {
   if (typeof window === "undefined") return
@@ -452,7 +453,10 @@ export function setupDevMock() {
             description: null,
           }
         }
-        return [
+        // `satisfies` 让 tsc 按契约逐字段校验这份字面量（2026-09-17 独立复核）：
+        // 少写一个字段、写错一个枚举，编译期就红——比"数出现次数"的闸门强得多
+        // （当年就是漏了一个 `prerequisiteMissing`，让面板把四项全判成"前置缺失"）。
+        const caps = [
           {
             id: "agent-team",
             labelZh: "多智能体协同",
@@ -471,6 +475,7 @@ export function setupDevMock() {
                 toggleOffSupported: false,
                 subsumedBy: null,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(1, "@deepseek-ai/dsh-experimental-agent-team-profile", "auto_bundle", "live"),
                   step(
@@ -492,6 +497,7 @@ export function setupDevMock() {
                 toggleOffSupported: true,
                 subsumedBy: "web",
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   // 宿主层已随 Web 档就位（同一份包被两档共用）。
                   step(1, "@deepseek-ai/dsh-experimental-agent-team-profile", "auto_bundle", "live"),
@@ -516,6 +522,7 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: true,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(
                     1,
@@ -542,6 +549,7 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: true,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(1, "@deepseek-ai/dsh-browser-use", "insert_row", "live", [
                     "dsh-dock-deepseek-ai-dsh-browser-use",
@@ -567,6 +575,7 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: true,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(1, "@deepseek-ai/dsh-browser-use", "insert_row", "live", [
                     "dsh-dock-deepseek-ai-dsh-browser-use",
@@ -599,6 +608,10 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: true,
                 displaced: [],
+                // 真机形态（2026-09-16 事故）：本机没装 cua-driver 时后端下发这句话，
+                // 面板必须禁掉开关并原样展示——dev 直开要能走到这条分支。
+                prerequisiteMissing:
+                  "本机没有可用的 cua-driver：请先安装它，或改用「随包自带运行时」那一档",
                 steps: [
                   step(1, "@deepseek-ai/dsh-computer-use", "insert_row", "off"),
                   step(
@@ -621,6 +634,7 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: true,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(1, "@deepseek-ai/dsh-computer-use", "insert_row", "off"),
                   step(
@@ -651,6 +665,7 @@ export function setupDevMock() {
                 subsumedBy: null,
                 toggleOffSupported: false,
                 displaced: [],
+                prerequisiteMissing: null,
                 steps: [
                   step(
                     1,
@@ -662,7 +677,9 @@ export function setupDevMock() {
               },
             ],
           },
-        ]
+        ] satisfies Capability[]
+        return caps
+
       }
 
       case "get_diagnostics":

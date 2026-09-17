@@ -13,6 +13,8 @@ import { describe, expect, it } from "vitest"
 
 import {
   commonPrerequisites,
+  commonSharedPackages,
+  offMeansRemove,
   planDisable,
   planEnable,
   planRemove,
@@ -556,6 +558,83 @@ describe("变体的标识包与共用包（界面按插件名说话）", () => {
     })
     expect(variantPackageRoles(three, "a").primary).toEqual([PLAYWRIGHT])
     expect(variantPackageRoles(three, "a").shared).toEqual([BASE])
+  })
+})
+
+// 2026-09-17 版面复盘：browser-use 三档都是「基座 + 各自 provider」，"另装共用包"在三条
+// 变体行里原样重复三遍——和共同前置是同一类噪音，同一类修法（提到面板级只讲一次）。
+// 2026-09-17 独立复核：这条判据曾在 `offIsRemove` 一处带守卫、另三处裸读
+// `toggleOffSupported` → 一次失败的安装就能让面板谎称"该能力由 profile 层提供"（假话）。
+describe("层类判据：关闭是否等价于移除，必须连带确认「真就位」", () => {
+  const layer = (state: CapabilityVariant["state"], toggleOffSupported: boolean) =>
+    variant({ id: "layer", state, toggleOffSupported })
+
+  it("真就位的层类档（on / disabled）→ 关闭即移除", () => {
+    expect(offMeansRemove(layer("on", false))).toBe(true)
+    expect(offMeansRemove(layer("disabled", false))).toBe(true)
+  })
+
+  it("装到一半（partial）**不算**层类：那时后端根本无从判定包的形态", () => {
+    // `toggle_off_supported` 对未装齐的档恒为 false（要读包自己的 manifest），
+    // 照它渲染就会把 browser-use 这种纯 insert_row 档说成"由 profile 层提供"。
+    expect(offMeansRemove(layer("partial", false))).toBe(false)
+    expect(offMeansRemove(layer("off", false))).toBe(false)
+  })
+
+  it("纯行级档（toggleOffSupported=true）永远不是层类", () => {
+    expect(offMeansRemove(layer("on", true))).toBe(false)
+    expect(offMeansRemove(layer("disabled", true))).toBe(false)
+  })
+})
+
+describe("共用基座包：全体共有时只讲一次，否则保持行内标注", () => {
+  const threeVariants = (thirdPackage: string) =>
+    capability({
+      variants: [
+        twoStepVariant({ id: "a" }),
+        twoStepVariant({
+          id: "b",
+          steps: [step({ package: BASE }), step({ ordinal: 2, package: DEVTOOLS })],
+        }),
+        twoStepVariant({
+          id: "c",
+          steps: [step({ package: BASE }), step({ ordinal: 2, package: thirdPackage })],
+        }),
+      ],
+    })
+
+  it("三档都带同一个基座 → 提到面板级，行内的重复被扣掉", () => {
+    const cap = threeVariants(REVIEW)
+    expect(commonSharedPackages(cap)).toEqual([BASE])
+    const inline = (id: string) =>
+      variantPackageRoles(cap, id).shared.filter((p) => !commonSharedPackages(cap).includes(p))
+    expect(inline("a")).toEqual([])
+    expect(inline("b")).toEqual([])
+    // 标识包不受影响：扣掉的只是"共用"那一份。
+    expect(variantDisplayName(cap, "b")).toBe(DEVTOOLS)
+  })
+
+  it("不是全体共有（Agent Teams 自建档那种）→ 交集为空，继续按行标注，不吞信息", () => {
+    const cap = capability({
+      variants: [
+        variant({
+          id: "web",
+          steps: [step({ package: BASE }), step({ ordinal: 2, package: PLAYWRIGHT })],
+        }),
+        variant({ id: "headless", steps: [step({ package: BASE })] }),
+      ],
+    })
+    expect(commonSharedPackages(cap)).toEqual([])
+    // Web 档照样如实标出"另装共用包 = 基座"。
+    expect(variantPackageRoles(cap, "web").shared).toEqual([BASE])
+  })
+
+  it("单档能力：没有「共用」这回事（整包即标识）", () => {
+    const cap = capability({
+      id: "auto-review",
+      variants: [variant({ id: "standard", steps: [step({ package: REVIEW })] })],
+    })
+    expect(commonSharedPackages(cap)).toEqual([])
   })
 })
 

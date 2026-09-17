@@ -247,6 +247,42 @@ export function commonPrerequisites(cap: Capability): readonly string[] {
   return first.prerequisitesZh.filter((p) => rest.every((v) => v.prerequisitesZh.includes(p)))
 }
 
+/**
+ * **"关掉它"是否等价于"移除它"**（层类能力）——判定必须连带确认它**真的就位**。
+ *
+ * `toggle_off_supported` 只在 `state !== "off"` 时才有意义：未装齐时后端读不到包的 manifest，
+ * 一律给 `false`。"未装齐"包含**装到一半失败**（`partial`）——那种档并不是层类能力，
+ * 只是我们还没资格判定。所以判据是 `!toggle_off_supported && (on | disabled)`。
+ *
+ * 为什么单列成函数（2026-09-17 独立复核）：这条判据曾被写进 `off_is_remove` 一处、
+ * 另外三处（移除确认框的 layer 说明与要点、详情面的移除说明）却照着裸
+ * `toggle_off_supported` 渲染 → 一次失败安装就能让面板谎称"该能力由 profile 层提供"，
+ * 而这句话是**假的**（browser-use 是纯 insert_row，根本不是层）。
+ * 四处共用本函数，才不会有第五处再漏。
+ */
+export function offMeansRemove(variant: CapabilityVariant): boolean {
+  return (
+    !variant.toggleOffSupported && (variant.state === "on" || variant.state === "disabled")
+  )
+}
+
+/**
+ * 该能力**所有变体都带**的共用包（交集）——详情面只讲一次，变体行里只留各档**额外**的。
+ *
+ * 为什么（2026-09-17 版面复盘）：`browser-use` 三档各自都是「基座 `dsh-browser-use` +
+ * 各自的 provider 包」，于是"另装共用包 …"在三条变体行里原样重复三遍，把真正用来区分
+ * 各档的那一行淹掉了——与 [`commonPrerequisites`] 是同一类噪音、同一类修法。
+ *
+ * 只对**全体共有**的包生效：Agent Teams 的自建档不带 Web 层，它的 `shared` 是空集，
+ * 交集为空 ⇒ 继续按行标注（不为了"整齐"而吞掉信息）。
+ */
+export function commonSharedPackages(cap: Capability): readonly string[] {
+  if (cap.variants.length === 0) return []
+  const [first, ...rest] = cap.variants
+  const candidates = variantPackageRoles(cap, first.id).shared
+  return candidates.filter((p) => rest.every((v) => variantPackageRoles(cap, v.id).shared.includes(p)))
+}
+
 /** 变体的**界面名** = 其标识包（多个时以 ` + ` 相连）。确认框、替换提示、失败点名都用它
  *  ——各处对"哪个后端"的称呼保持一致，不再出现卡片上已不存在的「Web 档」这类名字。 */
 export function variantDisplayName(cap: Capability, variantId: string): string {

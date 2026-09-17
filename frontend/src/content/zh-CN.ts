@@ -885,8 +885,9 @@ export const t = {
     noDescription: "暂无描述",
     officialCoreTitle: "DSH 官方核心插件",
     // 实验能力开关（2026-09-16，ADR-0020 §7：目录行 → 能力开关）
-    // 文案纪律：第一阅读层只出现**用户视角**的东西（价值 / 前置 / 状态 / 后果）；
-    // 包名、钉版本、激活方式、行 id 一律进「详情」折叠区。
+    // 文案纪律（2026-09-17 v3 版面重做后）：左栏**清单行**只出现"扫一眼就要知道"的东西
+    // （名称 / 状态 / 当前插件名 / 开关）；价值、插件清单、前置、钉版本、行 id 全在右栏
+    // 常驻的**详情面**里——那里不再需要"展开"，所以这些不再是"折叠区文案"。
     capTab: "实验能力",
 
     capTitle: "实验能力",
@@ -896,11 +897,18 @@ export const t = {
     capOfficialBadge: "DSH 官方",
     capOfficialNote:
       "这些是 DeepSeek 官方发布的 dsh 实验功能（@deepseek-ai/* 包）：dsh-dock 只做策展与开关，不是社区插件。",
+    // 两栏（清单 / 详情面）：左栏标题、右栏无障碍名、窄窗口下钻的返回。
+    capListLabel: "能力清单",
+    capPaneLabel: (name: string) => `${name}的详情`,
+    capBack: "返回清单",
     capPluginsLabel: "插件",
-    // 「一档一行、行首就是插件名」的行内提示（多档能力才显示）。
+    // 单选组的可访问名：组里选的是"哪个插件提供这个能力"，用「插件」当组名会与节标混。
+    capBackendLabel: "后端插件",
+    // 详情面「插件」节：后端以插件名逐行列出；共同前置与共用基座包只讲一次。
     capPrereqCommon: "各档共同前置",
+    capBasePackages: (pkgs: string) => `各档共用基座包 ${pkgs}`,
     capAlsoInstalls: (pkgs: string) => `另装共用包 ${pkgs}`,
-    capOfficialDesc: "官方简介",
+    capOfficialDesc: "官方简介：",
     capOfficialDescPending: "装好这条后会显示它自带的官方简介",
     capDesc: "DeepSeek 官方以实验包形式发布的 dsh 能力：开启即安装并挂载，随时可以关掉。",
     capTargetProfile: "目标 Profile",
@@ -909,6 +917,8 @@ export const t = {
     capReload: "重试",
     capSummary: (on: number, total: number) => `已启用 ${on} / ${total} 项`,
     capSummaryNeedsWork: (n: number) => `${n} 项需要处理`,
+    // 「已停用」是**用户自己关的**（关而不卸），不是需要处理的问题——单列一档说明。
+    capSummaryDisabled: (n: number) => `${n} 项已停用`,
     capSummaryOff: (n: number) => `${n} 项未启用`,
     capRestartHint: "配置已变更：重启该 Profile 后才会生效",
     capRestartNow: "立即重启",
@@ -941,9 +951,9 @@ export const t = {
     capQueueHint: "包下载与失败重试见「下载管理」",
     capRepair: "修复",
     capReadyToEnable: "已就位，可直接开启",
-    capDetailToggle: "详情",
     capUnlocks: "启用后会发生什么",
     capImplTitle: "实现细节（排障用）",
+    capImplPackages: (n: number) => `${n} 个包`,
     capPinned: (spec: string) => `钉版本 ${spec}`,
     capActivationAuto: "由 dsh 自动激活",
     capActivationInsert: "需写入一条配置行",
@@ -966,9 +976,20 @@ export const t = {
     capRemoveNoteLayer: "该能力由 profile 层提供：关闭它必须移除该层，包会被卸载。",
     capRemoveConfirm: "移除",
     capRemovePointPackages: (n: number) => `卸载 ${n} 个包（重新启用需要重新下载）`,
+    capReplaceDisplaced: (pkgs: string) =>
+      `会先移除已就位的后端包：${pkgs}（卸载后不会自动装回）`,
     capRemovePointRows: "删除 dsh-dock 写入的配置行（不清会留下指向空包的悬空行）",
     capRemovePointLayer: "从 profile 的层列表里移除该层",
     capDone: "已生效",
+    // 标点与整句都进字典：组件里不许留全角标点（2026-09-17 独立复核实测：
+    // 切到 English 会看到 `Could not read experimental capabilities：…` 这类中文标点）。
+    capValueSep: "：",
+    capWhyJoin: "；",
+    capDoneFor: (name: string) => `${name}：已生效`,
+    capPartialFor: (name: string, done: number, total: number) =>
+      `${name}：已完成 ${done}/${total}，可继续剩余步骤`,
+    capFailedOn: (name: string) => `「${name}」失败`,
+    capRowHasFailure: "这一项有还没处理的失败，原因在右侧详情面里",
     capPartial: (done: number, total: number) => `已完成 ${done}/${total}，可继续剩余步骤`,
     installModalTitle: (pkg: string) => `安装插件「${pkg}」`,
     installModalDesc: "选择要安装的目标 Profile。安装后将自动写入该 Profile 的 package.json 并通过 pnpm 自动构建安装。",
