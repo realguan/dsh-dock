@@ -64,12 +64,16 @@ describe("① 第一阅读层不得出现实现细节（官方包名除外，202
     }
   })
 
-  it("官方包名在第一阅读层**且**带官方标识（裁定要求，不得悄悄消失）", () => {
+  it("插件名（官方名）在第一阅读层，且是行首标签（2026-09-17 裁定：名字用插件名）", () => {
     const collapsed = collapsedRegion()
-    expect(collapsed, "第一阅读层缺少官方包名行").toContain("t.market.capOfficialPackages")
-    expect(collapsed, "官方包名行必须取自 variant.steps 的官方包名").toContain(
-      "variant.steps.map((s) => s.package).join",
+    expect(collapsed, "第一阅读层缺少「插件」节标").toContain("t.market.capPluginsLabel")
+    // 名字必须来自**派生规则**（标识包 = 该档独有；基座包另标共用），而不是我们发明的
+    // 「Web 档 / 复用已装的 cua-driver」这类标签——`variantPackageRoles` 有单测钉住取值。
+    expect(collapsed, "插件名必须由 variantPackageRoles 派生").toContain(
+      "variantPackageRoles(cap, v.id)",
     )
+    expect(collapsed, "行首必须渲染标识包（roles.primary）").toContain("roles.primary.map(")
+    expect(collapsed, "共用基座包要如实标注，不得省略").toContain("capAlsoInstalls")
   })
 
   it("官方来源与官方简介文案齐备（面板与逐包两处）", () => {
@@ -94,6 +98,20 @@ describe("① 第一阅读层不得出现实现细节（官方包名除外，202
     for (const required of ["cap.summaryZh", "prerequisitesZh", "cap.labelZh", "Switch"]) {
       expect(collapsed, `第一阅读层缺少「${required}」`).toContain(required)
     }
+  })
+})
+
+describe("①b 行内状态徽标按**变体自己**的状态取词（2026-09-17）", () => {
+  it("activeVariant 也覆盖「已就位但停用」，因此行内徽标不得无条件写「已启用」", () => {
+    // 后端契约：`official_catalog.rs` 的 Disabled 分支把 activeVariant 设成那条"包里齐了、
+    // 行被停用"的变体。所以行内徽标必须按 v.state 分档——版面复盘时在 mock 数据上
+    // 真抓到"卡片说已停用 / 行内说已启用"的自相矛盾。
+    const collapsed = collapsedRegion()
+    expect(collapsed).toContain('v.state === "on"')
+    expect(collapsed).toContain('v.state === "disabled"')
+    expect(collapsed).toContain("t.market.capStateDisabled")
+    expect(collapsed, "两档之外要有兜底").toContain("t.market.capStatePartial")
+    expect(collapsed, "单档能力不必在行内重复卡片头已说过的状态").toContain("multi && isActive")
   })
 })
 
@@ -176,8 +194,10 @@ describe("⑦b 卡片徽标与 chip 标记（2026-09-16 用户真机验收第二
     expect(src, "不得再照选中档渲染徽标").not.toMatch(/const shown = variant\.state/)
   })
 
-  it("被前置门挡住的档在 chip 上有标记（否则切档看不出区别）", () => {
-    expect(src).toMatch(/v\.prerequisiteMissing && \(/)
+  it("被前置门挡住的档在**它自己那一行**里有标记（否则切档看不出区别）", () => {
+    // 2026-09-17 重做后，"档"以插件行呈现，被挡的原因落在该行内（仍是第一阅读层）。
+    expect(src).toMatch(/const vBlocked = v\.prerequisiteMissing/)
+    expect(src, "原因必须渲染出来").toMatch(/\{vBlocked && \(/)
   })
 })
 
@@ -189,8 +209,11 @@ describe("⑦ 宿主前置缺失 = 硬门（2026-09-16 真机事故）", () => {
     expect(src, "前置缺失必须并入 Switch 的 disabled").toMatch(
       /disabled=\{busy \|\| subsumedBy !== null \|\| blocked !== null\}/,
     )
-    // 原因必须在标题下方（第一眼可见），且用警示色——原样展示后端文案（禁前端自造）。
-    expect(src).toMatch(/\{blocked && <p className="[^"]*text-danger[^"]*">\{blocked\}<\/p>\}/)
+    // 原因必须在**第一阅读层**（不展开「详情」就能看到），且用警示色——原样展示后端文案
+    // （禁前端自造）。2026-09-17 重做后它落在被挡那一行内：span + text-danger。
+    const collapsed = collapsedRegion()
+    expect(collapsed, "前置缺失的原因必须在第一阅读层").toContain("vBlocked")
+    expect(collapsed, "原因必须用警示色").toMatch(/text-danger[\s\S]{0,240}?\{vBlocked\}/)
   })
 })
 

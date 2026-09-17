@@ -12,11 +12,14 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  commonPrerequisites,
   planDisable,
   planEnable,
   planRemove,
   planReplace,
   runCapabilityOps,
+  variantDisplayName,
+  variantPackageRoles,
   type CapabilityIO,
   type CapabilityOp,
 } from "@/lib/experimentalCapabilities"
@@ -493,6 +496,95 @@ describe("串行执行器：软失败当失败、失败可续跑", () => {
       totalOps: 0,
       failedAt: null,
     })
+  })
+})
+
+// 2026-09-17 维护者裁定「实际上就是插件，名字使用插件名就行了」：界面用**插件名**称呼
+// 后端，并区分"这一档独有的包"与"兄弟档共用的基座"。规则纯函数化，正反例都钉住——
+// 拿这条去渲染卡片头与确认框，就不会再冒出「Web 档 / 复用已装的 cua-driver」这类
+// 我们发明的名字。
+describe("变体的标识包与共用包（界面按插件名说话）", () => {
+  it("基座 + provider 的两步档：标识 = provider，共用 = 基座", () => {
+    const cap = capability({
+      variants: [
+        twoStepVariant({ id: "playwright" }),
+        twoStepVariant({
+          id: "chrome-devtools",
+          steps: [
+            step({ ordinal: 1, package: BASE, rowId: "dsh-dock-base" }),
+            step({ ordinal: 2, package: DEVTOOLS, rowId: "dsh-dock-dt" }),
+          ],
+        }),
+      ],
+    })
+    expect(variantPackageRoles(cap, "playwright")).toEqual({
+      primary: [PLAYWRIGHT],
+      shared: [BASE],
+    })
+    expect(variantDisplayName(cap, "playwright")).toBe(PLAYWRIGHT)
+  })
+
+  it("只有基座的档（Agent Teams 自建档那种）：标识 = 基座本身，不显示成「什么都没有」", () => {
+    const cap = capability({
+      variants: [
+        variant({ id: "web", steps: [step({ package: BASE }), step({ ordinal: 2, package: PLAYWRIGHT })] }),
+        variant({ id: "headless", steps: [step({ package: BASE })] }),
+      ],
+    })
+    expect(variantPackageRoles(cap, "headless")).toEqual({ primary: [BASE], shared: [] })
+    expect(variantPackageRoles(cap, "web")).toEqual({ primary: [PLAYWRIGHT], shared: [BASE] })
+  })
+
+  it("单档能力：整包即标识（无兄弟 ⇒ 没有共用概念）", () => {
+    const cap = capability({ id: "auto-review", variants: [variant({ id: "standard", steps: [step({ package: REVIEW })] })] })
+    expect(variantPackageRoles(cap, "standard")).toEqual({ primary: [REVIEW], shared: [] })
+    expect(variantDisplayName(cap, "standard")).toBe(REVIEW)
+  })
+
+  it("未知变体：空结果，不抛（渲染路径上的防御）", () => {
+    expect(variantPackageRoles(capability(), "nope")).toEqual({ primary: [], shared: [] })
+    expect(variantDisplayName(capability(), "nope")).toBe("")
+  })
+
+  it("包序沿用步骤序（宿主层在前），不随兄弟变体数量变化", () => {
+    const three = capability({
+      variants: [
+        twoStepVariant({ id: "a" }),
+        twoStepVariant({ id: "b", steps: [step({ package: BASE }), step({ ordinal: 2, package: DEVTOOLS })] }),
+        twoStepVariant({ id: "c", steps: [step({ package: BASE }), step({ ordinal: 2, package: REVIEW })] }),
+      ],
+    })
+    expect(variantPackageRoles(three, "a").primary).toEqual([PLAYWRIGHT])
+    expect(variantPackageRoles(three, "a").shared).toEqual([BASE])
+  })
+})
+
+describe("共同前置：卡片只讲一次，行内只讲各档额外的", () => {
+  it("三档共有的 Chromium 前置只出现一次（交集），各档独有前置留在行内", () => {
+    const cap = capability({
+      variants: [
+        variant({ id: "playwright", prerequisitesZh: ["浏览器只用 Chromium 系"] }),
+        variant({
+          id: "chrome-devtools",
+          prerequisitesZh: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+        }),
+        variant({ id: "stagehand", prerequisitesZh: ["浏览器只用 Chromium 系", "需填 model"] }),
+      ],
+    })
+    expect(commonPrerequisites(cap)).toEqual(["浏览器只用 Chromium 系"])
+    const extras = (id: string) =>
+      cap.variants.find((v) => v.id === id)!.prerequisitesZh.filter((p) => !commonPrerequisites(cap).includes(p))
+    expect(extras("playwright")).toEqual([])
+    expect(extras("chrome-devtools")).toEqual(["本机需安装 Chrome"])
+    expect(extras("stagehand")).toEqual(["需填 model"])
+  })
+
+  it("没有共同前置时交集为空（单档能力、各说各的）", () => {
+    expect(commonPrerequisites(capability({ variants: [variant({ prerequisitesZh: ["a"] })] }))).toEqual(["a"])
+    const two = capability({
+      variants: [variant({ id: "a", prerequisitesZh: ["x"] }), variant({ id: "b", prerequisitesZh: ["y"] })],
+    })
+    expect(commonPrerequisites(two)).toEqual([])
   })
 })
 

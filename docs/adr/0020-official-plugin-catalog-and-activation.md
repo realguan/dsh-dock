@@ -306,9 +306,26 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
    仅在行确由壳写入时调用。登记册 §一 同步。
 4. **状态由后端一次算全**（`CapabilityState` = `off` / `on` / `disabled` / `partial` /
    `conflict`）：状态是「包 × 行 × disabled」的函数，**前端不得凭 `installed` 猜**（§2.8 禁双源）。
-5. **实现细节折叠**：包名 / spec / 激活方式 / 行 id 进「详情」，默认不出现在第一阅读层；
+5. **实现细节折叠**：spec / 激活方式 / 行 id / 版本提示进「详情」，默认不出现在第一阅读层；
    启用确认框显示**确切版本**（§2.4 的原始要求，v1 未落到弹窗）。
-6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言，无反引号）。
+   > **2026-09-17 修订（维护者裁定「实际上就是插件，名字使用插件名就行了」）**：本条的
+   > **「包名」一项从折叠区上移到第一阅读层**——一个"后端"本就是**一串插件**（browser-use
+   > 三档都是 `dsh-browser-use` 基座 + 各自 provider；Agent Teams 的 Web 档再加
+   > `-web-profile`，而"自建档"**就是基座本身**），所以卡片不再用我们发明的
+   > 「Web 档 / 复用已装的 cua-driver」称呼后端，改为**行首直接写插件名**，并区分
+   > 「该档独有的包」与「另装共用基座包」（规则纯函数化：
+   > `experimentalCapabilities::variantPackageRoles`，有单测）。
+   > 理由是**可对照**：用户要拿这些名字去对 `node_modules`、`cordis.patch.yml` 与
+   > 上游 README，我们自造的名字在这里全是噪音。spec / 激活方式 / 行 id / 版本提示
+   > **仍在「详情」**（它们才是排障细节）。同一轮版面规范：刻度只用既有 token、
+   > 圆角按角色、品牌色只承担"选中/主操作"、状态色只承担状态、各档共同前置去重成一条、
+   > **行内状态徽标按变体自身状态取词**（`activeVariant` 含"已就位但停用"，照抄「已启用」
+   > 会与卡片头的「已停用」自相矛盾——版面复盘真抓到）。
+6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言）。
+   > **2026-09-17 补**：**不得含任何 markdown 标记**——面板没有 markdown 渲染器，
+   > 反引号与 `**` 都会原样显示（D6 只挡住了反引号，`unlocks_zh` 里的 `**权限最高**`
+   > 一直漏到用户眼前）。门禁：Rust `user_facing_copy_has_no_markdown_markup`
+   > ＋ 前端 `dictCopyHygiene.test.ts`（扫两本字典的求值叶子）。
 7. `list_official_plugins` **改名并改形**为 `list_experimental_capabilities`（返回
    `CapabilityView[]`）。无外部消费者，仅本仓库前端；连带 `ipc.rs` 闸门 fixture 与登记册。
 8. **区分「互斥变体」与「子集变体」**（2026-09-16 真机暴露，D8）：变体状态里新增

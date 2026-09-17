@@ -209,7 +209,7 @@ pub const CAPABILITIES: &[Capability] = &[
         summary_zh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
         unlocks_zh: "模型多出九个 team 工具（创建 / 收发消息 / 协调 teammate、读写共享任务板），\
                      消息与任务挺得过崩溃与重载。Web 档还会在主界面出现 Team 面板与任务板。\
-                     注意：它会**取代旧的委派控件** —— subagent、subagent_fork 等四个旧行会被停用，\
+                     注意：它会接管旧的委派控件 —— subagent、subagent_fork 等四个旧行会被停用，\
                      两者不能并存；移除本能力后旧控件恢复。",
         variants: &[
             Variant {
@@ -236,7 +236,7 @@ pub const CAPABILITIES: &[Capability] = &[
         label_zh: "浏览器操作",
         summary_zh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
         unlocks_zh: "模型多出一组浏览器工具（打开页面、点击、填表、截图、读取页面结构）。\
-                     同一时刻**只允许一个后端生效**，换后端要走替换。\
+                     同一时刻只允许一个后端生效，换后端要走替换。\
                      浏览器状态按 Session 重建 —— 登录态与浏览器 profile 不会从会话历史恢复；\
                      取消调用也无法撤销已经送达页面的操作。",
         variants: &[
@@ -281,8 +281,8 @@ pub const CAPABILITIES: &[Capability] = &[
         label_zh: "桌面控制",
         summary_zh: "让模型操作你的桌面：鼠标、键盘、窗口",
         unlocks_zh: "模型多出一组桌面控制工具，可以直接操作真实的鼠标键盘与窗口。\
-                     这是**权限最高**的实验能力：多个会话共享同一个桌面，操作之间不会被串行化，\
-                     而取消调用**无法撤销已经送到桌面的输入**。请只在受控环境启用。",
+                     这是权限最高的实验能力：多个会话共享同一个桌面，操作之间不会被串行化，\
+                     而取消调用无法撤销已经送到桌面的输入。请只在受控环境启用。",
         variants: &[
             Variant {
                 id: "cua-driver-mcp",
@@ -314,8 +314,8 @@ pub const CAPABILITIES: &[Capability] = &[
         label_zh: "自动安全审查",
         summary_zh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
         unlocks_zh: "权限选择器里多出带 EXP 上标的 Auto review 模式：每个原生或 PTC 工具调用\
-                     **执行前**先由当前模型评估一次，可拦下危险动作。代价是每个动作多一轮模型\
-                     调用（不缓存、不重试、更慢更贵），且**模型分类可能出错** —— 既可能误放行，\
+                     在执行前先由当前模型评估一次，可拦下危险动作。代价是每个动作多一轮模型\
+                     调用（不缓存、不重试、更慢更贵），且模型分类可能出错 —— 既可能误放行，\
                      也可能误拒。卸载时正在使用它的会话会被迁移回 Full access。",
         variants: &[Variant {
             id: "standard",
@@ -548,7 +548,7 @@ pub fn resolve_capabilities(
                                 None => (
                                     step.package.clone(),
                                     Some(
-                                        "运行时版本未检出，本步**未钉版本**——裸包名会按 latest 解析，\
+                                        "运行时版本未检出，本步未钉版本——裸包名会按 latest 解析，\
                                          可能与运行时错配（如需严格匹配请先让引擎就绪）"
                                             .to_string(),
                                     ),
@@ -964,7 +964,7 @@ mod tests {
 
     /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
     #[test]
-    fn user_facing_copy_has_no_markdown_backticks() {
+    fn user_facing_copy_has_no_markdown_markup() {
         for cap in CAPABILITIES {
             let mut texts: Vec<String> = vec![
                 cap.label_zh.to_string(),
@@ -977,7 +977,14 @@ mod tests {
                 texts.extend(v.prerequisites_zh.iter().map(|s| (*s).to_string()));
             }
             for text in texts {
+                // 面板没有 markdown 渲染器：反引号与 `**` 都会**原样显示**给用户
+                //（2026-09-17 版面复盘：详情区的「启用后会发生什么」里真的出现了星号）。
                 assert!(!text.contains('`'), "{} 的文案含反引号：{text}", cap.id);
+                assert!(
+                    !text.contains("**"),
+                    "{} 的文案含 markdown 强调：{text}",
+                    cap.id
+                );
             }
         }
     }

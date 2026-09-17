@@ -883,8 +883,10 @@ export const enUS: AppCopy = {
     // locally once installed — never paraphrased or translated).
     capOfficialBadge: "DSH Official",
     capOfficialNote:
-      "These are dsh experimental capabilities published by DeepSeek (`@deepseek-ai/*` packages): dsh-dock only curates them and flips the switch — they are not community plugins.",
-    capOfficialPackages: "Official packages",
+      "These are dsh experimental capabilities published by DeepSeek (@deepseek-ai/* packages): dsh-dock only curates them and flips the switch — they are not community plugins.",
+    capPluginsLabel: "Plugins",
+    capPrereqCommon: "Shared prerequisites",
+    capAlsoInstalls: (pkgs: string) => `also installs shared ${pkgs}`,
     capOfficialDesc: "Official description",
     capOfficialDescPending: "The package's own description appears here once installed",
     capDesc: "dsh capabilities that upstream marks as experimental. Turn one on to install and mount it; you can turn it off at any time.",
@@ -903,9 +905,8 @@ export const enUS: AppCopy = {
     capStatePartial: "Needs Repair",
     capStateConflict: "Backend Conflict",
     capSwitchLabel: (name: string) => `Toggle ${name}`,
-    capBackendLabel: "Backend",
-    capOtherActive: (label: string) => `"${label}" is currently active; turning on this backend replaces it first`,
-    capOtherReady: (label: string) => `"${label}" is already in place (disabled); turning on this backend removes it first`,
+    capOtherActive: (label: string) => `"${label}" is currently active; turning this plugin on replaces it first`,
+    capOtherReady: (label: string) => `"${label}" is already in place (disabled); turning this plugin on removes it first`,
     capOffIsRemove: "Provided by a profile layer: turning it off removes it",
     capStateSubsumed: "Included",
     capSubsumedBy: (label: string) =>

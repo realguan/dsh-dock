@@ -895,8 +895,11 @@ export const t = {
     // 包简介 = 包自己 package.json 的 description（装好后读本地文件，不转述不翻译）。
     capOfficialBadge: "DSH 官方",
     capOfficialNote:
-      "这些是 DeepSeek 官方发布的 dsh 实验功能（`@deepseek-ai/*` 包）：dsh-dock 只做策展与开关，不是社区插件。",
-    capOfficialPackages: "官方包",
+      "这些是 DeepSeek 官方发布的 dsh 实验功能（@deepseek-ai/* 包）：dsh-dock 只做策展与开关，不是社区插件。",
+    capPluginsLabel: "插件",
+    // 「一档一行、行首就是插件名」的行内提示（多档能力才显示）。
+    capPrereqCommon: "各档共同前置",
+    capAlsoInstalls: (pkgs: string) => `另装共用包 ${pkgs}`,
     capOfficialDesc: "官方简介",
     capOfficialDescPending: "装好这条后会显示它自带的官方简介",
     capDesc: "DeepSeek 官方以实验包形式发布的 dsh 能力：开启即安装并挂载，随时可以关掉。",
@@ -915,13 +918,12 @@ export const t = {
     capStatePartial: "需要修复",
     capStateConflict: "后端冲突",
     capSwitchLabel: (name: string) => `${name}的开关`,
-    capBackendLabel: "后端",
-    capOtherActive: (label: string) => `当前生效的是「${label}」；开启本后端会先替换它`,
-    capOtherReady: (label: string) => `当前已就位的是「${label}」（已停用）；开启本后端会先拆掉它`,
+    capOtherActive: (label: string) => `当前生效的是「${label}」；开启本插件会先替换它`,
+    capOtherReady: (label: string) => `当前已就位的是「${label}」（已停用）；开启本插件会先拆掉它`,
     capOffIsRemove: "该能力由 profile 层提供：关闭即移除",
     capStateSubsumed: "已包含",
     capSubsumedBy: (label: string) =>
-      `本档的包是「${label}」的基础层，已随之就位；开关与移除统一由「${label}」控制`,
+      `本插件是「${label}」的基础层，已随之就位；开关与移除统一由「${label}」控制`,
     capRunning: (index: number, total: number) => `正在处理（第 ${index}/${total} 步）`,
     capOpInstall: (pkg: string) => `安装 ${pkg}`,
     capOpRemove: (pkg: string) => `移除 ${pkg}`,

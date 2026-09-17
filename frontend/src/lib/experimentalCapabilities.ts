@@ -200,6 +200,59 @@ export function planReplace(cap: Capability, variantId: string): CapabilityOp[] 
   return [...others.flatMap((v) => teardownOps(v, keep)), ...planEnable(cap, variantId)]
 }
 
+/**
+ * 变体在界面上的**标识包**与**共用包**（2026-09-17 维护者裁定「实际上就是插件，
+ * 名字使用插件名就行了」）。
+ *
+ * 数据事实：一个"后端"本就是一串插件——`browser-use` 的三档都是
+ * `@deepseek-ai/dsh-browser-use`（基座）+ 各自的 provider 包；Agent Teams 的
+ * 「Web 档」是基座 + `-web-profile`，而「自建档」**就是基座本身**。所以界面不该再造
+ * 「Web 档 / 复用已装的 cua-driver」这类我们发明的名字，直接说插件名，并如实区分：
+ *
+ * - `primary` = **该变体独有**的包（兄弟变体没有的）→ 它才是"这一档是什么"；
+ * - `shared`  = 兄弟变体也带的基座包（换后端时"留住的共享基座"，与 [`planReplace`]
+ *   的 `keep` 同一语义）；
+ * - 没有任何独有包时（「自建档」那种）→ `primary` 退回它自己的全部包、`shared` 为空：
+ *   它的标识就是基座包本身，不该显示成"什么也没有"。
+ *
+ * 包序沿用步骤序（宿主层在前、provider 在后），与安装顺序同源。
+ */
+export function variantPackageRoles(
+  cap: Capability,
+  variantId: string,
+): { primary: readonly string[]; shared: readonly string[] } {
+  const me = cap.variants.find((v) => v.id === variantId)
+  if (!me) return { primary: [], shared: [] }
+  const mine = ordered(me).map((s) => s.package)
+  const others = new Set(
+    cap.variants
+      .filter((v) => v.id !== variantId)
+      .flatMap((v) => v.steps.map((s) => s.package)),
+  )
+  const unique = mine.filter((p) => !others.has(p))
+  if (unique.length === 0) return { primary: mine, shared: [] }
+  return { primary: unique, shared: mine.filter((p) => !unique.includes(p)) }
+}
+
+/**
+ * 该能力**所有变体共有**的前置条件（交集）——卡片级只讲一次，行内只讲各档**额外**的。
+ *
+ * 为什么要去重（2026-09-17 版面复盘）：Chromium 这条前置写在三个浏览器档里，三行完全
+ * 相同；而"本机需安装 Chrome"（Chrome DevTools 档）才是切档时要对比的信息。重复行把
+ * 真正的差异淹掉了——去重后卡片短两行、差异一眼可见。
+ */
+export function commonPrerequisites(cap: Capability): readonly string[] {
+  if (cap.variants.length === 0) return []
+  const [first, ...rest] = cap.variants
+  return first.prerequisitesZh.filter((p) => rest.every((v) => v.prerequisitesZh.includes(p)))
+}
+
+/** 变体的**界面名** = 其标识包（多个时以 ` + ` 相连）。确认框、替换提示、失败点名都用它
+ *  ——各处对"哪个后端"的称呼保持一致，不再出现卡片上已不存在的「Web 档」这类名字。 */
+export function variantDisplayName(cap: Capability, variantId: string): string {
+  return variantPackageRoles(cap, variantId).primary.join(" + ")
+}
+
 /** 插件操作失败：把后端的分类一起带出来（组件据此选文案，不再自己正则判一次）。 */
 class PluginOpFailed extends Error {
   readonly failureKind: FailureKind | null
