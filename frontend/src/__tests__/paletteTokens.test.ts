@@ -295,4 +295,61 @@ describe("调色板 token 收口闸门", () => {
     expect(termBrand, "index.css 缺少 --color-term-brand").toBeDefined()
     expect(switcherSrc, "悬浮胶囊缺少 term-brand 镜像").toContain(termBrand!)
   })
+
+  it("语义色不得手搓 alpha、不得用 -white 字面（2026-09-18 收口批次闸门）", () => {
+    // 批次 E 钉住了原生调色板，但**语义 token 自己**仍被绕过：bg-ok/10、
+    // bg-brand/15、text-ink/80、bg-white……同一语义又长出第二套值。
+    // 豁免口径：border-<族>/N（index.css 裁定描边直接叠透明度）、
+    // bg-brand/60+ 与 selection:bg-brand/N（品牌强档，非淡色洗）、
+    // hover:bg-destructive/80+（实心危险钮的 hover 变暗）。
+    const stripComments = (src: string) =>
+      src
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1")
+    const FORBIDDEN: [string, RegExp][] = [
+      [
+        "状态族一律 -soft 底色 token（bg-ok-soft / text-danger…）",
+        /\b(?:bg|text|fill|stroke)-(?:ok|info|warn|danger|alt)\/[\d.[\]]+/,
+      ],
+      ["shadcn 软性危险底改 bg-danger-soft", /\bbg-destructive\/(?:[1-9]|1\d|2\d)\b/],
+      ["品牌蓝淡底一律 bg-wash", /\bbg-brand\/(?:[1-9]|1\d|20)\b/],
+      ["灰字用 text-dim / text-faint", /\btext-ink\/[\d.]+/],
+      [
+        "白用 bg-panel / text-primary-foreground / term-*（禁 -white 字面）",
+        /\b(?:bg|text|border|ring|from|to|via|fill|stroke|outline|placeholder|shadow|decoration)-white\b/,
+      ],
+    ]
+    const offenders = Object.entries(RAW_SOURCES)
+      .filter(([path]) => !path.endsWith("/paletteTokens.test.ts"))
+      .filter(([path]) => !isExempt(path))
+      .flatMap(([path, src]) => {
+        const body = stripComments(src)
+        return FORBIDDEN.flatMap(([why, re]) => {
+          const hits = [...body.matchAll(new RegExp(re.source, "g"))].map((m) => m[0])
+          return hits.length ? [`${path}: ${[...new Set(hits)].join(" ")} → ${why}`] : []
+        })
+      })
+    expect(offenders, "手搓色值绕过语义 token：\n" + offenders.join("\n")).toEqual([])
+
+    // 闸门自检：禁的必须拦住、豁免口径不得误伤
+    expect("bg-ok/10".match(FORBIDDEN[0][1])).toHaveLength(1)
+    expect("text-danger/80".match(FORBIDDEN[0][1])).toHaveLength(1)
+    expect("bg-info/[0.04]".match(FORBIDDEN[0][1])).toHaveLength(1)
+    expect("bg-destructive/10".match(FORBIDDEN[1][1])).toHaveLength(1)
+    expect("bg-brand/15".match(FORBIDDEN[2][1])).toHaveLength(1)
+    expect("text-ink/75".match(FORBIDDEN[3][1])).toHaveLength(1)
+    expect("bg-white/20".match(FORBIDDEN[4][1])).toHaveLength(1)
+    expect("border-ok/30".match(FORBIDDEN[0][1])).toBeNull()
+    expect("bg-ok-soft".match(FORBIDDEN[0][1])).toBeNull()
+    expect("text-term-danger".match(FORBIDDEN[0][1])).toBeNull()
+    expect("hover:bg-destructive/90".match(FORBIDDEN[1][1])).toBeNull()
+    expect("bg-brand/60 selection:bg-brand/30".match(FORBIDDEN[2][1])).toBeNull()
+    expect("text-primary-foreground bg-panel".match(FORBIDDEN[4][1])).toBeNull()
+    // 注释剥离不误伤字符串里的 URL；行尾注释本体被剥掉
+    const stripped = stripComments(
+      'const u = "https://dsh.dev/docs" // 提到 bg-white 的注释',
+    )
+    expect(stripped.includes("https://dsh.dev/docs")).toBe(true)
+    expect(stripped.includes("bg-white")).toBe(false)
+  })
 })

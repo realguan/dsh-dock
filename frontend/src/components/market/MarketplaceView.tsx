@@ -31,6 +31,7 @@ import { MarketPluginCard } from "@/components/market/MarketPluginCard"
 import { MarketInstallDialog } from "@/components/market/MarketInstallDialog"
 import { MarketCustomInstallDialog } from "@/components/market/MarketCustomInstallDialog"
 import { Button } from "@/components/ui/button"
+import { StateBlock } from "@/components/ui/state-block"
 import {
   Select,
   SelectContent,
@@ -244,13 +245,14 @@ export function MarketplaceView({
             )}
           </div>
 
-          {/* 排序方式 */}
+          {/* 排序方式（2026-09-18 收口：去 h-8.5/rounded-xl 任意档，控制件对齐 Button
+              默认档 h-8 rounded-lg，触发器/按钮/翻页件同行同高）。 */}
           <div className="w-[150px]">
             <Select
               value={sortOption}
               onValueChange={(val) => setSortOption(val as MarketSortOption)}
             >
-              <SelectTrigger className="h-8.5 rounded-xl border-line bg-wash text-xs text-ink font-medium">
+              <SelectTrigger className="bg-wash font-medium">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
@@ -282,12 +284,11 @@ export function MarketplaceView({
             </Select>
           </div>
 
-          {/* 手动输入地址安装 */}
+          {/* 手动输入地址安装（次行动 = outline；hover 用 bg-wash token，不手搓 brand alpha） */}
           <Button
-            size="sm"
             variant="outline"
             onClick={() => setCustomInstallOpen(true)}
-            className="h-8.5 gap-1.5 rounded-xl text-xs font-medium border-brand/40 text-brand-deep hover:bg-brand/10 hover:border-brand"
+            className="text-xs font-medium border-brand/40 text-brand-deep hover:bg-wash hover:border-brand"
           >
             <Plus className="size-3.5" />
             <span>{t.market.manualInstallBtn}</span>
@@ -295,11 +296,10 @@ export function MarketplaceView({
 
           {/* 刷新 Registry */}
           <Button
-            size="sm"
             variant="outline"
             onClick={() => void loadRegistry(true)}
             disabled={loading}
-            className="h-8.5 gap-1.5 rounded-xl text-xs"
+            className="text-xs"
           >
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : ""}`} />
             <span>{loading ? t.market.loadingBtn : t.market.refreshRegistry}</span>
@@ -316,7 +316,7 @@ export function MarketplaceView({
                 onClick={() => setSelectedCategory("all")}
                 className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                   selectedCategory === "all"
-                    ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                    ? "bg-brand text-primary-foreground border-brand shadow-2xs font-semibold"
                     : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                 }`}
               >
@@ -324,7 +324,7 @@ export function MarketplaceView({
                 <span
                   className={`text-meta font-mono rounded-md px-1 py-0.2 ${
                     selectedCategory === "all"
-                      ? "bg-white/20 text-white"
+                      ? "bg-primary-foreground/15 text-primary-foreground"
                       : "bg-panel text-faint"
                   }`}
                 >
@@ -340,7 +340,7 @@ export function MarketplaceView({
                   onClick={() => setSelectedCategory(cat.key)}
                   className={`px-2.5 py-1 rounded-lg text-xs transition-all flex items-center gap-1.5 border ${
                     selectedCategory === cat.key
-                      ? "bg-brand text-white border-brand shadow-2xs font-semibold"
+                      ? "bg-brand text-primary-foreground border-brand shadow-2xs font-semibold"
                       : "bg-wash text-dim border-line/60 hover:border-brand/40 hover:text-ink"
                   }`}
                 >
@@ -348,7 +348,7 @@ export function MarketplaceView({
                   <span
                     className={`text-meta font-mono rounded-md px-1 py-0.2 ${
                       selectedCategory === cat.key
-                        ? "bg-white/20 text-white"
+                        ? "bg-primary-foreground/15 text-primary-foreground"
                         : "bg-panel text-faint"
                     }`}
                   >
@@ -362,7 +362,7 @@ export function MarketplaceView({
                 <button
                   type="button"
                   onClick={() => setExpandAllCategories(!expandAllCategories)}
-                  className="px-2.5 py-1 rounded-lg text-xs text-brand-deep hover:bg-brand/10 transition-colors flex items-center gap-1 font-medium border border-transparent"
+                  className="px-2.5 py-1 rounded-lg text-xs text-brand-deep hover:bg-wash transition-colors flex items-center gap-1 font-medium border border-transparent"
                 >
                   <span>
                     {expandAllCategories
@@ -387,31 +387,32 @@ export function MarketplaceView({
           <AlertCircle className="size-6 mx-auto opacity-80" />
           <p className="font-medium">{t.market.loadFailed}</p>
           <p className="font-mono text-label opacity-80 break-all">{error}</p>
-          <Button size="sm" variant="outline" onClick={() => void loadRegistry(true)} className="rounded-xl mt-2">
+          <Button size="sm" variant="outline" onClick={() => void loadRegistry(true)} className="mt-2">
             <RefreshCw className="mr-1 size-3.5" />
             {t.market.retry}
           </Button>
         </div>
       )}
 
-      {/* 加载骨架屏 */}
+      {/* 加载骨架屏（2026-09-18 收口：与真实卡同档圆角 rounded-2xl；
+          占位色用凹陷填充 token bg-line-soft，不复用品牌 wash——骨架不是内容） */}
       {loading && !registry && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-44 rounded-xl border border-line bg-panel p-4 animate-pulse space-y-3"
+              className="h-44 rounded-2xl border border-line bg-panel p-4 animate-pulse space-y-3"
             >
               <div className="flex items-center gap-3">
-                <div className="size-9 rounded-lg bg-wash" />
+                <div className="size-9 rounded-lg bg-line-soft" />
                 <div className="space-y-1.5 flex-1">
-                  <div className="h-3.5 w-24 rounded-md bg-wash" />
-                  <div className="h-2.5 w-16 rounded-md bg-wash" />
+                  <div className="h-3.5 w-24 rounded-md bg-line-soft" />
+                  <div className="h-2.5 w-16 rounded-md bg-line-soft" />
                 </div>
               </div>
-              <div className="h-3 w-full rounded-md bg-wash" />
-              <div className="h-3 w-3/4 rounded-md bg-wash" />
-              <div className="h-8 w-full rounded-lg bg-wash mt-4" />
+              <div className="h-3 w-full rounded-md bg-line-soft" />
+              <div className="h-3 w-3/4 rounded-md bg-line-soft" />
+              <div className="h-8 w-full rounded-lg bg-line-soft mt-4" />
             </div>
           ))}
         </div>
@@ -450,24 +451,27 @@ export function MarketplaceView({
               })}
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-line bg-panel/50 p-12 text-center text-xs space-y-2">
-              <Package className="size-8 mx-auto text-faint opacity-60" />
-              <p className="font-medium text-ink">{t.market.noResults}</p>
-              <p className="text-dim text-label">{t.market.noResultsHint}</p>
-              {(searchQuery || selectedCategory !== "all") && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setSearchQuery("")
-                    setSelectedCategory("all")
-                  }}
-                  className="rounded-xl mt-3 text-xs"
-                >
-                  {t.market.clearFilters}
-                </Button>
-              )}
-            </div>
+            <StateBlock
+              tone="empty"
+              icon={Package}
+              title={t.market.noResults}
+              hint={t.market.noResultsHint}
+              action={
+                (searchQuery || selectedCategory !== "all") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setSearchQuery("")
+                      setSelectedCategory("all")
+                    }}
+                    className="text-xs"
+                  >
+                    {t.market.clearFilters}
+                  </Button>
+                )
+              }
+            />
           )}
 
           {/* 底部现代分页控制条 */}
@@ -478,14 +482,14 @@ export function MarketplaceView({
               </div>
 
               <div className="flex items-center gap-2">
-                {/* 每页大小选择 */}
+                {/* 每页大小选择（2026-09-18 收口：h-7.5 任意档 → Select 基座 h-8 档） */}
                 <div className="flex items-center gap-1.5 text-xs text-dim">
                   <span>{t.market.pageSize}</span>
                   <Select
                     value={String(pageSize)}
                     onValueChange={(val) => setPageSize(Number(val))}
                   >
-                    <SelectTrigger className="h-7.5 w-18 rounded-lg border-line bg-wash text-xs text-ink font-mono">
+                    <SelectTrigger className="w-18 bg-wash font-mono">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
@@ -498,14 +502,14 @@ export function MarketplaceView({
                   </Select>
                 </div>
 
-                {/* 翻页按钮 */}
+                {/* 翻页按钮（2026-09-18 收口：size="sm"+size-8 p-0 rounded-lg 覆写
+                    属自毁尺寸，改用基座 icon 档 = size-8 rounded-lg） */}
                 <div className="flex items-center gap-1">
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="outline"
                     disabled={currentPage <= 1}
                     onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                    className="size-8 p-0 rounded-lg"
                     title={t.market.paginationPrev}
                   >
                     <ChevronLeft className="size-4" />
@@ -528,7 +532,7 @@ export function MarketplaceView({
                           onClick={() => setCurrentPage(item)}
                           className={`size-8 rounded-lg text-xs font-mono transition-colors ${
                             currentPage === item
-                              ? "bg-brand text-white font-bold"
+                              ? "bg-brand text-primary-foreground font-bold"
                               : "text-dim hover:bg-line"
                           }`}
                         >
@@ -539,11 +543,10 @@ export function MarketplaceView({
                   </div>
 
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="outline"
                     disabled={currentPage >= totalPages}
                     onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                    className="size-8 p-0 rounded-lg"
                     title={t.market.paginationNext}
                   >
                     <ChevronRight className="size-4" />

@@ -119,7 +119,7 @@ export function DshVersionCard() {
           )}
           {upgradeFail && (
             <div className="mt-1">
-              <Note tone="warn">{t.about.upgradeFailed}</Note>
+              <Note tone="danger">{t.about.upgradeFailed}</Note>
               <p
                 className="text-faint mt-0.5 max-w-xs truncate font-mono text-meta"
                 title={upgradeFail}
@@ -228,7 +228,7 @@ function VersionView({ dim }: { dim: ComponentUpdate | null }) {
         <span className="font-mono text-xs font-semibold text-ink">
           {dim.current ?? t.about.notDetected}
         </span>
-        <span className="bg-brand/10 text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 font-mono text-meta font-medium">
+        <span className="bg-wash text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 font-mono text-meta font-medium">
           {t.about.hasNew} {dim.latest ?? ""}
         </span>
       </div>

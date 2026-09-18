@@ -21,9 +21,9 @@ export function DownloadProgress() {
 
   const kindLabel =
     progress.kind === "node"
-      ? "Node.js 运行时"
+      ? t.boot.dlKindNode
       : progress.kind === "dsh"
-        ? "DSH 引擎"
+        ? t.boot.dlKindDsh
         : progress.kind
 
   return (
@@ -42,9 +42,9 @@ export function DownloadProgress() {
           </span>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold tracking-tight text-ink">{kindLabel}</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium text-brand-deep">
+            <span className="inline-flex items-center gap-1 rounded-full border border-brand/20 bg-wash px-2 py-0.5 font-mono text-meta font-medium text-brand-deep">
               <span className="size-1 animate-pulse rounded-full bg-brand" />
-              引擎在线引导
+              {t.boot.dlEngineBadge}
             </span>
           </div>
         </div>
@@ -57,7 +57,7 @@ export function DownloadProgress() {
             </span>
           )}
           {progress.eta !== null && fmtEta(progress.eta) && (
-            <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-line-soft/70 px-2 py-0.5 font-mono text-label text-dim shadow-2xs">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-line-soft px-2 py-0.5 font-mono text-label text-dim shadow-2xs">
               <Clock className="size-3" />
               {fmtEta(progress.eta)}
             </span>
@@ -81,7 +81,7 @@ export function DownloadProgress() {
                     .replace("{done}", String(progress.current))
                     .replace("{total}", String(progress.total))
                 : `${fmtBytes(progress.current)} / ${fmtBytes(progress.total)}`
-              : `已传输 ${fmtBytes(progress.current)}`}
+              : t.boot.dlTransferred(fmtBytes(progress.current))}
           </span>
         </div>
 
@@ -101,9 +101,9 @@ export function DownloadProgress() {
       <div className="mt-3.5 flex items-center justify-between border-t border-line/40 pt-2.5 text-label text-faint">
         <span className="flex items-center gap-1">
           <ShieldCheck className="size-3 text-ok" />
-          官方镜像链下载 · 完整性校验
+          {t.boot.dlMirrorNote}
         </span>
-        <span>自包含引擎 · 首启就绪后离线直通</span>
+        <span>{t.boot.dlSelfContainedNote}</span>
       </div>
     </motion.section>
   )

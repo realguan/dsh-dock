@@ -14,6 +14,8 @@ import {
   type VersionFilter,
 } from "@/lib/dshVersions"
 import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
+import { StateBlock } from "@/components/ui/state-block"
 import {
   Dialog,
   DialogContent,
@@ -111,24 +113,14 @@ export function DshVersionListDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-1" role="group">
-          {FILTERS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              aria-pressed={filter === f}
-              onClick={() => setFilter(f)}
-              className={cn(
-                "rounded-full px-2.5 py-1 text-meta font-medium transition-colors",
-                filter === f
-                  ? "bg-brand text-white"
-                  : "bg-line-soft text-dim hover:text-ink",
-              )}
-            >
-              {filterLabel(f)}
-            </button>
-          ))}
-        </div>
+        {/* 2026-09-18 收口：第 5 套手搓分段器 → 统一 Segmented */}
+        <Segmented<VersionFilter>
+          ariaLabel={t.about.versionFilterLabel}
+          className="self-start"
+          options={FILTERS.map((f) => ({ value: f, label: filterLabel(f) }))}
+          value={filter}
+          onChange={setFilter}
+        />
 
         {loading && !data && (
           <div className="text-faint flex items-center justify-center gap-2 py-8 text-xs">
@@ -137,17 +129,21 @@ export function DshVersionListDialog({
         )}
 
         {error && (
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-danger text-xs">{t.about.listLoadFailed}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => setReloadTick((n) => n + 1)}
-              className="gap-1 text-xs"
-            >
-              {t.about.listRetry}
-            </Button>
-          </div>
+          <StateBlock
+            tone="error"
+            title={t.about.listLoadFailed}
+            hint={<span className="font-mono">{error}</span>}
+            action={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setReloadTick((n) => n + 1)}
+                className="text-xs"
+              >
+                {t.about.listRetry}
+              </Button>
+            }
+          />
         )}
 
         {data && visible.length === 0 && (

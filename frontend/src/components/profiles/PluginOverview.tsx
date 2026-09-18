@@ -5,8 +5,8 @@ import {
   ChevronRight,
   Download,
   Filter,
-  LoaderCircle,
   Package,
+  RefreshCw,
   Search,
   Send,
 } from "lucide-react"
@@ -17,6 +17,8 @@ import { getPaginationPages, PROFILE_CHIP_CLASS } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { IconChip } from "@/components/ui/icon-chip"
+import { StateBlock } from "@/components/ui/state-block"
 import {
   Dialog,
   DialogContent,
@@ -35,6 +37,46 @@ import {
 import { Switch } from "@/components/ui/switch"
 
 const PAGE_SIZE_OPTIONS = [6, 9, 12, 18]
+
+/** 卡片「已安装到」chips 墙（2026-09-18 收口）：原先 max-h-16 卡内滚动条在
+ *  小卡里几乎不可发现。改为默认只露前 4 个，多余以「展开全部 (N)」就地展开
+ *  （局部 useState，不影响数据逻辑）。 */
+const SOURCES_VISIBLE_LIMIT = 4
+
+function SourcesChips({ sources }: { sources: AggregatePlugin["sources"] }) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
+  const collapsible = sources.length > SOURCES_VISIBLE_LIMIT
+  const visible = expanded || !collapsible ? sources : sources.slice(0, SOURCES_VISIBLE_LIMIT)
+  return (
+    <div className="flex flex-wrap gap-1">
+      {visible.map((src) => (
+        <span
+          key={src.profile}
+          className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-meta shadow-2xs transition-all ${PROFILE_CHIP_CLASS}`}
+          title={src.version ? `${src.profile} (v${src.version})` : t.profiles.overviewInstalledOn(src.profile)}
+        >
+          <span className="size-1 rounded-full bg-current opacity-80" />
+          <span className="font-semibold">{src.profile}</span>
+          {src.version && (
+            <span className="opacity-75 text-micro font-normal">v{src.version}</span>
+          )}
+        </span>
+      ))}
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="rounded-md px-1.5 py-0.5 text-meta font-medium text-brand-deep hover:bg-wash transition-colors"
+        >
+          {expanded
+            ? t.profiles.collapseSources
+            : t.profiles.expandAllSources(sources.length)}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function PluginOverview({
   refreshKey,
@@ -191,18 +233,18 @@ export function PluginOverview({
                     className="truncate"
                     title={
                       selectedProfileFilter === "all"
-                        ? "全部 Profile"
+                        ? t.profiles.overviewAllProfiles
                         : selectedProfileFilter
                     }
                   >
                     {selectedProfileFilter === "all"
-                      ? "全部 Profile"
+                      ? t.profiles.overviewAllProfiles
                       : `Profile: ${selectedProfileFilter}`}
                   </span>
                 </div>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部 Profile</SelectItem>
+                <SelectItem value="all">{t.profiles.overviewAllProfiles}</SelectItem>
                 {profiles.map((p) => (
                   <SelectItem key={p.name} value={p.name}>
                     {p.name} {p.web_ui ? "(Web)" : ""}
@@ -216,7 +258,7 @@ export function PluginOverview({
         {/* 条数与统计 */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-faint">
-            共 {totalItems} 个插件
+            {t.profiles.overviewCount(totalItems)}
           </span>
           <Select
             value={String(pageSize)}
@@ -228,7 +270,7 @@ export function PluginOverview({
             <SelectContent>
               {PAGE_SIZE_OPTIONS.map((opt) => (
                 <SelectItem key={opt} value={String(opt)}>
-                  {opt} 条/页
+                  {t.profiles.overviewPerPage(opt)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -237,25 +279,29 @@ export function PluginOverview({
       </div>
 
       {error && (
-        <div className="rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger">
-          加载全域插件失败：{error}
-        </div>
+        <StateBlock
+          tone="error"
+          title={t.profiles.overviewLoadFailed}
+          hint={<span className="break-all">{error}</span>}
+          action={
+            <Button size="sm" variant="outline" onClick={loadData} className="gap-1">
+              <RefreshCw className="size-3" />
+              {t.profiles.retryLoad}
+            </Button>
+          }
+        />
       )}
 
       {/* 宫格卡片呈现 (Bento Grid) */}
       {loading && !list ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-line bg-panel text-xs text-faint">
-          <LoaderCircle className="mb-2 size-6 animate-spin text-brand-deep" />
-          <span>正在扫描全域 Profile 插件矩阵...</span>
-        </div>
+        <StateBlock tone="loading" title={t.profiles.overviewScanLoading} />
       ) : paginatedList.length === 0 ? (
-        <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/60 text-center">
-          <Package className="text-faint mb-2 size-8" />
-          <p className="text-xs font-medium text-ink">未找到匹配的插件</p>
-          <p className="text-faint mt-1 text-label">
-            尝试调整搜索关键词或重置 Profile 筛选条件。
-          </p>
-        </div>
+        <StateBlock
+          tone="empty"
+          icon={Package}
+          title={t.profiles.overviewEmptySearch}
+          hint={t.profiles.overviewEmptySearchHint}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           {paginatedList.map((item) => {
@@ -272,9 +318,7 @@ export function PluginOverview({
                   {/* 头部：包名与版本 */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
-                        <Package className="size-3.5" />
-                      </div>
+                      <IconChip icon={Package} tone="brand" />
                       <span
                         className="font-mono text-xs font-bold text-ink truncate"
                         title={item.name}
@@ -292,38 +336,22 @@ export function PluginOverview({
                     className="text-xs text-faint line-clamp-2 leading-relaxed min-h-[32px]"
                     title={item.description || undefined}
                   >
-                    {item.description || "暂无插件描述说明"}
+                    {item.description || t.profiles.overviewNoDesc}
                   </p>
 
-                  {/* 已安装到的 Profile 标签 */}
+                  {/* 已安装到的 Profile 标签（>4 折叠，见 SourcesChips） */}
                   <div>
                     <span className="text-meta font-semibold text-dim block mb-1">
-                      已安装到 ({item.sources.length}):
+                      {t.profiles.overviewInstalledTo(item.sources.length)}
                     </span>
-                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
-                      {item.sources.map((src) => {
-                        return (
-                          <span
-                            key={src.profile}
-                            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-meta shadow-2xs transition-all ${PROFILE_CHIP_CLASS}`}
-                            title={src.version ? `${src.profile} (v${src.version})` : `已安装于 ${src.profile}`}
-                          >
-                            <span className="size-1 rounded-full bg-current opacity-80" />
-                            <span className="font-semibold">{src.profile}</span>
-                            {src.version && (
-                              <span className="opacity-75 text-micro font-normal">v{src.version}</span>
-                            )}
-                          </span>
-                        )
-                      })}
-                    </div>
+                    <SourcesChips sources={item.sources} />
                   </div>
                 </div>
 
                 {/* 底部操作条 */}
                 <div className="mt-3.5 flex items-center justify-between border-t border-line/60 pt-2.5">
                   <span className="text-label text-faint font-mono">
-                    {item.sources.length} 处引用
+                    {t.profiles.overviewRefCount(item.sources.length)}
                   </span>
 
                   <Button
@@ -338,10 +366,10 @@ export function PluginOverview({
                       setSelectedDest(null)
                       setWithConfig(false)
                     }}
-                    className="h-7 gap-1 px-2 text-xs hover:border-brand hover:text-brand-deep"
+                    className="gap-1"
                   >
                     <Send className="size-3" />
-                    <span>分发到...</span>
+                    <span>{t.profiles.quickDistribute}</span>
                   </Button>
                 </div>
               </div>
@@ -354,7 +382,7 @@ export function PluginOverview({
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t border-line pt-3 text-xs">
           <span className="text-faint text-label font-mono">
-            第 {currentPage} / {totalPages} 页
+            {t.profiles.overviewPageInfo(currentPage, totalPages)}
           </span>
 
           <div className="flex items-center gap-1.5">
@@ -363,10 +391,10 @@ export function PluginOverview({
               variant="outline"
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               disabled={currentPage <= 1}
-              className="h-7 gap-1 px-2 text-xs"
+              className="gap-1"
             >
               <ChevronLeft className="size-3.5" />
-              <span>上一页</span>
+              <span>{t.profiles.overviewPrevPage}</span>
             </Button>
 
             <div className="flex items-center gap-1 px-1">
@@ -386,7 +414,7 @@ export function PluginOverview({
                     onClick={() => setCurrentPage(item)}
                     className={`size-7 rounded-lg text-xs font-mono transition-colors ${
                       currentPage === item
-                        ? "bg-brand text-white font-bold"
+                        ? "bg-brand text-primary-foreground font-bold"
                         : "text-dim hover:bg-line"
                     }`}
                   >
@@ -401,9 +429,9 @@ export function PluginOverview({
               variant="outline"
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage >= totalPages}
-              className="h-7 gap-1 px-2 text-xs"
+              className="gap-1"
             >
-              <span>下一页</span>
+              <span>{t.profiles.overviewNextPage}</span>
               <ChevronRight className="size-3.5" />
             </Button>
           </div>
@@ -435,7 +463,7 @@ export function PluginOverview({
               {/* 目标 Profile 选择框（修复宽度截断） */}
               <div className="space-y-1.5">
                 <span className="text-dim font-semibold text-label">
-                  选择目标 Profile <span className="text-danger">*</span>
+                  {t.profiles.distributeTargetLabel} <span className="text-danger">*</span>
                 </span>
                 <Select
                   value={selectedDest ?? undefined}
@@ -445,12 +473,12 @@ export function PluginOverview({
                     aria-label={t.profiles.distributeTargetLabel}
                     className="h-9 w-full min-w-[240px] rounded-xl border-line bg-bg font-mono text-xs"
                   >
-                    <SelectValue placeholder="请选择目标 Profile..." />
+                    <SelectValue placeholder={t.profiles.distributePickPlaceholder} />
                   </SelectTrigger>
                   <SelectContent className="min-w-[240px]">
                     {distributeDestinations.length === 0 ? (
                       <div className="p-3 text-center text-xs text-faint">
-                        所有已物化 Profile 均已安装此插件
+                        {t.profiles.distributeAllInstalled}
                       </div>
                     ) : (
                       distributeDestinations.map((p) => (
@@ -470,7 +498,7 @@ export function PluginOverview({
                 <div className="flex items-center justify-between">
                   <span className="text-faint text-label flex items-center gap-1">
                     <Download className="size-3" />
-                    目标版本
+                    {t.profiles.distributeTargetVersion}
                   </span>
                   <span className="font-mono text-xs font-bold text-ink">
                     {distributeTarget.version}
@@ -481,9 +509,11 @@ export function PluginOverview({
               {/* 迁移配置选项 */}
               <div className="flex items-center justify-between pt-2 border-t border-line/60">
                 <div className="space-y-0.5">
-                  <span className="text-xs font-medium text-ink">连带复制配置行</span>
+                  <span className="text-xs font-medium text-ink">
+                    {t.profiles.distributeWithConfig}
+                  </span>
                   <p className="text-meta text-faint">
-                    从首个来源 Profile 的 cordis.patch.yml 原样同步配置条目
+                    {t.profiles.distributeWithConfigDesc}
                   </p>
                 </div>
                 <Switch
@@ -500,14 +530,10 @@ export function PluginOverview({
               variant="outline"
               onClick={() => setDistributeTarget(null)}
             >
-              取消
+              {t.confirm.cancel}
             </Button>
-            <Button
-              onClick={(e) => handleEnqueueDistribute(e)}
-              disabled={!selectedDest}
-              className="bg-brand text-white hover:bg-brand/90"
-            >
-              <span>加入分发队列</span>
+            <Button onClick={(e) => handleEnqueueDistribute(e)} disabled={!selectedDest}>
+              <span>{t.profiles.distributeEnqueueBtn}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

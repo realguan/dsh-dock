@@ -66,7 +66,7 @@ export function ProfileSwitchDialog({
 
   return (
     <Dialog open={target !== null} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {target ? (restart ? t.profiles.restartTitle(target) : t.profiles.switchTitle(target)) : ""}

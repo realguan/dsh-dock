@@ -11,10 +11,12 @@ import {
   Eraser,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { classifyLogLine } from "@/lib/logLevel"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { localizeLogTimestamp } from "@/lib/format"
 import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
 import type { LogQueryResult } from "@/types/ipc"
 
@@ -87,53 +89,17 @@ export function LogViewerPane({
     <div className="flex flex-col space-y-3.5">
       {/* 顶部控制栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* 日志源 Segmented Tabs */}
-        <div
-          role="tablist"
-          className="flex rounded-xl border border-line bg-line-soft/80 p-0.5"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={source === "shell"}
-            onClick={() => setSource("shell")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-              source === "shell"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            {t.console.sourceShell}
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={source === "dsh"}
-            onClick={() => setSource("dsh")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-              source === "dsh"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            {t.console.sourceDsh}
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={source === "session_repair"}
-            onClick={() => setSource("session_repair")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-              source === "session_repair"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            {t.console.sourceRepair}
-          </button>
-        </div>
+        {/* 日志源 Segmented Tabs（2026-09-18 收口：统一走 Segmented 原语） */}
+        <Segmented<LogSourceKey>
+          ariaLabel={t.console.logsTitle}
+          options={[
+            { value: "shell", label: t.console.sourceShell },
+            { value: "dsh", label: t.console.sourceDsh },
+            { value: "session_repair", label: t.console.sourceRepair },
+          ]}
+          value={source}
+          onChange={setSource}
+        />
 
         {/* 快速动作栏 */}
         <div className="flex items-center gap-2">
@@ -145,7 +111,6 @@ export function LogViewerPane({
               aria-label={t.console.autoScroll}
               checked={autoScroll}
               onCheckedChange={setAutoScroll}
-              className="scale-75"
             />
           </div>
 
@@ -160,7 +125,7 @@ export function LogViewerPane({
             ) : (
               <Copy className="size-3.5" />
             )}
-            <span>{copied ? "已复制" : t.console.copyLogs}</span>
+            <span>{copied ? t.console.copied : t.console.copyLogs}</span>
           </Button>
 
           <Button
@@ -229,7 +194,7 @@ export function LogViewerPane({
           {loading && !logData ? (
             <div className="flex h-full items-center justify-center text-term-faint">
               <LoaderCircle className="mr-2 size-4 animate-spin text-term-brand" />
-              <span>正在读取日志流…</span>
+              <span>{t.console.logsLoading}</span>
             </div>
           ) : filteredLines.length === 0 ? (
             <div className="flex h-full items-center justify-center text-term-faint">
@@ -239,13 +204,7 @@ export function LogViewerPane({
             <div className="space-y-0.5">
               {filteredLines.map((line, idx) => {
                 const displayLine = localizeLogTimestamp(line)
-                const isError =
-                  line.includes("ERROR") ||
-                  line.includes("error") ||
-                  line.includes("Err") ||
-                  line.includes("failed")
-                const isWarn = line.includes("WARN") || line.includes("warn")
-                const isInfo = line.includes("INFO") || line.includes("info")
+                const level = classifyLogLine(line)
 
                 return (
                   <div
@@ -257,11 +216,11 @@ export function LogViewerPane({
                     </span>
                     <span
                       className={`break-all whitespace-pre-wrap ${
-                        isError
+                        level === "error"
                           ? "text-term-danger font-semibold"
-                          : isWarn
+                          : level === "warn"
                             ? "text-term-warn"
-                            : isInfo
+                            : level === "info"
                               ? "text-term-info"
                               : "text-term-ink"
                       }`}

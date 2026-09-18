@@ -41,17 +41,17 @@ export function BootStep({
     <motion.div
       layout="position"
       className={`relative flex items-start gap-3 rounded-xl px-3 transition-colors duration-200 ${
-        isRunning ? "bg-wash/70 py-2.5 shadow-2xs" : "py-2 hover:bg-line-soft/40"
+        isRunning ? "bg-wash py-2.5 shadow-2xs" : "py-2 hover:bg-line-soft"
       }`}
     >
-      {/* 状态节点 */}
-      <div className="relative z-1 mt-0.5 flex size-6 shrink-0 items-center justify-center">
+      {/* 状态节点（光晕走共享原语，见 index.css .brand-halo） */}
+      <div className="brand-halo [--halo-scale:1.7] relative z-1 mt-0.5 flex size-6 shrink-0 items-center justify-center">
         {isDone ? (
           <div className="flex size-6 items-center justify-center rounded-full border border-ok/30 bg-ok-soft text-ok shadow-2xs">
             <Check className="size-3.5" strokeWidth={2.5} />
           </div>
         ) : isRunning ? (
-          <div className="flex size-6 items-center justify-center rounded-full bg-brand text-white shadow-glow ring-3 ring-brand/20">
+          <div className="flex size-6 items-center justify-center rounded-full bg-brand text-primary-foreground shadow-xs">
             <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
           </div>
         ) : isError ? (
@@ -75,14 +75,14 @@ export function BootStep({
                 : isError
                   ? "font-semibold text-warn"
                   : isDone
-                    ? "font-medium text-ink/75"
-                    : "font-normal text-dim"
+                    ? "font-medium text-dim"
+                    : "font-normal text-faint"
             }`}
           >
             {name}
           </span>
           {isRunning && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/20 bg-brand/10 px-1.5 py-0.5 font-mono text-meta font-medium text-brand-deep">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand/25 bg-panel px-1.5 py-0.5 font-mono text-meta font-medium text-brand-deep">
               <span className="size-1 animate-pulse rounded-full bg-brand" aria-hidden />
               {t.boot.stRunning}
             </span>
@@ -118,7 +118,7 @@ export function BootStep({
         )}
 
         {isError && detail && (
-          <p className="mt-1 break-all text-xs leading-relaxed text-warn/90">{detail}</p>
+          <p className="mt-1 break-all text-xs leading-relaxed text-warn">{detail}</p>
         )}
       </div>
     </motion.div>

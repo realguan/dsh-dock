@@ -123,7 +123,7 @@ export function CredentialsPane({
             className="gap-1.5 text-xs"
           >
             <Code2 className="size-3.5 text-dim" />
-            <span>{rawMode ? "卡片视图" : t.console.rawYamlToggle}</span>
+            <span>{rawMode ? t.console.cardView : t.console.rawYamlToggle}</span>
           </Button>
 
           <Button
@@ -143,9 +143,10 @@ export function CredentialsPane({
       <div className="flex items-start gap-2.5 rounded-xl border border-line bg-panel p-3 text-xs text-dim">
         <ShieldCheck className="size-4 text-ok shrink-0 mt-0.5" />
         <div className="space-y-0.5">
-          <span className="font-semibold text-ink">0600 权限保障与前端脱敏</span>
+          <span className="font-semibold text-ink">{t.console.permTitle}</span>
           <p className="text-label text-faint leading-relaxed">
-            {t.console.permHint}。前端界面绝不持有全量明文 API Key，仅显示脱敏掩码。
+            {t.console.permHint}
+            {t.console.permMaskNote}
           </p>
         </div>
       </div>
@@ -159,7 +160,7 @@ export function CredentialsPane({
               size="sm"
               onClick={() => setConfirmRaw(true)}
               disabled={savingRaw}
-              className="gap-1.5 bg-brand text-white hover:bg-brand/90"
+              className="gap-1.5"
             >
               {savingRaw ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -173,7 +174,7 @@ export function CredentialsPane({
             value={rawContent}
             onChange={(e) => setRawContent(e.target.value)}
             rows={14}
-            className="w-full resize-y rounded-xl border border-term-line bg-term p-3.5 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
+            className="w-full resize-y rounded-xl border border-term-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
             placeholder={t.console.credentialsEmpty}
           />
         </div>
@@ -214,7 +215,9 @@ export function CredentialsPane({
                       {item.maskedKey}
                     </span>
                   ) : (
-                    <span className="text-faint text-label italic">尚未配置 API Key</span>
+                    <span className="text-faint text-label italic">
+                      {t.console.keyNotConfigured}
+                    </span>
                   )}
                 </div>
               </div>
@@ -223,11 +226,11 @@ export function CredentialsPane({
                 {item.configured && (
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="destructive"
                     onClick={() => setPendingKeyClear(item)}
-                    className="h-7 px-2 text-xs text-faint hover:text-danger"
+                    className="h-7 gap-1 px-2.5 text-xs"
                   >
-                    <Trash2 className="size-3 mr-1" />
+                    <Trash2 className="size-3" />
                     <span>{t.console.deleteKey}</span>
                   </Button>
                 )}
@@ -241,7 +244,7 @@ export function CredentialsPane({
                   className="h-7 gap-1 px-2.5 text-xs hover:border-brand hover:text-brand-deep"
                 >
                   <Edit2 className="size-3" />
-                  <span>{item.configured ? "修改 Key" : t.console.editKey}</span>
+                  <span>{item.configured ? t.console.editKeyExisting : t.console.editKey}</span>
                 </Button>
               </div>
             </div>
@@ -288,15 +291,11 @@ export function CredentialsPane({
               onClick={() => setEditingProvider(null)}
               disabled={savingKey}
             >
-              取消
+              {t.confirm.cancel}
             </Button>
-            <Button
-              onClick={handleSaveKey}
-              disabled={savingKey || !inputKey.trim()}
-              className="bg-brand text-white hover:bg-brand/90"
-            >
+            <Button onClick={handleSaveKey} disabled={savingKey || !inputKey.trim()}>
               {savingKey && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
-              <span>保存 API Key</span>
+              <span>{t.console.saveApiKey}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

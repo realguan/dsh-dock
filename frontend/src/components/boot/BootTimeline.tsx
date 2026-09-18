@@ -10,7 +10,7 @@ import { Emblem } from "@/components/layout/Emblem"
 import type { BootStepState } from "@/types/events"
 
 const SEG_CLS: Record<BootStepState, string> = {
-  done: "bg-ok/60",
+  done: "bg-ok",
   running: "bg-brand animate-pulse motion-reduce:animate-none",
   error: "bg-danger",
   pending: "bg-line",
@@ -46,8 +46,7 @@ export function BootTimeline({
     >
       {/* 卡头：徽标 + 当前状态 + 分段进度 */}
       <div className="flex items-center gap-3 border-b border-line/70 px-5 py-4">
-        <div className="relative shrink-0">
-          <div className="absolute -inset-1.5 rounded-xl bg-brand/15 blur-md" aria-hidden />
+        <div className="brand-halo [--halo-strength:0.5] shrink-0">
           <Emblem size={28} framed={true} />
         </div>
         <div className="min-w-0 flex-1">

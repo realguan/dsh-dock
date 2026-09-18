@@ -11,7 +11,7 @@ export function ElapsedChip({ startedAt }: { startedAt: number }) {
   return (
     <span
       title={t.handoff.elapsedTitle}
-      className="text-dim bg-line-soft/80 shrink-0 rounded-full px-1.5 py-0.5 font-mono text-micro tabular-nums"
+      className="text-dim bg-line-soft shrink-0 rounded-full px-1.5 py-0.5 font-mono text-meta tabular-nums"
     >
       {formatElapsed(ms)}
     </span>

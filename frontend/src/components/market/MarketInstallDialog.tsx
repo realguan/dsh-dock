@@ -20,6 +20,7 @@ import {
   getPluginDisplayName,
 } from "@/lib/market"
 import { Button } from "@/components/ui/button"
+import { IconChip } from "@/components/ui/icon-chip"
 import {
   Dialog,
   DialogContent,
@@ -108,12 +109,12 @@ export function MarketInstallDialog({
   return (
     <>
     <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
-      <DialogContent className="max-w-md rounded-2xl border border-line bg-panel p-6 shadow-xl">
+      {/* 2026-09-18 收口（弹窗统一）：尺寸走 max-w-md 档 + 4rem 高约束；
+          圆角/底色/padding 回归 DialogContent 基座，不再覆写。 */}
+      <DialogContent className="max-h-[calc(100dvh-4rem)] sm:max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand-deep shadow-2xs">
-              <Download className="size-5" />
-            </div>
+            <IconChip icon={Download} tone="brand" className="size-10" />
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base font-bold text-ink truncate" title={plugin.name}>
                 {t.market.installModalTitle(displayName)}
@@ -163,10 +164,10 @@ export function MarketInstallDialog({
               )}
             </label>
             <Select value={selectedProfile} onValueChange={setSelectedProfile}>
-              <SelectTrigger className="w-full h-9 rounded-xl border-line bg-panel text-ink text-xs">
+              <SelectTrigger className="bg-panel">
                 <SelectValue placeholder={t.market.selectProfile} />
               </SelectTrigger>
-              <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">
+              <SelectContent>
                 {profiles.map((p) => {
                   const hasIt = installedProfiles.includes(p.name)
                   return (
@@ -174,10 +175,13 @@ export function MarketInstallDialog({
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-medium">{p.name}</span>
                         {p.web_ui && (
-                          <span className="rounded-md bg-brand/10 px-1 py-0.2 text-micro text-brand-deep">Web</span>
+                          <span className="rounded-md bg-wash px-1 py-0.2 text-micro text-brand-deep">Web</span>
                         )}
+                        {/* 2026-09-18 收口：「已安装」提示改中性底——安装弹窗里
+                            绿色＝成功语义，与「将覆盖重装」的警示上下文相撞
+                            （CustomInstall 来源徽标同批口径：中性只表事实）。 */}
                         {hasIt && (
-                          <span className="rounded-md bg-ok-soft px-1 py-0.2 text-micro text-ok">
+                          <span className="rounded-md bg-line-soft px-1 py-0.2 text-micro text-dim">
                             {t.market.installedBadge}
                           </span>
                         )}
@@ -210,7 +214,7 @@ export function MarketInstallDialog({
             </div>
 
             {/* 安装源显示框（不可编辑） */}
-            <div className="flex items-center justify-between rounded-xl border border-line bg-wash/80 px-3 py-2 font-mono text-xs text-ink shadow-2xs">
+            <div className="flex items-center justify-between rounded-xl border border-line bg-wash px-3 py-2 font-mono text-xs text-ink shadow-2xs">
               <span className="truncate select-all font-medium text-ink flex-1" title={sourceInfo.spec}>
                 {sourceInfo.spec}
               </span>
@@ -226,16 +230,14 @@ export function MarketInstallDialog({
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-line/60">
-          <Button variant="outline" size="sm" onClick={onClose} className="rounded-xl text-xs">
-            {t.profiles.pluginInstallCancel}
+        {/* 2026-09-18 收口：footer 回归 DialogFooter 基座默认（静默、无 border-t 覆写）；
+            取消复用通用键 t.confirm.cancel；主行动 = 默认 Button（brand+白字），
+            删除手搓 brand 填充 + 白字覆写。 */}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t.confirm.cancel}
           </Button>
-          <Button
-            size="sm"
-            onClick={handleEnqueue}
-            disabled={!selectedProfile || !sourceInfo.spec.trim()}
-            className="rounded-xl bg-brand text-white hover:bg-brand/90 text-xs font-medium gap-1.5 shadow-xs"
-          >
+          <Button onClick={handleEnqueue} disabled={!selectedProfile || !sourceInfo.spec.trim()}>
             <Download className="size-3.5" />
             <span>{isAlreadyInstalled ? t.market.reinstallBtn : t.market.installBtn}</span>
           </Button>

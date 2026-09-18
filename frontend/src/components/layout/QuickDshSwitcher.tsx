@@ -114,7 +114,7 @@ export function QuickDshSwitcher() {
       </span>
 
       {/* 文本主体 */}
-      <span className="font-medium tracking-tight text-ink/90 group-hover:text-brand-deep transition-colors whitespace-nowrap">
+      <span className="font-medium tracking-tight text-ink group-hover:text-brand-deep transition-colors whitespace-nowrap">
         {handoffBusy
           ? t.profiles.reloadingWorkbench
           : handoffReady

@@ -50,13 +50,13 @@ export function UpdateBanner() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.22, ease: "easeOut" }}
-          className="pointer-events-auto w-full max-w-md rounded-xl border border-warn/30 bg-panel/95 p-3.5 shadow-lg backdrop-blur-md"
+          className="pointer-events-auto w-full max-w-md rounded-2xl border border-warn/30 bg-panel p-3.5 shadow-lg"
           role="status"
         >
           <div className="flex flex-col gap-2">
             {banners.map((b) => (
               <div key={b.key} className="flex items-start gap-2.5">
-                <span className="mt-1.5 size-2 shrink-0 animate-pulse rounded-full bg-warn ring-2 ring-warn/25" />
+                <span className="mt-1.5 size-2 shrink-0 animate-pulse rounded-full bg-warn ring-2 ring-warn-soft" />
                 <div className="min-w-0 flex-1">
                   <p className="text-note font-medium leading-snug text-ink">
                     {b.kind === "dsh"
@@ -73,7 +73,7 @@ export function UpdateBanner() {
                   type="button"
                   title={t.updateBanner.dismissTip}
                   onClick={() => dismiss(b)}
-                  className="rounded-md p-1 text-faint transition-colors hover:bg-line/60 hover:text-dim"
+                  className="rounded-md p-1 text-faint transition-colors hover:bg-line hover:text-dim"
                 >
                   <X className="size-3.5" />
                 </button>

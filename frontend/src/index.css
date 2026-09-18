@@ -307,7 +307,7 @@
     90deg,
     transparent,
     var(--color-brand),
-    #7d9cf2,
+    color-mix(in oklab, var(--color-brand), white 35%),
     transparent
   );
   animation: pulse-slide 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
@@ -318,5 +318,71 @@
   }
   100% {
     transform: translateX(320%);
+  }
+}
+
+/* ---------------- 品牌光晕原语（2026-09-18 收口，批次 2 布局/启动区）---------
+   同一件「发光」此前有四种写法：启动 splash 徽标 `-inset-4 bg-brand/20 blur-xl`
+   （带 animate-pulse）、模式页头 `-inset-2 bg-brand/10 blur-xl`、控制台卡头
+   `-inset-1.5 bg-brand/15 blur-md`，另有 BootIndex / BootSelector 顶部各写一份
+   内联任意值 radial-gradient 光带。四处都是「手搓品牌 alpha + 各自绝对定位假元素」
+   ——色板散且每处自带一份布局补丁。
+   收敛为两个伪元素原语，**只此一个尺寸档**：强弱/松紧差异确属构图意图的，
+   由调用点用 `[--halo-strength:…]` / `[--halo-scale:…]` 微调，不再改色板。
+   · `.brand-halo` 贴合自身盒子（徽标、状态节点用它）
+   · `.brand-ambient` 铺满容器（页面顶部环境光带用它）
+   写在 @layer components：层级低于 utilities，调用点的工具类仍可覆盖。
+   `isolation: isolate` 保证负 z 的 ::before 落在卡片底色**之上**、内容之下
+   （卡片若是普通非定位块，其底色会盖掉负 z 伪元素——实测过的坑）。 */
+@layer components {
+  .brand-halo {
+    position: relative;
+    isolation: isolate;
+  }
+  .brand-halo::before {
+    content: "";
+    position: absolute;
+    inset: -22%;
+    z-index: -1;
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--color-brand), transparent 55%),
+      transparent
+    );
+    opacity: var(--halo-strength, 1);
+    transform: scale(var(--halo-scale, 1));
+    pointer-events: none;
+  }
+
+  .brand-ambient {
+    position: relative;
+  }
+  .brand-ambient::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse 80% 60% at 50% -20%,
+      color-mix(in oklab, var(--color-brand), transparent 88%),
+      transparent 70%
+    );
+    pointer-events: none;
+  }
+}
+
+/* 呼吸档（旧 splash / 卡头光晕带 animate-pulse）：只呼吸光晕，不呼吸徽标本体。
+   未分层声明 = 优先级高于上面的 @layer components 同特异性规则。 */
+.brand-halo[data-halo="breathe"]::before {
+  animation: halo-breathe 2.2s ease-in-out infinite;
+}
+@keyframes halo-breathe {
+  50% {
+    opacity: calc(var(--halo-strength, 1) * 0.4);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-halo[data-halo="breathe"]::before {
+    animation: none;
   }
 }

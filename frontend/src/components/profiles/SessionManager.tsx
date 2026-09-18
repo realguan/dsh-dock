@@ -36,6 +36,8 @@ import { useI18n } from "@/stores/i18nStore"
 import type { SessionItem } from "@/types/ipc"
 import { statusMeta } from "@/lib/sessionStatus"
 import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
+import { StateBlock } from "@/components/ui/state-block"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 
 function formatBytes(bytes: number): string {
@@ -44,17 +46,26 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function formatRelativeTime(timestamp: number): string {
-  if (!timestamp) return "未知"
+/** 2026-09-18 收口：相对时间文案迁入 content 字典（原为模块内硬编码中文）。 */
+type RelativeTimeCopy = {
+  timeUnknown: string
+  timeJustNow: string
+  timeMinutes: (n: number) => string
+  timeHours: (n: number) => string
+  timeDays: (n: number) => string
+}
+
+function formatRelativeTime(timestamp: number, c: RelativeTimeCopy): string {
+  if (!timestamp) return c.timeUnknown
   const diff = Date.now() - timestamp
   const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return "刚刚"
+  if (seconds < 60) return c.timeJustNow
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 60) return c.timeMinutes(minutes)
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
+  if (hours < 24) return c.timeHours(hours)
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} 天前`
+  if (days < 30) return c.timeDays(days)
   return new Date(timestamp).toLocaleDateString()
 }
 
@@ -75,6 +86,11 @@ function endStateLabel(
   if (endState === "error") return t.sessions.endStateError
   return t.sessions.endStateOpen
 }
+
+/** 2026-09-18 边界收口：长会话列表不得无界直渲——行是重节点（徽标 + 两行元信息 +
+ *  操作区），几百条同挂会拖死首屏。渐进披露：默认只出最近的，「显示更早」逐批放开。 */
+const FLAT_BATCH = 50
+const GROUP_BATCH = 10
 
 export function SessionManager({
   refreshKey,
@@ -102,6 +118,9 @@ export function SessionManager({
   // 视图模式：按项目分组 vs 平铺列表
   const [viewMode, setViewMode] = useState<"grouped" | "flat">("grouped")
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
+  // 渐进披露的放开额度（2026-09-18 边界收口）：平铺一份，分组按项目各一份。
+  const [flatLimit, setFlatLimit] = useState(FLAT_BATCH)
+  const [groupLimits, setGroupLimits] = useState<Record<string, number>>({})
 
   const loadSessions = useCallback(async () => {
     setLoading(true)
@@ -120,6 +139,12 @@ export function SessionManager({
   useEffect(() => {
     void loadSessions()
   }, [refreshKey, loadSessions])
+
+  // 筛选条件一变，"更早"就换了语义（列出的已不是同一批），放开额度必须收回。
+  useEffect(() => {
+    setFlatLimit(FLAT_BATCH)
+    setGroupLimits({})
+  }, [searchQuery, statusFilter, viewMode, refreshKey])
 
   const stats = useMemo(() => {
     if (!sessions)
@@ -163,7 +188,7 @@ export function SessionManager({
         onNotice?.(t.sessions.repairSuccess(sessionDisplayName(session, t.sessions.noTitle)), "ok")
         await loadSessions()
       } else {
-        onNotice?.(res.message || "修复失败", "warn")
+        onNotice?.(res.message || t.sessions.repairFailed, "warn")
       }
     } catch (e) {
       onNotice?.(String(e), "warn")
@@ -180,7 +205,7 @@ export function SessionManager({
         onNotice?.(t.sessions.repairAllSuccess, "ok")
         await loadSessions()
       } else {
-        onNotice?.(res.message || "全量修复失败", "warn")
+        onNotice?.(res.message || t.sessions.repairAllFailed, "warn")
       }
     } catch (e) {
       onNotice?.(String(e), "warn")
@@ -204,7 +229,7 @@ export function SessionManager({
     try {
       await api.openExternal(path)
     } catch (e) {
-      onNotice?.(`打开目录失败：${e}`, "warn")
+      onNotice?.(t.sessions.openDirFailed(String(e)), "warn")
     }
   }
 
@@ -317,20 +342,16 @@ export function SessionManager({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18 }}
         className={`group relative flex flex-col gap-2.5 p-3.5 transition-colors sm:flex-row sm:items-center ${
-          isNeedsRepair
-            ? "bg-warn/[0.06] hover:bg-warn/[0.10]"
-            : isHealthy
-              ? "hover:bg-line-soft/30"
-              : "hover:bg-line-soft/30"
+          isNeedsRepair ? "bg-warn-soft" : "hover:bg-line-soft/30"
         }`}
       >
         {/* 非健康左侧脉冲条 */}
         {isNeedsRepair && (
-          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-warn/80 animate-pulse" />
+          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-warn animate-pulse" />
         )}
 
         <div className="min-w-0 flex-1 space-y-1">
-          {/* 首行：状态徽标 + 会话名称（标题为主） */}
+          {/* 主行（2026-09-18 收口重排）：状态徽标 + 会话名 + 最后活跃时间 */}
           <div className="flex flex-wrap items-center gap-2">
             {isActive ? (
               <span
@@ -385,6 +406,15 @@ export function SessionManager({
               {displayName}
             </span>
 
+            {/* 时间进主行：它是"最近怎样"的第一问 */}
+            <span
+              className="inline-flex shrink-0 items-center gap-1 text-label text-faint"
+              title={t.sessions.lastUpdated}
+            >
+              <Clock className="size-3" />
+              {formatRelativeTime(sess.updatedAt, t.sessions)}
+            </span>
+
             {sess.hasBackup && (
               <span className="flex shrink-0 items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 text-meta font-medium text-ok">
                 <FileArchive className="size-2.5" />
@@ -393,12 +423,12 @@ export function SessionManager({
             )}
           </div>
 
-          {/* 次行：ID（等宽可复制）+ 元信息 */}
+          {/* 次行（重排分组①·身份）：ID（等宽可复制）/ 项目 / 预设 */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-faint">
             <button
               type="button"
               onClick={() => handleCopyId(sess.id)}
-              title="复制会话 ID"
+              title={t.sessions.copyIdTitle}
               className="inline-flex items-center gap-1 font-mono hover:text-ink transition-colors"
             >
               {sess.id.slice(0, 18)}…
@@ -410,27 +440,30 @@ export function SessionManager({
             </button>
 
             <span className="inline-flex items-center gap-1">
-              <Clock className="size-3" />
-              {formatRelativeTime(sess.updatedAt)}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <HardDrive className="size-3" />
-              {formatBytes(sess.sizeBytes)}
-            </span>
-            <span className="hidden items-center gap-1 sm:inline-flex">
               <Folder className="size-3" />
               <span className="max-w-[220px] truncate font-mono" title={sess.projectName}>
                 {sess.projectName}
               </span>
             </span>
-            {/* 元数据副行（2026-09-07 扩展项1）：创建时间 / 事件数 / 结束状态 / 预设 */}
+            {sess.agentPreset && (
+              <span className="font-mono" title={t.sessions.agentPresetTitle}>
+                @{sess.agentPreset}
+              </span>
+            )}
+
+            {/* 次行分组②·体量与收尾：体积 / 创建时间 / 事件数 / 结束状态 */}
+            <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
+            <span className="inline-flex items-center gap-1">
+              <HardDrive className="size-3" />
+              {formatBytes(sess.sizeBytes)}
+            </span>
             {sess.createdAt ? (
               <span
                 className="inline-flex items-center gap-1"
                 title={`${t.sessions.createdAtTitle}：${new Date(sess.createdAt).toLocaleString()}`}
               >
                 <CalendarClock className="size-3" />
-                {formatRelativeTime(sess.createdAt)}
+                {formatRelativeTime(sess.createdAt, t.sessions)}
               </span>
             ) : null}
             {sess.eventCount ? (
@@ -454,11 +487,6 @@ export function SessionManager({
                   <HelpCircle className="size-3" />
                 )}
                 {endStateLabel(sess.endState, t)}
-              </span>
-            )}
-            {sess.agentPreset && (
-              <span className="font-mono" title={t.sessions.agentPresetTitle}>
-                @{sess.agentPreset}
               </span>
             )}
           </div>
@@ -485,10 +513,11 @@ export function SessionManager({
           {sess.archived === true && (
             <Button
               size="sm"
+              variant="outline"
               title={t.sessions.unarchiveBtn}
               onClick={() => handleUnarchiveSingle(sess)}
               disabled={isBusy || isDeleting || isUnarchiving || batchRepairing}
-              className="h-7 gap-1 bg-alt text-white hover:bg-alt/90 px-2.5 text-xs"
+              className="gap-1"
             >
               {isUnarchiving ? (
                 <LoaderCircle className="size-3 animate-spin" />
@@ -502,9 +531,10 @@ export function SessionManager({
           {!isActive && isNeedsRepair && (
             <Button
               size="sm"
+              variant="outline"
               onClick={() => handleRepairSingle(sess)}
               disabled={isBusy || batchRepairing || isDeleting}
-              className="h-7 gap-1 bg-warn text-white hover:bg-warn/90 px-2.5 text-xs"
+              className="gap-1"
             >
               {isBusy ? (
                 <LoaderCircle className="size-3 animate-spin" />
@@ -516,11 +546,10 @@ export function SessionManager({
           )}
 
           <Button
-            size="sm"
+            size="icon-sm"
             variant="outline"
-            title="复制会话文件完整路径"
+            title={t.sessions.copyPath}
             onClick={() => handleCopyPath(sess.filePath)}
-            className="size-7 p-0"
           >
             {copiedPath === sess.filePath ? (
               <Check className="size-3 text-ok" />
@@ -530,12 +559,11 @@ export function SessionManager({
           </Button>
 
           <Button
-            size="sm"
-            variant="outline"
+            size="icon-sm"
+            variant="destructive"
             title={t.sessions.deleteBtn}
             onClick={() => setPendingDelete(sess)}
             disabled={isBusy || batchRepairing || isDeleting}
-            className="size-7 p-0 hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
           >
             {isDeleting ? (
               <LoaderCircle className="size-3 animate-spin text-danger" />
@@ -551,16 +579,23 @@ export function SessionManager({
   return (
     <div className="space-y-4">
       {error && (
-        <div className="rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger">
-          {error}
-        </div>
+        <StateBlock
+          tone="error"
+          title={error}
+          action={
+            <Button size="sm" variant="outline" onClick={loadSessions} className="gap-1">
+              <RefreshCw className="size-3" />
+              {t.profiles.retryLoad}
+            </Button>
+          }
+        />
       )}
 
       {/* 顶部状态与操作条 */}
       <div className="rounded-2xl border border-line bg-panel p-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-brand/10 text-brand-deep">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-wash text-brand-deep">
               <ShieldCheck className="size-5" />
             </div>
             <div>
@@ -581,17 +616,14 @@ export function SessionManager({
               <span>{t.sessions.scanBtn}</span>
             </Button>
 
-            {/* 全局修复：仅存在异常会话时才可点击 */}
+            {/* 全局修复（2026-09-18 收口）：唯一的建设性主动作回到 default Button 的
+                brand 权重；此前用 bg-warn 实底，危险动作视觉最弱、建设动作最重。 */}
             <Button
               size="sm"
               onClick={handleRepairAll}
               disabled={batchRepairing || loading || !sessions || stats.needsRepair === 0}
               title={stats.needsRepair === 0 ? t.sessions.repairAllDisabled : t.sessions.repairNeedHint}
-              className={`gap-1.5 text-xs shadow-xs ${
-                stats.needsRepair > 0
-                  ? "bg-warn text-white hover:bg-warn/90"
-                  : "bg-brand/80 text-white opacity-55 hover:bg-brand/80 cursor-not-allowed"
-              }`}
+              className="gap-1.5 text-xs"
             >
               {batchRepairing ? (
                 <LoaderCircle className="size-3.5 animate-spin" />
@@ -603,38 +635,39 @@ export function SessionManager({
           </div>
         </div>
 
-        {/* 统计指标：项目 / 总数 / 健康 / 运行中 / 待修复 */}
+        {/* 统计指标（2026-09-18 收口）：三张卡此前各自染色（info/warn 半透明底 +
+            彩色描边），统一回中性 bg-bg，语义由色点与数字颜色承载。 */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-label text-faint">工作区项目数</span>
+            <span className="text-label text-faint">{t.sessions.statProjects}</span>
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.projectsCount}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
-            <span className="text-label text-faint">会话总数</span>
+            <span className="text-label text-faint">{t.sessions.statTotal}</span>
             <div className="mt-1 font-mono text-base font-bold text-ink">{stats.total}</div>
           </div>
           <div className="rounded-xl border border-line bg-bg p-3">
             <span className="flex items-center gap-1 text-label text-ok">
               <span className="size-1.5 rounded-full bg-ok" />
-              健康就绪
+              {t.sessions.statHealthy}
             </span>
             <div className="mt-1 font-mono text-base font-bold text-ok">
               {stats.healthy}
             </div>
           </div>
-          <div className="rounded-xl border border-info/20 bg-info/[0.04] p-3">
+          <div className="rounded-xl border border-line bg-bg p-3">
             <span className="flex items-center gap-1 text-label text-info">
               <span className="size-1.5 rounded-full bg-info animate-pulse" />
-              运行中
+              {t.sessions.statRunning}
             </span>
             <div className="mt-1 font-mono text-base font-bold text-info">
               {stats.running}
             </div>
           </div>
-          <div className="rounded-xl border border-warn/20 bg-warn/[0.04] p-3">
+          <div className="rounded-xl border border-line bg-bg p-3">
             <span className="flex items-center gap-1 text-label text-warn">
               <span className="size-1.5 rounded-full bg-warn animate-pulse" />
-              待修复异常
+              {t.sessions.statNeedsRepair}
             </span>
             <div className="mt-1 font-mono text-base font-bold text-warn">
               {stats.needsRepair}
@@ -656,97 +689,77 @@ export function SessionManager({
           />
         </div>
 
-        {/* 状态筛选：全部 / 仅看异常 */}
-        <div className="flex items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs">
-          <button
-            type="button"
-            onClick={() => setStatusFilter("all")}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-              statusFilter === "all" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
-            }`}
-          >
-            <Layers className="size-3.5" />
-            <span>{t.sessions.filterAll}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter("needs_repair")}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-              statusFilter === "needs_repair"
-                ? "bg-panel text-warn shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <AlertTriangle className="size-3.5" />
-            <span>{t.sessions.filterNeedsRepair}</span>
-            {stats.needsRepair > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warn-soft px-1 font-mono text-meta text-warn">
-                {stats.needsRepair}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter("archived")}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-              statusFilter === "archived"
-                ? "bg-panel text-alt shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <Archive className="size-3.5" />
-            <span>{t.sessions.filterArchived}</span>
-            {stats.archived > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-alt-soft px-1 font-mono text-meta text-alt">
-                {stats.archived}
-              </span>
-            )}
-          </button>
-        </div>
+        {/* 状态筛选：全部 / 仅看异常 / 已归档（2026-09-18 收口：手搓分段器 → Segmented，
+            计数徽标随 label 走） */}
+        <Segmented<"all" | "needs_repair" | "archived">
+          ariaLabel={t.sessions.title}
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: "all", label: t.sessions.filterAll, icon: Layers },
+            {
+              value: "needs_repair",
+              icon: AlertTriangle,
+              label: (
+                <>
+                  {t.sessions.filterNeedsRepair}
+                  {stats.needsRepair > 0 && (
+                    <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn-soft px-1 font-mono text-meta text-warn">
+                      {stats.needsRepair}
+                    </span>
+                  )}
+                </>
+              ),
+            },
+            {
+              value: "archived",
+              icon: Archive,
+              label: (
+                <>
+                  {t.sessions.filterArchived}
+                  {stats.archived > 0 && (
+                    <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-alt-soft px-1 font-mono text-meta text-alt">
+                      {stats.archived}
+                    </span>
+                  )}
+                </>
+              ),
+            },
+          ]}
+        />
 
-        <div className="hidden items-center rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs sm:flex">
-          <button
-            type="button"
-            onClick={() => setViewMode("grouped")}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-              viewMode === "grouped" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
-            }`}
-          >
-            <Layers className="size-3.5" />
-            <span>{t.sessions.groupByProject}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("flat")}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-              viewMode === "flat" ? "bg-panel text-ink shadow-xs" : "text-dim hover:text-ink"
-            }`}
-          >
-            <List className="size-3.5" />
-            <span>平铺列表</span>
-          </button>
-        </div>
+        <Segmented<"grouped" | "flat">
+          ariaLabel={t.sessions.title}
+          value={viewMode}
+          onChange={setViewMode}
+          className="hidden sm:flex"
+          options={[
+            { value: "grouped", label: t.sessions.groupByProject, icon: Layers },
+            { value: "flat", label: t.sessions.viewFlat, icon: List },
+          ]}
+        />
       </div>
 
       {/* 会话列表呈现 */}
       {loading && !sessions ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-panel py-12 text-center">
-          <LoaderCircle className="size-6 animate-spin text-brand-deep" />
-          <span className="text-faint mt-2 text-xs">正在扫描 DSH 会话记录...</span>
-        </div>
+        <StateBlock tone="loading" title={t.sessions.loadingScanning} />
       ) : filteredSessions.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel py-12 text-center">
-          <FileCode className="text-faint size-8" />
-          <p className="text-ink mt-2 text-xs font-medium">
-            {searchQuery || statusFilter !== "all"
+        <StateBlock
+          tone="empty"
+          icon={FileCode}
+          title={
+            searchQuery || statusFilter !== "all"
               ? t.sessions.emptyFilter
-              : t.sessions.emptyList}
-          </p>
-        </div>
+              : t.sessions.emptyList
+          }
+        />
       ) : viewMode === "grouped" ? (
         <div className="space-y-3.5">
           {projectGroups.map(([rawKey, group]) => {
             const isCollapsed = collapsedProjects.has(rawKey)
+            const limit = groupLimits[rawKey] ?? GROUP_BATCH
+            const visibleItems = group.items.slice(0, limit)
+            const restCount = group.items.length - visibleItems.length
             return (
               <div
                 key={rawKey}
@@ -754,9 +767,12 @@ export function SessionManager({
               >
                 <div className="border-b border-line bg-line-soft/40 px-4 py-3 space-y-1.5">
                   <div className="flex items-center justify-between gap-3">
-                    <div
+                    {/* 可点折叠头：div[onClick] → 真 button（键盘可达，2026-09-18 收口） */}
+                    <button
+                      type="button"
                       onClick={() => toggleProjectCollapse(rawKey)}
-                      className="flex cursor-pointer items-center gap-2 min-w-0 flex-1 select-none"
+                      aria-expanded={!isCollapsed}
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 select-none text-left"
                     >
                       {isCollapsed ? (
                         <ChevronRight className="size-4 text-faint shrink-0" />
@@ -771,9 +787,9 @@ export function SessionManager({
                         {group.projectName}
                       </span>
                       <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-meta font-mono text-faint">
-                        {group.items.length} 个会话 · {formatBytes(group.totalBytes)}
+                        {t.sessions.groupMeta(group.items.length, formatBytes(group.totalBytes))}
                       </span>
-                    </div>
+                    </button>
 
                     <Button
                       size="sm"
@@ -799,7 +815,24 @@ export function SessionManager({
 
                 {!isCollapsed && (
                   <div className="divide-y divide-line/60">
-                    {group.items.map((sess) => renderSessionRow(sess))}
+                    {visibleItems.map((sess) => renderSessionRow(sess))}
+                    {restCount > 0 && (
+                      <div className="p-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setGroupLimits((prev) => ({
+                              ...prev,
+                              [rawKey]: (prev[rawKey] ?? GROUP_BATCH) + GROUP_BATCH,
+                            }))
+                          }
+                          className="w-full text-xs text-dim"
+                        >
+                          {t.sessions.showMoreSessions(restCount)}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -808,7 +841,19 @@ export function SessionManager({
         </div>
       ) : (
         <div className="divide-y divide-line rounded-2xl border border-line bg-panel shadow-xs overflow-hidden">
-          {filteredSessions.map((sess) => renderSessionRow(sess))}
+          {filteredSessions.slice(0, flatLimit).map((sess) => renderSessionRow(sess))}
+          {filteredSessions.length > flatLimit && (
+            <div className="p-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setFlatLimit((n) => n + FLAT_BATCH)}
+                className="w-full text-xs text-dim"
+              >
+                {t.sessions.showMoreSessions(filteredSessions.length - flatLimit)}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

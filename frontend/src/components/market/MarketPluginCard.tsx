@@ -66,46 +66,51 @@ export function MarketPluginCard({
   const desc = getPluginDescription(plugin.description, activeLocale)
 
   return (
-    <article className="group relative flex flex-col justify-between rounded-xl border border-line bg-panel p-4 shadow-2xs transition-all duration-200 hover:border-brand/40 hover:shadow-xs hover:-translate-y-0.5">
+    <article className="group relative flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs transition-all duration-200 hover:border-brand/40 hover:shadow-xs hover:-translate-y-0.5">
       {/* 卡片头部 */}
       <div>
         <div className="flex items-start justify-between gap-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             {/* 左上角品牌/来源定制主图标 */}
             {isOfficial ? (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-brand/40 bg-brand/10 text-brand-deep shadow-2xs group-hover:border-brand transition-colors" title={t.market.officialCoreTitle}>
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-brand/40 bg-wash text-brand-deep shadow-2xs group-hover:border-brand transition-colors" title={t.market.officialCoreTitle}>
                 <Sparkles className="size-4.5 text-brand-deep" />
               </div>
             ) : plugin.npm ? (
               <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title={t.market.sourceNpm}>
-                <NpmIcon className="h-3 w-5 text-ink/80" />
+                <NpmIcon className="h-3 w-5 text-dim" />
               </div>
             ) : plugin.url?.includes("github.com") ? (
               <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-ink shadow-2xs group-hover:border-brand/40 transition-colors" title={t.market.sourceGithub}>
-                <GithubIcon className="size-4.5 text-ink/80" />
+                <GithubIcon className="size-4.5 text-dim" />
               </div>
             ) : (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-brand-deep shadow-2xs group-hover:border-brand/30 group-hover:bg-brand/5 transition-colors">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-wash text-brand-deep shadow-2xs group-hover:border-brand/30 group-hover:bg-wash transition-colors">
                 <Package className="size-4.5" />
               </div>
             )}
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <h3
-                  className="truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors"
-                  title={displayName}
-                  onClick={() => onOpenExternal(plugin.url || plugin.page)}
-                >
-                  {displayName}
+                {/* 2026-09-18 收口：可点击的 `<h3 onClick>` 改回真按钮（键盘可达、
+                    语义如实），h3 标题层级保留在 wrapper 上（读屏结构不变）。 */}
+                <h3 className="min-w-0 max-w-full">
+                  <button
+                    type="button"
+                    className="inline-block max-w-full truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                    title={displayName}
+                    onClick={() => onOpenExternal(plugin.url || plugin.page)}
+                  >
+                    {displayName}
+                  </button>
                 </h3>
                 {isOfficial && (
-                  <Badge variant="outline" className="h-4 px-1 text-micro bg-brand/10 text-brand-deep border-brand/30 font-mono">
+                  <Badge variant="outline" className="h-4 px-1 text-micro bg-wash text-brand-deep border-brand/30 font-mono">
                     OFFICIAL
                   </Badge>
                 )}
               </div>
               <p className="truncate text-label text-dim font-mono mt-0.5" title={plugin.owner}>
-                by <span className="text-ink/80">{plugin.owner}</span>
+                by <span className="text-dim">{plugin.owner}</span>
               </p>
             </div>
           </div>
@@ -131,13 +136,13 @@ export function MarketPluginCard({
 
         {/* 指标栏 (Stars, Downloads, Added) */}
         <div className="mt-3 flex items-center gap-3 text-label text-faint font-mono">
-          <div className="flex items-center gap-1 text-ink/70" title="GitHub Stars">
+          <div className="flex items-center gap-1 text-dim" title="GitHub Stars">
             <Star className="size-3 fill-dim/30" />
             <span>{plugin.stars?.toLocaleString() ?? 0}</span>
           </div>
 
           {plugin.downloads !== null && plugin.downloads !== undefined && (
-            <div className="flex items-center gap-1 text-ink/70" title="NPM Downloads">
+            <div className="flex items-center gap-1 text-dim" title="NPM Downloads">
               <Download className="size-3" />
               <span>{plugin.downloads >= 1000 ? `${(plugin.downloads / 1000).toFixed(1)}k` : plugin.downloads}</span>
             </div>
@@ -201,15 +206,13 @@ export function MarketPluginCard({
           </div>
         </div>
 
-        {/* 主动作按钮 */}
+        {/* 主动作按钮（2026-09-18 收口：去手搓 brand 填充 + 白字覆写
+            填充——主行动 = 默认 Button（brand+白字）；次行动 = outline）。 */}
         <Button
-          size="sm"
           variant={isInstalled ? "outline" : "default"}
           onClick={() => onInstall(plugin)}
-          className={`w-full h-8 text-xs font-medium gap-1.5 rounded-lg transition-all ${
-            isInstalled
-              ? "border-line text-ink hover:bg-wash hover:border-brand/40"
-              : "bg-brand text-white hover:bg-brand/90 shadow-2xs"
+          className={`w-full text-xs font-medium ${
+            isInstalled ? "hover:border-brand/40" : ""
           }`}
         >
           {isInstalled ? (

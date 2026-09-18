@@ -79,7 +79,7 @@ describe("市场文案 i18n 收口（task-16）", () => {
     const consumption: Array<[string, string, readonly string[]]> = [
       ["MarketplaceView", marketplaceViewSrc, ["t.market.loadingBtn", "t.market.openLinkFailed(", "t.market.clearFilters"]],
       ["MarketInstallDialog", marketInstallDialogSrc, ["t.market.reinstallBtn", "t.market.installedWillOverwrite", "t.market.installedBadge"]],
-      ["MarketCustomInstallDialog", marketCustomInstallDialogSrc, ["t.market.installedWillReinstall", "t.market.installedBadge", "t.market.installToBtn(", "t.about.cancelBtn"]],
+      ["MarketCustomInstallDialog", marketCustomInstallDialogSrc, ["t.market.installedWillReinstall", "t.market.installedBadge", "t.market.installToBtn(", "t.confirm.cancel"]],
       ["MarketPluginCard", marketPluginCardSrc, ["t.market.noDescription", "t.market.officialCoreTitle", "t.market.sourceNpm", "t.market.sourceGithub", "t.market.installedInProfile("]],
     ]
     for (const [label, src, keys] of consumption) {
@@ -115,10 +115,11 @@ describe("市场文案 i18n 收口（task-16）", () => {
     }
   })
 
-  it("死分支已清除：cancelBtn 不再挂无意义的中文兜底", () => {
-    // 原实现 `t.about.cancelBtn || "取消"`——该键 zh/en 两侧恒在，兜底永不渲染，
-    // 只会污染后续文案扫描（2026-09-11 裁定：删兜底而非为它补键）。
-    expect(marketCustomInstallDialogSrc).toContain("t.about.cancelBtn")
+  it("死分支已清除：cancel 不再挂无意义的中文兜底", () => {
+    // 原实现 `t.about.cancelBtn || "取消"`——兜底永不渲染，只会污染后续文案扫描
+    // （2026-09-11 裁定：删兜底而非为它补键）。2026-09-18 市场收口：两个安装弹窗
+    // 的取消键统一为通用 t.confirm.cancel（复用既有键，不新增），本闸只守兜底。
+    expect(marketCustomInstallDialogSrc).toContain("t.confirm.cancel")
     expect(marketCustomInstallDialogSrc).not.toContain('|| "取消"')
   })
 })

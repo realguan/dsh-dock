@@ -13,7 +13,15 @@ import {
 } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { DropdownMenu } from "radix-ui"
+
+/** 2026-09-18 收口：下拉菜单五项此前各抄一份同款类名字符串，提取为常量。 */
+const MENU_ITEM_CLASS =
+  "flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
+const MENU_ITEM_DANGER_CLASS =
+  "flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-danger outline-none hover:bg-danger-soft"
 
 interface ProfileRowProps {
   profile: ProfileSummary
@@ -79,13 +87,13 @@ export function ProfileRow({
         isSwitching ? "ring-1 ring-info/40" : ""
       }`}
     >
-      {/* 活跃/重载指示条 */}
+      {/* 活跃/重载指示条（2026-09-18 收口：w-[3.5px]/w-[3px] 两档并存，统一为 w-1） */}
       {isSwitching ? (
-        <span className="bg-info absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-info/50 animate-pulse" />
+        <span className="bg-info absolute inset-y-2.5 left-0 w-1 rounded-r-full shadow-xs shadow-info/50 animate-pulse" />
       ) : isRunning ? (
-        <span className="bg-ok absolute inset-y-2.5 left-0 w-[3.5px] rounded-r-full shadow-xs shadow-ok/50" />
+        <span className="bg-ok absolute inset-y-2.5 left-0 w-1 rounded-r-full shadow-xs shadow-ok/50" />
       ) : isSelected ? (
-        <span className="bg-brand absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" />
+        <span className="bg-brand absolute inset-y-2.5 left-0 w-1 rounded-r-full" />
       ) : null}
 
       <div className="flex items-start justify-between gap-2 pl-1.5">
@@ -121,9 +129,9 @@ export function ProfileRow({
               </span>
             ) : null}
 
-            {/* 默认启动 */}
+            {/* 默认启动（品牌=wash，2026-09-18 收口） */}
             {isDefault && (
-              <span className="bg-brand/10 text-brand-deep border border-brand/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
+              <span className="bg-wash text-brand-deep border border-brand/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none">
                 <Star className="size-2.5 fill-current" />
                 {t.profiles.defaultBadge}
               </span>
@@ -148,42 +156,32 @@ export function ProfileRow({
           className="flex shrink-0 items-center gap-1 pt-0.5"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 主动作：重载中、启动或重启 */}
+          {/* 主动作：重载中、启动或重启（2026-09-18 收口：手搓 bg-white 按钮改基座 Button） */}
           {isSwitching ? (
-            <button
-              type="button"
-              disabled
-              className="border-line/80 text-info bg-info-soft inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium cursor-wait shadow-2xs"
-            >
+            <span className="bg-info-soft text-info inline-flex items-center gap-1.5 rounded-lg border border-line/80 px-2 py-1 text-xs font-medium cursor-wait shadow-2xs">
               <LoaderCircle className="size-3 animate-spin text-info" aria-hidden />
               <span>{t.profiles.launchWorking}</span>
-            </button>
+            </span>
           ) : isRunning ? (
-            <button
-              type="button"
+            <Button
+              size="icon-sm"
+              variant="outline"
               title={busy ? t.profiles.launchWorking : t.profiles.restart}
               aria-label={busy ? t.profiles.launchWorking : t.profiles.restart}
               disabled={busy}
               onClick={onRestart}
-              className="text-dim hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg border border-line bg-white transition-colors disabled:opacity-40"
             >
               <RotateCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
-            </button>
+            </Button>
           ) : web_ui ? (
-            <button
-              type="button"
-              title={busy ? t.profiles.launchWorking : t.profiles.launch}
-              disabled={busy}
-              onClick={onLaunch}
-              className="border-line/80 text-dim hover:border-brand hover:text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40"
-            >
+            <Button size="sm" variant="outline" title={busy ? t.profiles.launchWorking : t.profiles.launch} disabled={busy} onClick={onLaunch}>
               {busy ? (
                 <LoaderCircle className="size-3 animate-spin" aria-hidden />
               ) : (
                 <Play className="size-3 fill-current opacity-70" aria-hidden />
               )}
               <span>{t.profiles.launch}</span>
-            </button>
+            </Button>
           ) : null}
 
           {/* 更多管理操作下拉菜单 */}
@@ -192,7 +190,7 @@ export function ProfileRow({
               <DropdownMenu.Trigger asChild>
                 <button
                   type="button"
-                  title="更多操作"
+                  title={t.profiles.moreActions}
                   aria-label={t.profiles.moreActions}
                   disabled={busy}
                   className="text-faint hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
@@ -207,48 +205,40 @@ export function ProfileRow({
                   sideOffset={4}
                   className="z-50 min-w-[150px] overflow-hidden rounded-xl border border-line bg-panel p-1 text-xs text-ink shadow-lg ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95"
                 >
-                  <DropdownMenu.Item
-                    onClick={onDetail}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
-                  >
-                    <Info className="size-3.5 text-dim" />
-                    <span>查看详情</span>
-                  </DropdownMenu.Item>
-
-                  <DropdownMenu.Item
-                    onClick={onSetDefault}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
-                  >
-                    <Star
-                      className={`size-3.5 ${
-                        isDefault ? "text-brand-deep fill-current" : "text-dim"
-                      }`}
-                    />
-                    <span>{isDefault ? t.profiles.defaultIs : t.profiles.setDefault}</span>
-                  </DropdownMenu.Item>
-
-                  <DropdownMenu.Item
-                    onClick={onCopy}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
-                  >
-                    <Copy className="size-3.5 text-dim" />
-                    <span>{t.profiles.submitCopy}</span>
-                  </DropdownMenu.Item>
-
-                  <DropdownMenu.Item
-                    onClick={onRename}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 outline-none hover:bg-wash hover:text-brand-deep"
-                  >
-                    <Pencil className="size-3.5 text-dim" />
-                    <span>{t.profiles.actionRename}</span>
-                  </DropdownMenu.Item>
+                  {(
+                    [
+                      {
+                        key: "detail",
+                        Icon: Info,
+                        label: t.profiles.actionDetail,
+                        run: onDetail,
+                        iconClass: undefined,
+                      },
+                      {
+                        key: "default",
+                        Icon: Star,
+                        label: isDefault ? t.profiles.defaultIs : t.profiles.setDefault,
+                        run: onSetDefault,
+                        iconClass: isDefault ? "fill-current text-brand-deep" : undefined,
+                      },
+                      { key: "copy", Icon: Copy, label: t.profiles.submitCopy, run: onCopy, iconClass: undefined },
+                      { key: "rename", Icon: Pencil, label: t.profiles.actionRename, run: onRename, iconClass: undefined },
+                    ] as const
+                  ).map(({ key, Icon, label, run, iconClass }) => (
+                    <DropdownMenu.Item
+                      key={key}
+                      onClick={run}
+                      className={MENU_ITEM_CLASS}
+                    >
+                      <Icon className={cn("size-3.5 text-dim", iconClass)} />
+                      <span>{label}</span>
+                    </DropdownMenu.Item>
+                  ))}
 
                   <DropdownMenu.Separator className="my-1 h-px bg-line" />
 
-                  <DropdownMenu.Item
-                    onClick={onDelete}
-                    className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-warn outline-none hover:bg-warn-soft"
-                  >
+                  {/* 删除：破坏性动作用 danger 语义色（修复"危险动作视觉最弱"的权重倒挂） */}
+                  <DropdownMenu.Item onClick={onDelete} className={MENU_ITEM_DANGER_CLASS}>
                     <Trash2 className="size-3.5" />
                     <span>{t.profiles.actionDelete}</span>
                   </DropdownMenu.Item>

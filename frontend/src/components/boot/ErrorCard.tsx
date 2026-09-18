@@ -195,7 +195,7 @@ export function ErrorCard({
             </>
           )}
         </Button>
-        {impact && <span className="text-micro text-faint">{impact}</span>}
+        {impact && <span className="text-label text-faint">{impact}</span>}
       </div>
     )
   }
@@ -212,9 +212,9 @@ export function ErrorCard({
       data-failure-kind={payload.failure?.kind ?? "none"}
     >
       {/* 诊断状态头 */}
-      <div className="flex items-center justify-between border-b border-danger/20 bg-danger-soft/40 px-4 py-2.5">
+      <div className="flex items-center justify-between border-b border-danger/20 bg-danger-soft px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="flex size-5 items-center justify-center rounded-full bg-danger text-white">
+          <span className="flex size-5 items-center justify-center rounded-full bg-danger text-destructive-foreground">
             <AlertTriangle className="size-3" />
           </span>
           <span className="font-mono text-xs font-semibold tracking-wide text-danger">
@@ -267,7 +267,7 @@ export function ErrorCard({
                   {t.error.actions.reselect}
                 </Button>
                 {actionImpact("reselect") && (
-                  <span className="text-micro text-faint">{actionImpact("reselect")}</span>
+                  <span className="text-label text-faint">{actionImpact("reselect")}</span>
                 )}
               </div>
             )}
@@ -275,7 +275,7 @@ export function ErrorCard({
         )}
 
         {actionError && (
-          <div className="mt-3 rounded-lg bg-danger/10 p-2.5 text-xs text-danger break-words">
+          <div className="mt-3 rounded-lg bg-danger-soft p-2.5 text-xs text-danger break-words">
             {actionError}
           </div>
         )}
@@ -300,14 +300,14 @@ export function ErrorCard({
         <div className="mt-3 flex flex-col gap-3">
         {/* 错误详情 */}
         {payload.detail && (
-          <div className="mt-2.5 rounded-xl border border-danger/20 bg-danger-soft/30 p-3 text-xs leading-relaxed text-dim break-words">
+          <div className="mt-2.5 rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs leading-relaxed text-dim break-words">
             {payload.detail}
           </div>
         )}
 
         {/* 建议解决方案 */}
         {suggestion && (
-          <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-wash/70 p-3 text-xs leading-relaxed text-dim">
+          <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-brand/20 bg-wash p-3 text-xs leading-relaxed text-dim">
             <Sparkles className="mt-0.5 size-3.5 shrink-0 text-brand-deep" />
             <div className="flex-1">
               <span className="font-semibold text-brand-deep">{t.error.suggestionLabel}</span>
@@ -342,7 +342,7 @@ export function ErrorCard({
               <button
                 type="button"
                 onClick={handleCopyLog}
-                className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/10 px-2 py-1 font-mono text-meta text-white/80 transition-colors hover:bg-white/20"
+                className="absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-md border border-term-line bg-term-panel px-2 py-1 font-mono text-meta text-term-dim transition-colors hover:border-term-dim/50 hover:bg-term-line hover:text-term-ink"
                 title={t.error.copyLog}
               >
                 {copied ? (

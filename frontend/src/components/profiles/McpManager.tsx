@@ -27,6 +27,7 @@ import { useI18n } from "@/stores/i18nStore"
 import type { McpNamed, McpProbe, McpServerConfig, PluginRuntimeSnapshot } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { StateBlock } from "@/components/ui/state-block"
 import { Switch } from "@/components/ui/switch"
 import {
   Dialog,
@@ -37,10 +38,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+// 2026-09-18 收口：预设描述文案迁入 t.profiles.mcpPresetDescs（按 preset.name 索引），
+// 这里只留结构化配置。
 const MCP_PRESETS: Array<{
   name: string
   label: string
-  desc: string
   icon: typeof Code2
   command: string
   args: string[]
@@ -49,7 +51,6 @@ const MCP_PRESETS: Array<{
   {
     name: "github",
     label: "GitHub Tools",
-    desc: "搜索代码、管理 Issue、PR 与提交历史",
     icon: Code2,
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-github"],
@@ -58,7 +59,6 @@ const MCP_PRESETS: Array<{
   {
     name: "filesystem",
     label: "Filesystem Sandbox",
-    desc: "安全的本地指定目录文件读写沙箱能力",
     icon: HardDrive,
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"],
@@ -67,7 +67,6 @@ const MCP_PRESETS: Array<{
   {
     name: "postgres",
     label: "PostgreSQL Database",
-    desc: "连接 PostgreSQL 数据库并执行安全只读/读写 SQL",
     icon: Database,
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:pass@localhost/db"],
@@ -76,7 +75,6 @@ const MCP_PRESETS: Array<{
   {
     name: "brave-search",
     label: "Brave Web Search",
-    desc: "通过 Brave Search API 进行实时全网检索",
     icon: Globe,
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-brave-search"],
@@ -353,7 +351,7 @@ export function McpManager({
 
   const handleSaveServer = async () => {
     if (!formName.trim()) {
-      onNotice?.("请输入服务名称", "warn")
+      onNotice?.(t.profiles.mcpNameRequired, "warn")
       return
     }
     setSaving(true)
@@ -408,7 +406,7 @@ export function McpManager({
     const prefix = `mcp__${serverName}__*`
     // 2026-09-08：写失败不再静默（原来只挂 .then 成功分支）
     const outcome = await copy(prefix, serverName)
-    if (outcome.ok) onNotice?.(`已复制工具匹配前缀：${prefix}`, "ok")
+    if (outcome.ok) onNotice?.(t.profiles.mcpPrefixCopied(prefix), "ok")
     else onNotice?.(t.error.copyFailed, "warn")
   }
 
@@ -427,41 +425,35 @@ export function McpManager({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={openCreateDialog}
-            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs"
-          >
+          <Button size="sm" onClick={openCreateDialog} className="gap-1.5">
             <Plus className="size-3.5" />
             <span>{t.profiles.mcpAddBtn}</span>
           </Button>
         </div>
       </div>
 
-      {/* 已配置的 MCP 服务器列表 */}
+      {/* 已配置的 MCP 服务器列表（2026-09-18 收口：错误/加载/空态统一 StateBlock） */}
       {loadError ? (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-danger/30 bg-danger/5 py-10 text-center">
-          <Server className="size-7 text-danger" />
-          <p className="text-xs font-medium text-ink">{t.profiles.mcpLoadFailed}</p>
-          <p className="max-w-md break-all text-label text-faint">{loadError}</p>
-          <Button size="sm" variant="outline" onClick={() => void loadData()} className="mt-1 gap-1 text-xs">
-            <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
-            <span>{t.profiles.mcpRetry}</span>
-          </Button>
-        </div>
+        <StateBlock
+          tone="error"
+          title={t.profiles.mcpLoadFailed}
+          hint={<span className="break-all">{loadError}</span>}
+          action={
+            <Button size="sm" variant="outline" onClick={() => void loadData()} className="gap-1">
+              <LoaderCircle className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
+              <span>{t.profiles.mcpRetry}</span>
+            </Button>
+          }
+        />
       ) : loading && !servers ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-panel py-12 text-center">
-          <LoaderCircle className="size-6 animate-spin text-brand-deep" />
-          <span className="text-faint mt-2 text-xs">正在读取 MCP 服务配置...</span>
-        </div>
+        <StateBlock tone="loading" title={t.profiles.mcpLoading} />
       ) : !servers || servers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-center">
-          <Server className="size-8 text-faint mb-2" />
-          <p className="text-xs font-medium text-ink">{t.profiles.mcpEmpty}</p>
-          <p className="text-label text-faint mt-1 max-w-sm">
-            支持一键添加 GitHub、Postgres、Brave Search 等 MCP 官方工具库。
-          </p>
-        </div>
+        <StateBlock
+          tone="empty"
+          icon={Server}
+          title={t.profiles.mcpEmpty}
+          hint={t.profiles.mcpEmptyHint}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-3">
           {servers.map((s) => {
@@ -482,11 +474,11 @@ export function McpManager({
                       </span>
                       {s.disabled ? (
                         <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-meta text-faint">
-                          已禁用
+                          {t.profiles.pluginDisabled}
                         </span>
                       ) : (
                         <span className="rounded-md bg-ok-soft px-1.5 py-0.5 text-meta font-medium text-ok">
-                          Active
+                          {t.profiles.mcpEnabledTag}
                         </span>
                       )}
 
@@ -494,7 +486,7 @@ export function McpManager({
                         type="button"
                         onClick={() => copyPrefix(s.name)}
                         className="flex items-center gap-1 font-mono text-meta text-faint hover:text-ink rounded-md px-1.5 py-0.5 border border-line bg-bg transition-colors"
-                        title="复制工具前缀"
+                        title={t.profiles.mcpCopyPrefix}
                       >
                         {copiedName === s.name ? (
                           <Check className="size-2.5 text-ok" />
@@ -510,7 +502,7 @@ export function McpManager({
                         size="sm"
                         variant="outline"
                         onClick={() => openEditDialog(s)}
-                        className="h-7 gap-1 px-2 text-xs"
+                        className="gap-1"
                       >
                         <Edit2 className="size-3" />
                         <span>{t.profiles.mcpEditBtn}</span>
@@ -524,7 +516,7 @@ export function McpManager({
                         aria-label={`${t.profiles.mcpProbeBtn}：${s.name}`}
                         onClick={() => void handleProbe(s.name)}
                         disabled={probingName === s.name || isDeleting}
-                        className="h-7 gap-1 px-2 text-xs"
+                        className="gap-1"
                       >
                         {probingName === s.name ? (
                           <LoaderCircle className="size-3 animate-spin" />
@@ -534,12 +526,11 @@ export function McpManager({
                         <span>{t.profiles.mcpProbeBtn}</span>
                       </Button>
                       <Button
-                        size="sm"
-                        variant="outline"
+                        size="icon-sm"
+                        variant="destructive"
                         aria-label={`${t.profiles.mcpDeleteBtn}：${s.name}`}
                         onClick={() => setPendingDelete(s.name)}
                         disabled={isDeleting}
-                        className="size-7 p-0 hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
                       >
                         {isDeleting ? (
                           <LoaderCircle className="size-3 animate-spin text-danger" />
@@ -572,7 +563,7 @@ export function McpManager({
 
                   {/* 运行态工具联动展示 */}
                   {activeTools.length > 0 ? (
-                    <div className="rounded-lg border border-ok/20 bg-ok/5 p-2 text-xs">
+                    <div className="rounded-lg border border-line bg-ok-soft p-2 text-xs">
                       <div className="flex items-center gap-1.5 text-ok font-semibold text-label">
                         <Wrench className="size-3" />
                         <span>{t.profiles.mcpActiveTools(activeTools.length)}</span>
@@ -631,17 +622,17 @@ export function McpManager({
                       </span>
                     </div>
                     <Button
-                      size="sm"
+                      size="xs"
                       variant="outline"
                       onClick={() => applyPreset(preset)}
-                      className="h-6 gap-1 px-2 text-label hover:border-brand hover:text-brand-deep"
+                      className="gap-1"
                     >
                       <PlusCircle className="size-3" />
-                      <span>应用预设</span>
+                      <span>{t.profiles.mcpApplyPreset}</span>
                     </Button>
                   </div>
                   <p className="mt-1.5 text-label text-faint leading-relaxed">
-                    {preset.desc}
+                    {t.profiles.mcpPresetDescs[preset.name as keyof typeof t.profiles.mcpPresetDescs]}
                   </p>
                 </div>
                 <div
@@ -678,7 +669,7 @@ export function McpManager({
                 id="mcp-form-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="例如 github, filesystem, postgres"
+                placeholder={t.profiles.mcpNamePlaceholder}
                 className="mt-1 w-full rounded-xl border border-line bg-bg px-3 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand"
               />
             </div>
@@ -721,11 +712,11 @@ export function McpManager({
                   onClick={() => setFormEnv([...formEnv, { key: "", value: "" }])}
                   className="text-label text-brand-deep hover:underline"
                 >
-                  + 添加变量
+                  {t.profiles.mcpAddEnv}
                 </button>
               </div>
               {formEnv.length === 0 ? (
-                <p className="text-label text-faint italic">无需特殊环境变量</p>
+                <p className="text-label text-faint italic">{t.profiles.mcpNoEnv}</p>
               ) : (
                 <div className="space-y-1.5 max-h-32 overflow-y-auto">
                   {formEnv.map((item, idx) => (
@@ -770,7 +761,7 @@ export function McpManager({
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-line/60">
-              <span className="text-xs text-dim">停用该 MCP 服务</span>
+              <span className="text-xs text-dim">{t.profiles.mcpDisable}</span>
               <Switch
                 aria-label={t.profiles.mcpDisable}
                 checked={formDisabled}
@@ -785,13 +776,9 @@ export function McpManager({
               onClick={() => setDialogOpen(false)}
               disabled={saving}
             >
-              取消
+              {t.confirm.cancel}
             </Button>
-            <Button
-              onClick={handleSaveServer}
-              disabled={saving || !formName.trim()}
-              className="bg-brand text-white hover:bg-brand/90"
-            >
+            <Button onClick={handleSaveServer} disabled={saving || !formName.trim()}>
               {saving && <LoaderCircle className="size-3.5 animate-spin mr-1.5" />}
               <span>{t.profiles.mcpSaveBtn}</span>
             </Button>

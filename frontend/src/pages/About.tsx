@@ -14,6 +14,7 @@ import { ClientUpdateCard } from "@/components/about/ClientUpdateCard"
 import { DshVersionCard } from "@/components/about/DshVersionCard"
 import { NodeVersionCard } from "@/components/about/NodeVersionCard"
 import { FloatingToast, type ToastMessage } from "@/components/ui/toast"
+import { IconChip } from "@/components/ui/icon-chip"
 import { Button } from "@/components/ui/button"
 
 let autoCheckedOnce = false
@@ -116,13 +117,7 @@ export function About() {
         >
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div
-                className={`flex size-8 shrink-0 items-center justify-center rounded-xl ${
-                  wbUrl ? "bg-ok-soft text-ok" : "bg-line-soft text-faint"
-                }`}
-              >
-                {wbUrl ? <Globe className="size-4" /> : <Server className="size-4" />}
-              </div>
+              <IconChip icon={wbUrl ? Globe : Server} tone={wbUrl ? "ok" : "neutral"} />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-ink text-xs font-semibold">
@@ -133,7 +128,7 @@ export function About() {
                   )}
                 </div>
                 <p className="text-faint mt-0.5 truncate font-mono text-label" title={wbUrl ?? undefined}>
-                  {wbUrl ?? "启动 DSH 后将自动建立本地 HTTP 桥接"}
+                  {wbUrl ?? t.about.workbenchBridgeHint}
                 </p>
               </div>
             </div>

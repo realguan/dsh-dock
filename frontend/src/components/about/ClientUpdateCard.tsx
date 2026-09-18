@@ -16,6 +16,7 @@ import { fmtBytes } from "@/lib/format"
 import { useI18n } from "@/stores/i18nStore"
 import { useClientUpdateStore } from "@/stores/clientUpdateStore"
 import { Button } from "@/components/ui/button"
+import { IconChip } from "@/components/ui/icon-chip"
 import { Progress } from "@/components/ui/progress"
 
 const BUSY_PHASES = new Set(["checking", "downloading", "installing", "relaunching"])
@@ -72,13 +73,11 @@ export function ClientUpdateCard() {
   })()
 
   return (
-    <div className="border-line bg-panel rounded-2xl border p-4.5 shadow-xs transition-shadow hover:shadow-sm">
+    <div className="border-line bg-panel rounded-2xl border p-4 shadow-xs transition-shadow hover:shadow-sm">
       {/* 顶栏：标题 + 状态胶囊 */}
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
-            <Sparkles className="size-3.5" />
-          </div>
+          <IconChip icon={Sparkles} tone="brand" />
           <div>
             <h2 className="text-ink text-xs font-bold tracking-tight">
               {t.about.clientLabel}
@@ -92,7 +91,7 @@ export function ClientUpdateCard() {
             tone === "ok"
               ? "bg-ok-soft text-ok"
               : tone === "accent"
-                ? "bg-brand/10 text-brand-deep border border-brand/20"
+                ? "bg-wash text-brand-deep border border-brand/20"
                 : tone === "danger"
                   ? "bg-danger-soft text-danger"
                   : tone === "busy"
@@ -145,12 +144,12 @@ export function ClientUpdateCard() {
                       onClick={() => setExpandNotes(!expandNotes)}
                       className="text-brand-deep hover:underline cursor-pointer select-none"
                     >
-                      {expandNotes ? "收起日志" : "展开全部"}
+                      {expandNotes ? t.about.notesCollapse : t.about.notesExpand}
                     </button>
                   )}
                 </div>
                 <div
-                  className={`text-label leading-relaxed whitespace-pre-wrap font-mono text-ink/90 overflow-y-auto transition-all ${
+                  className={`text-label leading-relaxed whitespace-pre-wrap font-mono text-ink overflow-y-auto transition-all ${
                     expandNotes ? "max-h-60" : "max-h-24"
                   }`}
                 >
@@ -191,7 +190,7 @@ export function ClientUpdateCard() {
                   </div>
                   <div className="text-faint flex justify-between font-mono text-label">
                     <span>{fmtBytes(snapshot.current ?? 0)}</span>
-                    <span>正在获取资源…</span>
+                    <span>{t.about.fetchingRelease}</span>
                   </div>
                 </>
               )}

@@ -32,13 +32,17 @@ export function DimNote({
   tone,
 }: {
   children: ReactNode
-  tone?: "warn" | "accent"
+  // 2026-09-18 收口：新增 danger 档——升级失败与 ClientUpdateCard failed
+  // 曾 warn/danger 两色并存，统一走 danger。
+  tone?: "warn" | "accent" | "danger"
 }) {
   const cls =
     tone === "warn"
       ? "text-warn text-xs"
       : tone === "accent"
         ? "text-brand-deep text-xs font-medium"
-        : "text-faint text-xs"
+        : tone === "danger"
+          ? "text-danger text-xs font-medium"
+          : "text-faint text-xs"
   return <span className={cls}>{children}</span>
 }

@@ -90,7 +90,7 @@ export function DshSettingsPane({
             ) : (
               <Copy className="size-3.5 text-dim" />
             )}
-            <span>{copied ? "已复制" : "复制 YAML"}</span>
+            <span>{copied ? t.console.copied : t.console.copyYaml}</span>
           </Button>
 
           <Button
@@ -101,14 +101,14 @@ export function DshSettingsPane({
             className="gap-1.5 text-xs"
           >
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin text-brand-deep" : "text-dim"}`} />
-            <span>重新加载</span>
+            <span>{t.console.reload}</span>
           </Button>
 
           <Button
             size="sm"
             onClick={() => setConfirmSave(true)}
             disabled={saving || loading}
-            className="gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs"
+            className="gap-1.5 text-xs"
           >
             {saving ? (
               <LoaderCircle className="size-3.5 animate-spin" />
@@ -127,7 +127,7 @@ export function DshSettingsPane({
             <FileCode2 className="size-3.5" />
             <span>$DSH_HOME/settings.yaml</span>
           </div>
-          <span>YAML 格式</span>
+          <span>{t.console.yamlFormat}</span>
         </div>
 
         <textarea

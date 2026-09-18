@@ -47,10 +47,10 @@ export function FloatingToast({
               // ok/warn/info 三语义，正好对应 term 族的三个级别色。
               className={`pointer-events-auto flex items-center gap-2.5 rounded-full px-4 py-2 text-xs font-medium shadow-lg backdrop-blur-md transition-all ${
                 toast.kind === "ok"
-                  ? "bg-term/90 text-white ring-1 ring-term-ok/40"
+                  ? "bg-term/90 text-term-ink ring-1 ring-term-ok/40"
                   : toast.kind === "warn"
                     ? "bg-term/90 text-term-warn ring-1 ring-term-warn/40"
-                    : "bg-term/90 text-term-ink ring-1 ring-white/20"
+                    : "bg-term/90 text-term-ink ring-1 ring-term-line"
               }`}
             >
               {toast.kind === "ok" && (
@@ -68,7 +68,7 @@ export function FloatingToast({
                 type="button"
                 onClick={onDismiss}
                 aria-label={t.console.toastClose}
-                className="ml-1 shrink-0 rounded-full p-0.5 opacity-60 hover:opacity-100 hover:bg-white/10 transition-colors"
+                className="ml-1 shrink-0 rounded-full p-0.5 opacity-60 hover:opacity-100 hover:bg-term-panel transition-colors"
               >
                 <X className="size-3.5" />
               </button>

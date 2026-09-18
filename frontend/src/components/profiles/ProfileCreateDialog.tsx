@@ -80,7 +80,7 @@ export function ProfileCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t.profiles.createTitle}</DialogTitle>
           <DialogDescription className="sr-only">{t.profiles.createTitle}</DialogDescription>

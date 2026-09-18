@@ -1,6 +1,6 @@
 import { useBootStore } from "@/stores/bootStore"
 import { useI18n } from "@/stores/i18nStore"
-import { DimRow, DimNote } from "./DimRow"
+import { DimRow } from "./DimRow"
 
 /**
  * Node 运行时维度行。
@@ -21,13 +21,11 @@ export function NodeVersionCard() {
             {node.version}
           </span>
           <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-dim">
-            <DimNote>
-              {node.origin === "engine"
-                ? t.about.nodeFromEngine
-                : node.origin === "system"
-                  ? t.about.nodeFromSystem
-                  : t.about.nodeManaged}
-            </DimNote>
+            {node.origin === "engine"
+              ? t.about.nodeFromEngine
+              : node.origin === "system"
+                ? t.about.nodeFromSystem
+                : t.about.nodeManaged}
           </span>
         </div>
       ) : (

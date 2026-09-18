@@ -208,8 +208,8 @@ export function BootIndex() {
 
   return (
     <div className="relative flex min-h-dvh flex-col bg-bg selection:bg-wash selection:text-brand-deep">
-      {/* 顶部环境渐变光晕 */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,color-mix(in_srgb,var(--color-brand)_12%,transparent),transparent_70%)]" />
+      {/* 顶部环境光带（原语 .brand-ambient，色板见 index.css） */}
+      <div className="brand-ambient pointer-events-none absolute inset-x-0 top-0 h-96" />
 
       {/* WSL 模式切换（仅 Windows 渲染）：悬浮胶囊 */}
       {can.bootWsl && (
@@ -278,8 +278,7 @@ export function BootIndex() {
             </>
           ) : (
             <div className="flex flex-col items-center text-center">
-              <div className="relative mb-6">
-                <div className="absolute -inset-4 animate-pulse rounded-2xl bg-brand/20 blur-xl motion-reduce:animate-none" />
+              <div className="brand-halo [--halo-scale:1.35] [--halo-strength:0.7] mb-6" data-halo="breathe">
                 <Emblem size={64} />
               </div>
               {/* 交接复用同一屏：只换文案（重启谁）与副题（到哪一步了），
@@ -303,7 +302,7 @@ export function BootIndex() {
               <button
                 type="button"
                 onClick={() => setTimelineIntent("expanded")}
-                className="mt-8 text-meta text-faint transition-colors hover:text-dim"
+                className="mt-8 text-meta text-dim transition-colors hover:text-ink"
               >
                 {t.boot.viewTimeline}
               </button>

@@ -460,7 +460,7 @@ export function ProfileDetailPane({
 
   if (!name) {
     return (
-      <div className="flex h-full min-h-[460px] flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-center">
+      <div className="flex h-full min-h-[480px] flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-panel/50 p-8 text-center">
         <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-line-soft text-faint">
           <Package className="size-6" />
         </div>
@@ -473,7 +473,7 @@ export function ProfileDetailPane({
   }
 
   return (
-    <div className="flex h-full min-h-[540px] flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-xs">
+    <div className="flex h-full min-h-[480px] flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-xs">
       {/* 顶部 Profile 标题栏 */}
       <header className="border-b border-line bg-panel/90 px-5 py-4 backdrop-blur-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -500,11 +500,11 @@ export function ProfileDetailPane({
             <p className="text-faint mt-0.5 text-xs">
               {detail ? (
                 <>
-                  <span>清单名: </span>
+                  <span>{t.profiles.manifestNameLabel}</span>
                   <span className="font-mono font-medium text-ink">{detail.package_name}</span>
                 </>
               ) : (
-                "正在加载配置档案..."
+                t.profiles.detailLoading
               )}
             </p>
           </div>
@@ -518,7 +518,7 @@ export function ProfileDetailPane({
               disabled={isDefault}
               className={`gap-1 text-xs ${
                 isDefault
-                  ? "bg-brand/10 text-brand-deep border border-brand/20 font-medium cursor-default opacity-100"
+                  ? "bg-wash text-brand-deep border border-brand/20 font-medium cursor-default opacity-100"
                   : ""
               }`}
             >
@@ -747,7 +747,7 @@ export function ProfileDetailPane({
               </div>
             ) : filteredDeps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
-                未匹配到搜索词对应的已装插件
+                {t.profiles.searchNoPlugin}
               </div>
             ) : (
               <div className="divide-y divide-line rounded-xl border border-line bg-panel shadow-xs">
@@ -793,7 +793,7 @@ export function ProfileDetailPane({
                               onClick={() =>
                                 openVersionPick(p.name, p.installed_version ?? "", latest)
                               }
-                              className="text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-mono text-meta font-medium transition-colors"
+                              className="text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-wash px-2 py-0.5 font-mono text-meta font-medium transition-colors"
                             >
                               <ArrowUpCircle className="size-3" />
                               <span>{latest}</span>
@@ -902,10 +902,10 @@ export function ProfileDetailPane({
               <div className="rounded-xl border border-line bg-wash/50 p-4 space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs font-semibold text-ink">
-                    DeepSeek 官方桌面客户端底座运行时
+                    {t.profiles.desktopRuntimeName}
                   </span>
-                  <span className="bg-brand/10 text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 text-meta font-medium">
-                    官方桌面版
+                  <span className="bg-wash text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 text-meta font-medium">
+                    {t.profiles.desktopRuntimeTag}
                   </span>
                 </div>
                 <p className="text-dim text-xs leading-relaxed">
@@ -916,14 +916,15 @@ export function ProfileDetailPane({
                   {t.profiles.desktopRuntimeDescSuffix}
                 </p>
                 <p className="text-faint text-meta">
-                  注：这些核心组件由客户端底座统一部署维护，属于内置底座体系，不计入第三方外挂插件。在此 Profile 安装的自定义扩展将独立展示在「外挂插件」列表中。
+                  {t.profiles.desktopRuntimeNote}
                 </p>
               </div>
             )}
 
             <p className="text-dim text-xs leading-relaxed">
-              底座组合由 Profile 初始化时写入（<code>dsh.profile.bundles</code>
-              ），定义了工作台的基础界面宿主与系统能力：
+              {t.profiles.bundleIntroPre}
+              <code>dsh.profile.bundles</code>
+              {t.profiles.bundleIntroPost}
             </p>
 
             <div className="grid gap-2.5">
@@ -942,7 +943,7 @@ export function ProfileDetailPane({
                         </span>
                         {isBase && (
                           <span className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta">
-                            系统核心
+                            {t.profiles.bundleBaseTag}
                           </span>
                         )}
                       </div>
@@ -1007,7 +1008,7 @@ export function ProfileDetailPane({
                   ) : (
                     <Copy className="size-3.5" />
                   )}
-                  {copiedYaml ? "已复制" : "复制 YAML"}
+                  {copiedYaml ? t.console.copied : t.profiles.copyYaml}
                 </Button>
               )}
             </div>
@@ -1040,7 +1041,7 @@ export function ProfileDetailPane({
 
       {/* 版本选择弹窗 */}
       <Dialog open={versionPick !== null} onOpenChange={(o) => !o && setVersionPick(null)}>
-        <DialogContent className="flex max-h-[calc(100vh-6rem)] flex-col sm:max-w-[400px]">
+        <DialogContent className="flex max-h-[calc(100dvh-4rem)] flex-col sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm font-semibold">
               {versionPick ? t.profiles.pickVersionTitle(versionPick.pkg) : ""}

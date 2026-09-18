@@ -47,10 +47,10 @@ export function VersionChip() {
             ? "bg-ok ring-2 ring-ok/25"
             : dot === "new"
               ? "animate-pulse bg-warn ring-2 ring-warn/30"
-              : "bg-faint/60"
+              : "bg-faint"
         }`}
       />
-      <span className="truncate font-medium text-ink/90" title={text}>
+      <span className="truncate font-medium text-ink" title={text}>
         {text}
       </span>
       {clientMsg && (

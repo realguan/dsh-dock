@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
-import { LoaderCircle } from "lucide-react"
+import { Check, LoaderCircle, Settings2 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { cn } from "@/lib/utils"
 import { useI18n } from "@/stores/i18nStore"
 import {
   groupPickerCandidates,
@@ -151,7 +152,7 @@ export function PluginImportPickerDialog({
             results.push({
               pkg: g.pkg,
               ok: false,
-              detail: `插件已安装，但配置行复制失败：${String(e)}`,
+              detail: t.profiles.importConfigCopyFailed(String(e)),
             })
           }
         } else {
@@ -180,7 +181,7 @@ export function PluginImportPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="flex max-h-[calc(100vh-4rem)] flex-col sm:max-w-[560px]">
+      <DialogContent className="flex max-h-[calc(100dvh-4rem)] flex-col sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t.profiles.importTitle(target)}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -230,14 +231,27 @@ export function PluginImportPickerDialog({
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        {/* 主勾选：插件 + 名称 */}
-                        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
-                          <input
-                            type="checkbox"
-                            checked={picked}
-                            onChange={() => togglePkg(g.pkg)}
-                            className="accent-brand mt-0.5 size-4 shrink-0 rounded-md"
-                          />
+                        {/* 主勾选：插件 + 名称（2026-09-18 收口：native
+                            input[accent-brand] → 自绘 button[role=checkbox]，
+                            整行可点、键盘可达，勾选态走 brand 语义） */}
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={picked}
+                          onClick={() => togglePkg(g.pkg)}
+                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-left"
+                        >
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-md border transition-colors",
+                              picked
+                                ? "border-brand bg-wash ring-1 ring-brand"
+                                : "border-line bg-panel",
+                            )}
+                          >
+                            {picked && <Check className="size-3 text-brand-deep" />}
+                          </span>
                           <span className="min-w-0 flex-1">
                             <span className="flex flex-wrap items-center gap-2">
                               <span
@@ -264,31 +278,43 @@ export function PluginImportPickerDialog({
                               </span>
                             )}
                           </span>
-                        </label>
+                        </button>
 
                         {/* 连配置：逐行勾选，来源无条目置灰 */}
-                        <label
-                          className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs transition-opacity ${
-                            hasConfig
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={picked && withConfigPkgs.has(g.pkg)}
+                          disabled={!picked || !hasConfig}
+                          onClick={() => toggleConfig(g.pkg)}
+                          className={cn(
+                            "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs transition-opacity",
+                            picked && hasConfig
                               ? "text-dim hover:text-ink"
-                              : "text-faint opacity-50 cursor-not-allowed"
-                          }`}
+                              : "text-faint opacity-50 cursor-not-allowed",
+                          )}
                           title={hasConfig ? undefined : t.profiles.importNoConfig}
                         >
-                          <input
-                            type="checkbox"
-                            checked={picked && withConfigPkgs.has(g.pkg)}
-                            disabled={!picked || !hasConfig}
-                            onChange={() => toggleConfig(g.pkg)}
-                            className="accent-brand size-3.5"
-                          />
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "flex size-3.5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                              picked && withConfigPkgs.has(g.pkg)
+                                ? "border-brand bg-wash ring-1 ring-brand"
+                                : "border-line bg-panel",
+                            )}
+                          >
+                            {picked && withConfigPkgs.has(g.pkg) && (
+                              <Check className="size-2.5 text-brand-deep" />
+                            )}
+                          </span>
                           <span className="text-label">{t.profiles.importConfig}</span>
-                        </label>
+                        </button>
                       </div>
 
                       {/* 来源 Profile 切换器（折叠去重） */}
                       <div className="ml-7 flex flex-wrap items-center gap-1.5 text-label">
-                        <span className="text-faint">来源：</span>
+                        <span className="text-faint">{t.profiles.importSourceLabel}</span>
                         {g.sources.map((src) => {
                           const isSelectedSrc = src.profile === currentSrcName
                           return (
@@ -301,12 +327,12 @@ export function PluginImportPickerDialog({
                                   ? `${PROFILE_CHIP_CLASS} ring-1 ring-brand/40 font-semibold shadow-2xs`
                                   : "bg-panel text-dim hover:bg-line-soft opacity-75"
                               }`}
-                              title={`从 ${src.profile} (v${src.version}) 导入${src.hasConfig ? "，包含配置" : ""}`}
+                              title={`${t.profiles.importSourceFrom(src.profile, src.version)}${src.hasConfig ? t.profiles.importIncludesConfig : ""}`}
                             >
                               <span>{src.profile}</span>
                               <span className="text-faint opacity-80">v{src.version}</span>
                               {src.hasConfig && (
-                                <span className="text-brand-deep text-micro font-bold">⚙</span>
+                                <Settings2 className="size-3 shrink-0 text-brand-deep" />
                               )}
                             </button>
                           )

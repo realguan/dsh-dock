@@ -66,8 +66,7 @@ export function BootMode() {
     <PageShell width={620}>
       {/* 头部 */}
       <div className="mb-8 flex flex-col items-center gap-3 text-center">
-        <div className="relative">
-          <div className="absolute -inset-2 rounded-2xl bg-brand/10 blur-xl" />
+        <div className="brand-halo [--halo-strength:0.55]">
           <Emblem size={56} />
         </div>
         <div>
@@ -95,14 +94,14 @@ export function BootMode() {
               aria-pressed={selected}
               className={`group relative flex flex-col rounded-2xl border p-5 text-left transition-all ${
                 selected
-                  ? "border-brand bg-panel ring-1 ring-brand/50 outline-3 outline-brand/15"
-                  : "border-line bg-panel/90 hover:border-brand/40 hover:bg-wash/20 hover:shadow-sm"
+                  ? "border-brand bg-wash ring-1 ring-brand/40"
+                  : "border-line bg-panel hover:border-brand/40 hover:bg-wash hover:shadow-sm"
               }`}
             >
               <div className="flex items-center justify-between">
                 <span
                   className={`inline-flex size-10 items-center justify-center rounded-xl transition-colors ${
-                    selected ? "bg-brand text-white shadow-xs" : "bg-line-soft text-dim group-hover:text-brand-deep"
+                    selected ? "bg-brand text-primary-foreground shadow-xs" : "bg-line-soft text-dim group-hover:text-brand-deep"
                   }`}
                 >
                   <Icon className="size-5" />
@@ -111,8 +110,8 @@ export function BootMode() {
                 <span
                   className={`rounded-full border px-2 py-0.5 text-meta font-semibold tracking-wide ${
                     selected
-                      ? "border-brand/30 bg-wash text-brand-deep"
-                      : "border-line bg-line-soft/60 text-faint"
+                      ? "border-brand/30 bg-panel text-brand-deep"
+                      : "border-line bg-line-soft text-faint"
                   }`}
                 >
                   {badge}
@@ -139,7 +138,7 @@ export function BootMode() {
 
       {/* 错误提示 */}
       {errorMsg && (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-xs text-danger">
           <AlertCircle className="size-4 shrink-0" />
           <span>{errorMsg}</span>
         </div>
@@ -160,12 +159,7 @@ export function BootMode() {
           </div>
         </label>
 
-        <Button
-          type="button"
-          disabled={!picked || submitting}
-          onClick={handleStart}
-          className="gap-2 rounded-full px-7 shadow-xs"
-        >
+        <Button type="button" size="lg" disabled={!picked || submitting} onClick={handleStart}>
           {submitting ? (
             <>
               <Loader2 className="size-4 animate-spin" />

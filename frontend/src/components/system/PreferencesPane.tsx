@@ -1,11 +1,9 @@
 // PreferencesPane.tsx —— 界面语言偏好与崩溃高可用守护配置（4.12 & 4.13）。
 import { useCallback, useEffect, useState } from "react"
 import {
-  AlertTriangle,
   Check,
   Globe,
   Keyboard,
-  LoaderCircle,
   MonitorCog,
   Package,
   RefreshCw,
@@ -20,6 +18,8 @@ import { patchShellSettings } from "@/lib/shellSettings"
 import { usePlatform } from "@/hooks/usePlatform"
 import { useI18n, type LocaleKey } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
+import { IconChip } from "@/components/ui/icon-chip"
+import { StateBlock } from "@/components/ui/state-block"
 import { Switch } from "@/components/ui/switch"
 import type { ShellSettings } from "@/types/ipc"
 import { invalidateDiagnosticsCache } from "./DiagnosticsPane"
@@ -141,33 +141,27 @@ export function PreferencesPane({
   }
 
   if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center text-xs text-faint">
-        <LoaderCircle className="mr-2 size-4 animate-spin text-brand-deep" />
-        <span>{t.console.settingsLoading}</span>
-      </div>
-    )
+    return <StateBlock tone="loading" title={t.console.settingsLoading} />
   }
 
   if (loadError) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center">
-        <AlertTriangle className="size-5 text-warn" />
-        <p className="max-w-md text-xs text-dim">
-          {t.console.settingsLoadFailed}
-          <br />
-          <span className="font-mono text-xs break-all text-faint">{loadError}</span>
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={loadSettings}
-          className="gap-1 text-xs"
-        >
-          <RefreshCw className="size-3" />
-          <span>{t.console.retryLoad}</span>
-        </Button>
-      </div>
+      <StateBlock
+        tone="error"
+        title={t.console.settingsLoadFailed}
+        hint={<span className="font-mono">{loadError}</span>}
+        action={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={loadSettings}
+            className="gap-1 text-xs"
+          >
+            <RefreshCw className="size-3" />
+            <span>{t.console.retryLoad}</span>
+          </Button>
+        }
+      />
     )
   }
 
@@ -190,9 +184,7 @@ export function PreferencesPane({
       {/* 模块 1：界面语言选择 */}
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex items-center gap-2.5 mb-1.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
-            <Globe className="size-4" />
-          </div>
+          <IconChip icon={Globe} tone="brand" />
           <div>
             <h2 className="text-sm font-semibold text-ink">
               {t.console.localeLabel}
@@ -208,7 +200,7 @@ export function PreferencesPane({
             onClick={() => handleLanguageChange("system")}
             className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
               preference === "system"
-                ? "border-brand bg-brand/5 shadow-xs"
+                ? "border-brand bg-wash shadow-xs"
                 : "border-line bg-bg hover:border-line-hover"
             }`}
           >
@@ -230,7 +222,7 @@ export function PreferencesPane({
             onClick={() => handleLanguageChange("zh-CN")}
             className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
               preference === "zh-CN"
-                ? "border-brand bg-brand/5 shadow-xs"
+                ? "border-brand bg-wash shadow-xs"
                 : "border-line bg-bg hover:border-line-hover"
             }`}
           >
@@ -251,7 +243,7 @@ export function PreferencesPane({
             onClick={() => handleLanguageChange("en-US")}
             className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
               preference === "en-US"
-                ? "border-brand bg-brand/5 shadow-xs"
+                ? "border-brand bg-wash shadow-xs"
                 : "border-line bg-bg hover:border-line-hover"
             }`}
           >
@@ -272,9 +264,7 @@ export function PreferencesPane({
       {can.chooseMode && (
         <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
           <div className="flex items-center gap-2.5 mb-1.5">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
-              <MonitorCog className="size-4" />
-            </div>
+            <IconChip icon={MonitorCog} tone="brand" />
             <div>
               <h2 className="text-sm font-semibold text-ink">
                 {t.console.bootModeSection}
@@ -298,7 +288,7 @@ export function PreferencesPane({
                   onClick={() => void handleChangeDefaultMode(opt.value)}
                   className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all disabled:opacity-60 ${
                     active
-                      ? "border-brand bg-brand/5 shadow-xs"
+                      ? "border-brand bg-wash shadow-xs"
                       : "border-line bg-bg hover:border-line-hover"
                   }`}
                 >
@@ -323,19 +313,10 @@ export function PreferencesPane({
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div
-              className={`flex size-8 shrink-0 items-center justify-center rounded-xl transition-colors ${
-                autoRestartActive
-                  ? "bg-ok-soft text-ok border border-ok/20"
-                  : "bg-line-soft text-faint"
-              }`}
-            >
-              {autoRestartActive ? (
-                <ShieldCheck className="size-4" />
-              ) : (
-                <Shield className="size-4" />
-              )}
-            </div>
+            <IconChip
+              icon={autoRestartActive ? ShieldCheck : Shield}
+              tone={autoRestartActive ? "ok" : "neutral"}
+            />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-ink">
@@ -401,15 +382,10 @@ export function PreferencesPane({
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div
-              className={`flex size-8 shrink-0 items-center justify-center rounded-xl transition-colors ${
-                floatingSwitcherActive
-                  ? "bg-brand/15 text-brand-deep border border-brand/20"
-                  : "bg-line-soft text-faint"
-              }`}
-            >
-              <SlidersHorizontal className="size-4" />
-            </div>
+            <IconChip
+              icon={SlidersHorizontal}
+              tone={floatingSwitcherActive ? "brand" : "neutral"}
+            />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-ink">
@@ -418,7 +394,7 @@ export function PreferencesPane({
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                     floatingSwitcherActive
-                      ? "bg-brand/10 text-brand-deep"
+                      ? "bg-wash text-brand-deep"
                       : "bg-line-soft text-faint"
                   }`}
                 >
@@ -467,7 +443,7 @@ export function PreferencesPane({
               onClick={() => handleChangeShortcut("default")}
               className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
                 shortcutChoice === "default"
-                  ? "border-brand bg-brand/5 shadow-xs"
+                  ? "border-brand bg-wash shadow-xs"
                   : "border-line bg-bg hover:border-line-hover"
               }`}
             >
@@ -488,7 +464,7 @@ export function PreferencesPane({
               onClick={() => handleChangeShortcut("shift_p")}
               className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
                 shortcutChoice === "shift_p"
-                  ? "border-brand bg-brand/5 shadow-xs"
+                  ? "border-brand bg-wash shadow-xs"
                   : "border-line bg-bg hover:border-line-hover"
               }`}
             >
@@ -511,9 +487,7 @@ export function PreferencesPane({
           也允许固定一个由用户自己承担。 */}
       <section className="rounded-2xl border border-line bg-panel p-5 shadow-2xs">
         <div className="flex items-center gap-2.5 mb-1.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand-deep">
-            <Package className="size-4" />
-          </div>
+          <IconChip icon={Package} tone="brand" />
           <div>
             <h2 className="text-sm font-semibold text-ink">
               {t.console.pluginRegistrySection}
@@ -544,7 +518,7 @@ export function PreferencesPane({
               onClick={() => void handleChangeRegistry(value)}
               className={`group flex items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
                 registryChoice === value
-                  ? "border-brand bg-brand/5 shadow-xs"
+                  ? "border-brand bg-wash shadow-xs"
                   : "border-line bg-bg hover:border-line-hover"
               }`}
             >

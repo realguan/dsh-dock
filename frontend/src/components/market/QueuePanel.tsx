@@ -8,20 +8,21 @@
 // 角标在入队瞬间弹跳、在胶囊落地瞬间再闪一圈。
 import { useEffect, useRef } from "react"
 import { motion } from "framer-motion"
-import { Download, LoaderCircle, X } from "lucide-react"
+import { Download, Inbox, LoaderCircle, X } from "lucide-react"
 import { useQueueStore } from "@/stores/queueStore"
 import { useI18n } from "@/stores/i18nStore"
 import { useInstallFlightStore } from "@/stores/installFlightStore"
 import { setQueueAnchor } from "@/lib/installFlight"
 import type { QueueItem } from "@/lib/queue"
 import { Button } from "@/components/ui/button"
+import { StateBlock } from "@/components/ui/state-block"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 type StatusKey = "queueStatusQueued" | "queueStatusInstalling" | "queueStatusDone" | "queueStatusFailed"
 
 const STATUS_CHIP: Record<QueueItem["status"], { key: StatusKey; cls: string }> = {
   queued: { key: "queueStatusQueued", cls: "border-line bg-line-soft/60 text-faint" },
-  installing: { key: "queueStatusInstalling", cls: "border-brand/30 bg-brand/10 text-brand-deep" },
+  installing: { key: "queueStatusInstalling", cls: "border-brand/30 bg-wash text-brand-deep" },
   done: { key: "queueStatusDone", cls: "border-ok/30 bg-ok-soft text-ok" },
   failed: { key: "queueStatusFailed", cls: "border-danger/30 bg-danger-soft text-danger" },
 }
@@ -64,7 +65,7 @@ export function QueuePanel() {
                 initial={{ scale: 0.55 }}
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 520, damping: 16 }}
-                className="inline-flex rounded-full bg-brand px-1.5 py-0.5 text-meta font-semibold leading-none text-white"
+                className="inline-flex rounded-full bg-brand px-1.5 py-0.5 text-meta font-semibold leading-none text-primary-foreground"
               >
                 {active.length}
               </motion.span>
@@ -83,10 +84,12 @@ export function QueuePanel() {
         </button>
       </PopoverTrigger>
 
+      {/* 2026-09-18 收口：定宽 26rem 在窄窗口会横向溢出 → 视口自适应上限；
+          空态统一走 StateBlock（带图标，与其他空态同款）。 */}
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="max-h-96 w-[26rem] overflow-y-auto rounded-2xl p-3 shadow-xl"
+        className="max-h-96 w-[min(26rem,90vw)] overflow-y-auto rounded-2xl p-3 shadow-xl"
       >
         <div className="flex items-center justify-between px-1 pb-2">
           <span className="text-xs font-semibold text-ink">{t.market.queueTitle}</span>
@@ -102,7 +105,7 @@ export function QueuePanel() {
         </div>
 
         {items.length === 0 ? (
-          <p className="text-faint px-1 py-6 text-center text-xs">{t.market.queueEmpty}</p>
+          <StateBlock tone="empty" icon={Inbox} title={t.market.queueEmpty} />
         ) : (
           <div className="space-y-2">
             {items.map((item) => {
@@ -153,9 +156,9 @@ export function QueuePanel() {
                   )}
                   {item.status === "failed" && (
                     <Button
-                      size="sm"
+                      size="xs"
                       variant="outline"
-                      className="mt-1.5 h-6 rounded-lg px-2 text-label"
+                      className="mt-1.5 text-label"
                       onClick={() => retry(item.id)}
                     >
                       {t.market.queueRetry}

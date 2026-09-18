@@ -32,7 +32,7 @@ function Switch({ className, ...props }: SwitchProps) {
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
         className={cn(
-          "pointer-events-none block size-3 rounded-full bg-white shadow-xs ring-0 transition-transform duration-200 data-[state=checked]:translate-x-3.5 data-[state=unchecked]:translate-x-0.5",
+          "pointer-events-none block size-3 rounded-full bg-panel shadow-xs ring-0 transition-transform duration-200 data-[state=checked]:translate-x-3.5 data-[state=unchecked]:translate-x-0.5",
         )}
       />
     </SwitchPrimitive.Root>

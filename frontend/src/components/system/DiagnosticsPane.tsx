@@ -17,6 +17,7 @@ import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
+import { IconChip } from "@/components/ui/icon-chip"
 import { EV } from "@/types/events"
 import type { SystemDiagnosticsReport } from "@/types/ipc"
 
@@ -177,7 +178,7 @@ export function DiagnosticsPane({
             ) : (
               <Copy className="size-3.5" />
             )}
-            <span>{copied ? "已复制" : t.console.copyReport}</span>
+            <span>{copied ? t.console.copied : t.console.copyReport}</span>
           </Button>
 
           <Button
@@ -201,9 +202,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
-                <Cpu className="size-4" />
-              </div>
+              <IconChip icon={Cpu} tone="neutral" />
               <span
                 className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   node.isReady
@@ -215,14 +214,14 @@ export function DiagnosticsPane({
               </span>
             </div>
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
-
+              {t.console.diagNodeTitle}
             </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
-              {node.version || "未检出"}
+              {node.version || t.console.diagNotDetected}
             </p>
           </div>
           <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
-            <span title={node.path}>{node.path || "无路径"}</span>
+            <span title={node.path}>{node.path || t.console.diagNoPath}</span>
           </div>
         </div>
 
@@ -230,9 +229,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
-                <Package className="size-4" />
-              </div>
+              <IconChip icon={Package} tone="neutral" />
               <span
                 className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   pnpm.isReady
@@ -244,14 +241,18 @@ export function DiagnosticsPane({
               </span>
             </div>
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
-
+              {t.console.diagPnpmTitle}
             </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
-              {pnpm.isReady ? (pnpm.version ? `v${pnpm.version}` : "已全局就绪") : "缺失"}
+              {pnpm.isReady
+                ? pnpm.version
+                  ? `v${pnpm.version}`
+                  : t.console.diagPnpmGlobalReady
+                : t.console.diagPnpmMissing}
             </p>
           </div>
           <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
-            <span title={pnpm.path}>{pnpm.path || "无路径"}</span>
+            <span title={pnpm.path}>{pnpm.path || t.console.diagNoPath}</span>
           </div>
         </div>
 
@@ -259,9 +260,7 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
-                <Server className="size-4" />
-              </div>
+              <IconChip icon={Server} tone="neutral" />
               <span
                 className={`rounded-full px-2 py-0.5 text-meta font-medium leading-none ${
                   dsh.isReady
@@ -273,14 +272,18 @@ export function DiagnosticsPane({
               </span>
             </div>
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
-
+              {t.console.diagDshTitle}
             </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
-              {dsh.isReady ? (dsh.version ? `v${dsh.version}` : "官方源 (已就绪)") : "官方源 (未检出)"}
+              {dsh.isReady
+                ? dsh.version
+                  ? `v${dsh.version}`
+                  : t.console.diagDshOfficialReady
+                : t.console.diagDshOfficialMissing}
             </p>
           </div>
           <div className="mt-3 truncate border-t border-line/60 pt-2 font-mono text-meta text-faint">
-            <span title={dsh.path}>{dsh.path || "无路径"}</span>
+            <span title={dsh.path}>{dsh.path || t.console.diagNoPath}</span>
           </div>
         </div>
 
@@ -288,15 +291,13 @@ export function DiagnosticsPane({
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
             <div className="flex items-center justify-between">
-              <div className="bg-line-soft text-dim flex size-7 items-center justify-center rounded-lg">
-                <HardDrive className="size-4" />
-              </div>
-              <span className="rounded-full bg-line px-2 py-0.5 font-mono text-meta text-faint">
+              <IconChip icon={HardDrive} tone="neutral" />
+              <span className="rounded-full bg-line-soft px-2 py-0.5 font-mono text-meta text-dim">
                 {platform.os} ({platform.arch})
               </span>
             </div>
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
-
+              {t.console.diagStorageTitle}
             </h3>
             <p className="mt-0.5 font-mono text-xs font-bold text-ink">
               {formatBytes(storage.totalBytes)}
@@ -314,7 +315,7 @@ export function DiagnosticsPane({
           <div className="flex items-center gap-2">
             <Database className="size-4 text-brand-deep" />
             <h3 className="text-xs font-semibold text-ink">
-              DSH_HOME 存储空间分布
+              {t.console.storageDistributionTitle}
             </h3>
           </div>
           <span className="font-mono text-xs font-medium text-dim">
@@ -346,7 +347,9 @@ export function DiagnosticsPane({
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
             <span className="size-2.5 rounded-full bg-chart-1 shrink-0" />
             <div className="min-w-0">
-              <span className="text-ink font-medium">Profile 工作台</span>
+              <span className="text-ink font-medium">
+                {t.console.storageProfilesLabel}
+              </span>
               <p className="font-mono text-label text-faint truncate">
                 {t.console.profilesUsage(
                   storage.profilesCount,
@@ -359,7 +362,9 @@ export function DiagnosticsPane({
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
             <span className="size-2.5 rounded-full bg-chart-2 shrink-0" />
             <div className="min-w-0">
-              <span className="text-ink font-medium">会话数据 (Sessions)</span>
+              <span className="text-ink font-medium">
+                {t.console.storageSessionsLabel}
+              </span>
               <p className="font-mono text-label text-faint truncate">
                 {t.console.sessionsUsage(
                   storage.sessionsCount,
@@ -372,7 +377,9 @@ export function DiagnosticsPane({
           <div className="flex items-center gap-2.5 rounded-xl border border-line bg-bg p-2.5">
             <span className="size-2.5 rounded-full bg-chart-3 shrink-0" />
             <div className="min-w-0">
-              <span className="text-ink font-medium">系统缓存与其他</span>
+              <span className="text-ink font-medium">
+                {t.console.storageCacheOtherLabel}
+              </span>
               <p className="font-mono text-label text-faint truncate">
                 {formatBytes(
                   Math.max(

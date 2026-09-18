@@ -31,6 +31,8 @@ import { ProfileDeleteDialog } from "@/components/profiles/ProfileDeleteDialog"
 import { ProfileSwitchDialog } from "@/components/profiles/ProfileSwitchDialog"
 import { FloatingToast, type ToastMessage } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
+import { StateBlock } from "@/components/ui/state-block"
 import { QuickDshSwitcher } from "@/components/layout/QuickDshSwitcher"
 
 /** 交接终态在导轨上停留多久再收起（ms）：用户正盯着这一刻，别让它"啪"地消失 */
@@ -300,74 +302,23 @@ export function ProfileManager() {
 
         {/* 顶部右侧：视图分段切换 + 刷新 + 胶囊 */}
         <div className="flex items-center gap-2 shrink-0">
-          <div
-            role="tablist"
-            className="flex rounded-xl border border-line bg-line-soft/80 p-0.5 shadow-2xs"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "list"}
-              onClick={() => setView("list")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                view === "list"
-                  ? "bg-panel text-ink shadow-xs"
-                  : "text-dim hover:text-ink"
-              }`}
-            >
-              <SlidersHorizontal className="size-3.5" />
-              <span>{t.profiles.viewProfiles}</span>
-            </button>
+          {/* 2026-09-18 收口：视图切换统一走 Segmented 基座（原为四份手搓 tablist 按钮）。 */}
+          <Segmented<"list" | "plugins" | "sessions" | "console">
+            ariaLabel={t.profiles.title}
+            options={[
+              { value: "list", label: t.profiles.viewProfiles, icon: SlidersHorizontal },
+              { value: "plugins", label: t.profiles.viewPluginHub, icon: Store },
+              { value: "sessions", label: t.profiles.viewSessions, icon: ShieldCheck },
+              { value: "console", label: t.profiles.viewConsole, icon: Settings },
+            ]}
+            value={view}
+            onChange={setView}
+          />
 
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "plugins"}
-              onClick={() => setView("plugins")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                view === "plugins"
-                  ? "bg-panel text-ink shadow-xs"
-                  : "text-dim hover:text-ink"
-              }`}
-            >
-              <Store className="size-3.5" />
-              <span>{t.profiles.viewPluginHub}</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "sessions"}
-              onClick={() => setView("sessions")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                view === "sessions"
-                  ? "bg-panel text-ink shadow-xs"
-                  : "text-dim hover:text-ink"
-              }`}
-            >
-              <ShieldCheck className="size-3.5" />
-              <span>{t.profiles.viewSessions}</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "console"}
-              onClick={() => setView("console")}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                view === "console"
-                  ? "bg-panel text-ink shadow-xs"
-                  : "text-dim hover:text-ink"
-              }`}
-            >
-              <Settings className="size-3.5" />
-              <span>{t.profiles.viewConsole}</span>
-            </button>
-          </div>
-
-          {/* 控制台数据与状态手动刷新（带旋转反馈与清晰语义） */}
+          {/* 控制台数据与状态手动刷新（带旋转反馈与清晰语义）。
+              2026-09-18 收口：`size="sm"` + `size-8 rounded-xl` 覆写属自毁尺寸，改用基座 icon 档。 */}
           <Button
-            size="sm"
+            size="icon"
             variant="outline"
             title={t.profiles.refreshData}
             aria-label={t.profiles.refreshData}
@@ -378,7 +329,6 @@ export function ProfileManager() {
               setTimeout(() => setIsRefreshingData(false), 600)
             }}
             disabled={isRefreshingData}
-            className="size-8 p-0 rounded-xl"
           >
             <RefreshCw className={`size-3.5 ${isRefreshingData ? "animate-spin text-brand-deep" : ""}`} />
           </Button>
@@ -427,7 +377,7 @@ export function ProfileManager() {
             type="button"
             aria-label={t.profiles.safeModeDismiss}
             title={t.profiles.safeModeDismiss}
-            className="rounded-md p-1 text-warn/70 transition-colors hover:bg-warn/10 hover:text-warn"
+            className="rounded-md p-1 text-warn transition-colors hover:bg-warn-soft hover:text-warn"
             onClick={() => {
               if (!selectedName) return
               // 先乐观隐藏（横幅不是关键路径），失败再拉回（重取状态）并提示。
@@ -473,10 +423,11 @@ export function ProfileManager() {
             aria-label={t.profiles.listLabel}
             className="space-y-3 md:col-span-4 xl:col-span-4"
           >
-            {/* 新建 Profile 专属醒目操作条 */}
+            {/* 新建 Profile 专属醒目操作条（2026-09-18 收口：删手搓 bg-brand 覆写，用默认 Button） */}
             <Button
+              size="lg"
               onClick={() => setCreateOpen(true)}
-              className="w-full gap-1.5 bg-brand text-white hover:bg-brand/90 text-xs shadow-xs h-9 rounded-xl font-medium"
+              className="w-full gap-1.5"
             >
               <Plus className="size-4" />
               <span>{t.profiles.createBtn}</span>
@@ -495,13 +446,16 @@ export function ProfileManager() {
             </div>
 
             {loadError && (
-              <div className="rounded-xl border border-dashed border-line bg-panel p-6 text-center">
-                <p className="text-dim mb-2 text-xs">{loadError}</p>
-                <Button size="sm" variant="outline" onClick={refreshAll}>
-                  <RefreshCw className="mr-1 size-3" />
-                  {t.profiles.retryLoad}
-                </Button>
-              </div>
+              <StateBlock
+                tone="error"
+                title={loadError}
+                action={
+                  <Button size="sm" variant="outline" onClick={refreshAll}>
+                    <RefreshCw className="mr-1 size-3" />
+                    {t.profiles.retryLoad}
+                  </Button>
+                }
+              />
             )}
 
             {!loadError && (
@@ -527,9 +481,7 @@ export function ProfileManager() {
                   />
                 ))}
                 {filteredList.length === 0 && !loading && (
-                  <div className="rounded-xl border border-dashed border-line bg-panel/50 p-6 text-center text-xs text-faint">
-                    未找到匹配的 Profile
-                  </div>
+                  <StateBlock tone="empty" title={t.profiles.searchEmpty} />
                 )}
               </div>
             )}
@@ -538,7 +490,7 @@ export function ProfileManager() {
           {/* 右侧 Detail：选中的 Profile 工作台面板 */}
           <section
             aria-label={t.profiles.detailWorkspaceLabel}
-            className="min-h-[560px] md:col-span-8 xl:col-span-8"
+            className="min-h-[480px] md:col-span-8 xl:col-span-8"
           >
             <ProfileDetailPane
               name={currentSelectedProfile?.name ?? null}
