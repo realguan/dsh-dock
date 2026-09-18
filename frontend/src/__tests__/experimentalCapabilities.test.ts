@@ -68,9 +68,9 @@ function step(over: Partial<CapabilityStep> = {}): CapabilityStep {
 function variant(over: Partial<CapabilityVariant> = {}): CapabilityVariant {
   return {
     id: "playwright",
-    labelZh: "Playwright",
-    noteZh: "通用浏览器自动化后端",
-    prerequisitesZh: [],
+    label: "Playwright",
+    note: "通用浏览器自动化后端",
+    prerequisites: [],
     steps: [step()],
     state: "off",
     subsumedBy: null,
@@ -84,9 +84,9 @@ function variant(over: Partial<CapabilityVariant> = {}): CapabilityVariant {
 function capability(over: Partial<Capability> = {}): Capability {
   return {
     id: "browser-use",
-    labelZh: "浏览器操作",
-    summaryZh: "让模型自己开浏览器",
-    unlocksZh: "多出一组浏览器工具",
+    label: "浏览器操作",
+    summary: "让模型自己开浏览器",
+    unlocks: "多出一组浏览器工具",
     variants: [variant()],
     state: "off",
     activeVariant: null,
@@ -645,26 +645,26 @@ describe("共同前置：卡片只讲一次，行内只讲各档额外的", () =
   it("三档共有的 Chromium 前置只出现一次（交集），各档独有前置留在行内", () => {
     const cap = capability({
       variants: [
-        variant({ id: "playwright", prerequisitesZh: ["浏览器只用 Chromium 系"] }),
+        variant({ id: "playwright", prerequisites: ["浏览器只用 Chromium 系"] }),
         variant({
           id: "chrome-devtools",
-          prerequisitesZh: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+          prerequisites: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
         }),
-        variant({ id: "stagehand", prerequisitesZh: ["浏览器只用 Chromium 系", "需填 model"] }),
+        variant({ id: "stagehand", prerequisites: ["浏览器只用 Chromium 系", "需填 model"] }),
       ],
     })
     expect(commonPrerequisites(cap)).toEqual(["浏览器只用 Chromium 系"])
     const extras = (id: string) =>
-      cap.variants.find((v) => v.id === id)!.prerequisitesZh.filter((p) => !commonPrerequisites(cap).includes(p))
+      cap.variants.find((v) => v.id === id)!.prerequisites.filter((p) => !commonPrerequisites(cap).includes(p))
     expect(extras("playwright")).toEqual([])
     expect(extras("chrome-devtools")).toEqual(["本机需安装 Chrome"])
     expect(extras("stagehand")).toEqual(["需填 model"])
   })
 
   it("没有共同前置时交集为空（单档能力、各说各的）", () => {
-    expect(commonPrerequisites(capability({ variants: [variant({ prerequisitesZh: ["a"] })] }))).toEqual(["a"])
+    expect(commonPrerequisites(capability({ variants: [variant({ prerequisites: ["a"] })] }))).toEqual(["a"])
     const two = capability({
-      variants: [variant({ id: "a", prerequisitesZh: ["x"] }), variant({ id: "b", prerequisitesZh: ["y"] })],
+      variants: [variant({ id: "a", prerequisites: ["x"] }), variant({ id: "b", prerequisites: ["y"] })],
     })
     expect(commonPrerequisites(two)).toEqual([])
   })

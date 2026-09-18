@@ -169,18 +169,43 @@ pub fn required_command(package: &str) -> Option<&'static str> {
 
 // ---------- 策展集：能力 → 变体 ----------
 
+/// 用户可见文案的语言（2026-09-18 task-边界A：英文界面下实验能力页不再漏中文）。
+///
+/// 视图**按请求语言出品**（单语 payload），而不是把两套文案都塞进 IPC——
+/// 前端拿到的 `label`/`note` 等就是该展示的那一份，不存在"选错边"的可能。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyLang {
+    Zh,
+    En,
+}
+
+impl CopyLang {
+    /// 宽松解析 IPC 传来的 locale 标签：`en`/`en-US` → En，其余（含 `None`）→ Zh。
+    /// 未知语言退回中文是**有意的**：目录的原文是中文，英文是译文。
+    pub fn from_tag(tag: Option<&str>) -> Self {
+        match tag {
+            Some(t) if t.to_ascii_lowercase().starts_with("en") => Self::En,
+            _ => Self::Zh,
+        }
+    }
+}
+
 /// 能力下的一个**可选后端**（同能力变体互斥：同一时刻只应有一个生效）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variant {
     /// 稳定 id（前端用它做单选值，不得用展示名——改文案即丢状态）。
     pub id: &'static str,
-    /// 展示名（中文）。
+    /// 展示名（中文原文）。
     pub label_zh: &'static str,
+    pub label_en: &'static str,
     /// 一句话：这个后端适合谁 / 代价是什么。**人类语言，不得含 Markdown 反引号**
     /// （v1 直接把反引号渲染成了字面量，ADR-0020 §7.1 D6）。
     pub note_zh: &'static str,
+    pub note_en: &'static str,
     /// 需要用户自备或额外配置的东西（空 = 无）。展示与确认框共用。
+    /// 中英列表**必须等长**（有闸门测试钉住）。
     pub prerequisites_zh: &'static [&'static str],
+    pub prerequisites_en: &'static [&'static str],
     /// 有序包清单：**顺序即语义**（Agent Teams 先宿主层再 Web 层，装反即激活失败）。
     pub packages: &'static [&'static str],
 }
@@ -190,10 +215,13 @@ pub struct Variant {
 pub struct Capability {
     pub id: &'static str,
     pub label_zh: &'static str,
+    pub label_en: &'static str,
     /// 一句话价值（卡片副标题）。
     pub summary_zh: &'static str,
+    pub summary_en: &'static str,
     /// 启用后**用户能观察到什么**（详情与确认框）。
     pub unlocks_zh: &'static str,
+    pub unlocks_en: &'static str,
     pub variants: &'static [Variant],
 }
 
@@ -223,17 +251,29 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "agent-team",
         label_zh: "多智能体协同",
+        label_en: "Multi-agent collaboration",
         summary_zh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
+        summary_en: "Let the model recruit on its own: named teammates, direct messages, a shared task board",
         unlocks_zh: "模型多出九个 team 工具（创建 / 收发消息 / 协调 teammate、读写共享任务板），\
                      消息与任务挺得过崩溃与重载。Web 档还会在主界面出现 Team 面板与任务板。\
                      注意：它会接管旧的委派控件 —— subagent、subagent_fork 等四个旧行会被停用，\
                      两者不能并存；移除本能力后旧控件恢复。",
+        unlocks_en: "The model gains nine team tools (creating teammates, sending and receiving \
+                     messages, coordinating them, reading and writing the shared task board); \
+                     messages and tasks survive crashes and reloads. The Web tier also adds a Team \
+                     panel and the task board to the main UI. Note: it takes over the older \
+                     delegation controls — the four legacy rows (subagent, subagent_fork, etc.) \
+                     are disabled and the two cannot coexist; removing this capability restores \
+                     the old controls.",
         variants: &[
             Variant {
                 id: "web",
                 label_zh: "Web 档",
+                label_en: "Web tier",
                 note_zh: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
+                note_en: "Includes the host layer and the Web layer; the Team panel shows up in the browser.",
                 prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
+                prerequisites_en: &["Persistent session storage is required for team state to persist"],
                 packages: &[
                     "@deepseek-ai/dsh-experimental-agent-team-profile",
                     "@deepseek-ai/dsh-experimental-agent-team-web-profile",
@@ -242,8 +282,11 @@ pub const CAPABILITIES: &[Capability] = &[
             Variant {
                 id: "headless",
                 label_zh: "自建档（无 Web 界面）",
+                label_en: "Profile-only (no Web UI)",
                 note_zh: "只装宿主层：工具与任务板可用，界面不新增面板。",
+                note_en: "Host layer only: tools and the task board work, no new panels in the UI.",
                 prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
+                prerequisites_en: &["Persistent session storage is required for team state to persist"],
                 packages: &["@deepseek-ai/dsh-experimental-agent-team-profile"],
             },
         ],
@@ -251,17 +294,27 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "browser-use",
         label_zh: "浏览器操作",
+        label_en: "Browser control",
         summary_zh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
+        summary_en: "Let the model drive a browser: click pages, read their structure, run navigation tasks",
         unlocks_zh: "模型多出一组浏览器工具（打开页面、点击、填表、截图、读取页面结构）。\
                      同一时刻只允许一个后端生效，换后端要走替换。\
                      浏览器状态按 Session 重建 —— 登录态与浏览器 profile 不会从会话历史恢复；\
                      取消调用也无法撤销已经送达页面的操作。",
+        unlocks_en: "The model gains a set of browser tools (open pages, click, fill forms, \
+                     screenshot, read page structure). Only one backend may be active at a \
+                     time — switching backends is a replacement. Browser state is rebuilt per \
+                     session: logins and browser profiles are not restored from session history, \
+                     and cancelling a call cannot undo actions already delivered to the page.",
         variants: &[
             Variant {
                 id: "playwright",
                 label_zh: "Playwright",
+                label_en: "Playwright",
                 note_zh: "通用浏览器自动化后端，适合脚本化的多步导航。",
+                note_en: "General-purpose browser automation backend, a good fit for scripted multi-step navigation.",
                 prerequisites_zh: &["浏览器只用 Chromium 系"],
+                prerequisites_en: &["Browser limited to Chromium-based ones"],
                 packages: &[
                     "@deepseek-ai/dsh-browser-use",
                     "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
@@ -270,8 +323,14 @@ pub const CAPABILITIES: &[Capability] = &[
             Variant {
                 id: "chrome-devtools",
                 label_zh: "Chrome DevTools",
+                label_en: "Chrome DevTools",
                 note_zh: "直连本机 Chrome，多带一层 DevTools 检查能力。",
+                note_en: "Connects directly to a local Chrome and adds a DevTools inspection layer.",
                 prerequisites_zh: &["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+                prerequisites_en: &[
+                    "Browser limited to Chromium-based ones",
+                    "Chrome must be installed on this machine",
+                ],
                 packages: &[
                     "@deepseek-ai/dsh-browser-use",
                     "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp",
@@ -280,11 +339,18 @@ pub const CAPABILITIES: &[Capability] = &[
             Variant {
                 id: "stagehand",
                 label_zh: "Stagehand",
+                label_en: "Stagehand",
                 note_zh: "用自然语言描述操作，由指定模型翻译成动作。",
+                note_en: "Actions are described in natural language and translated by a designated model.",
                 prerequisites_zh: &[
                     "浏览器只用 Chromium 系",
                     "需在 profile 配置里显式填 model，且不支持 DeepSeek 端点或 baseURL 覆盖",
                     "会额外消耗该模型的调用额度，且这部分用量不计入 dsh 会话统计",
+                ],
+                prerequisites_en: &[
+                    "Browser limited to Chromium-based ones",
+                    "model must be filled in explicitly in the profile config; DeepSeek endpoints and baseURL overrides are not supported",
+                    "Consumes that model's call quota additionally, and this usage is not counted in dsh session statistics",
                 ],
                 packages: &[
                     "@deepseek-ai/dsh-browser-use",
@@ -296,16 +362,26 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "computer-use",
         label_zh: "桌面控制",
+        label_en: "Desktop control",
         summary_zh: "让模型操作你的桌面：鼠标、键盘、窗口",
+        summary_en: "Let the model drive your desktop: mouse, keyboard, windows",
         unlocks_zh: "模型多出一组桌面控制工具，可以直接操作真实的鼠标键盘与窗口。\
                      这是权限最高的实验能力：多个会话共享同一个桌面，操作之间不会被串行化，\
                      而取消调用无法撤销已经送到桌面的输入。请只在受控环境启用。",
+        unlocks_en: "The model gains a set of desktop-control tools that drive the real mouse, \
+                     keyboard and windows. This is the highest-privilege experimental capability: \
+                     multiple sessions share the same desktop, operations are not serialized \
+                     between them, and cancelling a call cannot undo input already sent to the \
+                     desktop. Enable it only in controlled environments.",
         variants: &[
             Variant {
                 id: "cua-driver-mcp",
                 label_zh: "复用已装的 cua-driver",
+                label_en: "Reuse an installed cua-driver",
                 note_zh: "通过 MCP 连你本机已装好的 cua-driver，本体不随包带入。",
+                note_en: "Connects over MCP to the cua-driver already installed on this machine; brings no runtime of its own.",
                 prerequisites_zh: &["需先自行安装并保持 cua-driver 可用"],
+                prerequisites_en: &["You must install cua-driver yourself and keep it available"],
                 packages: &[
                     "@deepseek-ai/dsh-computer-use",
                     "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
@@ -314,10 +390,16 @@ pub const CAPABILITIES: &[Capability] = &[
             Variant {
                 id: "cua-driver-native",
                 label_zh: "随包自带运行时",
+                label_en: "Bundled runtime",
                 note_zh: "把 cua-driver 原生运行时作为依赖一起装上，自包含。",
+                note_en: "Installs the cua-driver native runtime as a dependency; self-contained.",
                 prerequisites_zh: &[
                     "需授予宿主桌面权限（装包本身不会授权，也不会创建桌面会话）",
                     "原生崩溃可能终止该进程；若原生关闭失败，换用另一个后端前需重启 dsh",
+                ],
+                prerequisites_en: &[
+                    "Requires granting desktop permissions to the host (installing the package neither grants them nor creates a desktop session)",
+                    "A native crash may kill the process; if native shutdown fails, restart dsh before switching to the other backend",
                 ],
                 packages: &[
                     "@deepseek-ai/dsh-computer-use",
@@ -329,16 +411,27 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "auto-review",
         label_zh: "自动安全审查",
+        label_en: "Automatic safety review",
         summary_zh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
+        summary_en: "Every tool call is re-checked beforehand by the same model, blocking dangerous actions",
         unlocks_zh: "权限选择器里多出带 EXP 上标的 Auto review 模式：每个原生或 PTC 工具调用\
                      在执行前先由当前模型评估一次，可拦下危险动作。代价是每个动作多一轮模型\
                      调用（不缓存、不重试、更慢更贵），且模型分类可能出错 —— 既可能误放行，\
                      也可能误拒。卸载时正在使用它的会话会被迁移回 Full access。",
+        unlocks_en: "The permission picker gains an Auto review mode marked with an EXP superscript: \
+                     each native or PTC tool call is first evaluated by the current model, which \
+                     can block dangerous actions. The cost is one extra model call per action \
+                     (uncached, no retries — slower and pricier), and the model's classification \
+                     can be wrong in both directions — false approvals as well as false blocks. \
+                     Sessions using it at uninstall time are migrated back to Full access.",
         variants: &[Variant {
             id: "standard",
             label_zh: "标准",
+            label_en: "Standard",
             note_zh: "只对 Web 档有意义，装上即生效。",
+            note_en: "Only meaningful for the Web tier; effective once installed.",
             prerequisites_zh: &["会额外消耗 token；不提供文件沙箱与确定性豁免"],
+            prerequisites_en: &["Consumes extra tokens; provides no file sandbox and no deterministic exemptions"],
             packages: &["@deepseek-ai/dsh-experimental-auto-review"],
         }],
     },
@@ -438,9 +531,11 @@ pub struct StepView {
 #[serde(rename_all = "camelCase")]
 pub struct VariantView {
     pub id: String,
-    pub label_zh: String,
-    pub note_zh: String,
-    pub prerequisites_zh: Vec<String>,
+    /// 以下展示字段**已按请求语言出品**（`resolve_capabilities` 的 `lang`），
+    /// 故不带语言后缀——前端拿到的就是要展示的那一份。
+    pub label: String,
+    pub note: String,
+    pub prerequisites: Vec<String>,
     pub steps: Vec<StepView>,
     pub state: VariantState,
     /// 本变体的包是**另一个已就位变体**的真子集 → 本档已被那一档包含。
@@ -480,9 +575,9 @@ pub struct VariantView {
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityView {
     pub id: String,
-    pub label_zh: String,
-    pub summary_zh: String,
-    pub unlocks_zh: String,
+    pub label: String,
+    pub summary: String,
+    pub unlocks: String,
     pub variants: Vec<VariantView>,
     pub state: CapabilityState,
     /// 当前生效（或已就位但停用）的变体 id；`None` = 未启用。
@@ -558,11 +653,22 @@ pub fn installation_shipped(runtime_dir: &std::path::Path, packages: &[String]) 
 ///
 /// `rows` 来自 `plugins::plugin_rows_blocking`（一次 `--dump-config`），是"行是否存在 /
 /// 是否被停用"的**唯一**来源；`runtime_version` 用于钉版本（`None` → 诚实降级为裸包名）。
+/// `lang` 决定**用户可见文案**（含运行时提示）出品哪一种语言。
 pub fn resolve_capabilities(
     facts: &PackageFacts,
     rows: &[PluginRowState],
     runtime_version: Option<&str>,
+    lang: CopyLang,
 ) -> Vec<CapabilityView> {
+    // 闭包无法对入参生命周期做泛型（两个 `&str` 借用要统一到一个返回寿命），
+    // 故用嵌套 fn；`lang` 显式传参。
+    fn pick<'a>(lang: CopyLang, zh: &'a str, en: &'a str) -> &'a str {
+        if lang == CopyLang::En {
+            en
+        } else {
+            zh
+        }
+    }
     let installed: std::collections::HashSet<&str> =
         facts.installed.iter().map(String::as_str).collect();
     let declared: std::collections::HashSet<&str> =
@@ -600,9 +706,14 @@ pub fn resolve_capabilities(
                                 None => (
                                     step.package.clone(),
                                     Some(
-                                        "运行时版本未检出，本步未钉版本——裸包名会按 latest 解析，\
-                                         可能与运行时错配（如需严格匹配请先让引擎就绪）"
-                                            .to_string(),
+                                        pick(lang,
+                                            "运行时版本未检出，本步未钉版本——裸包名会按 latest 解析，\
+                                             可能与运行时错配（如需严格匹配请先让引擎就绪）",
+                                            "Runtime version not detected; this step is not pinned — the \
+                                             bare package name resolves to latest and may mismatch the \
+                                             runtime (get the engine ready first for strict matching)",
+                                        )
+                                        .to_string(),
                                     ),
                                 ),
                             };
@@ -664,22 +775,34 @@ pub fn resolve_capabilities(
                             .iter()
                             .any(|missing| missing == command)
                             .then(|| {
-                                format!(
-                                    "本机 PATH 中找不到「{command}」——装上会让 dsh 在加载插件时\
-                                     直接失败、工作台起不来。请先装好它（或改用自包含的那一档）"
+                                pick(lang,
+                                    &format!(
+                                        "本机 PATH 中找不到「{command}」——装上会让 dsh 在加载插件时\
+                                         直接失败、工作台起不来。请先装好它（或改用自包含的那一档）"
+                                    ),
+                                    &format!(
+                                        "\"{command}\" was not found in PATH on this machine — \
+                                         installing this backend would make dsh fail while loading \
+                                         plugins, and the workbench would not start. Install it \
+                                         first (or use the self-contained tier)"
+                                    ),
                                 )
+                                .to_string()
                             })
                     });
 
                     VariantView {
                         id: variant.id.to_string(),
-                        label_zh: variant.label_zh.to_string(),
-                        note_zh: variant.note_zh.to_string(),
-                        prerequisites_zh: variant
-                            .prerequisites_zh
-                            .iter()
-                            .map(|s| (*s).to_string())
-                            .collect(),
+                        label: pick(lang, variant.label_zh, variant.label_en).to_string(),
+                        note: pick(lang, variant.note_zh, variant.note_en).to_string(),
+                        prerequisites: (if lang == CopyLang::En {
+                            variant.prerequisites_en
+                        } else {
+                            variant.prerequisites_zh
+                        })
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect(),
                         steps,
                         state,
                         toggle_off_supported,
@@ -756,9 +879,9 @@ pub fn resolve_capabilities(
 
             CapabilityView {
                 id: capability.id.to_string(),
-                label_zh: capability.label_zh.to_string(),
-                summary_zh: capability.summary_zh.to_string(),
-                unlocks_zh: capability.unlocks_zh.to_string(),
+                label: pick(lang, capability.label_zh, capability.label_en).to_string(),
+                summary: pick(lang, capability.summary_zh, capability.summary_en).to_string(),
+                unlocks: pick(lang, capability.unlocks_zh, capability.unlocks_en).to_string(),
                 variants,
                 state,
                 active_variant,
@@ -868,7 +991,7 @@ mod tests {
                 .collect(),
             ..facts(&[sample.as_str()], &[])
         };
-        let view = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"));
+        let view = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let steps: Vec<_> = view
             .iter()
             .flat_map(|c| c.variants.iter())
@@ -977,7 +1100,7 @@ mod tests {
         assert!(spec.ends_with("@0.1.6-alpha.1"), "{spec}");
         // 检出到运行时版本时，本步**不得**再挂"未钉版本"一类的 notice（那是降级路径专用）。
         let f = facts(&[], &[]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         assert!(find(&caps, "auto-review").variants[0].steps[0]
             .version_notice
             .is_none());
@@ -1061,14 +1184,14 @@ mod tests {
             shipped: packages.clone(),
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
         let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
         assert!(view.shipped_by_dsh, "安装自带该能力的全部包 → 归 dsh 管");
         assert!(!view.legacy_copy, "profile 没有这些包 → 没有遗留副本可清");
 
         // ② 老引擎（0.1.6-alpha.1 的形态：不带）→ 仍由 dock 策展，否则用户没有任何入口打开它。
         facts.shipped.clear();
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
         assert!(
             !view.shipped_by_dsh,
@@ -1081,7 +1204,7 @@ mod tests {
             shipped: partial,
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
         assert!(
             !caps
                 .iter()
@@ -1096,7 +1219,7 @@ mod tests {
             shipped: packages.clone(),
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"));
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
         assert!(
             caps.iter()
                 .find(|c| c.id == "agent-team")
@@ -1160,7 +1283,7 @@ mod tests {
             shipped: vec!["@deepseek-ai/dsh-experimental-agent-team-profile".to_string()],
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &rows, None);
+        let caps = resolve_capabilities(&facts, &rows, None, CopyLang::Zh);
         let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
         assert!(
             !view.legacy_copy,
@@ -1168,7 +1291,8 @@ mod tests {
         );
     }
 
-    /// 面向用户的文案不得含 Markdown 反引号    /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
+    /// 面向用户的文案不得含 Markdown 反引号（v1 的字面量渲染缺陷 D6 的回归护栏）。
+    /// 中英**两侧**都扫（2026-09-18 边界A：英文文案自这轮起也是用户可见承诺）。
     #[test]
     fn user_facing_copy_has_no_markdown_markup() {
         for cap in CAPABILITIES {
@@ -1176,11 +1300,17 @@ mod tests {
                 cap.label_zh.to_string(),
                 cap.summary_zh.to_string(),
                 cap.unlocks_zh.to_string(),
+                cap.label_en.to_string(),
+                cap.summary_en.to_string(),
+                cap.unlocks_en.to_string(),
             ];
             for v in cap.variants {
                 texts.push(v.label_zh.to_string());
                 texts.push(v.note_zh.to_string());
                 texts.extend(v.prerequisites_zh.iter().map(|s| (*s).to_string()));
+                texts.push(v.label_en.to_string());
+                texts.push(v.note_en.to_string());
+                texts.extend(v.prerequisites_en.iter().map(|s| (*s).to_string()));
             }
             for text in texts {
                 // 面板没有 markdown 渲染器：反引号与 `**` 都会**原样显示**给用户
@@ -1195,13 +1325,136 @@ mod tests {
         }
     }
 
+    /// 双语**完整性**闸门（2026-09-18 边界A）：每条中文都必须有对应英文，
+    /// prerequisites 中英必须**等长**（前端按索引并排展示，缺一项就是整列错位）；
+    /// 任何 `_en` 不得留空串——留空 = 英文界面渲染出空白。
+    #[test]
+    fn catalog_has_complete_english_copy() {
+        for cap in CAPABILITIES {
+            for (name, zh, en) in [
+                ("label", cap.label_zh, cap.label_en),
+                ("summary", cap.summary_zh, cap.summary_en),
+                ("unlocks", cap.unlocks_zh, cap.unlocks_en),
+            ] {
+                assert!(!en.trim().is_empty(), "{}.{name} 缺英文文案", cap.id);
+                assert_ne!(zh, en, "{}.{name} 英文与中文同值（未翻译？）", cap.id);
+            }
+            for v in cap.variants {
+                assert!(
+                    !v.label_en.trim().is_empty(),
+                    "{}/{} 缺英文 label",
+                    cap.id,
+                    v.id
+                );
+                assert!(
+                    !v.note_en.trim().is_empty(),
+                    "{}/{} 缺英文 note",
+                    cap.id,
+                    v.id
+                );
+                assert_eq!(
+                    v.prerequisites_zh.len(),
+                    v.prerequisites_en.len(),
+                    "{}/{} 的中英前置列表不等长（前端按序展示会错位）",
+                    cap.id,
+                    v.id
+                );
+                assert!(
+                    v.prerequisites_en.iter().all(|s| !s.trim().is_empty()),
+                    "{}/{} 的英文前置含空串",
+                    cap.id,
+                    v.id
+                );
+            }
+        }
+    }
+
+    /// locale 标签解析：未知/缺失一律回退中文（原文语言），`en*` 才出英文。
+    #[test]
+    fn copy_lang_from_tag_falls_back_to_zh() {
+        assert_eq!(CopyLang::from_tag(None), CopyLang::Zh);
+        assert_eq!(CopyLang::from_tag(Some("zh-CN")), CopyLang::Zh);
+        assert_eq!(CopyLang::from_tag(Some("fr")), CopyLang::Zh);
+        assert_eq!(CopyLang::from_tag(Some("en")), CopyLang::En);
+        assert_eq!(CopyLang::from_tag(Some("en-US")), CopyLang::En);
+        assert_eq!(CopyLang::from_tag(Some("EN-us")), CopyLang::En);
+    }
+
+    /// 英文侧不得混入汉字（em dash /  curly apostrophe 等英文排版符号**不算**泄漏——
+    /// 判据是"有没有中文"，不是"是不是 ASCII"）。
+    fn contains_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    /// 按请求语言出品（2026-09-18 边界A 的收口断言）：同一事实、两种语言，
+    /// 视图里的**每一条**用户可见文案都应随 `lang` 切换，而非只切一半。
+    /// （变体 label 允许中英同值——Playwright 等是专名，不做相等性断言。）
+    #[test]
+    fn views_follow_requested_language() {
+        let f = facts(&[], &[]);
+        let zh = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
+        let en = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::En);
+        // 未钉版本的提示也双语（runtime_version = None 分支）
+        let en_nowarn = resolve_capabilities(&f, &[], None, CopyLang::En);
+        let step = en_nowarn
+            .iter()
+            .flat_map(|c| c.variants.iter())
+            .flat_map(|v| v.steps.iter())
+            .find(|s| s.version_notice.is_some())
+            .expect("runtime_version=None 时每步都该有提示");
+        assert!(
+            !contains_cjk(step.version_notice.as_deref().unwrap()),
+            "英文视图里的版本提示漏了中文：{}",
+            step.version_notice.as_deref().unwrap()
+        );
+        for (a, b) in zh.iter().zip(en.iter()) {
+            assert_ne!(a.label, b.label, "{} label 未随语言切换", a.id);
+            assert_ne!(a.summary, b.summary, "{} summary 未随语言切换", a.id);
+            assert_ne!(a.unlocks, b.unlocks, "{} unlocks 未随语言切换", a.id);
+            assert!(!contains_cjk(&b.label));
+            assert!(!contains_cjk(&b.summary));
+            assert!(!contains_cjk(&b.unlocks));
+            for (va, vb) in a.variants.iter().zip(b.variants.iter()) {
+                assert_eq!(va.id, vb.id);
+                assert_ne!(va.note, vb.note, "{}/{} note 未随语言切换", a.id, va.id);
+                assert_eq!(va.prerequisites.len(), vb.prerequisites.len());
+                assert!(vb.prerequisites.iter().all(|s| !contains_cjk(s)));
+                assert!(
+                    vb.prerequisite_missing.is_none(),
+                    "本用例未探测缺失命令，不该出现硬门文案"
+                );
+            }
+        }
+        // 硬门文案双语（缺 cua-driver + 请求英文）
+        let gate = resolve_capabilities(
+            &facts_missing(&[], &[], &["cua-driver"]),
+            &[],
+            Some("0.1.6-alpha.1"),
+            CopyLang::En,
+        );
+        let blocked = find(&gate, "computer-use")
+            .variants
+            .iter()
+            .find(|v| v.id == "cua-driver-mcp")
+            .expect("目录里有该变体");
+        let reason = blocked
+            .prerequisite_missing
+            .as_deref()
+            .expect("缺前置必须报硬门");
+        assert!(
+            !contains_cjk(reason),
+            "英文视图的硬门文案漏了中文：{reason}"
+        );
+        assert!(reason.contains("cua-driver"));
+    }
+
     /// 「装了」不等于「生效」：包已装但挂载行缺失 → Partial（需要修复），
     /// 而不是 On。这是 v1 只报 `installed` 时最危险的静默错误。
     #[test]
     fn installed_without_row_is_partial_not_on() {
         const PLAYWRIGHT: &str = "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp";
         let f = facts(&["@deepseek-ai/dsh-browser-use", PLAYWRIGHT], &[]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         let v = variant(cap, "playwright");
         assert_eq!(v.state, VariantState::Partial, "行缺失必须报需要修复");
@@ -1223,7 +1476,7 @@ mod tests {
             ),
             row(&row_id_for(PLAYWRIGHT), PLAYWRIGHT, false),
         ];
-        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         let v = variant(cap, "playwright");
         assert_eq!(v.state, VariantState::On);
@@ -1249,7 +1502,7 @@ mod tests {
             ),
             row(&row_id_for(PLAYWRIGHT), PLAYWRIGHT, true),
         ];
-        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         assert_eq!(variant(cap, "playwright").state, VariantState::Disabled);
         assert_eq!(cap.state, CapabilityState::Disabled);
@@ -1267,7 +1520,7 @@ mod tests {
         let f = facts(&[REVIEW], &[REVIEW]);
 
         let with_rows = vec![bundle_row(REVIEW, &["review-a", "review-b"], false)];
-        let caps = resolve_capabilities(&f, &with_rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &with_rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "auto-review");
         let v = variant(cap, "standard");
         assert_eq!(v.state, VariantState::On);
@@ -1281,7 +1534,7 @@ mod tests {
         );
 
         // 无贡献行：仍然"已激活"（CLI 管），但没有可切的行。
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "auto-review");
         let v = variant(cap, "standard");
         assert_eq!(v.state, VariantState::On);
@@ -1312,7 +1565,7 @@ mod tests {
             ],
             &[],
         );
-        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         assert_eq!(find(&caps, "browser-use").state, CapabilityState::On);
         assert!(variant(find(&caps, "browser-use"), "playwright").toggle_off_supported);
 
@@ -1332,7 +1585,7 @@ mod tests {
             "@deepseek-ai/dsh-experimental-agent-team-web-profile",
         ];
         let layer = facts(&layer_pkgs, &layer_pkgs);
-        let caps = resolve_capabilities(&layer, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&layer, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let web = variant(find(&caps, "agent-team"), "web");
         assert_eq!(web.state, VariantState::On, "层装上即由 CLI 激活");
         assert!(!web.toggle_off_supported, "层类能力不得声称可纯行级关闭");
@@ -1347,7 +1600,7 @@ mod tests {
         const WEB: &str = "@deepseek-ai/dsh-experimental-agent-team-web-profile";
         // 两个包都是 profile 层（声明 dsh.bundle）→ 装上即由 CLI 激活，无壳行。
         let f = facts(&[HOST, WEB], &[HOST, WEB]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "agent-team");
 
         assert_eq!(cap.state, CapabilityState::On, "子集关系不是冲突");
@@ -1380,7 +1633,7 @@ mod tests {
             row(&row_id_for(PW), PW, false),
             row(&row_id_for(CDP), CDP, false),
         ];
-        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         assert_eq!(cap.state, CapabilityState::Conflict);
         assert!(variant(cap, "playwright").subsumed_by.is_none());
@@ -1403,7 +1656,7 @@ mod tests {
             row(&row_id_for(PW), PW, false),
             row(&row_id_for(CDP), CDP, false),
         ];
-        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         assert_eq!(cap.state, CapabilityState::Conflict);
         assert!(cap.active_variant.is_none(), "冲突时不得谎报单一活动变体");
@@ -1415,7 +1668,7 @@ mod tests {
     fn switching_variant_displaces_only_the_other_backend() {
         const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
         let f = facts(&["@deepseek-ai/dsh-browser-use", CDP], &[]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "browser-use");
         assert_eq!(
             variant(cap, "playwright").displaced,
@@ -1433,7 +1686,7 @@ mod tests {
     fn capabilities_do_not_leak_across() {
         const CDP: &str = "@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp";
         let f = facts(&["@deepseek-ai/dsh-browser-use", CDP], &[]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         assert_eq!(find(&caps, "computer-use").state, CapabilityState::Off);
         assert_eq!(find(&caps, "auto-review").state, CapabilityState::Off);
         assert_eq!(find(&caps, "agent-team").state, CapabilityState::Off);
@@ -1443,7 +1696,7 @@ mod tests {
     /// 未钉版本的显式告知（沉默会让用户以为已钉好）。
     #[test]
     fn resolve_without_runtime_version_degrades_honestly() {
-        let caps = resolve_capabilities(&PackageFacts::default(), &[], None);
+        let caps = resolve_capabilities(&PackageFacts::default(), &[], None, CopyLang::Zh);
         let step = &find(&caps, "auto-review").variants[0].steps[0];
         assert_eq!(
             step.spec, step.package,
@@ -1469,7 +1722,12 @@ mod tests {
     /// 宿主层在前、Web 层在后（装反即激活失败）。
     #[test]
     fn every_step_carries_the_pin_in_order() {
-        let caps = resolve_capabilities(&PackageFacts::default(), &[], Some("0.1.6-alpha.1"));
+        let caps = resolve_capabilities(
+            &PackageFacts::default(),
+            &[],
+            Some("0.1.6-alpha.1"),
+            CopyLang::Zh,
+        );
         let v = variant(find(&caps, "agent-team"), "web");
         assert_eq!(v.steps.len(), 2);
         for s in &v.steps {
@@ -1535,6 +1793,7 @@ mod tests {
             &facts_missing(&[], &[], &["cua-driver"]),
             &[],
             Some("0.1.6-alpha.1"),
+            CopyLang::Zh,
         );
         let cap = find(&caps, "computer-use");
         let blocked = variant(cap, "cua-driver-mcp");
@@ -1553,7 +1812,7 @@ mod tests {
             "自包含档无外部前置，不得被一起挡掉"
         );
 
-        let ok = resolve_capabilities(&facts(&[], &[]), &[], Some("0.1.6-alpha.1"));
+        let ok = resolve_capabilities(&facts(&[], &[]), &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         assert!(
             variant(find(&ok, "computer-use"), "cua-driver-mcp")
                 .prerequisite_missing

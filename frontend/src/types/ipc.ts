@@ -275,6 +275,13 @@ export interface CredentialSummaryItem {
   maskedKey: string
 }
 
+/// MCP 条目所在的 patch 层 —— 决定它的**生效范围**（2026-09-18）。
+///
+/// dsh 的 patch 应用顺序：各 bundle 层 → `profile` → `global` → `--patch` overlays。
+/// 两层**同名不是覆盖**：两条都会插入，上游 `serverName` 是加载期预留，
+/// 先加载的占住名字、后加载的那条实例化失败。
+export type McpScope = "profile" | "global"
+
 /// MCP 服务器配置项
 export interface McpServerConfig {
   name: string
@@ -290,6 +297,11 @@ export interface McpServerConfig {
   url?: string
   /** `streamable-http` 的附加请求头（stdio 恒空）。 */
   headers?: Record<string, string>
+  /** stdio 子进程工作目录（2026-09-18）。上游缺省是空串；「绝对路径 node +
+   *  绝对路径入口脚本」这类不依赖 PATH 的写法必须靠它。不填则不下发该键。 */
+  cwd?: string
+  /** 条目所在层（生效范围）。读取时由后端按所在层填充；保存时据此选层。 */
+  scope?: McpScope
 }
 
 /// 一条具名 MCP 能力（tool / resource / template）——2026-09-15，ADR-0022。
@@ -511,13 +523,15 @@ export interface CapabilityStep {
 }
 
 /// 能力下的一个可选后端。同能力的变体**互斥**（同一时刻只应有一个生效）。
+/// 展示字段（`label/note/prerequisites`）**按请求语言出品**（2026-09-18 边界A：
+/// IPC 传 locale，后端只下发该语言的一份文案），故字段名不带语言后缀。
 export interface CapabilityVariant {
   id: string
-  labelZh: string
+  label: string
   /// 一句话：这个后端适合谁 / 代价是什么。
-  noteZh: string
+  note: string
   /// 需要用户自备或额外配置的东西（空 = 无）。
-  prerequisitesZh: string[]
+  prerequisites: string[]
   steps: CapabilityStep[]
   state: VariantState
   /// 本变体的包是**另一个已就位变体**的真子集 → 本档已被那一档包含（Agent Teams 的
@@ -544,11 +558,11 @@ export interface CapabilityVariant {
 export interface Capability {
   /// 稳定 id（`agent-team` 等）——**不得用展示名当身份**（改文案即丢状态）。
   id: string
-  labelZh: string
+  label: string
   /// 一句话价值。
-  summaryZh: string
+  summary: string
   /// 启用后**用户能观察到什么**（含"什么会消失"，如旧 subagent 控件被取代）。
-  unlocksZh: string
+  unlocks: string
   variants: CapabilityVariant[]
   state: CapabilityState
   /// 当前生效（或已就位但停用）的变体 id；`null` = 未启用 / 冲突。

@@ -426,6 +426,7 @@ export function setupDevMock() {
       case "set_plugin_disabled":
         return null
 
+      // 视图是**单语 payload**（按 lang 出品，2026-09-18 边界A）；mock 固定模拟 zh 那份。
       case "list_experimental_capabilities": {
         const V = "@0.1.6-alpha.1"
         const step = (
@@ -463,18 +464,18 @@ export function setupDevMock() {
             // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
             shippedByDsh: true,
             legacyCopy: true,
-            labelZh: "多智能体协同",
-            summaryZh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
-            unlocksZh:
+            label: "多智能体协同",
+            summary: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
+            unlocks:
               "模型多出九个 team 工具。注意：它会取代旧的委派控件 —— subagent、subagent_fork 等四个旧行会被停用，两者不能并存；移除本能力后旧控件恢复。",
             state: "on",
             activeVariant: "web",
             variants: [
               {
                 id: "web",
-                labelZh: "Web 档",
-                noteZh: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
-                prerequisitesZh: ["需持久会话存储，团队状态才落得下来"],
+                label: "Web 档",
+                note: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
+                prerequisites: ["需持久会话存储，团队状态才落得下来"],
                 state: "on",
                 toggleOffSupported: false,
                 subsumedBy: null,
@@ -493,9 +494,9 @@ export function setupDevMock() {
               },
               {
                 id: "headless",
-                labelZh: "自建档（无 Web 界面）",
-                noteZh: "只装宿主层：工具与任务板可用，界面不新增面板。",
-                prerequisitesZh: ["需持久会话存储，团队状态才落得下来"],
+                label: "自建档（无 Web 界面）",
+                note: "只装宿主层：工具与任务板可用，界面不新增面板。",
+                prerequisites: ["需持久会话存储，团队状态才落得下来"],
                 // 真机形态：Web 档生效时本档的包必然也齐 → 报"已包含"而不是"冲突"。
                 state: "on",
                 toggleOffSupported: true,
@@ -515,17 +516,17 @@ export function setupDevMock() {
             // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
             shippedByDsh: false,
             legacyCopy: false,
-            labelZh: "浏览器操作",
-            summaryZh: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
-            unlocksZh: "模型多出一组浏览器工具；同一时刻只允许一个后端生效。",
+            label: "浏览器操作",
+            summary: "让模型自己开浏览器：点页面、读页面结构、跑导航任务",
+            unlocks: "模型多出一组浏览器工具；同一时刻只允许一个后端生效。",
             state: "disabled",
             activeVariant: "playwright",
             variants: [
               {
                 id: "playwright",
-                labelZh: "Playwright",
-                noteZh: "通用浏览器自动化后端，适合脚本化的多步导航。",
-                prerequisitesZh: ["浏览器只用 Chromium 系"],
+                label: "Playwright",
+                note: "通用浏览器自动化后端，适合脚本化的多步导航。",
+                prerequisites: ["浏览器只用 Chromium 系"],
                 state: "disabled",
                 subsumedBy: null,
                 toggleOffSupported: true,
@@ -550,9 +551,9 @@ export function setupDevMock() {
               },
               {
                 id: "chrome-devtools",
-                labelZh: "Chrome DevTools",
-                noteZh: "直连本机 Chrome，多带一层 DevTools 检查能力。",
-                prerequisitesZh: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
+                label: "Chrome DevTools",
+                note: "直连本机 Chrome，多带一层 DevTools 检查能力。",
+                prerequisites: ["浏览器只用 Chromium 系", "本机需安装 Chrome"],
                 state: "off",
                 subsumedBy: null,
                 toggleOffSupported: true,
@@ -572,9 +573,9 @@ export function setupDevMock() {
               },
               {
                 id: "stagehand",
-                labelZh: "Stagehand",
-                noteZh: "用自然语言描述操作，由指定模型翻译成动作。",
-                prerequisitesZh: [
+                label: "Stagehand",
+                note: "用自然语言描述操作，由指定模型翻译成动作。",
+                prerequisites: [
                   "浏览器只用 Chromium 系",
                   "需在 profile 配置里显式填 model，且不支持 DeepSeek 端点或 baseURL 覆盖",
                   "会额外消耗该模型的调用额度，且这部分用量不计入 dsh 会话统计",
@@ -604,18 +605,18 @@ export function setupDevMock() {
             // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
             shippedByDsh: false,
             legacyCopy: false,
-            labelZh: "桌面控制",
-            summaryZh: "让模型操作你的桌面：鼠标、键盘、窗口",
-            unlocksZh:
+            label: "桌面控制",
+            summary: "让模型操作你的桌面：鼠标、键盘、窗口",
+            unlocks:
               "模型多出一组桌面控制工具。这是权限最高的实验能力：多个会话共享同一个桌面，而取消调用无法撤销已经送到桌面的输入。",
             state: "off",
             activeVariant: null,
             variants: [
               {
                 id: "cua-driver-mcp",
-                labelZh: "复用已装的 cua-driver",
-                noteZh: "通过 MCP 连你本机已装好的 cua-driver，本体不随包带入。",
-                prerequisitesZh: ["需先自行安装并保持 cua-driver 可用"],
+                label: "复用已装的 cua-driver",
+                note: "通过 MCP 连你本机已装好的 cua-driver，本体不随包带入。",
+                prerequisites: ["需先自行安装并保持 cua-driver 可用"],
                 state: "off",
                 subsumedBy: null,
                 toggleOffSupported: true,
@@ -636,9 +637,9 @@ export function setupDevMock() {
               },
               {
                 id: "cua-driver-native",
-                labelZh: "随包自带运行时",
-                noteZh: "把 cua-driver 原生运行时作为依赖一起装上，自包含。",
-                prerequisitesZh: [
+                label: "随包自带运行时",
+                note: "把 cua-driver 原生运行时作为依赖一起装上，自包含。",
+                prerequisites: [
                   "需授予宿主桌面权限（装包本身不会授权，也不会创建桌面会话）",
                   "原生崩溃可能终止该进程；若原生关闭失败，换用另一个后端前需重启 dsh",
                 ],
@@ -665,18 +666,18 @@ export function setupDevMock() {
             // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
             shippedByDsh: false,
             legacyCopy: false,
-            labelZh: "自动安全审查",
-            summaryZh: "每次工具调用前用同一模型复核一遍，拦下危险操作",
-            unlocksZh:
+            label: "自动安全审查",
+            summary: "每次工具调用前用同一模型复核一遍，拦下危险操作",
+            unlocks:
               "权限选择器里多出带 EXP 上标的 Auto review 模式。代价是每个动作多一轮模型调用（更慢更贵），且模型分类可能出错。",
             state: "partial",
             activeVariant: null,
             variants: [
               {
                 id: "standard",
-                labelZh: "标准",
-                noteZh: "只对 Web 档有意义，装上即生效。",
-                prerequisitesZh: ["会额外消耗 token；不提供文件沙箱与确定性豁免"],
+                label: "标准",
+                note: "只对 Web 档有意义，装上即生效。",
+                prerequisites: ["会额外消耗 token；不提供文件沙箱与确定性豁免"],
                 state: "partial",
                 subsumedBy: null,
                 toggleOffSupported: false,

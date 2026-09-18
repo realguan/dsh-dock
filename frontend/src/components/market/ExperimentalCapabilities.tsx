@@ -153,7 +153,7 @@ export function ExperimentalCapabilities({
   onNotice,
   onRestart,
 }: Props) {
-  const { t } = useI18n()
+  const { t, activeLocale } = useI18n()
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [profile, setProfile] = useState("")
   const [caps, setCaps] = useState<Capability[] | null>(null)
@@ -210,7 +210,9 @@ export function ExperimentalCapabilities({
     setLoading(true)
     setError(null)
     try {
-      const next = await api.listExperimentalCapabilities(profile)
+      // 文案是**单语 payload**（按请求语言出品），所以 activeLocale 进依赖：
+      // 切语言即重新拉取（`load` 身份变化 → 下方 effect 重跑）。
+      const next = await api.listExperimentalCapabilities(profile, activeLocale)
       if (seq === loadSeq.current) setCaps(next)
     } catch (e) {
       if (seq === loadSeq.current) {
@@ -220,7 +222,7 @@ export function ExperimentalCapabilities({
     } finally {
       if (seq === loadSeq.current) setLoading(false)
     }
-  }, [profile, t])
+  }, [profile, t, activeLocale])
 
   useEffect(() => {
     // 换档即清"选择"与"失败"：两者都绑定在具体档位上，留着会串味（选中态指向另一个
@@ -279,7 +281,7 @@ export function ExperimentalCapabilities({
         )
         if (result.ok) {
           setDirty(true)
-          onNotice?.(t.market.capDoneFor(cap.labelZh), "ok")
+          onNotice?.(t.market.capDoneFor(cap.label), "ok")
         } else {
           // 失败**不回滚**：已完成的步处于一致态，就地保留原因供续跑。
           const detail = result.failedAt?.error ?? ""
@@ -294,7 +296,7 @@ export function ExperimentalCapabilities({
           // 只有**真的改过什么**才提示重启：0/N 步就失败时文件一个字节都没动，
           // 此时报"配置已变更"是谎报，会把用户骗去重启一个没变的 Profile。
           if (result.completedOps > 0) setDirty(true)
-          onNotice?.(t.market.capPartialFor(cap.labelZh, result.completedOps, result.totalOps), "warn")
+          onNotice?.(t.market.capPartialFor(cap.label, result.completedOps, result.totalOps), "warn")
         }
       } finally {
         setRun(null)
@@ -395,7 +397,7 @@ export function ExperimentalCapabilities({
         <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
         <Badge
           variant="outline"
-          className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-2 text-meta font-normal text-brand-deep"
+          className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-2 text-meta font-normal text-brand-deep"
         >
           <BadgeCheck className="size-3" />
           {t.market.capOfficialBadge}
@@ -432,9 +434,9 @@ export function ExperimentalCapabilities({
           <span>{t.market.capRestartHint}</span>
           {onRestart && (
             <Button
-              size="sm"
+              size="xs"
               variant="outline"
-              className="ml-auto h-6 gap-1 px-2 text-micro"
+              className="ml-auto gap-1"
               onClick={() => onRestart(profile)}
             >
               <RotateCw className="size-3" />
@@ -455,9 +457,9 @@ export function ExperimentalCapabilities({
           <TriangleAlert className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
           <Button
-            size="sm"
+            size="xs"
             variant="outline"
-            className="ml-auto h-6 px-2 text-micro"
+            className="ml-auto"
             onClick={() => void load()}
           >
             {t.market.capReload}
@@ -546,8 +548,8 @@ export function ExperimentalCapabilities({
         title={
           pending
             ? pending.kind === "enable"
-              ? t.market.capConfirmTitle(pending.cap.labelZh)
-              : t.market.capRemoveTitle(pending.cap.labelZh)
+              ? t.market.capConfirmTitle(pending.cap.label)
+              : t.market.capRemoveTitle(pending.cap.label)
             : ""
         }
         note={
@@ -630,10 +632,10 @@ function confirmPoints(
   const variant = pending.cap.variants.find((v) => v.id === pending.variantId)
   if (!variant) return []
   if (pending.kind === "enable") {
-    const points = [...variant.prerequisitesZh]
+    const points = [...variant.prerequisites]
     if (pending.cap.activeVariant && pending.cap.activeVariant !== variant.id) {
       const from = pending.cap.variants.find((v) => v.id === pending.cap.activeVariant)
-      points.push(t.market.capReplaceFrom(from?.labelZh ?? ""))
+      points.push(t.market.capReplaceFrom(from?.label ?? ""))
     } else if (variant.displaced.length > 0) {
       // 没有"当前生效"的档、但别的档已经有包就位（**冲突态**或装了一半）：`planReplace`
       // 仍会先把它们拆掉。后端早把要拆的包算在 `displaced` 里了，这里如实说出来——
@@ -732,7 +734,7 @@ function CapabilityRow({
         delay: reduceMotion ? 0 : Math.min(index, 6) * 0.03,
       }}
       className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-colors ${
-        selected ? "border-brand/40 bg-brand/5" : "border-line bg-panel hover:border-brand/25"
+        selected ? "border-brand/40 bg-wash" : "border-line bg-panel hover:border-brand/25"
       }`}
     >
       <button
@@ -741,10 +743,10 @@ function CapabilityRow({
         aria-current={selected ? "true" : undefined}
         aria-controls={PANE_ID}
         onClick={() => onSelect(cap)}
-        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
       >
         <span
-          className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${stateTone(
+          className={`flex size-7 shrink-0 items-center justify-center rounded-lg border ${stateTone(
             variant.state === "off" ? cap.state : variant.state,
           )}`}
         >
@@ -752,13 +754,13 @@ function CapabilityRow({
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="truncate text-label font-medium text-ink">{cap.labelZh}</span>
+            <span className="truncate text-label font-medium text-ink">{cap.label}</span>
             {cap.shippedByDsh ? (
               // 自带的徽标只说一次：原来"随 dsh 自带"与右侧"dsh 已内置"同时出现，
               // 一块行里两个徽标讲同一件事＝噪音（维护者一贯口径：多此一举）。
               <Badge
                 variant="outline"
-                className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-1.5 text-micro font-normal text-brand-deep"
+                className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-1.5 text-micro font-normal text-brand-deep"
               >
                 <BadgeCheck className="size-3" />
                 {t.market.capStateShipped}
@@ -806,7 +808,7 @@ function CapabilityRow({
         <ChevronRight className="hidden size-3.5 shrink-0 text-faint lg:block" />
       ) : (
       <Switch
-        aria-label={t.market.capSwitchLabel(`${cap.labelZh} · ${name}`)}
+        aria-label={t.market.capSwitchLabel(`${cap.label} · ${name}`)}
         aria-describedby={why.length > 0 ? descId : undefined}
         checked={on}
         disabled={busy || subsumedBy || blocked}
@@ -911,7 +913,7 @@ function CapabilityPane({
     <motion.section
       id={PANE_ID}
       tabIndex={-1}
-      aria-label={t.market.capPaneLabel(cap.labelZh)}
+      aria-label={t.market.capPaneLabel(cap.label)}
       initial={reduceMotion ? false : { opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
@@ -920,7 +922,7 @@ function CapabilityPane({
       {/* 身份 + 状态：一行读全"这是什么 / 现在怎样"。 */}
       <div className="flex items-start gap-3 border-b border-line/70 px-4 py-3">
         <span
-          className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${stateTone(
+          className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${stateTone(
             variant.state === "off" ? cap.state : variant.state,
           )}`}
         >
@@ -928,7 +930,7 @@ function CapabilityPane({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="text-note font-semibold text-ink">{cap.labelZh}</h3>
+            <h3 className="text-note font-semibold text-ink">{cap.label}</h3>
             <Badge
               variant="outline"
               className="h-4.5 shrink-0 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-faint"
@@ -937,13 +939,13 @@ function CapabilityPane({
             </Badge>
             <StateBadge cap={cap} variant={variant} t={t} />
           </div>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summaryZh}</p>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summary}</p>
         </div>
         {/* 窄窗口：下钻态的唯一出口（宽窗口隐藏）。 */}
         <button
           type="button"
           onClick={onBack}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-line bg-panel px-2 py-1 text-meta text-dim transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
+          className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-panel px-2 py-1 text-meta text-dim transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
         >
           <ArrowLeft className="size-3" />
           {t.market.capBack}
@@ -952,7 +954,7 @@ function CapabilityPane({
 
       <div className="flex flex-col gap-3 px-4 py-3">
         {run && (
-          <div className="rounded-md border border-brand/25 bg-brand/5 px-3 py-2.5">
+          <div className="rounded-md border border-brand/25 bg-wash px-3 py-2.5">
             <div className="flex items-center gap-2 text-label text-ink">
               <LoaderCircle className="size-3.5 animate-spin text-brand-deep" />
               <span>{t.market.capRunning(run.index + 1, run.ops.length)}</span>
@@ -1088,11 +1090,11 @@ function CapabilityPane({
               // 若选中的档不可选（全体被挡），停靠点落在第一个可选项上，
               // 保证这一组仍然能被键盘进入。
               const focusTabIndex = selectable && v.id === tabbableId ? 0 : -1
-              const extras = v.prerequisitesZh.filter((p) => !commonPrereqs.includes(p))
+              const extras = v.prerequisites.filter((p) => !commonPrereqs.includes(p))
               const rowCls = [
-                "flex w-full items-start gap-2.5 rounded-md border px-3 py-2 text-left transition-colors",
+                "flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors",
                 selected
-                  ? "border-brand/40 bg-brand/5"
+                  ? "border-brand/40 bg-wash"
                   : selectable
                     ? "border-line bg-panel hover:border-brand/25 hover:bg-wash/60"
                     : "border-line bg-panel",
@@ -1156,9 +1158,9 @@ function CapabilityPane({
                         </Badge>
                       )}
                     </span>
-                    {v.noteZh && (
+                    {v.note && (
                       <span className="mt-1 block text-label leading-relaxed text-dim">
-                        {v.noteZh}
+                        {v.note}
                       </span>
                     )}
                     {extraShared(roles.shared).length > 0 && (
@@ -1258,7 +1260,7 @@ function CapabilityPane({
           <h4 className="text-meta font-semibold tracking-wider text-faint">
             {t.market.capUnlocks}
           </h4>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocksZh}</p>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocks}</p>
         </section>
 
         <section className="border-t border-line/70 pt-3">
@@ -1392,28 +1394,28 @@ function ShippedPane({
     <motion.section
       id={PANE_ID}
       tabIndex={-1}
-      aria-label={t.market.capPaneLabel(cap.labelZh)}
+      aria-label={t.market.capPaneLabel(cap.label)}
       initial={reduceMotion ? false : { opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
       className="flex flex-col rounded-xl border border-line bg-panel shadow-2xs"
     >
       <div className="flex items-start gap-3 border-b border-line/70 px-4 py-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-brand/25 bg-brand/5 text-brand-deep">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-brand/25 bg-wash text-brand-deep">
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="text-note font-semibold text-ink">{cap.labelZh}</h3>
+            <h3 className="text-note font-semibold text-ink">{cap.label}</h3>
             <Badge
               variant="outline"
-              className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-brand/5 px-1.5 text-micro font-normal text-brand-deep"
+              className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-1.5 text-micro font-normal text-brand-deep"
             >
               <BadgeCheck className="size-3" />
               {t.market.capStateShipped}
             </Badge>
           </div>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summaryZh}</p>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summary}</p>
         </div>
       </div>
 
@@ -1438,7 +1440,7 @@ function ShippedPane({
           <span className="text-meta font-medium tracking-wider text-faint">
             {t.market.capUnlocks}
           </span>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocksZh}</p>
+          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocks}</p>
         </section>
 
         {/* 遗留副本：只有真的还在时才出现——平时这一屏就只有上面三块。 */}
@@ -1502,7 +1504,7 @@ function FailureBlock({
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          className="h-6 bg-brand px-2 text-micro text-white hover:bg-brand/90"
+          className="h-6 px-2 text-micro"
           onClick={onResume}
         >
           {t.market.capResume}

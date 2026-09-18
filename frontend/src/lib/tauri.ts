@@ -19,6 +19,7 @@ import type {
   LifecycleOutcome,
   LogQueryResult,
   McpProbe,
+  McpScope,
   McpServerConfig,
   RowWriteOutcome,
   SafeModeState,
@@ -119,9 +120,11 @@ export const api = {
   // 4.4④ 收口：插件总览聚合（只读文件扫描）+ 配置行原样复制（写入例外 #4）
   listAllPlugins: () => invoke<AggregatePlugin[]>("list_all_plugins"),
   /** 实验能力目录（ADR-0020 §7）：能力 → 变体 → 步骤三级事实视图，能力状态由后端
-   *  一次算全（「包 × 行 × disabled」的函数）。运行时版本由**后端本地检出**，前端不传。 */
-  listExperimentalCapabilities: (profile: string) =>
-    invoke<Capability[]>("list_experimental_capabilities", { profile }),
+   *  一次算全（「包 × 行 × disabled」的函数）。运行时版本由**后端本地检出**，前端不传。
+   *  `lang`（2026-09-18 边界A）：传当前生效 locale，后端**按请求语言出品文案**
+   *  （单语 payload）；语言切换后必须重新拉取。 */
+  listExperimentalCapabilities: (profile: string, lang: string) =>
+    invoke<Capability[]>("list_experimental_capabilities", { profile, lang }),
   /** 确保一条策展挂载行就位（ADR-0020 §7.4）：**写行前当场重判**该包是否声明
    *  `dsh.bundle`——声明了则由 CLI 激活，壳**不写行**（返回 `autoActivated: true`），
    *  因为"安装前"的行形态判定是过期的（v1 因此会给 profile 层多写一条行 = 重复挂载）。
@@ -180,16 +183,20 @@ export const api = {
     invoke<void>("save_dsh_settings_raw", { content }),
 
   // MCP 服务器结构化管理（4.7）
+  /** 列出**两层**可见的 MCP（profile 层 + home 级全局层），每条带 `scope`。 */
   listMcpServers: (profile: string) =>
     invoke<McpServerConfig[]>("list_mcp_servers", { profile }),
+  /** 保存到 `server.scope` 指出的那一层（缺省 profile 层）。 */
   saveMcpServer: (profile: string, server: McpServerConfig) =>
     invoke<void>("save_mcp_server", { profile, server }),
-  deleteMcpServer: (profile: string, serverName: string) =>
-    invoke<void>("delete_mcp_server", { profile, serverName }),
+  /** **按层删除**（2026-09-18）：同名条目两层都有时只删指定层那一条。 */
+  deleteMcpServer: (profile: string, serverName: string, scope: McpScope) =>
+    invoke<void>("delete_mcp_server", { profile, serverName, scope }),
   /** 探测 MCP 服务器能力（ADR-0022 stdio 分支）：握手后枚举 Tools/Resources/Templates。
-   *  `streamable-http` 与 WSL 客体档会 reject（各自说明原因）。 */
-  probeMcpServer: (profile: string, serverName: string) =>
-    invoke<McpProbe>("probe_mcp_server", { profile, serverName }),
+   *  `streamable-http` 与 WSL 客体档会 reject（各自说明原因）。
+   *  `scope` 决定探测哪一层的那一条（两层同名时不可省）。 */
+  probeMcpServer: (profile: string, serverName: string, scope: McpScope) =>
+    invoke<McpProbe>("probe_mcp_server", { profile, serverName, scope }),
 
   // 社区插件市场 Registry 拉取
   fetchMarketRegistry: () => invoke<string>("fetch_market_registry"),

@@ -90,7 +90,7 @@ describe("⑧ 版面预算：清单 / 详情分栏，详情**不得**内联展�
     expect(row, "清单行里出现了块级段落").not.toMatch(/<p[\s>]/)
     // 一个能力一行（而不是"一档一行"）：变体清单归详情面。
     expect(row, "清单行不得渲染完整变体清单").not.toContain("cap.variants.map(")
-    expect(row, "长描述归详情面").not.toContain("cap.summaryZh")
+    expect(row, "长描述归详情面").not.toContain("cap.summary")
     // 插件名**完整显示（折行）**，不截断：官方包名动辄 50+ 字符，截断截掉的正好是
     // 区分各档的那一段（`…cua-driver-mcp` 与 `…cua-driver-native` 会截成同一个前缀）。
     // 能力名可以截断（短且同一份数据），**插件名不行**：它是唯一"要对得上 node_modules"
@@ -101,7 +101,7 @@ describe("⑧ 版面预算：清单 / 详情分栏，详情**不得**内联展�
 
   it("清单行保住必须「扫一眼就有」的四件事：名称 / 状态 / 插件名 / 开关", () => {
     const row = listRegion()
-    for (const required of ["cap.labelZh", "StateBadge", "variantDisplayName(cap,", "Switch"]) {
+    for (const required of ["cap.label", "StateBadge", "variantDisplayName(cap,", "Switch"]) {
       expect(row, `清单行缺少「${required}」`).toContain(required)
     }
   })
@@ -152,17 +152,17 @@ describe("① 实现细节只能在详情面，不得进清单行", () => {
       "capImplTitle",
       "s.rowId",
       "s.description",
-      "cap.summaryZh",
-      "cap.unlocksZh",
+      "cap.summary",
+      "cap.unlocks",
     ]) {
       expect(pane, `详情面缺少「${required}」`).toContain(required)
     }
   })
 
   it("用户视角的信息必须在清单行或详情面上（价值 / 前置 / 状态）", () => {
-    expect(paneRegion(), "详情面缺少价值描述").toContain("cap.unlocksZh")
-    expect(paneRegion(), "详情面缺少前置").toContain("prerequisitesZh")
-    for (const required of ["cap.labelZh", "Switch"]) {
+    expect(paneRegion(), "详情面缺少价值描述").toContain("cap.unlocks")
+    expect(paneRegion(), "详情面缺少前置").toContain("prerequisites")
+    for (const required of ["cap.label", "Switch"]) {
       expect(listRegion(), `清单行缺少「${required}」`).toContain(required)
     }
   })

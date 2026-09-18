@@ -206,11 +206,16 @@ pub async fn remove_official_patch_row(
 /// `engines/`），不从前端传——前端没有廉价且权威的来源，传参只会引入漂移。
 /// 检出不到时**不拼坏 spec**：退回裸包名并在该步的 `versionNotice` 里**明示未钉版本**
 /// （裸包名按 `latest` 解析，而 Agent Teams 三包的 `latest` 实测落后于运行时）。
+///
+/// `lang`（2026-09-18 边界A）：前端传当前界面 locale，视图**按请求语言出品**
+/// （单语 payload，见 `official_catalog::CopyLang`）；缺省/未知回退中文（目录原文）。
 #[tauri::command]
 pub async fn list_experimental_capabilities(
     app: tauri::AppHandle,
     profile: String,
+    lang: Option<String>,
 ) -> Result<Vec<crate::official_catalog::CapabilityView>, String> {
+    let lang = crate::official_catalog::CopyLang::from_tag(lang.as_deref());
     // 世界择源（ADR-0016 §5-b/c，**绝不回落本地**）：本地 = 宿主 home 直读；
     // **WSL 客体档当前显式报错**——客体侧需补一组客体文件读原语才能拼出同一份事实
     // 快照，本轮未实现。此处宁可如实报"该档暂不支持"，也**不**去读宿主 home
@@ -283,6 +288,7 @@ pub async fn list_experimental_capabilities(
             },
             &rows,
             runtime_version.as_deref(),
+            lang,
         ))
     })
     .await

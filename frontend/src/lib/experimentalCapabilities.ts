@@ -244,7 +244,7 @@ export function variantPackageRoles(
 export function commonPrerequisites(cap: Capability): readonly string[] {
   if (cap.variants.length === 0) return []
   const [first, ...rest] = cap.variants
-  return first.prerequisitesZh.filter((p) => rest.every((v) => v.prerequisitesZh.includes(p)))
+  return first.prerequisites.filter((p) => rest.every((v) => v.prerequisites.includes(p)))
 }
 
 /**
