@@ -69,6 +69,79 @@
   ⚠️ 唯一**未经像素级证明**的一条：`BootSelector` 在 dev 主窗口走不到（渲染的是启动
   等待屏），该处只有代码级验证。
 
+### 2026-09-19 补记 + 修复 · InfoTip 悬浮整块乌漆麻黑：`cn()` 把颜色类合并掉了 —— guan（AI 协作）
+
+- **补记原委**：同日「UI 收口」条目的凭据栏只核对了 **DOM 里有没有这段文本**（`innerText`
+  读得到），没核对视觉，并写下"本机截图不可行"。该判定**已失效**——本轮 in-app Browser
+  能出图，像素级复核做成了。维护者截图打脸：悬浮层是纯黑一块，字完全看不见。
+  按本档规矩旧条目不改写，另立此条。
+- **根因三层**（第一层是主因，且**源码读不出来**）：
+  1. `cn()` = `twMerge(clsx())`。tailwind-merge 只按 Tailwind 原生刻度认 `text-xs/sm/base`
+     为字号，本仓库的 `text-label` 落进它的 **text-color 兜底组** ⇒ 判定与 `text-background`
+     同族冲突 ⇒ **颜色类被静默删除** ⇒ ink 底 + ink 字。typecheck / lint / paletteTokens /
+     contrast 四道闸门全绿：类名合法，只是不在最终 class 串里。
+  2. 旧口径 `bg-foreground text-background` 跨两个命名族，读的人无从判断这是一对。
+  3. 悬浮面零阴影 + `text-xs` 当正文；且 `data-open:` / `data-closed:` 变体永不命中
+     （Radix 只写 `data-state`）——等于既没有层次也没有入场。
+- **变更**：`lib/utils.ts` 用 `extendTailwindMerge` 登记五档字号（根因修在这里，全站受益）；
+  `ui/tooltip.tsx` 悬浮面重做为**成对 term token**（`bg-term` + `text-term-ink` ≈ 15.8:1，
+  非纯白字）、正文档 `text-note` 13px / `leading-relaxed`、`px-3.5 py-2.5`、`rounded-lg`、
+  `shadow-lg`（浮层档）、`max-w-80`、`collisionPadding=8`（窄窗下不再贴住窗口边缘）、
+  `animate-in fade-in-0 zoom-in-95 duration-100`（hover 与 focus 两路径同享）、箭头
+  `fill-term`，kbd 死类退役；`info-tip.tsx` 不再自己传字号。
+- **顺带修好的两个同源静默 bug**（同一 merge 误判）：`MarketPluginCard.tsx:107` 与
+  `ExperimentalCapabilities.tsx:1562` 的 Badge 同时写 `text-micro` + `text-<颜色>`，
+  旧 merge 把 `text-micro` 当颜色挤掉 ⇒ **9px 档从未生效**；`PluginOverview.tsx:267`
+  SelectTrigger 的 `text-label` 与 base `text-sm` 同组互斥，现按调用方生效。
+- **闸门**：新增 `__tests__/cnFontScale.test.ts`——① 行为：字号档与颜色档必须共存
+  （含"乌漆麻黑那一次"的回归锚点）；② 同步：`index.css` 每新增一个 `--text-*` 档位，
+  `lib/utils.ts` 的 font-size 组必须登记，否则该档名又落进颜色兜底组。**"合并即消失"的
+  缺陷只有 merge 结果断言拦得住**，读源码与看类名字符串都拦不住。
+- **影响**：`cn()` 是全站原语，merge 语义变化的作用面 = 同一元素同时出现「字号档 + 颜色档」
+  的调用点；已全仓扫过，仅上述三处，且都是修复而非回归。**合入前请开一次 Browser 面板**
+  复核 MCP 弹窗与列表两屏（本轮已自查三屏截图，见凭据）。
+- **凭据**：`tsc -b` 0 错 / `oxlint` 0 warning / `vitest` **545 passed（57 文件）**。
+  截图复核三屏：弹窗字段 Tip、列表行状态 Tip、实验能力页头 Tip——均为深色浮层 + 可读
+  13px 正文 + 指向触发图标的箭头；computed 实测 `color rgb(232,236,246)` /
+  `background rgb(13,18,31)`、对比度 15.81:1、字号 13px/行高 21px、圆角 10px、阴影生效、
+  入场动画 60ms 时 opacity 0.575 → 落定 1。
+- **本轮刻意未动**：MCP 列表行 `conflicted` 整卡描红（`McpManager.tsx:835`
+  `border-danger/40`）在重名行多时一片红，噪声大于信号（结论已由行内徽标承担）。
+  属另一处视觉裁定，已向维护者提出，另行开工。
+
+### 2026-09-19 UI 收口 · 解释性文案不平铺：改 InfoTip 悬浮（MCP 面板 + 实验能力）—— guan（AI 协作）
+
+- **触发**：维护者「文案是不是有点多啊，mcp 功能和实验性功能那里都直接把文案平铺了，
+  显得内容很多杂乱，解释性文本可以用一个 icon 悬浮可见就行了吧」。上一轮把六个真 bug
+  摆到界面上，代价正是这些解释——每条重名/表达式/装配状态各带一整句散文，一屏最多 4 个
+  堆叠告警盒 + 弹窗 7 段说明，"要填什么"被"为什么"淹没。
+- **裁定口径（写进 `info-tip.tsx` 头注）**：**结论留在表面，原因挂悬浮**。状态/重名/失败
+  仍以短徽标可见，只有解释性长句进 Tip；刻意**不做**"整块徽标当触发器"的变体——悬浮是
+  扫不到的，把结论放悬浮等于把信息藏起来。
+- **变更**：新增原语 `frontend/src/components/ui/info-tip.tsx`（`Tip`）。Radix Tooltip
+  原语（`ui/tooltip.tsx`）此前**零使用**，本轮启用；自带 `TooltipProvider` 一层（各窗口
+  独立 JS runtime，AGENTS §4.4 红线 3，全局挂载点不止一处）；触发器是**可聚焦 `button` +
+  `aria-label`**（Radix 在 focus 时同样打开 ⇒ 键盘可达）。未沿用仓库既有的原生 `title=`
+  （~1s 延迟、不可样式、键盘不可达）。字典新增顶层 `tip.aria/ariaFor` 与五个短徽标键
+  （`mcpScopeConflictTag` / `mcpDupSameScopeTag` / `mcpExprShort` / 四个 `mcpRuntime*Tag`），
+  长句原样保留作悬浮正文；`mcpExprNote` 并入 `mcpExprHint`（消双源）。
+- **MCP 面**：弹窗 7 段 `<p>` 说明全改为标签行尾的 Tip（stdio 6 枚 / http 4 枚，
+  transport 提示随分支切换）；列表行最多 4 个告警盒压成**一行三枚徽标**（本层重名 /
+  跨层重名 / 装配状态），每枚各挂自己的解释；`ScopeBadge` 的原生 `title` 一并移除。
+- **实验能力面**：页头"这不是社区插件"段与"dsh 已内置"指路段落改挂徽标（它回答的正是
+  鼠标停在徽标上时想问的）；**保持平铺**的：前置条件缺项、重启提示、失败块、能力解锁清单
+  ——这些是可执行结论，不进悬浮。
+- **影响**：仅周知。IPC / 落盘零改动；文案键有增有删（`mcpExprNote` 删），zh 字典为权威、
+  en 必须同键（`AppCopy` 编译期兜底，漏键即 `tsc -b` 红）。
+- **凭据**：`tsc -b` 0 错 / `oxlint` 0 warning（163 文件）/ `vitest` **541 passed（56 文件）**。
+  `mcpScope.test.ts` 因呈现层改动漂移的窗口锚点已修，并新增闸门「**结论留在表面，长句挂在
+  Tip 上（两者都不得少）**」：行级三态各配一枚 Tip（断言 `<Tip` 计数 = 3），短标签与长句
+  必须同时在场——防止收拢退化成"只剩悬浮"。浏览器 devMock 逐态核对：hover 与 focus **两条
+  路径都实测**渲染出 `[data-slot="tooltip-content"]` 且句子完整（列表 16 枚 Tip 标签全中、
+  弹窗只剩 2 段散文、实验能力 2 枚、en-US 同 16 枚无中文漏字）。
+  ⚠️ **未做像素级核对**（本机 in-app Browser viewport 0×0，无可见表面，截图与尺寸测量
+  拿不到）；视觉复核请维护者开一次 Browser 面板看 MCP 一屏。
+
 ### 2026-09-17 裁决 · dsh 0.1.6-alpha.2 起自带 Agent Teams：实验能力页「dsh 自带的、dock 不代管」 —— guan（AI 协作）
 
 - **触发**（维护者给了两张截图）：「dsh 新版本已经把智能体团队插件内置了，我们的实验性功能可以把

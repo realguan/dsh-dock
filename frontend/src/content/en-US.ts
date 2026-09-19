@@ -1175,4 +1175,9 @@ export const enUS: AppCopy = {
   confirm: {
     cancel: "Cancel",
   },
+  // Explanatory hover tips (ui/info-tip.tsx, 2026-09-19): the icon carries no visible text.
+  tip: {
+    aria: "Show more information",
+    ariaFor: (subject: string) => `More information about ${subject}`,
+  },
 }

@@ -1187,6 +1187,12 @@ export const t = {
   confirm: {
     cancel: "取消",
   },
+  // 解释性悬浮（ui/info-tip.tsx，2026-09-19）：图标按钮没有可见文字，名称只能靠 aria。
+  // 同一屏会有十几个「查看说明」，所以带上它说明的是**哪一项**（读屏 tab 过去能对上）。
+  tip: {
+    aria: "查看该项说明",
+    ariaFor: (subject: string) => `查看「${subject}」的说明`,
+  },
 } as const
 
 type RecursiveString<T> = {

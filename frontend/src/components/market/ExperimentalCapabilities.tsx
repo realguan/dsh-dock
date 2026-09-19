@@ -58,6 +58,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { Tip } from "@/components/ui/info-tip"
 import { Progress } from "@/components/ui/progress"
 import {
   Select,
@@ -391,17 +392,21 @@ export function ExperimentalCapabilities({
 
   return (
     <div className="flex flex-col gap-2.5">
-      {/* 页头压成两行：身份 + 目标 Profile 同一行，说明各一行（v2 这里是 4 行 + 一条汇总条）。
-          官方来源说明（capOfficialNote）留在页头：它是"这不是社区插件"的口径，不能挪进详情。 */}
+      {/* 页头压成两行：身份 + 目标 Profile 同一行（v2 这里是 4 行 + 一条汇总条）。
+          官方来源说明（capOfficialNote）2026-09-19 起挂在官方徽标上：它仍然是页头
+          的一部分（"这不是社区插件"的口径不能挪进详情面），只是不再平铺一段散文。 */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
-        <Badge
-          variant="outline"
-          className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-2 text-meta font-normal text-brand-deep"
-        >
-          <BadgeCheck className="size-3" />
-          {t.market.capOfficialBadge}
-        </Badge>
+        <span className="flex items-center gap-1">
+          <Badge
+            variant="outline"
+            className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-2 text-meta font-normal text-brand-deep"
+          >
+            <BadgeCheck className="size-3" />
+            {t.market.capOfficialBadge}
+          </Badge>
+          <Tip text={t.market.capOfficialNote} label={t.tip.ariaFor(t.market.capOfficialBadge)} />
+        </span>
         <span className="min-w-0 flex-1 basis-56 text-label leading-relaxed text-dim">
           {t.market.capDesc}
         </span>
@@ -426,7 +431,6 @@ export function ExperimentalCapabilities({
           </Select>
         </div>
       </header>
-      <p className="-mt-1 text-meta leading-relaxed text-faint">{t.market.capOfficialNote}</p>
 
       {dirty && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-1.5 text-label text-warn">
@@ -1407,21 +1411,24 @@ function ShippedPane({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3 className="text-note font-semibold text-ink">{cap.label}</h3>
-            <Badge
-              variant="outline"
-              className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-1.5 text-micro font-normal text-brand-deep"
-            >
-              <BadgeCheck className="size-3" />
-              {t.market.capStateShipped}
-            </Badge>
+            {/* 「指路」那段（开关在 dsh 自己的插件页）2026-09-19 起挂在状态徽标上：
+                它回答的是"那我在哪儿开"，正是鼠标停在这个徽标上时想问的。 */}
+            <span className="flex items-center gap-1">
+              <Badge
+                variant="outline"
+                className="h-4.5 shrink-0 gap-1 rounded-full border-brand/25 bg-wash px-1.5 text-micro font-normal text-brand-deep"
+              >
+                <BadgeCheck className="size-3" />
+                {t.market.capStateShipped}
+              </Badge>
+              <Tip text={t.market.capShippedNote} label={t.tip.ariaFor(t.market.capStateShipped)} />
+            </span>
           </div>
           <p className="mt-1 text-label leading-relaxed text-dim">{cap.summary}</p>
         </div>
       </div>
 
       <div className="flex flex-col gap-3 px-4 py-3">
-        <p className="text-label leading-relaxed text-dim">{t.market.capShippedNote}</p>
-
         <div>
           <span className="text-meta font-medium tracking-wider text-faint">
             {t.market.capShippedPackages}
