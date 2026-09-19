@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Segmented } from "@/components/ui/segmented"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Switch } from "@/components/ui/switch"
+import { YamlEditor } from "@/components/ui/yaml-editor"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
 import { McpManager } from "@/components/profiles/McpManager"
 import {
@@ -985,11 +986,9 @@ export function ProfileDetailPane({
             </div>
 
             {detail?.patch_yaml ? (
-              <div className="relative overflow-hidden rounded-xl border border-term-line bg-term p-4 font-mono text-xs text-term-ink">
-                <pre className="max-h-[420px] overflow-auto leading-relaxed whitespace-pre font-mono selection:bg-brand/30">
-                  {detail.patch_yaml}
-                </pre>
-              </div>
+              /* 只读视窗与编辑面同一套（2026-09-18）：行号 / 折叠 / 高亮 / ⌘F 查找，
+                 封顶口径沿用旧 pre 的 max-h-[420px]（≈21 行）。 */
+              <YamlEditor value={detail.patch_yaml} rows={6} maxRows={21} readOnly />
             ) : (
               <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
                 {t.profiles.detailPatchNone}

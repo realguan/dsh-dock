@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { YamlEditor } from "@/components/ui/yaml-editor"
 
 export function CredentialsPane({
   onNotice,
@@ -170,11 +171,10 @@ export function CredentialsPane({
               <span>{t.console.saveCredentials}</span>
             </Button>
           </div>
-          <textarea
+          <YamlEditor
             value={rawContent}
-            onChange={(e) => setRawContent(e.target.value)}
+            onChange={setRawContent}
             rows={14}
-            className="w-full resize-y rounded-xl border border-term-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
             placeholder={t.console.credentialsEmpty}
           />
         </div>

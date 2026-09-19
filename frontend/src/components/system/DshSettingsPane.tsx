@@ -14,6 +14,7 @@ import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { YamlEditor } from "@/components/ui/yaml-editor"
 
 export function DshSettingsPane({
   onNotice,
@@ -130,12 +131,11 @@ export function DshSettingsPane({
           <span>{t.console.yamlFormat}</span>
         </div>
 
-        <textarea
+        <YamlEditor
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={setContent}
           rows={16}
-          className="w-full resize-y rounded-xl border border-term-line bg-term p-4 font-mono text-xs leading-relaxed text-term-ink focus:border-term-brand focus:outline-none"
-          placeholder="# DSH settings.yaml\n# model: deepseek-chat\n# defaultProvider: deepseek"
+          placeholder={"# DSH settings.yaml\n# model: deepseek-chat\n# defaultProvider: deepseek"}
         />
       </div>
 

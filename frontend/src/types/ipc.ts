@@ -282,6 +282,9 @@ export interface CredentialSummaryItem {
 /// 先加载的占住名字、后加载的那条实例化失败。
 export type McpScope = "profile" | "global"
 
+/** 传输方式：上游 `@deepseek-ai/dsh-mcp-client` 只有这两种（无 `sse` 字面量）。 */
+export type McpTransport = "stdio" | "streamable-http"
+
 /// MCP 服务器配置项
 export interface McpServerConfig {
   name: string
@@ -291,8 +294,10 @@ export interface McpServerConfig {
   disabled: boolean
   /** 传输方式（2026-09-15，ADR-0022 前置）：上游 `@deepseek-ai/dsh-mcp-client`
    *  仅支持 `stdio` 与 `streamable-http`（无 `sse` 字面量）；后端缺省发 `stdio`。
-   *  可选是为兼容既有构造点（表单只填 stdio 字段时无需补全）。 */
-  transport?: "stdio" | "streamable-http"
+   *  可选是为兼容既有构造点（表单只填 stdio 字段时无需补全）。
+   *  **编辑时必须带回原值**：保存会按传输方式清掉另一分支的键（切传输不留残键），
+   *  表单漏带 = 把一条 http 条目改写成 stdio 并丢掉 url/headers。 */
+  transport?: McpTransport
   /** `streamable-http` 的 MCP 端点 URL（stdio 恒空）。 */
   url?: string
   /** `streamable-http` 的附加请求头（stdio 恒空）。 */
@@ -302,6 +307,13 @@ export interface McpServerConfig {
   cwd?: string
   /** 条目所在层（生效范围）。读取时由后端按所在层填充；保存时据此选层。 */
   scope?: McpScope
+  /** 条目在 patch 里的行 id（insert 项 `id`；旧字典形态为所在行 id）。
+   *  2026-09-18：装配状态徽标按它精确匹配运行态 `entryId`，同层重复行也靠它区分。 */
+  rowId?: string
+  /** 该行原文含 `!!js` 之类的标签值（上游用它传 secret 引用）。
+   *  表单里看到的是**展平后的字符串**；这类行只有「启用/停用」可以直接保存，
+   *  改配置会被后端拒绝（结构化写入会把表达式静默展平成字面量）。 */
+  expr?: boolean
 }
 
 /// 一条具名 MCP 能力（tool / resource / template）——2026-09-15，ADR-0022。

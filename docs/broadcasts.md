@@ -142,6 +142,125 @@
   ⚠️ **未做像素级核对**（本机 in-app Browser viewport 0×0，无可见表面，截图与尺寸测量
   拿不到）；视觉复核请维护者开一次 Browser 面板看 MCP 一屏。
 
+### 2026-09-19 修复 + 优化 · MCP 面板三修：行身份贯穿、`!!js` 保真、表单补齐 http（ADR-0027 §7）—— guan（AI 协作）
+
+- **触发**：维护者「深度检测一下待提交代码中对 mcp 功能的设计和理解……全部优化，还有
+  UIUX 等视觉用户体验方面也需要优化」。前一轮（ADR-0027 主体）把**两层生效范围**建模出来
+  了，本轮是它暴露出的后果：**同层重名第一次被摆到界面上，而写操作只按 `(name, scope)`
+  定位**——于是"点第二条动第一条"从假设变成可达路径。
+- **修掉的六个真 bug**（按危害排序）：
+  1. **删错/改错行**：`delete_mcp_server` / `probe_mcp_server` / `save_mcp_server` 现各带
+     `row_id`。**空 ⇒ 按名字首条命中**（兼容无 `id` 的手写行）；**给了却没命中 ⇒ 报错**
+     （"请刷新列表后重试"），不再回退按名字操作另一行、也不再"找不到就 append 一行"。
+  2. **`!!js` 表达式行被展平**：serde_yaml 解析到 `Value` 时静默丢标签 ⇒ 保存一次就把
+     `!!js process.env.X` 写成字面量，**密钥引用从此失效且界面看不出来**。现：`expr` 从
+     原文判定（粒度 = **顶层条目**，因 `PatchFile` 重序列化粒度就是顶层条目）、结构化保存
+     一律拒绝、纯启停走**逐字节文本改写**（`toggle_disabled_in_text`）。
+  3. **streamable-http 行渲染成"没配命令"**（前端恒显示 `command args`）⇒ 表单补 transport
+     分段 + URL + 请求头，列表按传输分派（http 显示端点，stdio 显示命令 + cwd）。
+  4. **编辑全局层条目 = 凭空多一条 profile 条**（表单不带 scope）⇒ `openEditDialog` 带层，
+     改名/改层**先存后删**（反序会在保存失败时丢条目）。
+  5. **装配状态徽标恒空**（扫 `mcp__` 前缀，而清单给的是插件行）⇒ 按 `moduleName` +
+     `entryId`（剥 `include:`）匹配，`rowId` 精确、名字兜底；四种结论各有文案。
+  6. **探测假通过/假失败**：引擎未就绪时回落"当前进程 PATH"探到的命令 dsh 子进程根本看不
+     见 ⇒ 改为显式失败；预算 15s → 30s（`pnpm dlx` 首跑在装依赖不算超时）；`expr` 行不探。
+- **UI/UX（同一屏）**：两层分区头带**文件名**（"写在哪个文件"是排查第一问）、行内启停
+  Switch（不再"看徽标 + 进弹窗"两段式）、ENV/请求头默认打码点击显形（这块正是截图求助的
+  场合）、重名两种情形分别陈述并给出**加载序第几条**、表达式行徽标 + 可改范围说明、
+  参数按**引号语义**切分（`"/Program Files/…"` 算一个参数，`splitArgs`/`joinArgs` 互逆）、
+  名称非法即时禁用保存、确认框在同层重名时点出**行 id**。
+- **落档**：ADR-0027 **新增 §7 修订补录**（三条：行身份收紧 / 标签值保真只能走文本 /
+  探测口径同步），并登记 `PatchFile::for_each_entry_mut` 的返回值语义坑（返回 `false` 时
+  已做的改动被静默丢弃——本轮踩过一次）；IPC 登记册 §一 补"三修"块（`row_id` 入参、
+  `rowId`/`expr` 字段、expr 保存拒绝、探测不回落）、§二 把 http 探测预算改 30s；
+  台账复现点 23 未变（层序 / serverName 预留 / 无 npx 三条已在前一轮登记）。
+- **影响**：IPC **命令条数不变（62）**，`delete`/`probe` 的 `row_id` 为**可选**入参（旧载荷
+  仍可工作），但 `save` 对 `row_id` 失效改判错 ⇒ **前后端须同批上线**。`devMock` 的 MCP
+  一屏现在覆盖全部异常形状（同层重名 / 跨层重名 / 表达式行 / http / 停用 / 四种装配状态），
+  浏览器直开即可逐态核对。
+- **凭据**：Rust `cargo fmt --check` 通过 / 宿主 `clippy --all-targets -D warnings` 0 警告 /
+  `cargo test` **531 passed / 7 ignored**（其中 mcp 相关 47 passed，本轮新增 12 条：显式
+  row_id 优先于名字兜底、`row_id` 失效判错、同层重名逐条删、启停保真等）；
+  `cargo clippy --target x86_64-apple-darwin` 0 警告。
+  ⚠️ **windows / linux 交叉 leg 本机跑不了**：`ring` 缺 Windows SDK 头、缺
+  `x86_64-linux-gnu-gcc`（第三方 C 构建脚本先失败，进不到本 crate）——**不是**代码问题，
+  但也意味着本机没有该两平台的 lint 面。本轮以机器核对补位：`git diff` 新增行**不含任何
+  `cfg(windows)` / `cfg(unix)` 分叉**（只有一处 `#[cfg(test)]`），故缺口不落在本轮代码上；
+  CI 三平台 leg 仍须全绿才算合入。
+  前端 `tsc -b` 0 错 / `oxlint` 0 warning / `vitest` **540 passed（56 文件）**，含新增
+  `mcpForm.test.ts` 14 条纯逻辑（名称校验正反例、参数引号往返、`dupInfo` 的 rank 与两种
+  重名）与重写后的 `mcpScope.test.ts` 22 条结构闸门。
+  UI 验证方式：浏览器直开 devMock，逐态读无障碍树 + 文案（探测成功卡 / `!!js` 拒绝卡 /
+  密钥显形 / 同层重名确认框点出行 id / 编辑全局 http 条目带 scope+url+headers / 新建默认
+  profile+stdio+`pnpm`+保存禁用 / en-US 无中文漏字）。**未做像素级核对**——本机 in-app
+  Browser 无可见表面（viewport 0×0），截图与尺寸测量都拿不到；视觉复核请维护者开一次
+  Browser 面板看 MCP 一屏。
+
+### 2026-09-18 宪法级改动 · 依赖白名单入 CodeMirror 6（YAML 配置编辑面）—— guan（AI 协作）
+
+- **触发**：维护者反馈「配置的编辑体验很差，没有 VSCode 那种编辑器体验」（DSH 引擎配置
+  页，原为生 `textarea`）。经裁定选 CodeMirror 6 路线。
+- **变更**：AGENTS §4.4.1 白名单回写「CodeMirror 6（仅限配置编辑面）」；新增共享原语
+  `frontend/src/components/ui/yaml-editor.tsx`（行号 / 折叠 / YAML 高亮 / ⌘F 查找 /
+  活动行，主题全走 term-* token，零硬编码 hex；`readOnly` + `maxRows` 支持只读视窗），
+  替换三处：`DshSettingsPane` 与 `CredentialsPane` 原文模式（编辑）+ Profile 详情
+  「Patch YAML」页（只读，原为生 `<pre>`，沿用 420px≈21 行封顶口径）；
+  **Tab 失焦根因**：CM6 `basicSetup` 按无障碍惯例不把 Tab 绑给缩进（留给浏览器移焦），
+  显式补 `indentWithTab`（故依赖含 @codemirror/commands）；只读模式刻意用
+  `EditorView.editable(false)` 而非 `EditorState.readOnly`——后者连程序化 dispatch
+  一起拦，换 profile 时新内容同步不进去；`contrast.test.ts` 的 dark: 闸门收紧为
+  `dark:[a-zA-Z]`（原式误伤 CM 主题规格 `{ dark: true }` 对象字面量，非 tailwind 变体）。
+  前端依赖 +7：codemirror / @codemirror/{lang-yaml,state,view,language,commands} /
+  @lezer/highlight（构建期打包进 bundle，不触前端运行时网络红线）。
+- **影响**：仅周知（用户可见：三处 YAML 面统一为专业编辑器形态；Tab/Shift-Tab 缩进）。
+- **凭据**：typecheck / oxlint 0 警告 / vitest 519 全绿；浏览器真机验证（devMock）：
+  编辑器挂载、行号与折叠槽渲染、键高亮 = term-brand、编辑触发 docChanged 回传状态；
+  **Tab 实测** `defaultPrevented` + 焦点保持 + 多行选区缩进生效；**只读实测**
+  `contenteditable=false`、模拟输入不改文档、滚动封顶正常。
+  实测记录：裸数字/布尔 lang-yaml 6.1 不产 token，未虚构高亮规则（组件注释在案）。
+
+### 2026-09-18 宪法级改动 + 快车道 · MCP 生效范围建模（ADR-0027）与两层 patch 写入登记 —— guan（AI 协作）
+
+- **触发**：维护者「对当前 dsh-dock 的 mcp 相关功能进行优化，还需要考虑到 mcp 的生效范围」。
+  上一起因（前一轮已修）：面板说"已启用"、模型侧却永远没有 `mcp__<名>__*` 工具。
+- **先读上游、再实测**（依据都可复核）：
+  · **层顺序**：`dsh-app-boot/lib/index.js:1005 readProfilePatches` —— bundle 层 →
+    **profile 层**（`profiles/<名>/cordis.patch.yml`）→ **home 级全局层**
+    （`$DSH_HOME/cordis.patch.yml`）→ `--patch` overlays；
+  · **实测坐实**：`dsh --profile web --dump-config` 的输出里，`web` 层的 `mcp-dayu`
+    之后紧跟 `# == /Users/guan/.dsh/cordis.patch.yml` 段的 `mcp-tempad-dev`
+    —— 全局层确实进**每一个** profile 的组合树；
+  · **PATH 实测**：Harness 主进程 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`（`ps eww`），
+    且壳的 `engines/bin` 里**没有 npx**（只有 dsh / node / pnpm）⇒ 壳与 dsh 两个宿主下
+    `command: npx` 都不可达（`spawnSync` 实测 ENOENT）。这正是"MCP 配了却起不来"的头号真因；
+  · **空层会砖**：`parsePatchList` 对"解析结果不是顶层数组"**直接抛错**；纯注释文件
+    js-yaml 得 `null` ⇒ 该 profile **起不来**（本机 js-yaml 实测）。本文件中招过一次，
+    已修（空层写 `[]`）。
+- **ADR-0027 采纳的决策**：dsh 的两层用户 patch 是**两种生效范围**，壳必须同时建模——
+  `McpScope::{Profile, Global}` 进 IPC 契约；`list` 读两层并逐条标注（顺序 = patch 应用顺序）；
+  `save` 按 `scope` 选文件；`delete`/`probe` 带 `scope`（行身份 = `(scope, name)`）。
+  **跨层同名不是覆盖**（上游 `serverName` 是加载期预留，后加载的那条实例化失败），
+  故前端**显式告警且不去重**。同时补齐 `cwd` 字段、保存改**就地合并**（壳不认识的
+  `failOnStartupError`/`toolCallTimeoutMs`/`maxInstructionBytes`/`reconnect` 不得被静默删除）、
+  `serverName` 校验对齐上游 `^[A-Za-z0-9_-]{1,32}$`（否则"保存成功但永不生效"）、
+  `probe_stdio` 复现 dsh 的 PATH 与 `cwd`（否则"探测通过但 dsh 起不来"的假通过）。
+- **宪法改动（AGENTS §6）**：MCP/插件配置的写入目标从"profile `cordis.patch.yml`"
+  更正为"**两个用户层**"，指针挂 ADR-0027（§11.3 回收：明细不在正文双源）。
+  ⚠️ **提请维护者注意**：§6 当前 **47 行**，超出 §11.4 的"单节 ≤ 40 行"预算——
+  这是**既有**超支（本轮仅 +1 行指针），未擅自做大范围删除，留给维护者裁定回收范围。
+- **影响**：用户可见——MCP 面板多出「生效范围」徽标 / 作用域选择器 / 跨层冲突告警 /
+  `cwd` 输入 / 装配状态徽标；`全局` 条目自此可见可改可删。**需重启 Harness** 才对
+  desktop profile 生效（本机两层配置已修好：全局层保留可用那条，profile 层重复行已移除）。
+  IPC **命令条数不变（62）**，但 `delete_mcp_server` / `probe_mcp_server` 增 `scope` 入参、
+  `McpServerConfig` 增 `cwd`/`scope` 字段——登记册已同步，**前后端须同批上线**。
+- **凭据**：Rust `cargo fmt --check` 通过 / `clippy --all-targets -D warnings` 0 警告 /
+  `cargo test --lib` **519 passed / 7 ignored**；前端 `tsc -b` 0 错 / `oxlint` 0 warning
+  （159 文件）/ `vitest` **519 passed（55 文件）**；新增 Rust 用例 9 条
+  （两层读写删、跨层同名不去重、`cwd` 往返、未建模键存活、既有行 id 不被改写、
+  切传输不留残键、名称校验正反例）+ 前端结构闸门 16 条（`mcpScope.test.ts`）。
+  实机复核：`dsh --profile web --dump-config` 确认全局层条目进 `web` 的组合树；
+  `js-yaml` 实测纯注释 patch = `null` ⇒ `parsePatchList` 会抛（空层必须 `[]`）。
+
 ### 2026-09-17 裁决 · dsh 0.1.6-alpha.2 起自带 Agent Teams：实验能力页「dsh 自带的、dock 不代管」 —— guan（AI 协作）
 
 - **触发**（维护者给了两张截图）：「dsh 新版本已经把智能体团队插件内置了，我们的实验性功能可以把

@@ -67,17 +67,27 @@ describe("① 探测失败恒展开（不得被折叠藏起来）", () => {
 })
 
 describe("② 配置变更即丢弃旧探测结果", () => {
-  it("保存与删除各调用一次 forgetProbe（紧跟 IPC 之后）", () => {
-    const saveWindow = slice("await api.saveMcpServer", "onNotice?.(")
-    expect(saveWindow).toContain("forgetProbe(srv.name)")
+  // 2026-09-18：`forgetProbe` 改带 `scope` —— 同一个 serverName 可以**同时**存在于
+  // profile 层与 home 级全局层（两条独立生效范围），只按名字清会把另一层的探测结果
+  // 一并清掉。故这里断言"清的是刚改动的那一条 (scope, name)"，而非"按名字清"。
+  it("保存与删除各调用一次 forgetProbe（紧跟 IPC 之后，且带上所在层）", () => {
+    const saveWindow = slice("await api.saveMcpServer", "setDialogOpen(false)")
+    expect(saveWindow).toContain("forgetProbe(formScope, srv.name)")
 
-    const deleteWindow = slice("await api.deleteMcpServer", "onNotice?.(")
-    expect(deleteWindow).toContain("forgetProbe(srvName)")
+    // 窗口取**整个删除处理器**而不是"第一处 delete IPC"：2026-09-18 起保存路径里
+    // 也有一处 `api.deleteMcpServer`（改名/改层时清旧身份），按 IPC 起点切会切错段。
+    const deleteWindow = slice("const handleDeleteServer = async", "const copyPrefix")
+    expect(deleteWindow).toContain("api.deleteMcpServer(profileName, srvName, scope, rowId)")
+    expect(deleteWindow).toContain("forgetProbe(scope, srvName)")
 
-    // 恰好两处调用点：多出来的应当是**有意的**新决策，需要人重新读一遍。
+    // 恰好**四**处调用点：多出来的应当是**有意的**新决策，需要人重新读一遍。
+    // 第三处 = 改名/改层时清掉**旧身份**那条的探测结果（`forgetProbe(orig.scope,
+    // orig.name)`，2026-09-18）：不清就会把旧条目的能力清单挂在已不存在的行上。
+    // 第四处 = 行内启停（`forgetProbe(scope, srv.name)`，2026-09-18 三修）：停用后
+    // 旧清单描述的是"启用的那条"，留着就是拿旧数据陈述新配置。
     // （定义形如 `const forgetProbe = (`，不含 `forgetProbe(`，故不计数。）
     expect(code).toContain("const forgetProbe = (")
-    expect(code.split("forgetProbe(").length - 1).toBe(2)
+    expect(code.split("forgetProbe(").length - 1).toBe(4)
   })
 
   it("换 profile 时整批清空（同名 server 在不同 profile 配置可以不同）", () => {

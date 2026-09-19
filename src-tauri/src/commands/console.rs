@@ -204,22 +204,34 @@ pub async fn save_mcp_server(
     .await
     .map_err(|e| format!("保存 MCP 服务任务异常终止：{e}"))?
 }
-/// MCP 管理：删除指定 MCP 服务（4.7）
+/// MCP 管理：删除指定 MCP 服务（4.7）。
+///
+/// `scope` 由前端按 `list_mcp_servers` 回传的条目所属层给（2026-09-18）：删除语义是
+/// "从这条**生效范围**里拿掉"，只删 profile 层会让全局层条目**删不掉**（此前正是如此）。
+/// `row_id` 同理带上（2026-09-18 三修）：同层重复 `serverName` 时只有行 id 能确定用户
+/// 点的是哪一条，缺了它会删掉**列表里另一条**同名行。
 #[tauri::command]
 pub async fn delete_mcp_server(
     app: tauri::AppHandle,
     profile: String,
     server_name: String,
+    scope: Option<crate::mcp::McpScope>,
+    row_id: Option<String>,
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let scope = scope.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
             let home = crate::resolve::user_dsh_home();
-            crate::mcp::delete_mcp_server(&home, &profile, &server_name)
+            crate::mcp::delete_mcp_server(&home, &profile, &server_name, scope, row_id.as_deref())
         }
-        crate::mgmt::World::Wsl { distro } => {
-            crate::mcp::delete_mcp_server_in_guest(&distro, &profile, &server_name)
-        }
+        crate::mgmt::World::Wsl { distro } => crate::mcp::delete_mcp_server_in_guest(
+            &distro,
+            &profile,
+            &server_name,
+            scope,
+            row_id.as_deref(),
+        ),
     })
     .await
     .map_err(|e| format!("删除 MCP 服务任务异常终止：{e}"))?
@@ -239,6 +251,8 @@ pub async fn probe_mcp_server(
     app: tauri::AppHandle,
     profile: String,
     server_name: String,
+    scope: Option<crate::mcp::McpScope>,
+    row_id: Option<String>,
 ) -> Result<crate::mcp_probe::McpProbe, String> {
     let world = crate::mgmt::current_world(&app)?;
     let home = match world {
@@ -251,20 +265,54 @@ pub async fn probe_mcp_server(
             )
         }
     };
+    // 探测要复现 **dsh 子进程的解析条件**（2026-09-18）：PATH 用同源的
+    // `dsh_child_path`——否则会出现"探测通过、dsh 里却 ENOENT"的假通过。
+    //
+    // **不得退化成当前进程 PATH**（2026-09-18 二修）：引擎未就绪时退着探，探到的
+    // 是"从 Dock 进程继承的 PATH 里恰好有什么"，而 dsh 子进程拿的是另一套 PATH ⇒
+    // 这类"能跑通"的结论会直接误导用户去点那条不存在的 `npx`。宁可显式失败。
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let crate::engines::DshToolchain::Engine { node_bin, .. } =
+        crate::engines::resolve_toolchain(&data_dir)?;
+    let path_env = crate::resolve::dsh_child_path(&node_bin, &data_dir);
+    let scope = scope.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let servers = crate::mcp::list_mcp_servers(&home, &profile)?;
+        // 同名条目可能同时存在于两层 ⇒ 按 (name, scope) 定位用户点的那一行；
+        // **同层**还有重复时只有行 id 能区分（2026-09-18 三修）——探错一条会把
+        // 另一条的结论挂到这一行上，比不探更坏。行 id 为空 ⇒ 回退按 (name, scope)。
+        let want_row = row_id.as_deref().filter(|s| !s.is_empty());
         let server = servers
             .into_iter()
-            .find(|s| s.name == server_name)
+            .find(|s| {
+                s.name == server_name
+                    && s.scope == scope
+                    && want_row.is_none_or(|id| s.row_id == id)
+            })
             .ok_or_else(|| {
                 format!("profile「{profile}」未配置名为「{server_name}」的 MCP 服务器")
             })?;
+        // `!!js process.env.X` 行**不探**（2026-09-18 二修）：壳只会把等号右边的
+        // **字面量**当 env 值传下去，而 dsh 侧是**求值后**的真实 token ⇒ 探测要么
+        // 假失败（401）要么带着错凭据假通过。两者都比不探更坏。
+        if server.expr {
+            return Err(format!(
+                "MCP 服务器「{}」的配置含 `!!js` 表达式（从环境变量取值），\
+                 壳无法在探测里复现 dsh 的求值 ⇒ 不探测（避免假通过/假失败）。\
+                 要验证能力，请在 dsh 会话里直接用它的工具。",
+                server.name
+            ));
+        }
         // 整轮总期限（启动 + 握手 + 三次枚举）：卡住的服务器不得挂死详情页。
+        // 30s（2026-09-18 二修，原 15s）：冷启动要走 `pnpm dlx` / 首跑装包，
+        // 15s 会把"其实在装依赖"误判成失败。
         // 按 transport 分派（ADR-0022 §3.3）：两条分支**各自有独立的合规通道**
         // ——stdio 走子进程，streamable-http 走条目级豁免的进程内 HTTP。
-        let budget = std::time::Duration::from_secs(15);
+        let budget = std::time::Duration::from_secs(30);
         match server.transport {
-            crate::mcp::McpTransport::Stdio => crate::mcp_probe::probe_stdio(&server, budget),
+            crate::mcp::McpTransport::Stdio => {
+                crate::mcp_probe::probe_stdio(&server, budget, Some(path_env.as_str()))
+            }
             crate::mcp::McpTransport::StreamableHttp => {
                 crate::mcp_probe::probe_http(&server, budget)
             }

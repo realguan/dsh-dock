@@ -236,12 +236,34 @@ export function setupDevMock() {
         const active = mockProfiles[0]
         return {
           profile: active.name,
-          entries: active.dependencies.map((d: string, i: number) => ({
-            entry_id: `entry-${i}`,
-            module_name: d,
-            enabled: i !== 2,
-            fiber_phase: i === 2 ? null : ("active" as const),
-          })),
+          entries: [
+            ...active.dependencies.map((d: string, i: number) => ({
+              entry_id: `entry-${i}`,
+              module_name: d,
+              enabled: i !== 2,
+              fiber_phase: i === 2 ? null : ("active" as const),
+            })),
+            // MCP 插件行（2026-09-18 三修）：装配状态徽标的真相源就是这些行——
+            // 模块名恒为 dsh-mcp-client，`entry_id` 是 loader 树路径 `include:<行id>`。
+            // 与上面 `list_mcp_servers` 的 rowId 对齐，四种装配结论各占一条：
+            // active / failed / loading / (enabled 但 fiber_phase=null = 没有实例)。
+            // 完全没有条目的行**不给徽标**（观测不到就不陈述）。
+            ...[
+              (["mcp-github", true, "active"]) as const,
+              (["mcp-fetch", true, "active"]) as const,
+              (["mcp-fetch-2", true, "failed"]) as const,
+              (["mcp-postgres", true, "loading"]) as const,
+              (["mcp-tempad-dev", true, null]) as const,
+              (["mcp-legacy-crash", false, null]) as const,
+              (["mcp-filesystem", true, "active"]) as const,
+              (["mcp-remote-search", true, "active"]) as const,
+            ].map(([rowId, enabled, phase]) => ({
+              entry_id: `include:${rowId}`,
+              module_name: "@deepseek-ai/dsh-mcp-client",
+              enabled,
+              fiber_phase: phase,
+            })),
+          ],
         }
       }
 
@@ -381,31 +403,126 @@ export function setupDevMock() {
           ],
         }
 
-      // MCP 服务器（结构化配置）
+      // MCP 服务器（结构化配置）。`scope` 演示两种生效范围（2026-09-18）：
+      // global = $DSH_HOME/cordis.patch.yml（所有 profile），profile = 仅本 profile。
+      // 2026-09-18 三修：这一屏要能直接看到全部**异常形状**（同层重名 / 跨层重名 /
+      // `!!js` 表达式行 / streamable-http / 已停用），否则改 UI 时只能看到最顺的那条。
+      // `rowId` 是写操作定位那一行的身份；命令一律 `pnpm dlx`——引擎目录里没有 npx。
       case "list_mcp_servers":
         return [
           {
             name: "github",
-            command: "npx",
-            args: ["-y", "@modelcontextprotocol/server-github"],
+            command: "pnpm",
+            args: ["dlx", "-y", "@modelcontextprotocol/server-github"],
             env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_••••••••••••" },
             disabled: false,
+            scope: "profile",
+            rowId: "mcp-github",
+          },
+          // 同层重名：两条同名都写进了**同一个文件** ⇒ 后加载那条必然实例化失败。
+          {
+            name: "fetch",
+            command: "pnpm",
+            args: ["dlx", "-y", "mcp-server-fetch"],
+            env: {},
+            disabled: false,
+            scope: "profile",
+            rowId: "mcp-fetch",
+          },
+          {
+            name: "fetch",
+            command: "pnpm",
+            args: ["dlx", "-y", "@modelcontextprotocol/fetch"],
+            env: {},
+            disabled: false,
+            scope: "profile",
+            rowId: "mcp-fetch-2",
+          },
+          // 表达式行：patch 原文是 `!!js process.env.APP_DB_URL`，展平后就是右边那串
+          // 字面量 ⇒ 界面必须标出来（改这类行会被后端拒绝）。
+          {
+            name: "postgres",
+            command: "pnpm",
+            args: ["dlx", "-y", "@modelcontextprotocol/server-postgres"],
+            env: { DATABASE_URL: "process.env.APP_DB_URL" },
+            disabled: false,
+            scope: "profile",
+            rowId: "mcp-postgres",
+            expr: true,
+          },
+          {
+            name: "tempad-dev",
+            command: "/usr/local/bin/node",
+            args: ["~/.dsh/mcp-servers/tempad-dev/node_modules/@tempad-dev/mcp/dist/cli.mjs"],
+            env: {},
+            cwd: "~/.dsh/mcp-servers/tempad-dev",
+            disabled: false,
+            scope: "global",
+            rowId: "mcp-tempad-dev",
+          },
+          // 跨层重名：profile 层与全局层各一条同名（两条都插入，全局那条失败）。
+          {
+            name: "filesystem",
+            command: "pnpm",
+            args: ["dlx", "-y", "@modelcontextprotocol/server-filesystem", "~/git"],
+            env: {},
+            disabled: false,
+            scope: "profile",
+            rowId: "mcp-filesystem",
           },
           {
             name: "filesystem",
-            command: "npx",
-            args: ["-y", "@modelcontextprotocol/server-filesystem", "~/git"],
+            command: "pnpm",
+            args: ["dlx", "-y", "@modelcontextprotocol/server-filesystem", "~/docs"],
             env: {},
             disabled: false,
+            scope: "global",
+            rowId: "mcp-filesystem",
+          },
+          // streamable-http：没有 command/args/cwd，只有端点与请求头。
+          {
+            name: "remote-search",
+            command: "",
+            args: [],
+            env: {},
+            disabled: false,
+            transport: "streamable-http",
+            url: "https://mcp.example.com/search/mcp",
+            headers: { Authorization: "Bearer sk-••••••••••", "X-Tenant": "acme" },
+            scope: "global",
+            rowId: "mcp-remote-search",
           },
           {
-            name: "postgres",
-            command: "npx",
-            args: ["-y", "@modelcontextprotocol/server-postgres"],
-            env: { DATABASE_URL: "postgresql://localhost:5432/app" },
+            name: "legacy-crash",
+            command: "pnpm",
+            args: ["dlx", "-y", "@acme/mcp-legacy"],
+            env: {},
             disabled: true,
+            scope: "global",
+            rowId: "mcp-legacy-crash",
           },
         ]
+
+      // MCP 能力探测（ADR-0022）：成功给一份三清单快照；表达式行**必须**走到拒绝分支
+      // （后端不会探 `!!js` 行——壳侧复现不了 dsh 的求值，探了就是假通过/假失败）。
+      case "probe_mcp_server": {
+        const name = args?.serverName ?? "unknown"
+        if (name === "postgres") {
+          throw `MCP 服务器「${name}」的配置含 \`!!js\` 表达式（从环境变量取值），壳无法复现 dsh 的求值 ⇒ 不探测。`
+        }
+        return {
+          protocolVersion: "2025-06-18",
+          serverName: name,
+          tools: [
+            { name: "search", detail: "按关键词检索，返回带引用的摘要" },
+            { name: "fetch_url", detail: "抓取一个 URL 并转成 Markdown" },
+            { name: "read_file", detail: "读取工作目录内的文本文件" },
+          ],
+          resources: [{ name: "help://getting-started", detail: "入门说明文档" }],
+          templates: [{ name: "record", detail: "records://{id}" }],
+          notes: [],
+        }
+      }
 
       // 实验能力开关（2026-09-16，ADR-0020 §7）：四态各一，供浏览器直开时看全状态
       // —— 已启用 / 未启用 / 已停用 / 需要修复都在一屏里，改文案与布局时能立刻看出差别。

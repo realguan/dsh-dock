@@ -210,7 +210,17 @@ fn await_id(
 ///
 /// `timeout` 是**整轮**探测的总期限（含启动、握手与三次枚举）——避免一个卡住的
 /// 服务器把详情页挂死。
-pub fn probe_stdio(server: &McpServerConfig, timeout: Duration) -> Result<McpProbe, String> {
+///
+/// `path_env`（2026-09-18 加）：**dsh 子进程实际拿到的 PATH**（调用方传
+/// `resolve::dsh_child_path` 的结果）。探测必须复现 dsh 的解析条件，否则会给出
+/// **假通过**：本机实测 Harness 进程 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，
+/// `command: npx` 在探测里（继承壳的宽 PATH）能起来，在 dsh 里却 `ENOENT`——
+/// 用户看到"探测通过"却永远拿不到工具。`None` = 沿用当前进程 PATH（测试/兼容用）。
+pub fn probe_stdio(
+    server: &McpServerConfig,
+    timeout: Duration,
+    path_env: Option<&str>,
+) -> Result<McpProbe, String> {
     if server.command.trim().is_empty() {
         return Err(format!(
             "MCP 服务器「{}」的 transport 是 stdio，但配置里没有 command，无法探测\
@@ -224,6 +234,14 @@ pub fn probe_stdio(server: &McpServerConfig, timeout: Duration) -> Result<McpPro
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
+    if let Some(path) = path_env {
+        cmd.env("PATH", path);
+    }
+    // cwd：上游 `StdioConfig.cwd` 就是子进程工作目录。不传 = 继承壳的 cwd，
+    // 与 dsh 里的语义不等价，故配置写了就照做。
+    if !server.cwd.trim().is_empty() {
+        cmd.current_dir(&server.cwd);
+    }
     // 守卫式 spawn（ADR-0015/AGENTS §6）：短命探测用 Role::Probe
     // ——不把 procs/ 目录堆满（lifecycle 对该角色有就地删除口径）。
     let mut child = crate::lifecycle::spawn(
@@ -231,7 +249,15 @@ pub fn probe_stdio(server: &McpServerConfig, timeout: Duration) -> Result<McpPro
         crate::lifecycle::Role::Probe,
         crate::lifecycle::GuardCtx::of(&server.command, None),
     )
-    .map_err(|e| format!("启动 MCP 服务器失败（{}）：{e}", server.command))?;
+    .map_err(|e| {
+        format!(
+            "启动 MCP 服务器失败（{}）：{e}。若为找不到可执行文件，请注意 dsh 子进程的 PATH \
+             比登录 shell 窄得多（本机实测仅 /usr/bin:/bin:/usr/sbin:/sbin），npx 一类装在\
+             版本管理器下的命令通常不可达；改用「绝对路径 node + 绝对路径入口脚本 + 显式 cwd」\
+             可完全不依赖 PATH",
+            server.command
+        )
+    })?;
 
     let mut stdin = child
         .stdin
@@ -625,6 +651,7 @@ fn run_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::McpScope;
 
     /// 握手请求必须携带**真实**协议版本与身份；缺 `params` 会被服务端直接拒。
     #[test]
@@ -715,8 +742,12 @@ mod tests {
             transport: crate::mcp::McpTransport::StreamableHttp,
             url: "https://example.test/mcp".to_string(),
             headers: std::collections::BTreeMap::new(),
+            cwd: String::new(),
+            scope: McpScope::Profile,
+            row_id: String::new(),
+            expr: false,
         };
-        let err = probe_stdio(&server, Duration::from_millis(50)).unwrap_err();
+        let err = probe_stdio(&server, Duration::from_millis(50), None).unwrap_err();
         assert!(err.contains("remote"), "须点名是哪个服务器：{err}");
         assert!(
             err.contains("streamable-http"),
@@ -919,6 +950,10 @@ mod tests {
             transport: crate::mcp::McpTransport::StreamableHttp,
             url: String::new(),
             headers: std::collections::BTreeMap::new(),
+            cwd: String::new(),
+            scope: McpScope::Profile,
+            row_id: String::new(),
+            expr: false,
         };
         let err = probe_http(&base, Duration::from_millis(50)).unwrap_err();
         assert!(err.contains("没有 url"), "{err}");
@@ -946,6 +981,10 @@ mod tests {
             transport: crate::mcp::McpTransport::StreamableHttp,
             url: "http://127.0.0.1:9/mcp".to_string(),
             headers: std::collections::BTreeMap::new(),
+            cwd: String::new(),
+            scope: McpScope::Profile,
+            row_id: String::new(),
+            expr: false,
         };
         let started = std::time::Instant::now();
         let err = probe_http(&server, Duration::from_secs(15))
@@ -993,8 +1032,12 @@ mod tests {
             transport: crate::mcp::McpTransport::Stdio,
             url: String::new(),
             headers: std::collections::BTreeMap::new(),
+            cwd: String::new(),
+            scope: McpScope::Profile,
+            row_id: String::new(),
+            expr: false,
         };
-        let probe = probe_stdio(&server, Duration::from_secs(30))
+        let probe = probe_stdio(&server, Duration::from_secs(30), None)
             .unwrap_or_else(|e| panic!("真实服务器探测失败：{e}"));
         assert!(
             !probe.tools.is_empty(),

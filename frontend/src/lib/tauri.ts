@@ -189,14 +189,19 @@ export const api = {
   /** 保存到 `server.scope` 指出的那一层（缺省 profile 层）。 */
   saveMcpServer: (profile: string, server: McpServerConfig) =>
     invoke<void>("save_mcp_server", { profile, server }),
-  /** **按层删除**（2026-09-18）：同名条目两层都有时只删指定层那一条。 */
-  deleteMcpServer: (profile: string, serverName: string, scope: McpScope) =>
-    invoke<void>("delete_mcp_server", { profile, serverName, scope }),
+  /** **按层删除**（2026-09-18）：同名条目两层都有时只删指定层那一条。
+   *  `rowId`（2026-09-18 三修）定位**同层重复 serverName** 里用户点的那一行。 */
+  deleteMcpServer: (profile: string, serverName: string, scope: McpScope, rowId?: string) =>
+    invoke<void>("delete_mcp_server", { profile, serverName, scope, rowId }),
   /** 探测 MCP 服务器能力（ADR-0022 stdio 分支）：握手后枚举 Tools/Resources/Templates。
    *  `streamable-http` 与 WSL 客体档会 reject（各自说明原因）。
-   *  `scope` 决定探测哪一层的那一条（两层同名时不可省）。 */
-  probeMcpServer: (profile: string, serverName: string, scope: McpScope) =>
-    invoke<McpProbe>("probe_mcp_server", { profile, serverName, scope }),
+   *  `scope` 决定探测哪一层的那一条（两层同名时不可省）；`rowId` 决定同层里的哪一条。 */
+  probeMcpServer: (
+    profile: string,
+    serverName: string,
+    scope: McpScope,
+    rowId?: string,
+  ) => invoke<McpProbe>("probe_mcp_server", { profile, serverName, scope, rowId }),
 
   // 社区插件市场 Registry 拉取
   fetchMarketRegistry: () => invoke<string>("fetch_market_registry"),

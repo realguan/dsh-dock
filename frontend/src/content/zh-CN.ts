@@ -359,6 +359,9 @@ export const t = {
     distributeTargetLabel: "选择目标 Profile",
     distributeWithConfig: "连带复制配置行",
     mcpDisable: "停用该 MCP 服务",
+    // 行内启停的无障碍名：一屏多行时必须说清是哪一条（读屏只念这一个字符串）。
+    mcpEnableAria: (name: string) => `启用 MCP 服务 ${name}`,
+    mcpDisableAria: (name: string) => `停用 MCP 服务 ${name}`,
     mcpEnvRemove: "删除该环境变量",
     title: "控制中心",
     subtitle: "多工作台管理、插件生态矩阵、会话自愈维护与系统控制台",
@@ -591,7 +594,7 @@ export const t = {
     tabPatch: "Patch YAML",
     tabMcp: "MCP 扩展",
     mcpTitle: "MCP 服务器管理器",
-    mcpSubtitle: "管理当前 Profile 的 Model Context Protocol 工具与外部服务扩展",
+    mcpSubtitle: "管理 Model Context Protocol 工具与外部服务扩展（含生效范围）",
     mcpEmpty: "当前 Profile 尚未配置任何 MCP 服务",
     mcpAddBtn: "添加 MCP 服务",
     mcpLoadFailed: "MCP 配置读取失败",
@@ -599,6 +602,29 @@ export const t = {
     mcpEditBtn: "编辑",
     mcpDeleteBtn: "删除",
     mcpDeleteConfirm: (name: string) => `确定移除 MCP 服务「${name}」？`,
+    // ── 生效范围（2026-09-18，dsh-app-boot 实查：profile 层 → 全局层 → overlays） ──
+    mcpScopeProfile: "仅本 Profile",
+    mcpScopeProfileHint: "写在 profiles/<名>/cordis.patch.yml：只有这个 Profile 会加载。",
+    mcpScopeGlobal: "所有 Profile",
+    mcpScopeGlobalHint: "写在 $DSH_HOME/cordis.patch.yml：每个 Profile 启动都会加载。",
+    mcpScopeLabel: "生效范围",
+    // 长句一律做**悬浮内容**，表面只留短结论（2026-09-19 裁定，见 ui/info-tip.tsx）。
+    /** 跨层同名 = 两条都会加载，后加载的那条实例化失败（上游 serverName 是加载期预留）。 */
+    mcpScopeConflict: (name: string, rank: number) =>
+      `「${name}」在「仅本 Profile」和「所有 Profile」两层各有一条，这一行按加载序是第 ${rank} 条：两条都会插入，后加载的那条会因 serverName 已预留而实例化失败。请删掉其中一条。`,
+    mcpScopeConflictTag: (rank: number) => `跨层重名 · 加载序第 ${rank} 条`,
+    /** 同层同名 = 同一个文件里两行都叫这个名字（手抄重复、复制粘贴最常见）。 */
+    mcpDupSameScope: (name: string, rank: number) =>
+      `本层有两条「${name}」，这一行是第 ${rank} 条：两条都会插入，后加载的那条会因 serverName 已预留而实例化失败。停用或删掉多余的一条即可（启停、探测、删除都只作用于这一行）。`,
+    mcpDupSameScopeTag: (rank: number) => `本层重名 · 第 ${rank} 条`,
+    // ── `!!js` 表达式行（2026-09-18 立，2026-09-19 收进悬浮）：表面短结论 + 完整口径 ──
+    mcpExprTag: "含表达式",
+    mcpExprShort: "含 !!js 表达式：只允许启用/停用",
+    mcpExprHint:
+      "这一行的值写了 !!js 表达式（从环境变量取密钥），界面里显示的是它展开后的文本、不是要填进去的值。结构化保存会把它展平成字面量、密钥引用从此失效，因此这类行只允许切换启用/停用；要改它的配置，请直接在文本编辑器里改所在层的 cordis.patch.yml。",
+    // ── 密钥显示（env / headers 常装 token，默认打码） ──
+    mcpSecretReveal: "点击显示该值",
+    mcpSecretHide: "点击隐藏该值",
     // MCP 能力探测（2026-09-15，ADR-0022 stdio 分支）
     mcpProbeBtn: "探测",
     mcpProbeResult: (srv: string, tools: number, resources: number, templates: number) =>
@@ -612,21 +638,60 @@ export const t = {
     mcpProbeResources: "资源",
     mcpProbeTemplates: "资源模板",
     // SSH 远程工作区向导（2026-09-15，ADR-0023）
-    mcpDeleteNote: "将从当前 Profile 的 cordis.patch.yml 中安全删除。",
-    mcpActiveTools: (count: number) => `运行时已加载 ${count} 个工具`,
-    mcpNoActiveTools: "当前未在运行态或无导出工具",
+    mcpDeleteNote: "将从所在层的 cordis.patch.yml 中安全删除（覆写前自动备份）。",
+    /** 同层同名两行时，确认框必须说出是哪一行（行 id 就是文件里那一行的 id）。 */
+    mcpDeleteRowId: (rowId: string) => `本层同名有多条，要删的是行 id「${rowId}」这一行。`,
+    // 装配状态（2026-09-18）：配置存在 ≠ 已加载。enabled 是配置级生效值，
+    // fiberPhase 才说明有没有存活实例（null = 没有实例，既可能是停用也可能是导入失败）。
+    // 2026-09-19：表面只放 `*Tag` 短结论，下面四句完整判定进悬浮。
+    mcpRuntimeActiveTag: "已加载",
+    mcpRuntimeDisabledTag: "运行态停用",
+    mcpRuntimeFailedTag: "加载失败",
+    mcpRuntimeNotLoadedTag: "未加载",
+    mcpRuntimeActive: "当前会话已加载：工具已在模型侧可用",
+    mcpRuntimeDisabled: "运行态显示该行已停用（配置未生效）",
+    mcpRuntimeFailed: "运行态显示加载失败：请看启动日志里的该行报错",
+    mcpRuntimeNotLoaded: (phase: string | null) =>
+      phase
+        ? `运行态显示 ${phase}：尚未就绪`
+        : "运行态显示该行没有存活实例（配置已启用但没加载起来；常见原因：命令不可达、缺依赖、或需要重启会话）",
     mcpModalTitle: "配置 MCP 服务",
-    mcpModalDesc: "配置服务名称、运行命令、参数与环境变量，保存后将整体安全更新至 cordis.patch.yml。",
+    mcpModalDesc:
+      "配置服务标识、生效范围、运行命令、参数与环境变量；保存后写入对应层的 cordis.patch.yml。",
     mcpPresetTitle: "快速应用常用预设",
     mcpServerName: "服务标识 (Server Name)",
+    mcpNameHint:
+      "会进工具名 mcp__<标识>__<工具>，因此只能是字母、数字、下划线或连字符，最长 32 个字符（中文名会让整行插件加载被拒）。",
+    mcpNameInvalid: (name: string) => `服务标识「${name}」不符合上游约束：仅限字母、数字、下划线与连字符，最长 32 个字符。`,
+    mcpNameTaken: (name: string) =>
+      `所选生效范围里已经有「${name}」这一条：新增会改写它而不是再加一条。要换一条请改标识，要改这条请用编辑。`,
+    // ── 连接方式（2026-09-18）：两种传输的字段完全不同，选错等于填了两份空配置 ──
+    mcpTransportLabel: "连接方式 (Transport)",
+    mcpTransportStdio: "本地命令 (stdio)",
+    mcpTransportHttp: "远程端点 (streamable-http)",
+    mcpTransportStdioHint: "由 dsh 启动一个本地子进程，通过标准输入输出通信：填命令、参数与环境变量。",
+    mcpTransportHttpHint: "连接一个已经跑着的 HTTP 端点：填 URL 与请求头，不需要命令。",
+    mcpUrl: "MCP 端点 URL",
+    mcpUrlHint: "形如 http://127.0.0.1:8000/mcp 或 https://example.com/mcp，必须是 http(s):// 开头。",
+    mcpUrlRequired: "streamable-http 必须填 MCP 端点 URL",
+    mcpUrlMissing: "该行未配置端点 URL（加载时必定失败）",
+    mcpHeaders: "请求头 (Headers)",
+    mcpHeadersLabel: "请求头",
+    mcpAddHeader: "+ 添加请求头",
+    mcpHeaderRemove: "删除该请求头",
+    mcpNoHeaders: "无需附加请求头",
     mcpCommand: "启动命令 (Command)",
     mcpArgs: "命令参数 (Args)",
+    mcpCwd: "工作目录 (cwd)",
+    mcpCwdHint:
+      "stdio 子进程的启动目录，可留空。若用「绝对路径 node + 绝对路径入口脚本」写法（完全不依赖 PATH），必须填这里让脚本能解析自己的依赖。",
+    mcpCommandHint:
+      "命令由 dsh 的子进程解析，它的 PATH 比登录 shell 窄得多：随壳内置的引擎目录里只有 pnpm（没有 npx）。所以一次性拉起包请写 pnpm dlx，命令名不必是版本管理器里的 npx。装在本机的服务写绝对路径（如 /usr/bin/node），并把它所在目录填进下面的工作目录。",
+    mcpArgsHint: "按空格分隔；含空格的路径用引号包起来算一个参数，例如 \"/Program Files/node/server.js\"。",
     mcpEnv: "环境变量 (ENV, KEY=VALUE 每行一个)",
-    mcpPrefix: "工具前缀",
     mcpSaveBtn: "保存服务",
     mcpSaveSuccess: (name: string) => `MCP 服务「${name}」已成功保存至 cordis.patch.yml`,
     mcpDeleteSuccess: "MCP 服务已成功删除",
-    mcpConfigSaved: "MCP 配置已同步至 cordis.patch.yml",
     emptySelectTitle: "未选定 Profile",
     emptySelectSubtitle: "在左侧选择一个 Profile 或新建工作台，即可在此配置插件、查看底座与管理 YAML Patch。",
     quickDistribute: "分发到...",

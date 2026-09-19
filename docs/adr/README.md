@@ -39,6 +39,7 @@
 | [0024](0024-desktop-quick-task-runner.md) | 桌面任务快跑器：OS 全局热键 + 轻量窗口，壳不解析 `--json`、职责限「任务转交」。（**2026-09-15 维护者裁定「暂时不做」——未否决，当前批次不实施，`roadmap` §5 边界问题留白**） |
 | [0025](0025-boot-safe-mode-overlay.md) | 启动失败的安全模式：用 `--patch` **临时 overlay** 禁用用户层全部行（差分 `--dump-config − --dump-default-config` 枚举，overlay 落在壳自有数据目录）——零 dsh 文件改动、原子回退；官方 app 的 `plugins-disable-all` 重置 bundles 治不了 `cordis.patch.yml` 的 insert 行；错误卡首屏收敛为**一个**按钮（其余出路下沉到"展开详情"，§7）。**状态：机制已被 [0026](0026-safe-mode-via-config-disable.md) 取代（保留决策史；§7 单按钮裁定仍有效）** |
 | [0026](0026-safe-mode-via-config-disable.md) | 安全模式 = **在 profile 配置里把全部三方插件写成 `disabled: true`**（覆写前备份 + 一键用备份覆盖回去）；配置层即唯一真相源，`--patch` overlay 退役。**状态：已采纳**（2026-09-16 维护者裁定；同时推翻 ADR-0025 §4 的"三方 bundle 层停不掉"结论——真因是判据过宽） |
+| [0027](0027-mcp-activation-scope.md) | MCP 生效范围建模：dsh 的两层用户 patch（profile 层 + `$DSH_HOME` 全局层）是两种生效范围——壳读两层、按层写/删/探，跨层同名**显式告警**（不是覆盖、不是去重）；补齐 `cwd`，且保存改**就地合并**（壳不认识的键不得被静默删除） |
 
 ## 维护约定
 

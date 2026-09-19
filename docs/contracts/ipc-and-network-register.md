@@ -61,6 +61,30 @@ ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并
 `probe_mcp_server`（2026-09-15，ADR-0022：探测 MCP 能力；**stdio 分支**经 `lifecycle`
 seam 起子进程，http 分支为条目级网络豁免，WSL 客体档显式报错）。
 
+> **2026-09-18 生效范围建模（命令条数不变；参数与语义变更）**：
+> - `list_mcp_servers` 改为读**两层**（`profiles/<名>/cordis.patch.yml` +
+>   `$DSH_HOME/cordis.patch.yml`），每条带 `scope: "profile" | "global"`；
+> - `save_mcp_server` 按 `server.scope` 选层写入（缺省 profile 层）；
+> - `delete_mcp_server` / `probe_mcp_server` 各增 `scope` 入参（可选，缺省 profile）
+>   —— **同名条目可同时存在于两层**，不带层会删错、探错那一条；
+> - `McpServerConfig` 增 `cwd`（stdio 子进程工作目录）与 `scope` 两个字段。
+>
+> 依据：`dsh-app-boot/lib/index.js:1005 readProfilePatches` 实查（bundle 层 → profile 层 →
+> home 级全局层 → `--patch` overlays）。**未新增命令，故 62 条不变**。
+>
+> **2026-09-18 三修（仍是那四条命令，参数与口径收紧；详见 ADR-0027 §7）**：
+> - `delete_mcp_server` / `probe_mcp_server` 各增 `row_id` 入参（可选）。**空 ⇒ 按
+>   `(name, scope)` 首条命中**（兼容无 `id` 的手写行）；**给了却没命中 ⇒ 直接报错**
+>   （"请刷新列表后重试"），绝不回退按名字操作另一行——同层重名时那是可达路径；
+> - `save_mcp_server` 同样按 `row_id` 定位被编辑的那一行；`row_id` 失效即报错，
+>   不再"名字对不上就 append 一行"（会凭空多出一条）；
+> - `McpServerConfig` 增 `rowId`（patch 行 id，装配状态按它匹配）与 `expr`
+>   （原文含 `!!js` 标签值）。**`expr` 行的结构化保存被后端拒绝**：serde_yaml 会把
+>   标签展平成字面量，写回去就毁掉凭据来源；只有"整行原样带回、仅 `disabled` 变化"
+>   的启停走逐字节文本改写通道；
+> - `probe_mcp_server` 在 `expr` 行上**不探测**（壳复现不了 dsh 的 `!!js` 求值 ⇒
+>   要么假失败要么带错凭据假通过），引擎未就绪时不回落当前进程 PATH（同理）。
+
 **市场**：`fetch_market_registry`（2026-08-31）。
 
 **当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
@@ -103,7 +127,7 @@ seam 起子进程，http 分支为条目级网络豁免，WSL 客体档显式报
 
 | 用途 | 落点 | 边界 |
 |:---|:---|:---|
-| MCP 能力探测（**streamable-http 分支**） | `mcp_probe.rs::post_rpc`，2026-09-15，ADR-0022 §3.3 方案 A | POST **用户在 `cordis.patch.yml` 自填的 `url`**；整轮 15s（5 次往返共享一个 deadline）、`redirects=0`、只读一次性快照。**条目级而非整文件**：将来新增触网点（如 `resources/read` 预览）仍须单独登记（ADR-0022 §3.3 方案 C 否决）。**本探测扩大壳的信任边界**——用户配置的 URL 会被壳真实访问；ADR-0022 **不解决 SSRF 类风险**，仅以"用户自配端点 + 只读 + 有界超时"限制影响面（如需策略另开工） |
+| MCP 能力探测（**streamable-http 分支**） | `mcp_probe.rs::post_rpc`，2026-09-15，ADR-0022 §3.3 方案 A | POST **用户在 `cordis.patch.yml` 自填的 `url`**；整轮 30s（2026-09-18 三修：原 15s 会把"`pnpm dlx` 首跑正在装依赖"误判成失败；5 次往返共享一个 deadline）、`redirects=0`、只读一次性快照。**条目级而非整文件**：将来新增触网点（如 `resources/read` 预览）仍须单独登记（ADR-0022 §3.3 方案 C 否决）。**本探测扩大壳的信任边界**——用户配置的 URL 会被壳真实访问；ADR-0022 **不解决 SSRF 类风险**，仅以"用户自配端点 + 只读 + 有界超时"限制影响面（如需策略另开工） |
 
 ### 直接触网（`updates.rs` / `updater.rs`，唯一网络面本体）
 

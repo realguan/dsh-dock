@@ -312,7 +312,9 @@ describe("设计 token 对比度闸门", () => {
     // 散落的 `dark:` 变体既不可达，将来一旦启用又会用原始调色板破坏 token 体系。
     const offenders = Object.entries(RAW_TSX)
       .filter(([path]) => !path.endsWith("/contrast.test.ts"))
-      .filter(([, src]) => /(?:^|[\s"'`])dark:/.test(src))
+      // 2026-09-18 收紧：变体后必跟类名片段（`dark:bg-x`）。原式会误伤对象
+      // 字面量 `{ dark: true }`（CodeMirror 主题规格），那不是 tailwind 变体。
+      .filter(([, src]) => /(?:^|[\s"'`])dark:[a-zA-Z]/.test(src))
       .map(([path]) => path)
     expect(offenders, "要做暗色请覆盖 @theme 语义变量，不要散落 dark: 变体").toEqual([])
   })

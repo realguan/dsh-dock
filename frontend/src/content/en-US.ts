@@ -357,6 +357,9 @@ export const enUS: AppCopy = {
     distributeTargetLabel: "Select target profile",
     distributeWithConfig: "Copy config lines too",
     mcpDisable: "Disable this MCP server",
+    // Row-level toggle accessible names: with several rows on screen the name must say which.
+    mcpEnableAria: (name: string) => `Enable MCP server ${name}`,
+    mcpDisableAria: (name: string) => `Disable MCP server ${name}`,
     mcpEnvRemove: "Remove this environment variable",
     title: "Control Center",
     subtitle: "Workspaces management, plugin matrix, session self-healing, and system console",
@@ -576,14 +579,36 @@ export const enUS: AppCopy = {
     tabPatch: "Patch YAML",
     tabMcp: "MCP Extensions",
     mcpTitle: "MCP Server Manager",
-    mcpSubtitle: "Manage Model Context Protocol external tools and services for this profile",
-    mcpEmpty: "No MCP servers configured in this profile yet",
+    mcpSubtitle: "Manage Model Context Protocol external tools and services (with activation scope)",
+    mcpEmpty: "No MCP servers configured for this profile yet",
     mcpAddBtn: "Add MCP Server",
     mcpLoadFailed: "Failed to load MCP configuration",
     mcpRetry: "Retry",
     mcpEditBtn: "Edit",
     mcpDeleteBtn: "Delete",
     mcpDeleteConfirm: (name: string) => `Remove MCP server "${name}"?`,
+    // Activation scope (2026-09-18; verified in dsh-app-boot: profile layer → global layer → overlays)
+    mcpScopeProfile: "This profile only",
+    mcpScopeProfileHint:
+      "Written to profiles/<name>/cordis.patch.yml: only this profile loads it.",
+    mcpScopeGlobal: "All profiles",
+    mcpScopeGlobalHint:
+      "Written to $DSH_HOME/cordis.patch.yml: every profile loads it on startup.",
+    mcpScopeLabel: "Activation scope",
+    mcpScopeConflict: (name: string, rank: number) =>
+      `"${name}" exists in both "This profile only" and "All profiles"; this row is #${rank} in load order: both rows are inserted, and the later one fails to instantiate because the serverName is already reserved. Delete one of them.`,
+    mcpScopeConflictTag: (rank: number) => `duplicate across layers · #${rank} in load order`,
+    mcpDupSameScope: (name: string, rank: number) =>
+      `This layer has two rows named "${name}"; this one is #${rank}: both are inserted, and the later one fails to instantiate because the serverName is already reserved. Disable or delete the extra one (the toggle, probe and delete all act on this row only).`,
+    mcpDupSameScopeTag: (rank: number) => `duplicate in this layer · #${rank}`,
+    // !!js expression rows (2026-09-18; the long wording moved into the hover tip 2026-09-19)
+    mcpExprTag: "has expression",
+    mcpExprShort: "contains an !!js expression: only enable/disable is allowed",
+    mcpExprHint:
+      "This row's value is an !!js expression (the secret comes from an environment variable); what you see here is its flattened text, not what you would type. A structured save would flatten it into a literal and break the secret reference, so only enable/disable is allowed here — to change its configuration, edit that layer's cordis.patch.yml in a text editor.",
+    // Secret display (env / headers usually carry tokens; masked by default)
+    mcpSecretReveal: "Click to reveal this value",
+    mcpSecretHide: "Click to hide this value",
     // MCP capability probe (2026-09-15, ADR-0022 stdio branch)
     mcpProbeBtn: "Probe",
     mcpProbeResult: (srv: string, tools: number, resources: number, templates: number) =>
@@ -597,21 +622,66 @@ export const enUS: AppCopy = {
     mcpProbeResources: "Resources",
     mcpProbeTemplates: "Resource templates",
     // SSH remote workspace wizard (2026-09-15, ADR-0023)
-    mcpDeleteNote: "This will be safely removed from cordis.patch.yml.",
-    mcpActiveTools: (count: number) => `${count} tools active in runtime`,
-    mcpNoActiveTools: "Not running or no exported tools",
+    mcpDeleteNote: "Removed from the cordis.patch.yml of the layer it lives in (backed up first).",
+    mcpDeleteRowId: (rowId: string) =>
+      `This layer has more than one row with that name; the row being deleted is the one with id "${rowId}".`,
+    // Assembly state (2026-09-18): configured ≠ loaded. `enabled` is the config-level
+    // value; `fiberPhase` is what tells you whether a live instance exists.
+    // 2026-09-19: the row shows only the `*Tag` conclusion; the four sentences below
+    // became the hover content.
+    mcpRuntimeActiveTag: "loaded",
+    mcpRuntimeDisabledTag: "disabled at runtime",
+    mcpRuntimeFailedTag: "load failed",
+    mcpRuntimeNotLoadedTag: "not loaded",
+    mcpRuntimeActive: "Loaded in this session: the tools are available to the model",
+    mcpRuntimeDisabled: "Runtime reports this row as disabled (configuration is not in effect)",
+    mcpRuntimeFailed: "Runtime reports a load failure: check that row's error in the startup log",
+    mcpRuntimeNotLoaded: (phase: string | null) =>
+      phase
+        ? `Runtime reports ${phase}: not ready yet`
+        : "Runtime reports no live instance for this row (enabled but never loaded; usual causes: command unreachable, missing dependency, or a session restart is needed)",
     mcpModalTitle: "Configure MCP Server",
-    mcpModalDesc: "Configure server name, command, arguments, and environment variables. Synced atomically to cordis.patch.yml.",
+    mcpModalDesc:
+      "Configure the server name, activation scope, command, arguments and environment variables; saved into the matching layer's cordis.patch.yml.",
     mcpPresetTitle: "Quick Apply Preset",
     mcpServerName: "Server Name",
+    mcpNameHint:
+      "It becomes part of the tool name mcp__<name>__<tool>, so only letters, digits, underscore and hyphen are allowed, up to 32 characters (a localized name makes the whole plugin row fail to load).",
+    mcpNameInvalid: (name: string) =>
+      `"${name}" violates the upstream constraint: letters, digits, underscore and hyphen only, up to 32 characters.`,
+    mcpNameTaken: (name: string) =>
+      `The selected scope already has a "${name}" row: saving as new would overwrite it rather than add a second one. Change the name to add another, or use Edit to change that one.`,
+    // Transport (2026-09-18): the two branches take completely different fields
+    mcpTransportLabel: "Transport",
+    mcpTransportStdio: "Local command (stdio)",
+    mcpTransportHttp: "Remote endpoint (streamable-http)",
+    mcpTransportStdioHint:
+      "dsh spawns a local child process and talks over stdin/stdout: fill in command, arguments and environment variables.",
+    mcpTransportHttpHint:
+      "Connects to an endpoint that already runs: fill in the URL and request headers, no command needed.",
+    mcpUrl: "MCP endpoint URL",
+    mcpUrlHint:
+      "Like http://127.0.0.1:8000/mcp or https://example.com/mcp; it must start with http(s)://.",
+    mcpUrlRequired: "streamable-http requires an MCP endpoint URL",
+    mcpUrlMissing: "This row has no endpoint URL (it cannot load)",
+    mcpHeaders: "Request Headers",
+    mcpHeadersLabel: "Headers",
+    mcpAddHeader: "+ Add header",
+    mcpHeaderRemove: "Remove this request header",
+    mcpNoHeaders: "No extra request headers",
     mcpCommand: "Command",
     mcpArgs: "Arguments (Args)",
+    mcpCwd: "Working directory (cwd)",
+    mcpCwdHint:
+      "Startup directory for the stdio child process; may be left empty. Required by the \"absolute node path + absolute entry script\" form (which avoids PATH entirely) so the script can resolve its own dependencies.",
+    mcpCommandHint:
+      "The command is resolved by the dsh child process, whose PATH is much narrower than your login shell: the engine directory bundled with the dock ships pnpm only (there is no npx). So run a package on the fly with \"pnpm dlx\" rather than npx, and for something installed locally use an absolute path (e.g. /usr/bin/node) plus its directory as the working directory below.",
+    mcpArgsHint:
+      "Space-separated; quote a path that contains spaces so it stays one argument, e.g. \"/Program Files/node/server.js\".",
     mcpEnv: "Environment Variables (KEY=VALUE per line)",
-    mcpPrefix: "Tool Prefix",
     mcpSaveBtn: "Save Server",
     mcpSaveSuccess: (name: string) => `MCP server "${name}" saved to cordis.patch.yml`,
     mcpDeleteSuccess: "MCP server removed successfully",
-    mcpConfigSaved: "MCP configuration synced to cordis.patch.yml",
     emptySelectTitle: "No Profile Selected",
     emptySelectSubtitle: "Select a profile from the left or create a new workbench to manage plugins, base bundles, and YAML patch.",
     quickDistribute: "Distribute to...",

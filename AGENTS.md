@@ -91,7 +91,8 @@
 ### 4.4 前端三红线
 
 1. **依赖白名单**：React / Radix / Zustand / Framer Motion / Lucide / 数据获取层
-   （取数·缓存·同步）；白名单外包需先回写本清单（唯一权威）再广播。
+   （取数·缓存·同步）/ CodeMirror 6（YAML 编辑器，2026-09-18 裁定入白，仅限配置
+   编辑面）；白名单外包需先回写本清单（唯一权威）再广播。
 2. **前端运行时禁止发起新网络请求**；网络需求一律经 IPC 到 Rust。
 3. **跨窗口真相源**：各窗口独立 JS runtime，Zustand 不跨窗；跨窗信息只经事件广播。
 
@@ -136,8 +137,9 @@
   旧的 `.yml` overlay 已退役并在进入安全模式时清理）
   · `procs/`（`lifecycle.rs:75`，ADR-0015 孤儿清扫的
   PID 锁登记表）· `<文件名>.bak-<unix秒>` 覆写前备份族（`fs_backup.rs`，2026-09-08 U9）·
-  MCP / 插件配置对 profile `cordis.patch.yml` 的写入：**统一走 `plugins.rs::PatchFile`**
+  MCP / 插件配置对 `cordis.patch.yml` 的写入：**统一走 `plugins.rs::PatchFile`**
   （宿主/客体同一内核：未改条目原文保真含行间注释 + 覆写前备份 + 原子替换；2026-09-11 统一）。
+  **写入目标 = 两个用户层**（profile 层 / `$DSH_HOME` 全局层；2026-09-18，ADR-0027）。
 - **dsh 文件系统不变量**：三件套**不得生成/复刻内容**（初始化归 dsh）；既有三件套的
   整目录复制、`name` 一致化改写、非模板名创建成功后的 web-app 声明单键追加
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
