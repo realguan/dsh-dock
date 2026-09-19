@@ -351,9 +351,13 @@ export function BootSelector() {
                             <h2 className="text-base font-semibold tracking-tight text-ink group-hover:text-brand-deep">
                               {p.title}
                             </h2>
-                            <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
-                              {p.name}
-                            </span>
+                            {/* 目录名徽标只在标题≠目录名时出现：无策展标题的 profile
+                                title 就是 name，同槽位并排两个 "default" 是复读（批次 3）。 */}
+                            {p.name !== p.title && (
+                              <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-faint">
+                                {p.name}
+                              </span>
+                            )}
                           </div>
                           <p
                             className="mt-1 line-clamp-2 text-xs leading-relaxed text-dim"
@@ -366,7 +370,7 @@ export function BootSelector() {
 
                       {/* 卡片底栏：插件数与进入指示（箭头 hover 转品牌色，不反白成块） */}
                       <div className="mt-6 flex items-center justify-between border-t border-line/60 pt-3">
-                        <span className="font-mono text-label text-faint">
+                        <span className="text-meta text-faint tabular-nums">
                           {p.pluginCount > 0
                             ? t.selector.pluginsCount.replace("{count}", String(p.pluginCount))
                             : p.name === "web"

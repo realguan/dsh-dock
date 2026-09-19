@@ -77,9 +77,11 @@ export function ProfileRow({
       onClick={onSelect}
       style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
       className={`page-rise group relative cursor-pointer rounded-xl border p-3 transition-all duration-200 focus-within:ring-2 focus-within:ring-brand/50 ${
+        // 2026-09-19 审美批次 2：选中只说一遍——蓝描边（/40，与全仓选中方言同档）。
+        // 底色不跟其他选中态铺 bg-wash：行内「默认启动」徽标本身就是 wash 底。
         isSelected
-          ? "border-brand/40 bg-panel shadow-md ring-1 ring-brand/30"
-          : "border-line bg-panel hover:border-line hover:bg-panel hover:shadow-xs"
+          ? "border-brand/40 bg-panel shadow-xs"
+          : "border-line bg-panel hover:bg-wash/40 hover:shadow-2xs"
       } ${materialized ? "" : "border-dashed"} ${
         // 交接期间用 info 环标记；底色不动——旧实现同时写 bg-panel 与 bg-info/5，
         // 两者冲突且 bg-panel 恒定胜出（dist 中 .bg-panel 在 .bg-info\/5 之后），
@@ -87,13 +89,13 @@ export function ProfileRow({
         isSwitching ? "ring-1 ring-info/40" : ""
       }`}
     >
-      {/* 活跃/重载指示条（2026-09-18 收口：w-[3.5px]/w-[3px] 两档并存，统一为 w-1） */}
+      {/* 左侧状态条＝**只承载运行态**（2026-09-19 审美批次 2：选中改由边框表达，
+          原 isSelected 分支在这里再画一条蓝条，与蓝色描边是同一句话讲两遍）。
+          2026-09-18 收口：w-[3.5px]/w-[3px] 两档并存，统一为 w-1。 */}
       {isSwitching ? (
         <span className="bg-info absolute inset-y-2.5 left-0 w-1 rounded-r-full shadow-xs shadow-info/50 animate-pulse" />
       ) : isRunning ? (
         <span className="bg-ok absolute inset-y-2.5 left-0 w-1 rounded-r-full shadow-xs shadow-ok/50" />
-      ) : isSelected ? (
-        <span className="bg-brand absolute inset-y-2.5 left-0 w-1 rounded-r-full" />
       ) : null}
 
       <div className="flex items-start justify-between gap-2 pl-1.5">
@@ -108,9 +110,9 @@ export function ProfileRow({
               }}
               aria-current={isSelected ? "true" : undefined}
               title={name}
-              className={`max-w-full truncate rounded-md p-0 text-left text-sm font-semibold tracking-tight outline-none ${
-                isSelected ? "text-brand-deep font-bold" : "text-ink"
-              }`}
+              // 2026-09-19 审美批次 2：名字不再随选中变蓝加粗——选中已由卡片描边表达，
+              // 同义强调叠三层（描边＋状态条＋蓝字）后每一层都不再携带信息。
+              className="max-w-full truncate rounded-md p-0 text-left text-sm font-semibold tracking-tight text-ink outline-none"
             >
               {name}
             </button>
@@ -145,8 +147,10 @@ export function ProfileRow({
             )}
           </div>
 
-          {/* 元信息行 */}
-          <div className="text-faint mt-1 truncate font-mono text-label" title={metaLine}>
+          {/* 元信息行（2026-09-19 审美批次 1：摘掉 font-mono——"2 个插件 · 4 项依赖"
+              是中文量词句，等宽栈没有汉字字形，回退后同一串里数字走 ui-monospace、
+              汉字走苹方，一个字符串两种字形，正是"散"的来源） */}
+          <div className="text-faint mt-1 truncate text-meta tabular-nums" title={metaLine}>
             {metaLine}
           </div>
         </div>

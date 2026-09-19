@@ -116,7 +116,7 @@ export function MarketInstallDialog({
           <div className="flex items-center gap-3">
             <IconChip icon={Download} tone="brand" className="size-10" />
             <div className="min-w-0 flex-1">
-              <DialogTitle className="text-base font-bold text-ink truncate" title={plugin.name}>
+              <DialogTitle className="text-base font-semibold text-ink truncate" title={plugin.name}>
                 {t.market.installModalTitle(displayName)}
               </DialogTitle>
               <DialogDescription className="text-xs text-dim mt-0.5 line-clamp-2">
@@ -131,7 +131,7 @@ export function MarketInstallDialog({
           <div className="rounded-xl border border-line bg-wash p-3.5 space-y-2">
             <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0 flex-1">
-                <div className="font-mono font-bold text-ink text-sm truncate" title={plugin.name}>
+                <div className="font-mono font-semibold text-ink text-sm truncate" title={plugin.name}>
                   {displayName}
                 </div>
                 {displayName !== plugin.name && (

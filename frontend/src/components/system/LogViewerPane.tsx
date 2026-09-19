@@ -91,6 +91,7 @@ export function LogViewerPane({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* 日志源 Segmented Tabs（2026-09-18 收口：统一走 Segmented 原语） */}
         <Segmented<LogSourceKey>
+          size="sm"
           ariaLabel={t.console.logsTitle}
           options={[
             { value: "shell", label: t.console.sourceShell },
@@ -167,7 +168,7 @@ export function LogViewerPane({
           />
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-label text-faint">
+        <div className="flex items-center gap-2 text-meta text-faint tabular-nums">
           <span>{logData ? t.console.totalLines(logData.totalLines) : ""}</span>
           {logData?.truncated && <span>· {t.console.truncatedHint}</span>}
         </div>

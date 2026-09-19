@@ -115,6 +115,7 @@ export function DshVersionListDialog({
 
         {/* 2026-09-18 收口：第 5 套手搓分段器 → 统一 Segmented */}
         <Segmented<VersionFilter>
+          size="sm"
           ariaLabel={t.about.versionFilterLabel}
           className="self-start"
           options={FILTERS.map((f) => ({ value: f, label: filterLabel(f) }))}

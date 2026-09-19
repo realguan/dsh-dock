@@ -127,7 +127,7 @@ export function About() {
                     <span className="bg-ok size-1.5 animate-pulse rounded-full" />
                   )}
                 </div>
-                <p className="text-faint mt-0.5 truncate font-mono text-label" title={wbUrl ?? undefined}>
+                <p className="text-faint mt-0.5 truncate text-meta" title={wbUrl ?? undefined}>
                   {wbUrl ?? t.about.workbenchBridgeHint}
                 </p>
               </div>

@@ -160,7 +160,7 @@ export function DiagnosticsPane({
       {/* 顶部工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-ink">
+          <h2 className="text-sm font-semibold text-ink">
             {t.console.diagnosticsTitle}
           </h2>
           <p className="text-xs text-faint">{t.console.diagnosticsSubtitle}</p>
@@ -216,7 +216,7 @@ export function DiagnosticsPane({
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
               {t.console.diagNodeTitle}
             </h3>
-            <p className="mt-0.5 font-mono text-xs font-bold text-ink">
+            <p className="mt-0.5 font-mono text-xs font-semibold text-ink">
               {node.version || t.console.diagNotDetected}
             </p>
           </div>
@@ -243,7 +243,7 @@ export function DiagnosticsPane({
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
               {t.console.diagPnpmTitle}
             </h3>
-            <p className="mt-0.5 font-mono text-xs font-bold text-ink">
+            <p className="mt-0.5 font-mono text-xs font-semibold text-ink">
               {pnpm.isReady
                 ? pnpm.version
                   ? `v${pnpm.version}`
@@ -274,7 +274,7 @@ export function DiagnosticsPane({
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
               {t.console.diagDshTitle}
             </h3>
-            <p className="mt-0.5 font-mono text-xs font-bold text-ink">
+            <p className="mt-0.5 font-mono text-xs font-semibold text-ink">
               {dsh.isReady
                 ? dsh.version
                   ? `v${dsh.version}`
@@ -290,16 +290,24 @@ export function DiagnosticsPane({
         {/* 4. 存储总览 */}
         <div className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs">
           <div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-2">
               <IconChip icon={HardDrive} tone="neutral" />
-              <span className="rounded-full bg-line-soft px-2 py-0.5 font-mono text-meta text-dim">
-                {platform.os} ({platform.arch})
-              </span>
+              {/* 2026-09-19 审美批次 1：系统串（"macOS 15.4 (Sequoia) (aarch64)"）
+                  原挤在一枚胶囊里，字号抬到 text-meta 12px 后折成三行、顶出卡片右边界。
+                  版本与架构分两行显示，胶囊不再承载整串。 */}
+              <div className="min-w-0 flex-1 text-right">
+                <div className="text-meta text-dim truncate" title={`${platform.os} (${platform.arch})`}>
+                  {platform.os}
+                </div>
+                <div className="truncate font-mono text-micro text-faint">
+                  {platform.arch}
+                </div>
+              </div>
             </div>
             <h3 className="mt-2.5 text-xs font-semibold text-ink">
               {t.console.diagStorageTitle}
             </h3>
-            <p className="mt-0.5 font-mono text-xs font-bold text-ink">
+            <p className="mt-0.5 font-mono text-xs font-semibold text-ink">
               {formatBytes(storage.totalBytes)}
             </p>
           </div>
@@ -318,7 +326,7 @@ export function DiagnosticsPane({
               {t.console.storageDistributionTitle}
             </h3>
           </div>
-          <span className="font-mono text-xs font-medium text-dim">
+          <span className="text-xs font-medium text-dim tabular-nums">
             {t.console.totalUsage(formatBytes(storage.totalBytes))}
           </span>
         </div>
@@ -350,7 +358,7 @@ export function DiagnosticsPane({
               <span className="text-ink font-medium">
                 {t.console.storageProfilesLabel}
               </span>
-              <p className="font-mono text-label text-faint truncate">
+              <p className="text-meta text-faint truncate tabular-nums">
                 {t.console.profilesUsage(
                   storage.profilesCount,
                   formatBytes(storage.profilesBytes),
@@ -365,7 +373,7 @@ export function DiagnosticsPane({
               <span className="text-ink font-medium">
                 {t.console.storageSessionsLabel}
               </span>
-              <p className="font-mono text-label text-faint truncate">
+              <p className="text-meta text-faint truncate tabular-nums">
                 {t.console.sessionsUsage(
                   storage.sessionsCount,
                   formatBytes(storage.sessionsBytes),
@@ -380,7 +388,7 @@ export function DiagnosticsPane({
               <span className="text-ink font-medium">
                 {t.console.storageCacheOtherLabel}
               </span>
-              <p className="font-mono text-label text-faint truncate">
+              <p className="text-meta text-faint truncate tabular-nums">
                 {formatBytes(
                   Math.max(
                     0,

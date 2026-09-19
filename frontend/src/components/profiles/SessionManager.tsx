@@ -545,9 +545,11 @@ export function SessionManager({
             </Button>
           )}
 
+          {/* 行内动作成对同权重（批次 2）：复制键不再描边——与右侧 ghost 删除键并排时，
+              一框一无框会让复制看起来更像主行动。成功态仍靠 text-ok 徽标可见。 */}
           <Button
             size="icon-sm"
-            variant="outline"
+            variant="ghost"
             title={t.sessions.copyPath}
             onClick={() => handleCopyPath(sess.filePath)}
           >
@@ -560,15 +562,15 @@ export function SessionManager({
 
           <Button
             size="icon-sm"
-            variant="destructive"
+            variant="destructive-ghost"
             title={t.sessions.deleteBtn}
             onClick={() => setPendingDelete(sess)}
             disabled={isBusy || batchRepairing || isDeleting}
           >
             {isDeleting ? (
-              <LoaderCircle className="size-3 animate-spin text-danger" />
+              <LoaderCircle className="size-3 animate-spin" />
             ) : (
-              <Trash2 className="size-3 text-faint" />
+              <Trash2 className="size-3" />
             )}
           </Button>
         </div>
@@ -599,7 +601,7 @@ export function SessionManager({
               <ShieldCheck className="size-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-ink">{t.sessions.title}</h2>
+              <h2 className="text-sm font-semibold text-ink">{t.sessions.title}</h2>
               <p className="text-xs text-faint">{t.sessions.subtitle}</p>
             </div>
           </div>
@@ -692,6 +694,7 @@ export function SessionManager({
         {/* 状态筛选：全部 / 仅看异常 / 已归档（2026-09-18 收口：手搓分段器 → Segmented，
             计数徽标随 label 走） */}
         <Segmented<"all" | "needs_repair" | "archived">
+          size="sm"
           ariaLabel={t.sessions.title}
           value={statusFilter}
           onChange={setStatusFilter}
@@ -729,6 +732,7 @@ export function SessionManager({
         />
 
         <Segmented<"grouped" | "flat">
+          size="sm"
           ariaLabel={t.sessions.title}
           value={viewMode}
           onChange={setViewMode}
@@ -781,12 +785,12 @@ export function SessionManager({
                       )}
                       <Folder className="size-4 text-brand-deep shrink-0" />
                       <span
-                        className="font-mono text-xs font-bold text-ink truncate"
+                        className="font-mono text-xs font-semibold text-ink truncate"
                         title={group.projectName}
                       >
                         {group.projectName}
                       </span>
-                      <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-meta font-mono text-faint">
+                      <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 text-meta text-faint tabular-nums">
                         {t.sessions.groupMeta(group.items.length, formatBytes(group.totalBytes))}
                       </span>
                     </button>

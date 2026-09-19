@@ -90,8 +90,9 @@ export function SystemConsole({
 
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-12 items-start">
-      {/* 左侧紧凑极简子导航（Master-Nav） */}
-      <aside className="space-y-1 md:col-span-4 xl:col-span-3">
+      {/* 左侧紧凑极简子导航（Master-Nav）。批次 3：跟随吸顶——右侧详情最长 900px，
+          导航只有 274px，滚到底就只剩一片空白且换面板要滚回顶。 */}
+      <aside className="space-y-1 md:sticky md:top-16 md:col-span-4 xl:col-span-3">
         <nav
           role="tablist"
           aria-orientation="vertical"

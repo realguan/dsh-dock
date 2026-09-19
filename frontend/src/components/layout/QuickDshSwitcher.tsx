@@ -122,10 +122,11 @@ export function QuickDshSwitcher() {
             : t.profiles.switchToDsh}
       </span>
 
-      {/* 关联 Profile 简要标记（若存在） */}
+      {/* 关联 Profile 简要标记（若存在）。max-w 按 12px 等宽重排（原 14＝56px
+          是给 10px 档量的，字号抬到 text-meta 12px 后 "(default)" 被截成 "(defau…"）。 */}
       {activeProfile && (
         <span
-          className="hidden font-mono text-meta text-faint max-w-14 truncate whitespace-nowrap sm:inline-block"
+          className="hidden font-mono text-meta text-faint max-w-20 truncate whitespace-nowrap sm:inline-block"
           title={activeProfile}
         >
           ({activeProfile})

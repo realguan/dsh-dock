@@ -20,7 +20,7 @@ export function NodeVersionCard() {
           <span className="font-mono text-xs font-semibold text-ink">
             {node.version}
           </span>
-          <span className="rounded-md bg-line-soft px-1.5 py-0.5 font-mono text-meta text-dim">
+          <span className="rounded-md bg-line-soft px-1.5 py-0.5 text-meta text-dim">
             {node.origin === "engine"
               ? t.about.nodeFromEngine
               : node.origin === "system"
@@ -29,7 +29,7 @@ export function NodeVersionCard() {
           </span>
         </div>
       ) : (
-        <span className="text-faint font-mono text-xs">
+        <span className="text-faint text-xs">
           {/*
             未安装：如实报"没装"，并给出**将装**哪个（不是"已装哪个"）。
             注意这里**不再**追加 `nodeUnknown`（"尚未确定"）：既然已经明确知道

@@ -79,7 +79,7 @@ export function ClientUpdateCard() {
         <div className="flex items-center gap-2">
           <IconChip icon={Sparkles} tone="brand" />
           <div>
-            <h2 className="text-ink text-xs font-bold tracking-tight">
+            <h2 className="text-ink text-xs font-semibold tracking-tight">
               {t.about.clientLabel}
             </h2>
             <p className="text-faint text-meta">{t.about.officialChannel}</p>
@@ -188,8 +188,8 @@ export function ClientUpdateCard() {
                   <div className="pulse-bar">
                     <div className="pulse-bar-fill" />
                   </div>
-                  <div className="text-faint flex justify-between font-mono text-label">
-                    <span>{fmtBytes(snapshot.current ?? 0)}</span>
+                  <div className="text-faint flex justify-between text-label">
+                    <span className="font-mono tabular-nums">{fmtBytes(snapshot.current ?? 0)}</span>
                     <span>{t.about.fetchingRelease}</span>
                   </div>
                 </>

@@ -361,7 +361,7 @@ export function PreferencesPane({
             <ShieldAlert className="size-3.5 text-warn" />
             <span>{t.console.breakerTitle}</span>
           </div>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 font-mono text-label">
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 text-meta tabular-nums">
             <div className="rounded-lg bg-panel p-2 border border-line">
               <span className="text-faint">{t.console.breakerWindowLabel}</span>
               <span className="text-ink font-semibold ml-1">{t.console.breakerWindowValue}</span>

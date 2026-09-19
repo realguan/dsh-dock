@@ -2,10 +2,11 @@
 // 2026-09-09 口径对齐（假角标修复）：「有新版/升级」只按可升级口径（稳定/rc）；
 // 预览版（alpha 等）经版本列表显式选择安装——选择权交给用户，稳定默认保护。
 // alpha 与回退经 ConfirmDialog 知情确认（needsConfirm 纯函数判定）。
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { ArrowUpCircle, LoaderCircle, RefreshCw } from "lucide-react"
 import { listen } from "@tauri-apps/api/event"
 import { api } from "@/lib/tauri"
+import { cn } from "@/lib/utils"
 import { useBootStore } from "@/stores/bootStore"
 import { useI18n } from "@/stores/i18nStore"
 import type { ComponentUpdate, DshVersionEntry } from "@/types/ipc"
@@ -111,7 +112,9 @@ export function DshVersionCard() {
               ) : (
                 <span>{t.about.versionListEntry}</span>
               )}
-              <span aria-hidden>· {t.about.previewView} ›</span>
+              {/* 批次 3：原后缀「· 查看 ›」与前面的「查看全部版本」是同一个按钮说两遍，
+                  只留箭头作 affordance。 */}
+              <span aria-hidden>›</span>
             </button>
           )}
           {note && (
@@ -121,7 +124,7 @@ export function DshVersionCard() {
             <div className="mt-1">
               <Note tone="danger">{t.about.upgradeFailed}</Note>
               <p
-                className="text-faint mt-0.5 max-w-xs truncate font-mono text-meta"
+                className="text-faint mt-0.5 max-w-xs truncate text-meta"
                 title={upgradeFail}
               >
                 {upgradeFail}
@@ -207,58 +210,79 @@ export function DshVersionCard() {
   )
 }
 
+// 2026-09-19 审美批次 1：mono 退回标识符专用。版本号有值才等宽；
+// 「未检测到」是中文散文，跟等宽栈混排会在一行里出现两套字形。
+function Ver({
+  value,
+  className,
+  children,
+}: {
+  value: string | null
+  className?: string
+  children?: ReactNode
+}) {
+  return value ? (
+    <span className={cn("font-mono tabular-nums", className)}>{value}</span>
+  ) : (
+    <span className={className}>{children}</span>
+  )
+}
+
 function VersionView({ dim }: { dim: ComponentUpdate | null }) {
   const { t } = useI18n()
   if (!dim)
     return (
-      <span className="text-faint font-mono text-xs">
+      <span className="text-faint text-xs">
         {t.about.notDetected} · <Note>{t.about.detecting}</Note>
       </span>
     )
   if (dim.error)
     return (
-      <span className="font-mono text-xs">
-        <span className="text-ink font-semibold">{dim.current ?? t.about.notDetected}</span>
+      <span className="text-xs">
+        <Ver value={dim.current} className="text-ink font-semibold">
+          {t.about.notDetected}
+        </Ver>
         <span className="ml-1.5"><Note tone="warn">{t.about.checkFailedNet}</Note></span>
       </span>
     )
   if (dim.newer)
     return (
       <div className="flex items-center gap-1.5">
-        <span className="font-mono text-xs font-semibold text-ink">
-          {dim.current ?? t.about.notDetected}
-        </span>
-        <span className="bg-wash text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 font-mono text-meta font-medium">
-          {t.about.hasNew} {dim.latest ?? ""}
+        <Ver value={dim.current} className="text-xs font-semibold text-ink">
+          {t.about.notDetected}
+        </Ver>
+        <span className="bg-wash text-brand-deep border border-brand/20 rounded-md px-1.5 py-0.5 text-meta font-medium">
+          {t.about.hasNew} <span className="font-mono tabular-nums">{dim.latest}</span>
         </span>
       </div>
     )
   // 运行中的版本高于稳定口径（如装了 alpha 后）——如实标注，不再误报「已是最新」
   if (dim.preview_latest && dim.current === dim.preview_latest)
     return (
-      <span className="font-mono text-xs">
-        <span className="font-semibold text-ink">{dim.current}</span>
+      <span className="text-xs">
+        <Ver value={dim.current} className="font-semibold text-ink" />
         <span className="text-dim ml-1.5 text-label">
-          （{t.about.onPreview} {dim.latest ?? ""}）
+          （{t.about.onPreview}{" "}
+          <span className="font-mono tabular-nums">{dim.latest}</span>）
         </span>
       </span>
     )
   if (dim.current && dim.latest)
     return (
-      <span className="font-mono text-xs">
-        <span className="font-semibold text-ink">{dim.current}</span>
+      <span className="text-xs">
+        <Ver value={dim.current} className="font-semibold text-ink" />
         <span className="text-faint ml-1.5 text-label">（{t.about.latestIsNewest}）</span>
       </span>
     )
   if (!dim.current && dim.latest)
     return (
-      <span className="font-mono text-xs text-dim">
-        {t.about.notDetected} · <Note>{t.about.latestOfficial} {dim.latest}</Note>
+      <span className="text-xs text-dim">
+        {t.about.notDetected} · <Note>{t.about.latestOfficial} <span className="font-mono tabular-nums">{dim.latest}</span></Note>
       </span>
     )
   return (
-    <span className="font-mono text-xs">
-      {dim.current ?? t.about.notDetected}
-    </span>
+    <Ver value={dim.current} className="text-xs">
+      {t.about.notDetected}
+    </Ver>
   )
 }

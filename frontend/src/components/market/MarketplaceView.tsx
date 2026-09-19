@@ -477,7 +477,7 @@ export function MarketplaceView({
           {/* 底部现代分页控制条 */}
           {totalPages > 1 && (
             <footer className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-line/60">
-              <div className="text-xs text-dim font-mono">
+              <div className="text-xs text-dim tabular-nums">
                 {t.market.pageInfo(currentPage, totalPages, totalItems)}
               </div>
 
@@ -489,7 +489,7 @@ export function MarketplaceView({
                     value={String(pageSize)}
                     onValueChange={(val) => setPageSize(Number(val))}
                   >
-                    <SelectTrigger className="w-18 bg-wash font-mono">
+                    <SelectTrigger className="w-18 bg-wash tabular-nums">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">

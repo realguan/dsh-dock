@@ -106,7 +106,7 @@ export function MarketCustomInstallDialog({
           <div className="flex items-center gap-3">
             <IconChip icon={Download} tone="brand" className="size-10" />
             <div className="min-w-0 flex-1">
-              <DialogTitle className="text-base font-bold text-ink">
+              <DialogTitle className="text-base font-semibold text-ink">
                 {t.market.manualInstallTitle}
               </DialogTitle>
               <DialogDescription className="text-xs text-dim mt-0.5 leading-relaxed">

@@ -70,7 +70,7 @@ export function DshSettingsPane({
         <div>
           <div className="flex items-center gap-2">
             <Sliders className="size-4 text-brand-deep" />
-            <h2 className="text-sm font-bold text-ink">
+            <h2 className="text-sm font-semibold text-ink">
               {t.console.dshSettingsTitle}
             </h2>
           </div>

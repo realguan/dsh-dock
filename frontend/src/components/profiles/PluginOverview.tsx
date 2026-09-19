@@ -320,7 +320,7 @@ export function PluginOverview({
                     <div className="flex items-center gap-2 min-w-0">
                       <IconChip icon={Package} tone="brand" />
                       <span
-                        className="font-mono text-xs font-bold text-ink truncate"
+                        className="font-mono text-xs font-semibold text-ink truncate"
                         title={item.name}
                       >
                         {item.name}
@@ -449,7 +449,7 @@ export function PluginOverview({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-sm font-bold flex items-center gap-2">
+            <DialogTitle className="text-sm font-semibold flex items-center gap-2">
               <Send className="size-4 text-brand-deep" />
               <span>{distributeTarget ? t.profiles.distributeTitle(distributeTarget.pkg) : ""}</span>
             </DialogTitle>
@@ -500,7 +500,7 @@ export function PluginOverview({
                     <Download className="size-3" />
                     {t.profiles.distributeTargetVersion}
                   </span>
-                  <span className="font-mono text-xs font-bold text-ink">
+                  <span className="font-mono text-xs font-semibold text-ink">
                     {distributeTarget.version}
                   </span>
                 </div>

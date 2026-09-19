@@ -18,6 +18,12 @@ const buttonVariants = cva(
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:border-destructive/40 focus-visible:ring-destructive/20",
+        // 2026-09-19 审美批次 2：列表行内的删除键不再用实心 destructive。
+        // 一屏 N 行 × 每行一颗实心红方块，等于没有重点——真正的危险决策点在
+        // ConfirmDialog 的确认键（那里仍用 destructive）。行内只保留图标，
+        // **hover/聚焦才转红**，红仍代表"这是删除"，只是不再抢注意力。
+        "destructive-ghost":
+          "text-dim hover:bg-danger-soft hover:text-danger focus-visible:border-destructive/40 focus-visible:ring-destructive/20",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

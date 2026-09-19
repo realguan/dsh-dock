@@ -31,6 +31,7 @@ export function PluginHub({
             2026-09-18 收口：三枚手搓 tab 按钮 → 统一 Segmented 基座。 */}
         <div className="sticky top-14 z-15 -mx-2 -mt-2 flex items-center justify-between gap-3 rounded-2xl border-b border-line/60 bg-bg/95 px-2 py-2.5 backdrop-blur-md transition-all">
           <Segmented<"market" | "installed" | "official">
+            size="sm"
             ariaLabel={t.market.subtabMarket}
             options={[
               { value: "market", label: t.market.subtabMarket, icon: Store },

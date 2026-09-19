@@ -280,7 +280,9 @@ export function ProfileManager() {
   }, [list, selectedName])
 
   return (
-    <PageShell width={1040} align="top" className="px-4 py-4 sm:px-6">
+    // 宽度 1040→1200（2026-09-19 审美批次 1）：窗口默认 1280（src/ui.rs:77），
+    // 原 1040 让两侧各空出 120px 纯边距，而顶栏副标题在 1280 就被挤到截断。
+    <PageShell width={1200} align="top" className="px-4 py-4 sm:px-6">
       {/* 顶部全局标题栏（单行弹性布局，右侧控制区 shrink-0 防止 Hover 展开时发生折行抖动）。
           2026-09-08 批次 D / U10：吸顶——长列表滚动后「视图切换」入口不再消失；
           负外边距抵消 PageShell 的 px-4/6/8，半透明底 + 模糊保证滚动内容不穿透。
@@ -294,7 +296,10 @@ export function ProfileManager() {
               <h1 className="text-ink text-base sm:text-lg font-bold tracking-tight truncate" title={t.profiles.title}>
                 {t.profiles.title}
               </h1>
-              <p className="text-faint text-xs truncate" title={t.profiles.subtitle}>
+              {/* 副标题是装饰性说明：字号抬到 text-xs(13.5) 后，最小窗（960）下右侧
+                  导航 + 胶囊把左栏挤到 147px，整句被截成「多工作台管理、插件…」。
+                  与其截成半句话，不如在窄窗直接不显示——h1 已承载页面身份。 */}
+              <p className="text-faint text-xs truncate hidden xl:block" title={t.profiles.subtitle}>
                 {t.profiles.subtitle}
               </p>
             </div>

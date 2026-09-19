@@ -96,7 +96,7 @@ export function MarketPluginCard({
                 <h3 className="min-w-0 max-w-full">
                   <button
                     type="button"
-                    className="inline-block max-w-full truncate font-mono text-xs font-bold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                    className="inline-block max-w-full truncate font-mono text-xs font-semibold text-ink tracking-tight hover:text-brand-deep cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                     title={displayName}
                     onClick={() => onOpenExternal(plugin.url || plugin.page)}
                   >
@@ -109,7 +109,7 @@ export function MarketPluginCard({
                   </Badge>
                 )}
               </div>
-              <p className="truncate text-label text-dim font-mono mt-0.5" title={plugin.owner}>
+              <p className="truncate text-meta text-dim mt-0.5" title={plugin.owner}>
                 by <span className="text-dim">{plugin.owner}</span>
               </p>
             </div>
@@ -128,7 +128,7 @@ export function MarketPluginCard({
 
         {/* 描述文本 */}
         <p
-          className="mt-3 line-clamp-2 text-xs text-dim leading-relaxed min-h-[32px]"
+          className="mt-3 line-clamp-2 text-xs text-dim leading-relaxed min-h-[44px]"
           title={desc || undefined}
         >
           {desc || t.market.noDescription}
@@ -175,7 +175,7 @@ export function MarketPluginCard({
                 )
               })
             ) : (
-              <span className="text-meta text-faint font-mono">
+              <span className="text-meta text-faint">
                 {t.market.notInstalled}
               </span>
             )}
@@ -206,14 +206,12 @@ export function MarketPluginCard({
           </div>
         </div>
 
-        {/* 主动作按钮（2026-09-18 收口：去手搓 brand 填充 + 白字覆写
-            填充——主行动 = 默认 Button（brand+白字）；次行动 = outline）。 */}
+        {/* 卡片动作（2026-09-19 审美批次 2）：一屏 20 张同款实心蓝按钮 = 没有主行动。
+            实心 primary 只留给弹窗里的「安装」确认键——那才是真正下单承诺的一步。 */}
         <Button
-          variant={isInstalled ? "outline" : "default"}
+          variant="outline"
           onClick={() => onInstall(plugin)}
-          className={`w-full text-xs font-medium ${
-            isInstalled ? "hover:border-brand/40" : ""
-          }`}
+          className="w-full text-xs font-medium"
         >
           {isInstalled ? (
             <>

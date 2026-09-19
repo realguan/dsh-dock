@@ -257,7 +257,7 @@ export const enUS: AppCopy = {
       failed: "Failed",
     },
     lines: {
-      idle: "Click \"Check for Updates\" to query official releases",
+      idle: "No check yet",
       checking: "Checking official release source",
       upToDate: "Already up to date",
       downloading: "Downloading new version",
@@ -300,7 +300,6 @@ export const enUS: AppCopy = {
     btnUpgradeTo: "Upgrade to",
     installingVersion: "Installing",
     previewReleased: "Preview released:",
-    previewView: "View",
     versionListEntry: "All versions",
     noteUpgraded: "Upgraded to",
     noteAlreadyLatest: "Already latest",
@@ -476,8 +475,9 @@ export const enUS: AppCopy = {
     versionsLoadFailed: "Failed to query versions",
     hiddenLayersHint: (n: number) => `There are ${n} additional plugin layers below`,
     pluginWithDsh: "Version follows DSH",
+    // 2026-09-19 审美批次 3：去掉与详情头徽标重复的 "Session active ·" 前缀，改纯计数图例。
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
-      `Session active · ${s.active} active${s.failed ? ` · ${s.failed} failed` : ""}${s.loading ? ` · ${s.loading} loading` : ""}${s.disabled ? ` · ${s.disabled} not running` : ""}`,
+      `Running ${s.active}${s.failed ? ` · Failed ${s.failed}` : ""}${s.loading ? ` · Loading ${s.loading}` : ""}${s.disabled ? ` · Disabled ${s.disabled}` : ""}`,
     runtimeUnavailable: "Profile is not currently running; showing static manifest",
     // Official desktop runtime note (2026-09-11): see zh-CN.ts for the ruling —
     // no hardcoded service count. Split into plain-text segments around the two

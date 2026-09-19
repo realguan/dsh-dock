@@ -29,6 +29,7 @@ import type {
   RuntimeEntry,
 } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Switch } from "@/components/ui/switch"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
@@ -528,81 +529,47 @@ export function ProfileDetailPane({
           </div>
         </div>
 
-        {/* 顶部 Tab 切换 */}
-        <div
-          role="tablist"
-          className="mt-4 flex rounded-xl border border-line bg-line-soft/80 p-1"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "plugins"}
-            onClick={() => setTab("plugins")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-all ${
-              tab === "plugins"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <Package className="size-3.5" />
-            <span>{t.profiles.tabPlugins}</span>
-            {depCount > 0 && (
-              <span className="rounded-full bg-line px-1.5 text-meta font-mono">
-                {depCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "bundles"}
-            onClick={() => setTab("bundles")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-all ${
-              tab === "bundles"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <Layers className="size-3.5" />
-            <span>{t.profiles.tabBundles}</span>
-            {layerBundles.length > 0 && (
-              <span className="rounded-full bg-line px-1.5 text-meta font-mono">
-                {layerBundles.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "mcp"}
-            onClick={() => setTab("mcp")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-all ${
-              tab === "mcp"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <Boxes className="size-3.5" />
-            <span>{t.profiles.tabMcp}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "patch"}
-            onClick={() => setTab("patch")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-all ${
-              tab === "patch"
-                ? "bg-panel text-ink shadow-xs"
-                : "text-dim hover:text-ink"
-            }`}
-          >
-            <Code2 className="size-3.5" />
-            <span>{t.profiles.tabPatch}</span>
-          </button>
-        </div>
+        {/* 顶部 Tab 切换（批次 3：第 6 份手搓分段器 → Segmented stretch；
+            与顶栏导航同配方，靠"整宽等分"而非"更大更亮"区分层级）。 */}
+        <Segmented<"plugins" | "bundles" | "patch" | "mcp">
+          className="mt-4"
+          stretch
+          ariaLabel={name}
+          value={tab}
+          onChange={setTab}
+          options={[
+            {
+              value: "plugins",
+              icon: Package,
+              label: (
+                <>
+                  {t.profiles.tabPlugins}
+                  {depCount > 0 && (
+                    <span className="rounded-full bg-line px-1.5 font-mono text-meta">
+                      {depCount}
+                    </span>
+                  )}
+                </>
+              ),
+            },
+            {
+              value: "bundles",
+              icon: Layers,
+              label: (
+                <>
+                  {t.profiles.tabBundles}
+                  {layerBundles.length > 0 && (
+                    <span className="rounded-full bg-line px-1.5 font-mono text-meta">
+                      {layerBundles.length}
+                    </span>
+                  )}
+                </>
+              ),
+            },
+            { value: "mcp", icon: Boxes, label: t.profiles.tabMcp },
+            { value: "patch", icon: Code2, label: t.profiles.tabPatch },
+          ]}
+        />
       </header>
 
       {/* 主体工作区 */}
@@ -730,7 +697,7 @@ export function ProfileDetailPane({
 
             {/* 运行态概要 */}
             {liveEntries.length > 0 ? (
-              <div className="text-faint px-1 text-label">
+              <div className="text-faint px-1 text-label tabular-nums">
                 {t.profiles.runtimeSummary(runtimeSummary(liveEntries))}
               </div>
             ) : null}
@@ -774,7 +741,9 @@ export function ProfileDetailPane({
                         <div className="flex flex-wrap items-center gap-2">
                           <span
                             className={`font-mono text-xs font-semibold ${
-                              shellDisabled ? "line-through text-faint" : "text-ink"
+                              // 停用行不划删除线：包名是标识符，划掉既读不动也误判为"已删除"；
+                              // 停用已由徽标 + 开关 + 行底色三重表达（批次 3 去掉第四重）。
+                              shellDisabled ? "text-faint" : "text-ink"
                             }`}
                             title={p.name}
                           >
@@ -865,25 +834,27 @@ export function ProfileDetailPane({
                               </div>
                             )}
 
-                            <button
-                              type="button"
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
                               title={t.profiles.pluginUpdate}
                               disabled={opBusy !== null}
                               onClick={() => runOp("update", p.name)}
-                              className="text-faint hover:text-ink hover:bg-line-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
                             >
-                              <ArrowUpCircle className="size-3.5" />
-                            </button>
+                              <ArrowUpCircle className="size-3.5 text-faint" />
+                            </Button>
 
-                            <button
-                              type="button"
+                            {/* 批次 2：手搓 warn 底改 destructive-ghost——卸载不可撤销，
+                                语义与其余三处行内删除键统一（danger 只在 hover 出现）。 */}
+                            <Button
+                              size="icon-sm"
+                              variant="destructive-ghost"
                               title={t.profiles.pluginUninstall}
                               disabled={opBusy !== null}
                               onClick={() => requestRemove(p.name)}
-                              className="text-faint hover:text-warn hover:bg-warn-soft inline-flex size-7 items-center justify-center rounded-lg transition-colors"
                             >
                               <Trash2 className="size-3.5" />
-                            </button>
+                            </Button>
                           </>
                         )}
                       </div>

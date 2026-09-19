@@ -108,7 +108,7 @@ export function CredentialsPane({
         <div>
           <div className="flex items-center gap-2">
             <KeyRound className="size-4 text-brand-deep" />
-            <h2 className="text-sm font-bold text-ink">
+            <h2 className="text-sm font-semibold text-ink">
               {t.console.credentialsTitle}
             </h2>
           </div>
@@ -189,7 +189,7 @@ export function CredentialsPane({
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-xs font-bold text-ink truncate" title={item.label}>
+                    <span className="text-xs font-semibold text-ink truncate" title={item.label}>
                       {item.label}
                     </span>
                     {item.label.toLowerCase() !== item.provider.toLowerCase() && (
@@ -209,9 +209,9 @@ export function CredentialsPane({
                   )}
                 </div>
 
-                <div className="mt-2.5 rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-xs text-dim">
+                <div className="mt-2.5 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-xs text-dim">
                   {item.configured ? (
-                    <span className="tracking-wider text-ink font-semibold">
+                    <span className="tracking-wider text-ink font-semibold font-mono">
                       {item.maskedKey}
                     </span>
                   ) : (
@@ -226,7 +226,7 @@ export function CredentialsPane({
                 {item.configured && (
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="destructive-ghost"
                     onClick={() => setPendingKeyClear(item)}
                     className="h-7 gap-1 px-2.5 text-xs"
                   >
@@ -264,7 +264,7 @@ export function CredentialsPane({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm font-bold">
+            <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
               <KeyRound className="size-4 text-brand-deep" />
               <span>{editingProvider ? t.console.keyModalTitle(editingProvider.label) : ""}</span>
             </DialogTitle>

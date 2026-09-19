@@ -130,16 +130,67 @@
   /* 契约区：系统字体栈（无外部字体文件——壳运行时不发起新网络请求） */
   --font-sans:
     -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* 2026-09-19 审美批次 1：等宽栈补 CJK 兜底。原栈以 generic `monospace` 收尾，
+     macOS 把它解析成 Monaco——Monaco **有**汉字字形，于是混排行里的中文用打字机体
+     渲染（方笔画、字距散），这是「中文混进等宽」最难看的部分。浏览器按字符逐个回退：
+     显式把无衬线中文体排在 generic 之前，ASCII 仍走等宽、汉字走苹方/雅黑。
+     这不替代收口——成句散文本就不该进 mono（见各视图 2026-09-19 修订）。 */
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "PingFang SC",
+    "Microsoft YaHei", monospace;
 
-  /* 字号刻度（2026-09-08 批次 D / U7）：把散落的 162 处 `text-[Npx]` 收进 token。
-     名字表达该档的主要用途；值刻意与改造前**逐像素一致**（避免视觉回归），
-     要收缩刻度时只改这里。Tailwind 原生刻度：text-xs 12 / sm 14 / base 16。 */
-  --text-micro: 9px; /* 极小：图表刻度、角标 */
-  --text-meta: 10px; /* 元信息 / 徽标（改造前最多的一档） */
-  --text-label: 11px; /* 小标签 / 等宽元数据 */
-  --text-note: 13px; /* 次级正文 */
-  --text-lead: 15px; /* 强调正文 */
+  /* ---- 字号刻度（2026-09-19 审美批次 1 整段重排）----------------------
+     批次 D 只登记了 5 个自定义档名，**没动 Tailwind 原生档**，于是全站在
+     9/10/11/12/13/14/15/16 八档里自由取用。四视图 computed 清点：628 处字号
+     声明里 505 处（80%）压在 9–12px，note(13) 仅 7 处、lead(15) 仅 2 处，
+     唯一的大字是 1 个 18px 页面标题。后果不是"小"而是**没有阶梯**——
+     11/12/13 肉眼无从区分，层级只能靠加粗硬撑（全站 245 处 font-medium+）。
+     另有一条中文专属硬约束：苹方没有 9–10px 的字形档位，该区间横折钩粘连、
+     不是"吃力"而是**糊**。故文字档下限抬到 10.5px，且仅限角标/图表刻度，
+     禁承载成句内容。
+     裁定：**覆盖 Tailwind 原生档位名**而非另起炉灶（与阴影同策略，批次 E）——
+     253 处 text-xs + 34 处 text-sm + 13 处 text-base 调用点零改动即整体抬升。
+     阶梯取 ~1.13 比率、相邻档差 ≥1.5px（差 <1.5px 等于没有档）：
+       10.5 → 12 → 13.5 → 15 → 17 → 20 → 24
+     旧名按**角色归并**到同一值（同值即同角色，不再制造第 8 档）：
+       micro 9→10.5 ｜ meta 10 + label 11 → 12 ｜ note 13 + xs 12 → 13.5
+       sm 14 → 15（新增 body 同义名）｜ base 16 + lead 15 → 17 ｜ lg 18→20 ｜ xl 20→24
+     行高必须与字号**成对改写**：Tailwind v4 的 --text-*--line-height 不随
+     字号自动重算，只改字号会让 13.5px 正文继续吃 16px 行高（1.19，CJK 多行
+     会挤成一坨）。新增档位务必同步 lib/utils.ts 的 font-size 组
+     （闸门：__tests__/cnFontScale.test.ts）。 */
+  --text-micro: 10.5px;
+  --text-micro--line-height: 13px;
+  --text-meta: 12px;
+  --text-meta--line-height: 16px;
+  --text-label: 12px;
+  --text-label--line-height: 16px;
+  --text-note: 13.5px;
+  --text-note--line-height: 19px;
+  --text-xs: 13.5px;
+  --text-xs--line-height: 19px;
+  --text-sm: 15px;
+  --text-sm--line-height: 22px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-base: 17px;
+  --text-base--line-height: 24px;
+  --text-lead: 17px;
+  --text-lead--line-height: 24px;
+  --text-lg: 20px;
+  --text-lg--line-height: 28px;
+  --text-xl: 24px;
+  --text-xl--line-height: 32px;
+
+  /* ---- 字重分工（2026-09-19 审美批次 1，随上面的阶梯一并裁定）----------
+     旧状态是阶梯的反面：全站 font-medium 106 + semibold 102 + bold 37 = 245 处
+     强调，因为 9–12px 挤在一起，**层级只能靠字重硬撑**，结果强调彼此抵消。
+     阶梯拉开后按角色重新分工（同档不越档）：
+       · bold     = 只给 display：页面 h1（≥17px）与统计数字。13.5px 以下禁 bold——
+                    苹方 700 在小字号下发糊，且与 h2 抢层级。
+       · semibold = 结构层上限：h2/h3、卡片与对话框标题、mono 标识符（包名/服务名）。
+       · medium   = 徽标、按钮、选中态文字。
+     判据一句话：**先字号、再颜色、最后才字重**。 */
 
   /* ---- 圆角梯度（2026-09-10 批次 E 收敛：4 档 → 2 档 + 胶囊）----
      旧口径 md(8)/lg(10)/xl(14)/2xl(18) 四档并用，且**同类元素分属两档**：

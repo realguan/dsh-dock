@@ -32,6 +32,43 @@
 
 ## 三、记录
 
+### 2026-09-19 UI 优化 · 审美升级三批：字号阶梯 / 动作强调 / 导航层级 —— guan（AI 协作）
+
+- **触发**：维护者「全面审查 UIUX 布局等做的不好的地方，然后开始优化」+「可以做 UIUX
+  审美升级，不仅仅局限于当前」（授权重排层级/节奏/配色，不限 token 收口）。密度取舍经
+  裁定：**可读性优先，接受一屏少约 15% 行**。字体仍限系统栈（前端禁发网络请求 ⇒ 不引 webfont）。
+- **批次 1（阶梯与字重）**：`index.css` 的 `--text-*` 重排为**成对声明行高**的阶梯
+  （micro 9→10.5 / meta 10→12 / label 11→12 / note 13→13.5 / body·lead 15→17…），
+  策略是**改 Tailwind 原生档名的值**而非新增档名 ⇒ 数百调用点零改动即整体抬字号。
+  字重契约收口：`bold` 只留展示型大字，`semibold` 为结构上限，徽标/按钮/选中文字回落
+  `medium`（判据：**先字号、再颜色、最后才字重**）。等宽只用于标识符，中文从 `font-mono`
+  摘出（macOS 裸 `monospace` 落到 Monaco，含汉字 ⇒ 混排打字机感），计数改 `tabular-nums`。
+- **批次 2（动作强调与选中态）**：`ui/button.tsx` 新增 `destructive-ghost`——行内删除/
+  卸载键静态 `text-dim` + 透明底，hover 才出 danger（实测 `rgb(175,5,50)` /
+  `rgba(175,5,50,.1)`）；**实心 destructive 只留给 `ConfirmDialog` 的确认键**（那才是
+  真正下单承诺的一步）。市场卡片不再挂实心 primary（一屏 20 张同款蓝按钮 = 没有主行动）
+  改 `outline`。选中只说一遍：`ProfileRow` 去掉蓝色左竖条（只留 `border-brand/40`），
+  左竖条收回给运行态；会话行的复制键与删除键成对同权重（不再一框一无框）。
+- **批次 3（导航层级与版面节奏）**：`ui/segmented.tsx` 升两级——`md`=换页面（顶栏），
+  `sm`=换面内内容（实测 37/31/13.5px vs 30/24/12px），此前两级同款同尺寸，插件中心顶栏
+  与页面内子 Tab 读起来像兄弟；新增 `stretch` 让详情面板四段 Tab 靠**整宽等分**而非
+  "更大更亮"分层级（顺手收掉第 6 份手搓分段器与 2 个裸 `<button>` 图标键）。系统控制台
+  左栏 `md:sticky md:top-16`（实测滚动后 top=64px），消除右列 900px / 左列 274px 的
+  626px 底部空洞。去噪：停用行不再划删除线（标识符划掉读不动，且已由徽标+开关+底色三重
+  表达）、boot 卡片目录名徽标只在 `title≠name` 时出现、`runtimeSummary` 改纯计数图例、
+  关于页 `lines.idle` 与「查看预览版」后缀的复读收掉（`previewView` 键已删）。
+- **影响**：`index.css` 与 `cn()` 同为全站面，他人若有未合并的 UI 分支，**重新看一眼
+  行高与字重**即可，无需改代码（档名未增删）。7 条破坏性入口的 `ConfirmDialog` 闸门
+  （`destructiveConfirmGate.test.ts`）与 `paletteTokens` 禁硬编码色闸门均未放宽。
+- **凭据**：`tsc -b` 0 错 / `oxlint` 0 warning（164 文件）/ `vitest` **547 passed
+  （57 文件）**，未新增测试依赖。视觉证据按**各窗口真实 `inner_size`** 取图（main
+  1280×820 / profiles 1180×780 / about 480×580，见 `src-tauri/src/ui.rs`、
+  `commands/window.rs`），并用 `getComputedStyle` 成对读色：每屏恰好 1 个实心 primary
+  （列表=新建工作台、会话=一键体检，插件/控制台/关于=0）；DOM 内 `line-through` 节点
+  归零；状态行实测渲染为「运行 7 · 失败 1 · 加载中 1 · 停用 3」。
+  ⚠️ 唯一**未经像素级证明**的一条：`BootSelector` 在 dev 主窗口走不到（渲染的是启动
+  等待屏），该处只有代码级验证。
+
 ### 2026-09-17 裁决 · dsh 0.1.6-alpha.2 起自带 Agent Teams：实验能力页「dsh 自带的、dock 不代管」 —— guan（AI 协作）
 
 - **触发**（维护者给了两张截图）：「dsh 新版本已经把智能体团队插件内置了，我们的实验性功能可以把

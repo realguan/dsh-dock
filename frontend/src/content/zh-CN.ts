@@ -259,7 +259,7 @@ export const t = {
       failed: "失败",
     },
     lines: {
-      idle: "点击「检查更新」查询官方发布源",
+      idle: "尚未检查更新",
       checking: "正在检查官方更新源",
       upToDate: "已是最新",
       downloading: "正在下载新版本",
@@ -303,7 +303,6 @@ export const t = {
     btnUpgradeTo: "升级到",
     installingVersion: "正在安装",
     previewReleased: "预览版已发布",
-    previewView: "查看",
     versionListEntry: "查看全部版本",
     noteUpgraded: "已升级到",
     noteAlreadyLatest: "已是最新",
@@ -477,8 +476,10 @@ export const t = {
     versionsLoadFailed: "版本列表查询失败",
     hiddenLayersHint: (n: number) => `另有 ${n} 个外挂插件层，见下方外挂插件清单`,
     pluginWithDsh: "版本随 dsh",
+    // 2026-09-19 审美批次 3：原句「会话运行中 · 7 行运行中 · …」把"运行中"说了两遍
+    // （会话态 + 行数），且会话态详情头部已有徽标。改成纯计数图例。
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
-      `会话运行中 · ${s.active} 行运行中${s.failed ? ` · ${s.failed} 行失败` : ""}${s.loading ? ` · ${s.loading} 行加载中` : ""}${s.disabled ? ` · ${s.disabled} 行未运行` : ""}`,
+      `运行 ${s.active}${s.failed ? ` · 失败 ${s.failed}` : ""}${s.loading ? ` · 加载中 ${s.loading}` : ""}${s.disabled ? ` · 停用 ${s.disabled}` : ""}`,
     runtimeUnavailable: "该 profile 当前未运行，仅显示静态清单",
     // 官方桌面运行时说明（2026-09-11）：原内联「内含 240+ 项本地预置底座服务」——
     // 数字随 dsh 版本漂移且无壳侧事实源（本机 desktop-packages.json 为 239 项），
