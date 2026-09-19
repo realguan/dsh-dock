@@ -32,6 +32,40 @@
 
 ## 三、记录
 
+### 2026-09-20 快车道 · 修「弹窗一开就自动弹出解释悬浮」：挂载焦点 + 焦点开悬浮两条闸门 —— guan（AI 协作）
+
+- **触发**：维护者拿截图指出「这个 bug 也得修，每次打开都自动打开了这个 tip 黑窗」
+  （「配置 MCP 服务」弹窗一开，`服务标识` 的 `Tip` 悬浮就自己弹出来）。
+- **两条根因叠成**（缺一不成立，故两处都改）：
+  1. `DialogContent` 的关闭键渲染在 `children` **之后** ⇒ Radix 的默认挂载焦点
+     （= 容器里第一个可聚焦元素）落到「服务标识」那个图标按钮上；
+  2. `@radix-ui/react-tooltip@1.2.16` 的 `TooltipTrigger.onFocus` **无条件**
+     `context.onOpen()`（源码 `if (!isPointerDownRef.current) context.onOpen()`，
+     没有 `:focus-visible` 闸门）⇒ "被聚焦"就等于"弹悬浮"。
+- **修法**：① `ui/dialog.tsx` 接管 `onOpenAutoFocus`（调用方给了就让位）——容器里第一个
+  `input/textarea/select`（排除 hidden 与 disabled）拿焦点；**没有可填字段的弹窗不接管**，
+  仍走 Radix 默认（确认框因此照旧落在按钮上）。② `ui/info-tip.tsx` 的 `onFocus` 里
+  对非 `:focus-visible` 的焦点 `preventDefault()`，借 `composeEventHandlers` 的
+  defaultPrevented 检查跳过 Radix 后续 handler（focus 事件本不可取消 ⇒ 无副作用）。
+- **两条不是重复保险**（实测）：键盘模态下的程序化 focus 同样命中 `:focus-visible`
+  （本机 `activeFocusVisible: true`），故只改 ② 拦不住这个 repro；只改 ① 则留下
+  「任何程序化焦点都弹悬浮」的隐患（Popover / 菜单同理）。分工：**①管焦点落在哪，②管这种焦点该不该开**。
+- **影响**：仅周知，但**所有表单弹窗的开弹窗落点变了**（现在落在第一个输入框，与用户
+  要填的东西对齐；确认框不变）。若上游修了 tooltip 的焦点闸门，②会变冗余但无害，届时复核。
+- **凭据**：`tsc -b` 0 错 / `oxlint` 0 warning（165 文件）/ `vitest` **550 passed（58 文件）**，
+  含新结构闸门 `__tests__/tooltipFocusGate.test.ts` 3 条（钉"弹窗自己决定挂载焦点 + Tip 只对
+  `:focus-visible` 开"两条不变量，回归形态 = 有人把 autofocus 交回默认）。
+  浏览器真机验证（devMock，profiles 窗）：打开「配置 MCP 服务」⇒ `activeElement =
+  INPUT#mcp-form-name`、`role=tooltip` **0 个**（关闭再开同样 0）；hover 仍开
+  （`data-state=delayed-open`，computed `bg rgb(13,18,31)` / `color rgb(232,236,246)`、
+  `13.5px/21.94px`，非纯黑块）；键盘焦点仍开（`instant-open`，读到「生效范围」那条说明）；
+  无字段的「移除 MCP 服务」确认框 ⇒ 不接管，Radix 默认聚焦「取消」。
+  ⚠️ **两条未实测**：(a) 鼠标模态下"程序化 focus 且 `:focus-visible=false`"这一分支在本机
+  造不出（in-app Browser 无可见表面，隐藏页里所有程序化 focus 都判为键盘模态），该分支只有
+  源码与闸门证据；(b) 像素级截图未取到（`take_screenshot` 报
+  `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，viewport 584×598 / `visibilityState=hidden`），
+  且窗口撑不到 profiles 真实 `1180×780`——视觉复核请维护者开一次 Browser 面板看这个弹窗。
+
 ### 2026-09-19 UI 优化 · 审美升级三批：字号阶梯 / 动作强调 / 导航层级 —— guan（AI 协作）
 
 - **触发**：维护者「全面审查 UIUX 布局等做的不好的地方，然后开始优化」+「可以做 UIUX

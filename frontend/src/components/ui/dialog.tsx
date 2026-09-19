@@ -7,6 +7,17 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
+/**
+ * 弹窗打开时优先聚焦的「真字段」（2026-09-19 裁定）。
+ *
+ * Radix 的默认 autofocus = 容器里第一个可聚焦元素，而表单弹窗里那一个常常是解释
+ * 图标（`Tip`，见 ui/info-tip.tsx）：焦点落在没有文字的图标上，既不是用户要填的
+ * 东西，又会连带把悬浮弹出来（"一开弹窗就冒出黑窗"）。这里把挂载焦点交给第一个
+ * 输入控件；没有输入控件的弹窗（确认框等）不接管，仍走 Radix 默认。
+ */
+const AUTOFOCUS_FIELD_SELECTOR =
+  "input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])"
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -51,6 +62,7 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -77,6 +89,18 @@ function DialogContent({
             "pointer-events-auto relative grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] overflow-y-auto gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm [&>*]:min-w-0 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
             className
           )}
+          onOpenAutoFocus={
+            onOpenAutoFocus ??
+            ((event: Event) => {
+              const container = event.currentTarget as HTMLElement | null
+              const field = container?.querySelector<HTMLElement>(
+                AUTOFOCUS_FIELD_SELECTOR
+              )
+              if (!field) return // 没有可填字段 ⇒ 不接管，走 Radix 默认
+              event.preventDefault()
+              field.focus()
+            })
+          }
           {...props}
         >
           {children}
