@@ -577,10 +577,13 @@ export function setupDevMock() {
         const caps = [
           {
             id: "agent-team",
-            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 管；
-            // 这里同时置 legacyCopy，浏览器直开时能看到"清理旧副本"那条出路。
+            // dsh 0.1.6-alpha.2 起 Agent Teams 随安装包自带（optional bundle）→ 由 dsh 官方
+            // 插件页托管。2026-09-20 维护者裁定：dock 不再展示它（面板与插件列表都按
+            // 「不含自带能力」的目录走）——浏览器直开时这项**不出现在面板里**即是预期，
+            // 剩下三项覆盖 已停用 / 未启用 / 需要修复 三态。`legacyCopy` 字段按契约保留
+            // （后端仍在下发，本壳不再消费）。
             shippedByDsh: true,
-            legacyCopy: true,
+            legacyCopy: false,
             label: "多智能体协同",
             summary: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
             unlocks:

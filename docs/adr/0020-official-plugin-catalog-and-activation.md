@@ -377,6 +377,13 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
    > `@deepseek-ai/dsh-experimental-*`（＝ `OPTIONAL_BUNDLES` 增项）。今天仍是"要装才有"的
    > 发布包：`auto-review` / `browser-use`（三档）/ `computer-use`（两档）。
 
+   > **修订（2026-09-20，ADR-0028 §6.2 维护者裁定）**：dsh 已把它接管为 optional
+   > bundle 的能力，**本壳不再摆任何面板呈现**——能力目录按 `shippedByDsh` 过滤后展示
+   > （`lib/pluginCatalog.ts::dockCuratedCaps`），独立详情面/自带徽标/「清理旧副本」整条
+   > 链移除。用户开关它的地方只有 **dsh 自己的插件页**；启用后其层写进本档
+   > `dsh.profile.bundles`，在插件列表与模板层同列展示（内置 + 层 N + 版本随 dsh）。
+   > 契约字段 `shippedByDsh` / `legacyCopy` 后端仍下发（判据不变），本壳不再消费。
+
 6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言）。
    > **2026-09-17 补**：**不得含任何 markdown 标记**——面板没有 markdown 渲染器，
    > 反引号与 `**` 都会原样显示（D6 只挡住了反引号，`unlocks_zh` 里的 `**权限最高**`
@@ -499,3 +506,19 @@ TypeError: Cannot read properties of undefined (reading 'mode') at validateBrows
 - 上游为 MCP provider 补默认 `mode`、或让 `Config` 变可选 → 行载荷表可减；
 - `cua-driver` 改为随包分发（如同 native 档自包含）→ 前置门可撤；
 - 启动等待口径再调（如 dsh 改为「失败即快退」）→ `stall_grace` 复评。
+
+---
+
+## 9. 面板落点迁出（2026-09-20，指针）
+
+本 ADR §7 定的**呈现单位、开关语义、状态口径与硬门全部不变**；变的是面板**落在哪个
+视图**：能力面板自**插件中心**（`PluginHub` 的 `official` 子页）迁入 **Profile 详情页**
+第 5 个 tab（与「插件列表」并列），插件中心收敛为市场 / 已安装两子页，
+「外挂插件」更名「插件列表」。理由与实现见 **[ADR-0028](0028-capability-panel-moves-into-profile.md)**
+（档位自持下拉 → 受控 prop，消除"面板档位与选中档不一致"的错写入口）。
+本节只作指针，**禁双源**：面板交互的一切判据以 ADR-0028 与其闸门
+（`frontend/src/__tests__/experimentalCapabilitiesGate.test.ts`）为准。
+
+§2.8 的「同一能力操作入口单源」在 **ADR-0028 §6（第二批，清单打标合并）** 有直接推论：
+「插件列表」里的实验性行**不持开关/卸载**（卸载必须连带清挂载行，编排只在能力面板），
+只给「去开关」跳转——合表之后两个视图不是"各一套入口"，而是"清单看事实、面板管动作"。

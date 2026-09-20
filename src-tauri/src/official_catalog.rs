@@ -905,9 +905,14 @@ struct RowFacts {
 /// 两种激活方式的判据**不同**，不可混用：
 /// - `InsertRow`：行由**壳**写入，必须按**精确 `id` + 包名**同时命中才算在
 ///   （防"行在、但落在别的包上"的半对状态）；
-/// - `AutoBundle`：行由**包自身的 patch**贡献，在行表里表现为以该包名为段落的合成条目
-///   （`plugins::build_row_states`），其 `contributed_ids` 即全部可切换目标。
-///   无贡献行 = 该包不产生配置行 → 无行可切（停用只能靠移除），但仍视为"已激活"。
+/// - `AutoBundle`：行由**包自身的 patch**贡献。两种形态都要认（2026-09-20 修联动缺陷）：
+///   - **多行补丁包**：以该包名为段落合成出的条目（`plugins::build_row_states`），
+///     `contributed_ids` 即全部可切换目标；
+///   - **自命名行**：包只插一行、且那行的 `name` 就是包名——`build_row_states` 视其
+///     "已由自身行表示"而不合成（`contributed_ids` 为空），切换目标 = 该自身行。
+///     漏掉这一档会让「实验能力」永远读到 `disabled: false`，与「外挂插件」的开关各说各话。
+///
+/// 两者都没有 = 该包不产生配置行 → 无行可切（停用只能靠移除），但仍视为"已激活"。
 fn row_state_for(
     rows: &[PluginRowState],
     package: &str,
@@ -933,13 +938,18 @@ fn row_state_for(
         Activation::AutoBundle => {
             let hit = rows
                 .iter()
-                .find(|r| r.pkg_name == package && !r.contributed_ids.is_empty());
+                .find(|r| r.pkg_name == package && !r.contributed_ids.is_empty())
+                .or_else(|| rows.iter().find(|r| r.pkg_name == package));
             match hit {
                 Some(r) => RowFacts {
                     package: package.to_string(),
                     present: true,
                     disabled: r.shell_disabled,
-                    targets: r.contributed_ids.clone(),
+                    targets: if r.contributed_ids.is_empty() {
+                        vec![r.id.clone()]
+                    } else {
+                        r.contributed_ids.clone()
+                    },
                 },
                 None => RowFacts {
                     package: package.to_string(),
@@ -1539,6 +1549,27 @@ mod tests {
         let v = variant(cap, "standard");
         assert_eq!(v.state, VariantState::On);
         assert!(v.steps[0].toggle_targets.is_empty());
+    }
+
+    /// **自命名行**的 bundle（实测 2026-09-20 `auto-review`）：包自身那层插入的唯一一行
+    /// `name` **就是包名**，于是 `build_row_states` 把它当成"已由自身行表示的依赖包"、
+    /// **不合成**（`contributed_ids` 为空）。此时行事实必须退回**自身行**——
+    /// 否则「外挂插件」把行停用了，「实验能力」却永远读到 `disabled: false`，
+    /// 两边开关各说各话（维护者报的联动缺陷）。
+    #[test]
+    fn auto_bundle_with_self_named_row_reads_and_toggles_that_row() {
+        const REVIEW: &str = "@deepseek-ai/dsh-experimental-auto-review";
+        let f = facts(&[REVIEW], &[REVIEW]);
+        // `build_row_states` 对自命名 bundle 的真实产物：原样一行，无 contributed_ids。
+        let rows = vec![row("auto-review", REVIEW, true)];
+        let caps = resolve_capabilities(&f, &rows, Some("0.1.6-alpha.1"), CopyLang::Zh);
+        let v = variant(find(&caps, "auto-review"), "standard");
+        assert_eq!(
+            v.state,
+            VariantState::Disabled,
+            "自身行已停用 → 能力必须报停用，不能停在 On"
+        );
+        assert_eq!(v.steps[0].toggle_targets, vec!["auto-review".to_string()]);
     }
 
     /// 纯行级开关的**准入条件**：每一步都得是壳写的行。provider 两个能力满足

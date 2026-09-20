@@ -24,15 +24,33 @@
 //     "钉版本 / 激活方式 / 行 id / 版本提示不进第一阅读层"。
 //   · 2026-09-17 v3：维护者验收 v2 = "占用空间太多、一屏一个工具、点详情还加长卡片"
 //     → 第一阅读层缩到"名称 / 状态 / 当前插件名 / 开关"，其余全部归常驻详情面。
+//   · 2026-09-20（ADR-0028）：面板迁入 Profile 详情页、档位改受控 prop → 「在途不许
+//     换档」判据从"下拉 disabled"改为"面板内不存在换档机制"；新增 onChanged 联动断言。
+//     **迁移自查补记**：换档入口搬到父级左列表后，"在途换档"重新可达，且原请求令牌
+//     拦不住（旧档回读自取更大 seq）——故补「三道闸门」断言（回读作废 / 落账复核 /
+//     进度按发起档归属）。判据注释里"缺陷形态随之消失"的说法已按事实更正。
+//   · 2026-09-20（ADR-0028 第二批，清单打标合并）：**目录数据也改受控**（与「插件列表」
+//     共用一次回读、禁双源）——回读作废 / 请求令牌 / 换档清 dirty 三条判据随负载一起
+//     搬到父级 `ProfileDetailPane.tsx`（本文件下方改指 `paneSrc`）；组件内留下的
+//     是**动作侧**闸门（落账复核 / 进度归属 / 迟到的 onChanged 作废），缺它们三症状
+//     （清单串档 / 失败串档 / 假重启提示）照样成立。
 
 import { describe, expect, it } from "vitest"
 
 import src from "@/components/market/ExperimentalCapabilities.tsx?raw"
+import paneSrc from "@/components/profiles/ProfileDetailPane.tsx?raw"
+import catalogSrc from "@/lib/pluginCatalog.ts?raw"
 import mock from "@/lib/devMock.ts?raw"
 
-/** 左栏**清单行**函数体（"不点任何东西就能扫到的东西"都在这里）。 */
+/** 左栏**清单行**函数体（"不点任何东西就能扫到的东西"都在这里）。v4 起切片终点是
+ *  BackendMenu——「切换后端」菜单是**披露面**（overflow-menu），不算行内联内容。 */
 function listRegion(): string {
-  return slice("function CapabilityRow(", "function CapabilityPane(")
+  return slice("function CapabilityRow(", "function BackendMenu(")
+}
+
+/** 「切换后端」溢出菜单函数体（v4 新增的披露面）。 */
+function menuRegion(): string {
+  return slice("function BackendMenu(", "function CapabilityPane(")
 }
 
 /** 右栏**详情面**函数体（常驻详情：插件 / 前置 / 排障 / 移除）。 */
@@ -254,9 +272,9 @@ describe("⑤ 子集档（Agent Teams 的两档）不得被当成互斥后端", 
     expect(dock, "被包含的档不得提供冲突修复入口").toMatch(
       // 2026-09-16 追加：前置门挡住的档**也不得给「修复」**——修复=装包+写行，
       // 后端两道都会拒，按钮点下去必失败（假按钮）。三个排除项必须同处一个条件里。
-      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}variant\.state === "partial"/,
+      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}target\.state === "partial"/,
     )
-    expect(dock, "被包含的档不得提供独立移除入口").toMatch(/!subsumedBy &&\s*\n?\s*\(variant\.state === "on"/)
+    expect(dock, "被包含的档不得提供独立移除入口").toMatch(/!subsumedBy &&\s*\n?\s*\(target\.state === "on"/)
     // 状态徽标要显式说"已包含"，而不是照抄底层 On/Disabled。
     expect(dock).toMatch(/if \(variant\.subsumedBy\) \{/)
     expect(dock).toContain("capStateSubsumed")
@@ -268,7 +286,7 @@ describe("⑦b 面板徽标与变体行标记（2026-09-16 用户真机验收第
     // 真机：桌面控制里「随包自带运行时」正在生效、用户点了被前置门挡住的
     // 「复用已装 cua-driver」，旧写法按选中档渲染 → 整个面板报「需要修复」。
     expect(src).toMatch(/const shown: keyof typeof map = cap\.state/)
-    expect(src, "不得再照选中档渲染徽标").not.toMatch(/const shown = variant\.state/)
+    expect(src, "不得再照选中档渲染徽标").not.toMatch(/const shown = target\.state/)
   })
 
   it("被前置门挡住的档在**它自己那一行**里有标记（否则切档看不出区别）", () => {
@@ -281,7 +299,7 @@ describe("⑦ 宿主前置缺失 = 硬门（2026-09-16 真机事故）", () => {
   it("前置缺失时开关禁用，且把后端给的原因**露在详情面上**（不是藏起来）", () => {
     // 事故：缺 cua-driver 时装上 cua-driver-mcp → dsh 插件树加载失败 → 工作台起不来。
     // 所以这不是"提示"，是门：禁用开关 + 说明为什么灰。
-    expect(src).toMatch(/const blocked = Boolean\(variant\.prerequisiteMissing\)/)
+    expect(src).toMatch(/const blocked = Boolean\(target\.prerequisiteMissing\)/)
     expect(src, "前置缺失必须并入 Switch 的 disabled").toMatch(
       /disabled=\{busy \|\| subsumedBy \|\| blocked\}/,
     )
@@ -321,7 +339,7 @@ describe("⑥ 失败态与状态衔接：不许说假话、不许两个按钮干
 
   it("有失败块时不再渲染「修复」——它与「继续剩余步骤」是同一个动作", () => {
     expect(src).toMatch(
-      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}variant\.state === "partial"/,
+      /!subsumedBy[\s\S]{0,60}!blocked[\s\S]{0,60}!failure[\s\S]{0,40}target\.state === "partial"/,
     )
   })
 
@@ -371,20 +389,64 @@ describe("⑩ 动作互斥：一次只能跑一个动作（2026-09-17 独立复�
     // → 两条编排行交错，同一份 `cordis.patch.yml` 上的 read-modify-write 可能丢更新。
     expect(src, "行与详情面都要收到全局 busy").toMatch(/busy=\{run !== null\}/)
     expect((src.match(/busy=\{run !== null\}/g) ?? []).length, "两栏都要传（行 + 详情面）").toBeGreaterThanOrEqual(2)
-    expect(src, "在途时不许换档（换档会让在途动作的语义搅乱）").toMatch(
-      /<Select value=\{profile\} onValueChange=\{setProfile\} disabled=\{run !== null\}>/,
-    )
+  })
+
+  it("档位受控于父级（ADR-0028）：面板内不再有自持档位切换机制", () => {
+    // 原判据「在途时不许换档」（`Select disabled={run !== null}`）守护的是**面板内下拉**——
+    // 该下拉已随迁入 Profile 详情页删除：档位是必传 prop（= ProfileDetailPane 选中档）。
+    // **但"在途换档"这个缺陷形态没有消失**：换档入口搬到了父级左列表，面板的 busy 管不到
+    // 那条路 → 见下方「在途换档」一节的三道闸门（2026-09-20 迁移自查时补）。
+    expect(src, "不得再有自持档位 state").not.toContain("setProfile")
+    expect(src, "不得再有档位下拉（Select 已随迁入移除）").not.toContain("<Select")
+    expect(src, "档位必须是受控 prop").toContain("profile: string")
+    // 同作用域联动的落点：写操作完成必须回调父级刷新同页「插件列表」。
+    expect(src, "写后必须回调父级刷新（onChanged）").toContain("onChanged?.()")
+    // 目录数据同受控（ADR-0028 第二批）：面板不自己取数，由父级 props 喂。
+    expect(src, "目录数据必须是受控 props").toContain("caps: Capability[] | null")
+    expect(src, "面板内不得再自行 invoke 能力目录").not.toContain("listExperimentalCapabilities")
   })
 
   it("在途动作的回读不许覆盖新档的清单（请求令牌）", () => {
     // 失败路径：A 在途 → 切到 B → B 的 load 先写 caps → A 的 finally 用旧 profile 回读覆盖面
     // → 下拉显示 B、清单是 A 的事实，之后按 A 的 installed 算计划装进 B。
-    expect(src).toContain("loadSeq")
-    expect(src, "只接受最后一次请求").toMatch(/if \(seq === loadSeq\.current\) setCaps\(next\)/)
+    // 2026-09-20 第二批：回读随负载搬到父级（`ProfileDetailPane::loadCaps`），令牌判据
+    // 随之改指 `paneSrc`——负载在哪，判据跟到哪，不靠"组件里看不到就当时不存在"。
+    expect(paneSrc, "父级的目录回读要有令牌").toContain("capsSeq")
+    expect(paneSrc, "只接受最后一次请求").toMatch(
+      /if \(seq !== capsSeq\.current\) return\s*\n\s*setCaps\(next\)/,
+    )
   })
 
   it("换档清状态时连 dirty 一起清（否则「立即重启」打在没改过的档上）", () => {
-    expect(src).toMatch(/setDirty\(false\)\s*\n\s*void load\(\)/)
+    // dirty 是**按档**的事实（哪个档的配置被改过）。第二批起负载搬到父级，但"清 dirty"
+    // 仍在本组件（它是组件内 state），判据改为：换档 effect 里必须连 dirty 一起清。
+    expect(src).toMatch(
+      /useEffect\(\(\) => \{[\s\S]{0,240}setDirty\(false\)\s*\n\s*\}, \[profile\]\)/,
+    )
+  })
+
+  it("在途换档（ADR-0028 迁移带出的新可达态）：旧档的回读与落账整体作废", () => {
+    // 旧版在途换档被面板内下拉的 `disabled={run !== null}` 挡着；换档入口搬到父级左列表
+    // （侧栏 ProfileRow 的 onSelect 不受面板 busy 约束）后这条路重新可达，且**令牌拦不住**：
+    // 旧档的回读自取更大的 seq，成了"最后一次请求"。三道闸门缺一，症状分别是——
+    // ① 清单串档：下拉/左列表显示 B、清单是 A 的事实；② 失败串档：A 的失败挂在 B 的同名
+    // 能力上（两档能力 id 同名）；③ 假重启提示：B 档弹"配置已变更"，重启一个没改过的档。
+    // 闸门一（回读作废）随负载在父级：旧档回读整体作废，不占令牌、不发请求。
+    expect(paneSrc, "旧档回读必须整体作废（不占令牌）").toMatch(
+      /if \(nameRef\.current !== profile\) return[\s\S]{0,120}capsSeq\.current \+= 1/,
+    )
+    // 闸门二（落账复核）在组件：动作结果落账前先看档位是否还在。
+    expect(src, "动作结果落账前必须复核档位").toMatch(
+      /if \(profileRef\.current !== profile\) return/,
+    )
+    // 进度按**发起档**归属：两档能力 id 同名，单看 capId 必然把转圈画到新档头上。
+    expect(src, "RunState 必须钉住发起档").toMatch(/interface RunState \{[\s\S]{0,80}profile: string/)
+    expect((src.match(/run\.profile === profile/g) ?? []).length, "行与详情面都要按档归属").toBeGreaterThanOrEqual(2)
+    // 父级刷新同样要挡：`onChanged` 是发起时的闭包（钉着旧 profile），迟到调用会把
+    // 旧档的详情/行表写进父级此刻显示的新档页面。
+    expect(src, "换档后的父级刷新必须一并作废").toMatch(
+      /if \(profileRef\.current === profile\) \{[\s\S]{0,140}onChanged\?\.\(\)/,
+    )
   })
 
   it("dev mock 与契约同形（tsc 兜底，不再数出现次数）", () => {
@@ -394,40 +456,89 @@ describe("⑩ 动作互斥：一次只能跑一个动作（2026-09-17 独立复�
   })
 })
 
-describe("⑪ dsh 自带的能力：dock 不代管（2026-09-17 立）", () => {
+describe("⑪ dsh 自带的能力不进面板：官方插件页托管，dock 不摆第二套入口（2026-09-20 修订）", () => {
   // 上游事实：dsh 0.1.6-alpha.2 起把 Agent Teams 两个 bundle 作为 **optional bundle**
   // 随安装包下发（`packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＋
   // `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`）：
-  // 用户在自己的插件页开关，dsh 视其为 not-removable。该设计笔记同时**否决**了
-  // "由某个面板按名字从 registry 装官方 bundle"这条路——那正是本模块原来在做的事。
-  const shipped = slice("function ShippedPane(", "function FailureBlock(")
+  // 随包下载、默认关、在 **dsh 自己的插件页**开关、**永不卸载**。
+  //
+  // 判据变更史：2026-09-17 立的原判据是"面板展示但只说明+清理遗留副本"（ShippedPane）；
+  // 2026-09-20 维护者裁定 **直接在面板里不展示**——它已被官方插件管理托管，dock 摆一份
+  // 说明页仍是双入口（ADR-0020 §2.8）。判据随裁定翻面：从"必须有 ShippedPane"变为
+  // "必须过滤掉"。过滤规则单一：`lib/pluginCatalog.ts::dockCuratedCaps`（父级过滤一次，
+  // 面板展示与插件列表打标共用）。
 
-  it("自带的能力没有开关、没有安装/替换入口（免得与 dsh 抢同一份插件）", () => {
-    expect(src, "自带行必须走 ShippedPane").toContain("selected.shippedByDsh && (")
-    expect(src, "自带能力不得进普通详情面").toContain("selected && !selected.shippedByDsh && (")
-    expect(shipped, "自带面里不得有开关").not.toContain("<Switch")
-    expect(shipped, "自带面里不得出现安装/替换/修复").not.toMatch(/planReplace|capRepair|capOtherActive/)
-    // 动作入口也要有防御式早退：计划层不该算（界面藏了按钮、动作还在跑 = 半吊子）。
-    expect(src, "handleSwitch 必须先挡掉自带能力").toMatch(
-      /if \(cap\.shippedByDsh\) return/,
-    )
+  it("面板不再渲染任何 shipped 分支（ShippedPane / 徽标 / 开关豁免全部移除）", () => {
+    expect(src, "ShippedPane 已随裁定移除").not.toContain("ShippedPane")
+    expect(src, "面板内不得再有任何 shipped 判定分支").not.toContain("shippedByDsh")
+    expect(src, "自带的说明/指路/清理文案键已随面板分支移除").not.toContain("capShipped")
+    expect(src, "遗留副本清理入口已移除").not.toContain("capLegacyCleanup")
   })
 
-  it("三个事实都在一屏里：归 dsh 管、自带哪些包、遗留副本怎么清", () => {
-    expect(shipped, "要说明开关在哪（指路）").toContain("t.market.capShippedNote")
-    expect(shipped, "要列出随 dsh 自带的包名").toContain("capShippedPackages")
-    expect(shipped, "遗留副本要如实说明并给清理出路").toContain("t.market.capLegacyCopy")
-    expect(shipped).toContain("t.market.capLegacyCleanupBtn")
-    // 清理必须走既有的破坏性确认链：只置起待确认态，不直接执行。
-    expect(src, "清理走 ConfirmDialog 的待确认态").toMatch(
-      /onCleanup=\{\(v\) => setPending\(\{ kind: "remove"/,
-    )
+  it("过滤发生在父级数据边界（单一规则，面板与插件列表共用）", () => {
+    expect(catalogSrc, "过滤规则是纯函数").toContain("export function dockCuratedCaps")
+    expect(catalogSrc, "判据锚定安装实测（shipped_by_dsh）").toMatch(/!cap\.shippedByDsh/)
+    expect(paneSrc, "父级过滤一次").toContain("dockCuratedCaps(caps ?? [])")
+    expect(paneSrc, "能力面板拿过滤后的目录").toContain("caps={curatedCaps}")
+    expect(paneSrc, "插件列表同样用过滤后的目录打标").toContain("caps: curatedCaps,")
   })
 
-  it("遗留副本只在该 Profile 真的还持有包时出现（没装过就不该出现清理按钮）", () => {
-    expect(shipped, "清理区必须受 legacyCopy 守护").toMatch(/\{cap\.legacyCopy && legacyVariant && \(/)
-    expect(shipped, "清理目标要选真的还装着东西的那一档").toMatch(
-      /cap\.variants\.find\(\(v\) => v\.steps\.some\(\(s\) => s\.installed \|\| s\.rowPresent \|\| s\.disabled\)\)/,
+  it("dev mock 保留一个自带能力（契约形状 + 过滤路径在浏览器直开时可见）", () => {
+    // mock 仍带 shippedByDsh: true：它是契约字段（后端在下发），且浏览器直开时
+    // "少一项"正是过滤生效的可观察证据。
+    expect(mock, "mock 至少要留一个自带能力").toMatch(/shippedByDsh: true/)
+    expect(mock, "mock 的载荷要按契约标注（少字段编译期就红）").toContain(
+      "] satisfies Capability[]",
     )
+  })
+})
+
+describe("⑫ v4 控制面/后果面：行内即事实、换后端走溢出菜单、无 picked 中间态", () => {
+  // 2026-09-20 维护者要求"布局和交互着重重构"，经 ui-ux-pro-max 规则核验后定稿：
+  //  · 左栏 = 唯一控制面（开关 + 切换后端菜单）；右栏 = 后果面（只读 + 恢复 + 危险区）；
+  //  · picked 中间态取消 → misaligned 隐藏态死亡（行里显示的自古以来就是事实）；
+  //  · 换后端**不放行内 pills**（compact-label-overflow / truncation-strategy /
+  //    web-target-size 叠加致死），走 overflow-menu。
+
+  it("picked / misaligned 中间态已移除（行里显示的就是事实）", () => {
+    expect(src, "不得再有 picked 选中态").not.toContain("setPicked")
+    // 注释里会写"misaligned 已死亡"的来龙去脉，故剥注释后判码
+    expect(stripComments(src), "不得再有不一致的选中态").not.toContain("misaligned")
+    expect(src, "行的开关目标来自 rowTarget（生效档 → 首个可用档）").toMatch(
+      /const rowTarget = useCallback/,
+    )
+    expect(src, "右栏同样用 rowTarget（详情与移除作用于事实档）").toContain("target={rowTarget(selected)}")
+  })
+
+  it("换后端是溢出菜单（Popover），不是行内 pills", () => {
+    const menu = menuRegion()
+    expect(menu, "菜单必须是 Popover 基座（外点/ESC 由 Radix 兜底）").toContain("<Popover")
+    expect(menu, "触发钮要有可访问名（图标-only）").toContain("t.market.capMenuBackend(")
+    expect(menu, "包名完整折行不截断（截断会砍掉区分各档的尾部）").toContain("break-all")
+    expect(menu, "当前生效档不可点（点了也是无操作）").toMatch(/const disabled = isActive \|\| vBlocked \|\| vSubsumed/)
+    expect(menu, "当前生效档要有徽标说明").toContain("t.market.capVariantActive")
+    // 行内联区域不得出现变体清单（它在菜单里）
+    expect(listRegion(), "清单行不得内联渲染变体清单").not.toContain("cap.variants.map(")
+  })
+
+  it("菜单点选与开关同链：都经 activate（该确认的确认）", () => {
+    expect(src, "启用链统一收口到 activate").toMatch(/const activate = \(cap: Capability, variant: CapabilityVariant\)/)
+    expect(src, "换后端复用 activate（无第二套启用路径）").toMatch(
+      /const switchBackend = \(cap: Capability, variant: CapabilityVariant\) => \{[\s\S]{0,160}activate\(cap, variant\)/,
+    )
+    expect(src, "要装新包/要拆旧档 → 先确认").toMatch(/willReplace \|\| variant\.state === "off"/)
+  })
+
+  it("后果面只读：右栏不再有开关/单选组，后端对照是纯列表", () => {
+    const pane = paneRegion()
+    expect(pane, "右栏不得再有开关").not.toContain("<Switch")
+    expect(pane, "右栏不得再有单选组").not.toContain("radiogroup")
+    expect(pane, "右栏不得再有 picked 回调").not.toContain("onPick")
+    expect(pane, "后端对照仍由 variantPackageRoles 派生").toContain("variantPackageRoles(cap, v.id)")
+    expect(pane, "恢复/危险区入口仍在（busy 互斥）").toContain("disabled={busy}")
+  })
+
+  it("汇总计数用等宽数字（number-tabular：状态变化时行不跳）", () => {
+    expect(src, "汇总计数要 tabular-nums").toContain("tabular-nums")
   })
 })

@@ -10,10 +10,14 @@ import {
   LoaderCircle,
   Package,
   Plus,
+  Puzzle,
   RefreshCw,
   Search,
+  ShieldCheck,
+  Sparkles,
   Star,
   Trash2,
+  TriangleAlert,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
@@ -21,7 +25,15 @@ import { useI18n } from "@/stores/i18nStore"
 import { runtimeChipFor, runtimeSummary, validatePluginSpec } from "@/lib/profiles"
 import type { RuntimeChip } from "@/lib/profiles"
 import { pluginToggleTargets, splitSettledToggles, toggleIntent } from "@/lib/pluginToggle"
+import {
+  dockCuratedCaps,
+  matchesKindFilter,
+  matchesSearch,
+  mergePluginRows,
+} from "@/lib/pluginCatalog"
+import type { MergedPluginRow, PluginKindFilter } from "@/lib/pluginCatalog"
 import type {
+  Capability,
   PluginEntry,
   PluginRowState,
   PluginRuntimeSnapshot,
@@ -35,6 +47,7 @@ import { Switch } from "@/components/ui/switch"
 import { YamlEditor } from "@/components/ui/yaml-editor"
 import { PluginImportPickerDialog } from "@/components/profiles/PluginImportPickerDialog"
 import { McpManager } from "@/components/profiles/McpManager"
+import { ExperimentalCapabilities } from "@/components/market/ExperimentalCapabilities"
 import {
   Dialog,
   DialogContent,
@@ -57,7 +70,7 @@ export function ProfileDetailPane({
   isSwitching = false,
   busy: _busy,
   onLaunch: _onLaunch,
-  onRestart: _onRestart,
+  onRestart,
   onSetDefault,
   onNotice,
 }: {
@@ -74,8 +87,8 @@ export function ProfileDetailPane({
   onDelete: () => void
   onNotice: (text: string, kind?: "ok" | "warn") => void
 }) {
-  const { t } = useI18n()
-  const [tab, setTab] = useState<"plugins" | "bundles" | "patch" | "mcp">("plugins")
+  const { t, activeLocale } = useI18n()
+  const [tab, setTab] = useState<"plugins" | "caps" | "patch" | "mcp">("plugins")
   const [detail, setDetail] = useState<ProfileDetail | null>(null)
   const [plugins, setPlugins] = useState<PluginEntry[] | null>(null)
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
@@ -84,6 +97,10 @@ export function ProfileDetailPane({
 
   // 插件搜索过滤
   const [searchQuery, setSearchQuery] = useState("")
+  // 三类筛选（ADR-0028 第二批：内置 / 第三方 / 实验性合一后的 facet chips）
+  const [kindFilter, setKindFilter] = useState<PluginKindFilter>("all")
+  // 能力组 hover 联动：鼠标进组即高亮整组（基座 + provider 从属关系的交互呈现）
+  const [hoveredCap, setHoveredCap] = useState<string | null>(null)
 
   // 操作状态
   const [opBusy, setOpBusy] = useState<string | null>(null)
@@ -135,31 +152,48 @@ export function ProfileDetailPane({
     return api
       .getPluginRuntime()
       .then((s) => {
-        setRuntime(s)
+        // 换档后旧档的快照不许写进新页面（与 loadCaps 同族护栏，ADR-0028 §4.1：
+        // 左列表切档不受面板 busy 约束，慢响应会串档）。
+        if (nameRef.current === profile) setRuntime(s)
         const appliesToProfile = s.profile !== null && s.profile === profile
         return { observed: true, appliesToProfile, entries: appliesToProfile ? s.entries : [] }
       })
       .catch(() => {
-        setRuntime({ profile: null, entries: [] })
+        if (nameRef.current === profile) setRuntime({ profile: null, entries: [] })
         return { observed: false, appliesToProfile: false, entries: [] as RuntimeEntry[] }
       })
   }, [])
 
   const reload = useCallback(() => {
     if (!name) return
+    const target = name
+    // 旧档的回读整体作废：请求发出后用户可能已经切到别的档（左列表 onSelect 不受
+    // busy 约束），迟到的响应会把旧档的详情/清单写进新档页面（ADR-0028 §4.1 同族）。
     api
-      .getProfileDetail(name)
-      .then((d) => setDetail(d))
-      .catch((e) => setError(String(e)))
+      .getProfileDetail(target)
+      .then((d) => {
+        if (nameRef.current === target) setDetail(d)
+      })
+      .catch((e) => {
+        if (nameRef.current === target) setError(String(e))
+      })
     api
-      .listProfilePlugins(name)
-      .then((p) => setPlugins(p))
-      .catch(() => setPlugins([]))
-    refreshRuntime(name).catch(() => {})
+      .listProfilePlugins(target)
+      .then((p) => {
+        if (nameRef.current === target) setPlugins(p)
+      })
+      .catch(() => {
+        if (nameRef.current === target) setPlugins([])
+      })
+    refreshRuntime(target).catch(() => {})
     api
-      .getPluginRows(name)
-      .then((r) => setRows(r))
-      .catch(() => setRows([]))
+      .getPluginRows(target)
+      .then((r) => {
+        if (nameRef.current === target) setRows(r)
+      })
+      .catch(() => {
+        if (nameRef.current === target) setRows([])
+      })
   }, [name, refreshRuntime])
 
   useEffect(() => {
@@ -173,6 +207,10 @@ export function ProfileDetailPane({
     setInstallSpec("")
     setInstallError(null)
     setSearchQuery("")
+    setKindFilter("all")
+    // 旧档的能力目录必须清：留着会让新档的包顶着旧档的「实验性」标（归属是按档的）
+    setCaps(null)
+    setCapsError(null)
     setUpdateMap(null)
     setCheckState("idle")
     setPending({})
@@ -191,6 +229,56 @@ export function ProfileDetailPane({
     },
     [],
   )
+
+  // ── 实验能力目录（受控数据，2026-09-20 ADR-0028 第二批）──────────────────
+  //
+  // 为什么由**父级**取数：插件列表要给每个包打「实验性 · <能力>」标，归属只有能力目录
+  // 知道；而目录是按 profile 的。两处各取一次 = 同窗两条目录链（ADR-0028 §2 禁），
+  // 且写操作后必然对不上。故目录与行表/详情一样随本页取数，面板只消费。
+  //
+  // 档位护栏与 ExperimentalCapabilities 动作侧闸门同族（ADR-0028 §4.1）：换档入口
+  // 在左侧列表，旧档的回读自己会取到更大的 seq——"最后一次请求"反而成了旧档的数据，
+  // 令牌拦不住。判据因此是**按最新档位早退**：旧档回读整体作废，不占令牌、不发请求。
+  const [caps, setCaps] = useState<Capability[] | null>(null)
+  const [capsLoading, setCapsLoading] = useState(false)
+  const [capsError, setCapsError] = useState<string | null>(null)
+  const capsSeq = useRef(0)
+  const loadCaps = useCallback(
+    (profile: string) => {
+      if (nameRef.current !== profile) return
+      const seq = (capsSeq.current += 1)
+      setCapsLoading(true)
+      api
+        .listExperimentalCapabilities(profile, activeLocale)
+        .then((next) => {
+          if (seq !== capsSeq.current) return
+          setCaps(next)
+          setCapsError(null)
+        })
+        .catch((e) => {
+          if (seq !== capsSeq.current) return
+          setCaps(null)
+          setCapsError(`${t.market.capLoadFailed}${t.market.capValueSep}${String(e)}`)
+        })
+        .finally(() => {
+          if (seq === capsSeq.current) setCapsLoading(false)
+        })
+    },
+    [activeLocale, t],
+  )
+
+  useEffect(() => {
+    if (!name) return
+    loadCaps(name)
+  }, [name, loadCaps])
+
+  /** 「插件列表」→「实验能力」的跳转请求（去开关）。nonce 保证同一能力连跳两次
+   *  也能再次触发选中（id 相同也要重新展开详情面）。 */
+  const [capFocus, setCapFocus] = useState<{ id: string; nonce: number } | null>(null)
+  const goToggleCapability = (cap: Capability) => {
+    setTab("caps")
+    setCapFocus({ id: cap.id, nonce: Date.now() })
+  }
 
   // 会话由「未运行」转为「运行中」时补取一次运行态（复核 P1 的另一半）：面板不重挂，
   // 旧实现只按 name 变化取数 ⇒ 启动后所有行都没有运行态徽标，页头却写着"会话运行中"。
@@ -446,19 +534,44 @@ export function ProfileDetailPane({
   )
   const depCount = deps.length
 
-  const filteredDeps = useMemo(() => {
-    if (!searchQuery.trim()) return deps
-    const q = searchQuery.toLowerCase().trim()
-    return deps.filter(
-      (d) =>
-        d.name.toLowerCase().includes(q) ||
-        (d.description && d.description.toLowerCase().includes(q)),
-    )
-  }, [deps, searchQuery])
+  // ── 三类合一的插件清单（ADR-0028 第二批：底座 / 第三方 / 实验性一行）────────
+  // 合并、打标、层序全部走纯函数（lib/pluginCatalog.ts，可单测）；这里只做筛选。
+  // 层栈成员在前（组合序），其余在后——层序是「底座组合」tab 留下的唯一信息。
+  //
+  // dock 策展的能力 = 目录排 dsh 安装自带的（单一规则，父级过滤一次）：面板与列表
+  // 共用——自带能力（OPTIONAL_BUNDLES）归 dsh 官方插件页托管，dock 不再摆第二套入口，
+  // 启用后其层按内置层在列表展示（2026-09-20 维护者裁定，ADR-0020 §2.8）。
+  const curatedCaps = useMemo(() => dockCuratedCaps(caps ?? []), [caps])
+  const merged = useMemo(
+    () =>
+      mergePluginRows({
+        plugins: plugins ?? [],
+        bundles: detail?.bundles ?? [],
+        rows: rows ?? [],
+        caps: curatedCaps,
+      }),
+    [plugins, detail, rows, curatedCaps],
+  )
+  const filteredRows = useMemo(
+    () =>
+      merged.rows.filter(
+        (r) => matchesKindFilter(r, kindFilter) && matchesSearch(r, searchQuery),
+      ),
+    [merged, kindFilter, searchQuery],
+  )
 
-  const depNames = new Set(deps.map((d) => d.name))
-  const layerBundles = detail?.bundles.filter((b) => !depNames.has(b)) ?? []
-  const hiddenLayers = (detail?.bundles.length ?? 0) - layerBundles.length
+  // 能力组切块：同一能力的行在 merged 里已相邻（lib 保证），这里按 capability id 把
+  // 连续行合成一组——组内基座在上、provider 缩进其下，整组 hover 联动（从属关系的交互呈现）。
+  const rowChunks = useMemo(() => {
+    const chunks: { capability: Capability | null; rows: MergedPluginRow[] }[] = []
+    for (const r of filteredRows) {
+      const capId = r.capability?.id ?? null
+      const last = chunks[chunks.length - 1]
+      if (capId !== null && last && last.capability?.id === capId) last.rows.push(r)
+      else chunks.push({ capability: r.capability, rows: [r] })
+    }
+    return chunks
+  }, [filteredRows])
 
   if (!name) {
     return (
@@ -531,8 +644,11 @@ export function ProfileDetailPane({
         </div>
 
         {/* 顶部 Tab 切换（批次 3：第 6 份手搓分段器 → Segmented stretch；
-            与顶栏导航同配方，靠"整宽等分"而非"更大更亮"区分层级）。 */}
-        <Segmented<"plugins" | "bundles" | "patch" | "mcp">
+            与顶栏导航同配方，靠"整宽等分"而非"更大更亮"区分层级）。
+            2026-09-20（ADR-0028 第二批）：「底座组合」tab 退役——层栈并入「插件列表」
+            （行内「层 N」序标承载组合序），本面板收敛为 插件列表 / 实验能力 / MCP /
+            Patch 四段。 */}
+        <Segmented<"plugins" | "caps" | "patch" | "mcp">
           className="mt-4"
           stretch
           ariaLabel={name}
@@ -545,28 +661,16 @@ export function ProfileDetailPane({
               label: (
                 <>
                   {t.profiles.tabPlugins}
-                  {depCount > 0 && (
+                  {merged.rows.length > 0 && (
                     <span className="rounded-full bg-line px-1.5 font-mono text-meta">
-                      {depCount}
+                      {merged.rows.length}
                     </span>
                   )}
                 </>
               ),
             },
-            {
-              value: "bundles",
-              icon: Layers,
-              label: (
-                <>
-                  {t.profiles.tabBundles}
-                  {layerBundles.length > 0 && (
-                    <span className="rounded-full bg-line px-1.5 font-mono text-meta">
-                      {layerBundles.length}
-                    </span>
-                  )}
-                </>
-              ),
-            },
+            // 实验能力（ADR-0028：自插件中心迁入，档位 = 本页选中档，与插件列表同作用域）。
+            { value: "caps", icon: Sparkles, label: t.profiles.tabCaps },
             { value: "mcp", icon: Boxes, label: t.profiles.tabMcp },
             { value: "patch", icon: Code2, label: t.profiles.tabPatch },
           ]}
@@ -581,7 +685,7 @@ export function ProfileDetailPane({
           </div>
         )}
 
-        {/* ================= Tab 1: 外挂插件控制台 ================= */}
+        {/* ================= Tab 1: 插件列表（外挂插件控制台） ================= */}
         {tab === "plugins" && (
           <div className="space-y-4">
             {/* 插件工具栏：搜索 + 安装 + 导入 + 检查更新 */}
@@ -703,173 +807,73 @@ export function ProfileDetailPane({
               </div>
             ) : null}
 
-            {/* 插件列表 */}
-            {plugins === null ? (
-              <div className="text-faint py-12 text-center text-xs">
-                <LoaderCircle className="mx-auto mb-2 size-5 animate-spin text-brand-deep" />
-                {t.profiles.busyShort}
-              </div>
-            ) : depCount === 0 ? (
-              <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
-                {t.profiles.detailEmptyDeps}
-              </div>
-            ) : filteredDeps.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
-                {t.profiles.searchNoPlugin}
-              </div>
-            ) : (
-              <div className="divide-y divide-line rounded-xl border border-line bg-panel shadow-xs">
-                {filteredDeps.map((p) => {
-                  const spec = detail?.dependencies[p.name]
-                  const chip = runtimeChipFor(p.name, liveEntries)
-                  const isPending = p.name in pendingToggles
-                  const rowBusy =
-                    opBusy === `remove:${p.name}` ||
-                    opBusy === `update:${p.name}` ||
-                    opBusy === `toggle:${p.name}`
-                  const row = rows?.find((r) => r.pkg_name === p.name)
-                  const shellDisabled = row?.shell_disabled ?? false
-                  const latest = updateMap?.[p.name]
+            {/* 三类筛选（与三个行内标记同名；计数可重叠——dsh 自带的实验层
+                同时计入「内置」与「实验性」，合计可大于总数，不是分区） */}
+            <Segmented<PluginKindFilter>
+              size="sm"
+              ariaLabel={t.profiles.tabPlugins}
+              value={kindFilter}
+              onChange={setKindFilter}
+              options={[
+                {
+                  value: "all",
+                  icon: Package,
+                  label: (
+                    <>
+                      {t.profiles.listFilterAll}
+                      <span className="font-mono text-meta opacity-70">{merged.rows.length}</span>
+                    </>
+                  ),
+                },
+                {
+                  value: "builtin",
+                  icon: ShieldCheck,
+                  label: (
+                    <>
+                      {t.profiles.listFilterBuiltin}
+                      <span className="font-mono text-meta opacity-70">
+                        {merged.counts.builtin}
+                      </span>
+                    </>
+                  ),
+                },
+                {
+                  value: "thirdParty",
+                  icon: Puzzle,
+                  label: (
+                    <>
+                      {t.profiles.listFilterThirdParty}
+                      <span className="font-mono text-meta opacity-70">
+                        {merged.counts.thirdParty}
+                      </span>
+                    </>
+                  ),
+                },
+                {
+                  value: "experimental",
+                  icon: Sparkles,
+                  label: (
+                    <>
+                      {t.profiles.listFilterExperimental}
+                      <span className="font-mono text-meta opacity-70">
+                        {merged.counts.experimental}
+                      </span>
+                    </>
+                  ),
+                },
+              ]}
+            />
 
-                  return (
-                    <div
-                      key={p.name}
-                      className={`group flex items-center justify-between gap-3 p-3.5 transition-colors hover:bg-wash/30 ${
-                        shellDisabled ? "bg-bg/40" : ""
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={`font-mono text-xs font-semibold ${
-                              // 停用行不划删除线：包名是标识符，划掉既读不动也误判为"已删除"；
-                              // 停用已由徽标 + 开关 + 行底色三重表达（批次 3 去掉第四重）。
-                              shellDisabled ? "text-faint" : "text-ink"
-                            }`}
-                            title={p.name}
-                          >
-                            {p.name}
-                          </span>
-
-                          <span className="font-mono text-xs text-faint">
-                            {p.installed_version ?? (spec ? t.profiles.pluginNotInstalled : "")}
-                          </span>
-
-                          {/* 升级提示 */}
-                          {latest && latest !== p.installed_version && (
-                            <button
-                              type="button"
-                              disabled={opBusy !== null}
-                              onClick={() =>
-                                openVersionPick(p.name, p.installed_version ?? "", latest)
-                              }
-                              className="text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-wash px-2 py-0.5 font-mono text-meta font-medium transition-colors"
-                            >
-                              <ArrowUpCircle className="size-3" />
-                              <span>{latest}</span>
-                            </button>
-                          )}
-
-                          {/* 运行态徽标（运行中的 dsh 视角；配置侧「已禁用」是另一个徽标，
-                              两者语义与配色都不同——2026-09-17 维护者实机提问后拆开） */}
-                          {!shellDisabled &&
-                            (isPending ? (
-                              <span
-                                title={t.profiles.chipHint.applying}
-                                className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta leading-none"
-                              >
-                                {t.profiles.chip.applying}
-                              </span>
-                            ) : (
-                              chip && (
-                                <span
-                                  title={t.profiles.chipHint[chip.kind]}
-                                  className={`rounded-md px-1.5 py-0.5 text-meta leading-none ${chipTone(chip)}`}
-                                >
-                                  {chipText(chip)}
-                                </span>
-                              )
-                            ))}
-
-                          {shellDisabled && (
-                            <span
-                              title={t.profiles.pluginDisabledHint}
-                              className="border border-line text-faint rounded-md px-1.5 py-0.5 text-meta leading-none"
-                            >
-                              {t.profiles.pluginDisabled}
-                            </span>
-                          )}
-                        </div>
-
-                        {(p.description || spec) && (
-                          <p
-                            className="text-faint mt-1 truncate text-xs"
-                            title={p.description ?? spec}
-                          >
-                            {p.description ?? spec}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* 右侧控制：Toggle 开关 + 动作按钮 */}
-                      <div className="flex shrink-0 items-center gap-2">
-                        {rowBusy ? (
-                          <LoaderCircle className="size-4 animate-spin text-brand-deep" />
-                        ) : (
-                          <>
-                            {row && (
-                              <div
-                                className="flex items-center gap-1.5"
-                                title={t.profiles.pluginToggleHint}
-                              >
-                                <Switch
-                                  aria-label={`${p.name}：${
-                                    shellDisabled
-                                      ? t.profiles.pluginEnable
-                                      : t.profiles.pluginDisable
-                                  }`}
-                                  checked={!shellDisabled}
-                                  disabled={opBusy !== null}
-                                  onCheckedChange={() => toggleDisabled(p.name)}
-                                />
-                              </div>
-                            )}
-
-                            <Button
-                              size="icon-sm"
-                              variant="ghost"
-                              title={t.profiles.pluginUpdate}
-                              disabled={opBusy !== null}
-                              onClick={() => runOp("update", p.name)}
-                            >
-                              <ArrowUpCircle className="size-3.5 text-faint" />
-                            </Button>
-
-                            {/* 批次 2：手搓 warn 底改 destructive-ghost——卸载不可撤销，
-                                语义与其余三处行内删除键统一（danger 只在 hover 出现）。 */}
-                            <Button
-                              size="icon-sm"
-                              variant="destructive-ghost"
-                              title={t.profiles.pluginUninstall}
-                              disabled={opBusy !== null}
-                              onClick={() => requestRemove(p.name)}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+            {/* 能力目录读取失败时如实说明：没标的实验包不许被默默显示成第三方 */}
+            {capsError && (
+              <div className="flex items-center gap-2 rounded-lg bg-warn-soft px-3 py-1.5 text-label text-warn">
+                <TriangleAlert className="size-3.5 shrink-0" />
+                <span className="min-w-0">{t.profiles.capsTagUnavailable}</span>
               </div>
             )}
-          </div>
-        )}
 
-        {/* ================= Tab 2: 底座组合架构 ================= */}
-        {tab === "bundles" && (
-          <div className="space-y-3">
+            {/* 官方桌面运行时说明（随「底座组合」tab 退役迁到此处：这批内置组件
+                现在就在下方列表里，带「内置」标记） */}
             {detail?.package_name === "@deepseek-ai/dsh-desktop-runtime" && (
               <div className="rounded-xl border border-line bg-wash/50 p-4 space-y-2">
                 <div className="flex items-center gap-2">
@@ -893,65 +897,115 @@ export function ProfileDetailPane({
               </div>
             )}
 
-            <p className="text-dim text-xs leading-relaxed">
-              {t.profiles.bundleIntroPre}
-              <code>dsh.profile.bundles</code>
-              {t.profiles.bundleIntroPost}
-            </p>
-
-            <div className="grid gap-2.5">
-              {layerBundles.map((b) => {
-                const chip = runtimeChipFor(b, liveEntries)
-                const isBase = b === "@deepseek-ai/dsh-base"
-                return (
-                  <div
-                    key={b}
-                    className="flex items-center justify-between rounded-xl border border-line bg-bg p-3.5"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-ink font-mono text-xs font-semibold">
-                          {b}
-                        </span>
-                        {isBase && (
-                          <span className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta">
-                            {t.profiles.bundleBaseTag}
-                          </span>
-                        )}
-                      </div>
-                      {/* `layerBundles` 只含**不是本 Profile 依赖**的层（见上方 filter）：
-                          它们都随 dsh 安装自带（dsh 的模型：不在 profile 依赖里、却在
-                          `dsh.profile.bundles` 里 = 安装提供的层）。所以只有确实认识的那两层
-                          才具体描述，其余给中性说明——旧代码对每一层都写"Web 界面与交互控制台
-                          渲染器"，把 agent-team 两个层也说成了渲染器（2026-09-17 截图抓到）。 */}
-                      <p className="text-faint mt-0.5 text-xs">
-                        {isBase
-                          ? t.profiles.bundleDescBase
-                          : b === "@deepseek-ai/dsh-web-app"
-                            ? t.profiles.bundleDescWebApp
-                            : t.profiles.bundleDescShipped}
-                      </p>
+            {/* 三类合一的插件列表（ADR-0028 第二批：层栈在前、按组合序；其余按依赖序） */}
+            {plugins === null ? (
+              <div className="text-faint py-12 text-center text-xs">
+                <LoaderCircle className="mx-auto mb-2 size-5 animate-spin text-brand-deep" />
+                {t.profiles.busyShort}
+              </div>
+            ) : merged.rows.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
+                {t.profiles.detailEmptyDeps}
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
+                {searchQuery.trim() ? t.profiles.searchNoPlugin : t.profiles.listFilterEmpty}
+              </div>
+            ) : (
+              <div className="divide-y divide-line rounded-xl border border-line bg-panel shadow-xs">
+                {rowChunks.map((chunk) =>
+                  chunk.capability ? (
+                    // 能力组：基座 + provider 从属一组。整组 hover 联动（从属关系要从
+                    // 交互上感知，不是两行平铺各说各话）；provider 行缩进挂在其下。
+                    <div
+                      key={chunk.capability.id}
+                      onMouseEnter={() => setHoveredCap(chunk.capability!.id)}
+                      onMouseLeave={() => setHoveredCap(null)}
+                    >
+                      {chunk.rows.map((item) => (
+                        <PluginListRow
+                          key={item.entry.name}
+                          item={item}
+                          spec={detail?.dependencies[item.entry.name]}
+                          chip={runtimeChipFor(item.entry.name, liveEntries)}
+                          isPending={item.entry.name in pendingToggles}
+                          rowBusy={
+                            opBusy === `remove:${item.entry.name}` ||
+                            opBusy === `update:${item.entry.name}` ||
+                            opBusy === `toggle:${item.entry.name}`
+                          }
+                          opBusy={opBusy !== null}
+                          latest={updateMap?.[item.entry.name]}
+                          onToggle={() => toggleDisabled(item.entry.name)}
+                          onUpdate={() => runOp("update", item.entry.name)}
+                          onRemove={() => requestRemove(item.entry.name)}
+                          onVersionPick={() =>
+                            openVersionPick(
+                              item.entry.name,
+                              item.entry.installed_version ?? "",
+                              updateMap?.[item.entry.name] ?? "",
+                            )
+                          }
+                          onGoToggle={
+                            item.capabilityAnchor
+                              ? () => goToggleCapability(item.capability!)
+                              : undefined
+                          }
+                          groupHovered={hoveredCap === chunk.capability!.id}
+                          chipText={chipText}
+                          chipTone={chipTone}
+                          t={t}
+                        />
+                      ))}
                     </div>
-
-                    {chip && (
-                      <span
-                        title={t.profiles.chipHint[chip.kind]}
-                        className={`rounded-md px-2 py-0.5 text-meta font-medium leading-none ${chipTone(chip)}`}
-                      >
-                        {chipText(chip)}
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            {hiddenLayers > 0 && (
-              <p className="text-faint text-xs">
-                {t.profiles.hiddenLayersHint(hiddenLayers)}
-              </p>
+                  ) : (
+                    <PluginListRow
+                      key={chunk.rows[0].entry.name}
+                      item={chunk.rows[0]}
+                      spec={detail?.dependencies[chunk.rows[0].entry.name]}
+                      chip={runtimeChipFor(chunk.rows[0].entry.name, liveEntries)}
+                      isPending={chunk.rows[0].entry.name in pendingToggles}
+                      rowBusy={
+                        opBusy === `remove:${chunk.rows[0].entry.name}` ||
+                        opBusy === `update:${chunk.rows[0].entry.name}` ||
+                        opBusy === `toggle:${chunk.rows[0].entry.name}`
+                      }
+                      opBusy={opBusy !== null}
+                      latest={updateMap?.[chunk.rows[0].entry.name]}
+                      onToggle={() => toggleDisabled(chunk.rows[0].entry.name)}
+                      onUpdate={() => runOp("update", chunk.rows[0].entry.name)}
+                      onRemove={() => requestRemove(chunk.rows[0].entry.name)}
+                      onVersionPick={() =>
+                        openVersionPick(
+                          chunk.rows[0].entry.name,
+                          chunk.rows[0].entry.installed_version ?? "",
+                          updateMap?.[chunk.rows[0].entry.name] ?? "",
+                        )
+                      }
+                      chipText={chipText}
+                      chipTone={chipTone}
+                      t={t}
+                    />
+                  ),
+                )}
+              </div>
             )}
           </div>
+        )}
+
+        {/* ================= Tab 1.5: 实验能力（ADR-0028，自插件中心迁入） ================= */}
+        {tab === "caps" && (
+          <ExperimentalCapabilities
+            profile={name}
+            caps={curatedCaps}
+            capsLoading={capsLoading}
+            capsError={capsError}
+            onRefreshCaps={() => loadCaps(name)}
+            onNotice={onNotice}
+            onRestart={onRestart}
+            onChanged={reload}
+            focus={capFocus}
+          />
         )}
 
         {/* ================= Tab 3: MCP 扩展服务器 ================= */}
@@ -1088,6 +1142,277 @@ export function ProfileDetailPane({
         }}
         onClose={() => setConfirmRemove(null)}
       />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 三类合一的清单行（2026-09-20，ADR-0028 第二批）
+//
+// 一行 = 一个包（层 / 依赖只出现一次），行内三枚正交标记：
+//   · 「层 N」——组合序（已退役的「底座组合」tab 的唯一独有信息，随合表迁到这里）；
+//   · 主标记三选一——「实验性 · <能力>」/「内置」/「第三方」；
+//   · dsh 自带的实验层（Agent Teams 两层）在主标记之外**再补一枚「内置」**。
+//
+// 控制面按主标记分流，这是**单一入口**的落点（ADR-0020 §2.8 / ADR-0028）：
+//   · 第三方：开关 + 更新 + 卸载（本面板的传统控制面，原样保留）；
+//   · 实验性：**不给开关/卸载**——那个能力的开关与移除只在「实验能力」面板
+//     （卸载还必须连带清挂载行，否则悬空行让 dsh 起不来），这里只给「去开关」跳转；
+//   · 内置：不给任何控制（随 dsh 自带、不可卸载；开关在 dsh 自己的插件页）。
+// ─────────────────────────────────────────────────────────────────────────────
+function PluginListRow({
+  item,
+  spec,
+  chip,
+  isPending,
+  rowBusy,
+  opBusy,
+  latest,
+  onToggle,
+  onUpdate,
+  onRemove,
+  onVersionPick,
+  onGoToggle,
+  groupHovered,
+  chipText,
+  chipTone,
+  t,
+}: {
+  item: MergedPluginRow
+  /** 该包在 dependencies 里的声明值（层没有）；仅作展示兜底。 */
+  spec?: string
+  chip: RuntimeChip | null
+  isPending: boolean
+  rowBusy: boolean
+  /** 面板级 busy（任一操作在途）——关掉本行的动作入口。 */
+  opBusy: boolean
+  latest?: string
+  onToggle: () => void
+  onUpdate: () => void
+  onRemove: () => void
+  onVersionPick: () => void
+  /** 实验性 anchor 行的「去开关」跳转（非 anchor 行为 undefined——同一能力一个入口）。 */
+  onGoToggle?: () => void
+  /** 所在能力组正被 hover（整组联动高亮——基座/provider 从属关系的交互呈现）。 */
+  groupHovered?: boolean
+  chipText: (chip: RuntimeChip) => string
+  chipTone: (chip: RuntimeChip) => string
+  t: ReturnType<typeof useI18n>["t"]
+}) {
+  const p = item.entry
+  const shellDisabled = item.row?.shell_disabled ?? false
+  const hasRow = item.row !== null
+  // 只有第三方行保留开关/更新/卸载（实验性与内置的控制面见上方注释）。
+  const manageable = item.kindTag === "thirdParty"
+  const isBase = p.name === "@deepseek-ai/dsh-base"
+  const isWebApp = p.name === "@deepseek-ai/dsh-web-app"
+  // 兜底说明只给**dsh 安装提供**的行（模板层 / optional / 桌面包——判定见
+  // lib/pluginCatalog.ts 的模型说明）。只有确实认识的两层才具体说，其余给中性说明——
+  // **用户装的层与实验依赖不能落进这句**：说它们"随 dsh 安装自带"就是 2026-09-17
+  // 那种张冠李戴（当时 agent-team 两层被写成「Web 界面渲染器」的同族错误）。
+  const fallbackDesc = isBase
+    ? t.profiles.bundleDescBase
+    : isWebApp
+      ? t.profiles.bundleDescWebApp
+      : t.profiles.bundleDescShipped
+  const desc = p.description ?? spec ?? (item.dshProvided ? fallbackDesc : null)
+  // 版本：实读 > 安装提供（无 node_modules 可读，版本锚在安装目录）> 未安装
+  const versionText =
+    p.installed_version ??
+    (item.dshProvided
+      ? t.profiles.pluginWithDsh
+      : spec
+        ? t.profiles.pluginNotInstalled
+        : "")
+
+  return (
+    <div
+      className={`group flex items-center justify-between gap-3 p-3.5 transition-colors ${
+        // 组内联动：hover 组内任一行，整组（基座 + provider）一起亮
+        groupHovered ? "bg-wash/40" : "hover:bg-wash/30"
+      } ${shellDisabled ? "bg-bg/40" : ""} ${
+        // provider 行缩进挂在基座下（从属关系一眼可读）
+        item.capabilityChild ? "ml-5 border-l-2 border-line/60" : ""
+      }`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`font-mono text-xs font-semibold ${
+              // 停用行不划删除线：包名是标识符，划掉既读不动也误判为"已删除"；
+              // 停用已由徽标 + 开关 + 行底色三重表达（批次 3 去掉第四重）。
+              shellDisabled ? "text-faint" : "text-ink"
+            }`}
+            title={p.name}
+          >
+            {p.name}
+          </span>
+
+          <span className="font-mono text-xs text-faint">{versionText}</span>
+
+          {/* 能力标记按组内位置分流（2026-09-20 真机两轮修订）：一个能力 = 基座 + 一个
+              生效 provider，**从属一组而非两个并列插件**——基座是 anchor（能力本体，
+              "Exclusive named registration"），provider 缩进其下。anchor 挂完整的
+              「实验性 · <能力>」（+「基座」标说明它自身不提供工具）；provider 行只挂
+              弱化「后端」标。 */}
+          {item.capability && item.capabilityAnchor && (
+            <span
+              title={t.profiles.tagExperimentalHint(item.capability.label)}
+              className="border-brand/25 bg-wash text-brand-deep inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              <Sparkles className="size-3" />
+              {t.profiles.tagExperimental(item.capability.label)}
+            </span>
+          )}
+          {item.capability && item.capabilityAnchor && item.capabilityRole === "shared" && (
+            <span
+              title={t.profiles.tagCapabilityBaseHint(item.capability.label)}
+              className="border-line bg-bg text-faint inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              <Layers className="size-3" />
+              {t.profiles.tagCapabilityBase(item.capability.label)}
+            </span>
+          )}
+          {item.capabilityChild && (
+            <span
+              title={t.profiles.tagBackendHint}
+              className="border-line bg-bg text-faint inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              <Puzzle className="size-3" />
+              {t.profiles.tagBackend}
+            </span>
+          )}
+          {item.kindTag === "builtin" || item.alsoBuiltin ? (
+            <span
+              title={t.profiles.tagBuiltinHint}
+              className="border-line bg-line-soft text-dim rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              {t.profiles.tagBuiltin}
+            </span>
+          ) : item.kindTag === "thirdParty" ? (
+            <span
+              title={t.profiles.tagThirdPartyHint}
+              className="border-line bg-bg text-faint rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              {t.profiles.tagThirdParty}
+            </span>
+          ) : null}
+
+          {/* 升级提示（只给可控的第三方行：实验能力的版本归能力面板管） */}
+          {manageable && latest && latest !== p.installed_version && (
+            <button
+              type="button"
+              disabled={opBusy}
+              onClick={onVersionPick}
+              className="text-brand-deep hover:bg-wash inline-flex items-center gap-1 rounded-full border border-brand/30 bg-wash px-2 py-0.5 font-mono text-meta font-medium transition-colors"
+            >
+              <ArrowUpCircle className="size-3" />
+              <span>{latest}</span>
+            </button>
+          )}
+
+          {/* 运行态徽标（运行中的 dsh 视角；配置侧「已禁用」是另一个徽标，
+              两者语义与配色都不同——2026-09-17 维护者实机提问后拆开） */}
+          {!shellDisabled &&
+            (isPending ? (
+              <span
+                title={t.profiles.chipHint.applying}
+                className="bg-line-soft text-dim rounded-md px-1.5 py-0.5 text-meta leading-none"
+              >
+                {t.profiles.chip.applying}
+              </span>
+            ) : (
+              chip && (
+                <span
+                  title={t.profiles.chipHint[chip.kind]}
+                  className={`rounded-md px-1.5 py-0.5 text-meta leading-none ${chipTone(chip)}`}
+                >
+                  {chipText(chip)}
+                </span>
+              )
+            ))}
+
+          {shellDisabled && (
+            <span
+              title={t.profiles.pluginDisabledHint}
+              className="border-line text-faint rounded-md border px-1.5 py-0.5 text-meta leading-none"
+            >
+              {t.profiles.pluginDisabled}
+            </span>
+          )}
+        </div>
+
+        {desc && (
+          <p className="text-faint mt-1 truncate text-xs" title={desc}>
+            {desc}
+          </p>
+        )}
+      </div>
+
+      {/* 右侧控制：按主标记分流（见上方注释：单一入口） */}
+      <div className="flex shrink-0 items-center gap-2">
+        {rowBusy ? (
+          <LoaderCircle className="size-4 animate-spin text-brand-deep" />
+        ) : (
+          <>
+            {manageable && hasRow && (
+              <div className="flex items-center gap-1.5" title={t.profiles.pluginToggleHint}>
+                <Switch
+                  aria-label={`${p.name}：${
+                    shellDisabled ? t.profiles.pluginEnable : t.profiles.pluginDisable
+                  }`}
+                  checked={!shellDisabled}
+                  disabled={opBusy}
+                  onCheckedChange={onToggle}
+                />
+              </div>
+            )}
+
+            {manageable && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                title={t.profiles.pluginUpdate}
+                disabled={opBusy}
+                onClick={onUpdate}
+              >
+                <ArrowUpCircle className="size-3.5 text-faint" />
+              </Button>
+            )}
+
+            {/* 批次 2：手搓 warn 底改 destructive-ghost——卸载不可撤销，
+                语义与其余三处行内删除键统一（danger 只在 hover 出现）。 */}
+            {manageable && (
+              <Button
+                size="icon-sm"
+                variant="destructive-ghost"
+                title={t.profiles.pluginUninstall}
+                disabled={opBusy}
+                onClick={onRemove}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+
+            {/* 实验性行不持开关/卸载：跳去「实验能力」面板（唯一入口）。
+                入口只在标识包行；基座行仅在该能力没有标识包在场（只装了基座 / 装一半）
+                时才承担——同一能力不给两个跳转按钮。 */}
+            {onGoToggle && item.capability && (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={t.profiles.goToggleAria(item.capability.label)}
+                title={t.profiles.goToggleHint(item.capability.label)}
+                onClick={onGoToggle}
+                className="gap-1 text-xs"
+              >
+                <Sparkles className="size-3.5" />
+                {t.profiles.goToggle}
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }

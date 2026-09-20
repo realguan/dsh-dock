@@ -394,10 +394,10 @@ export const t = {
     detailTitle: (name: string) => `「${name}」详情`,
     detailPackage: "清单名",
     detailBundles: "插件组合（dsh.profile.bundles）",
-    detailDeps: "外挂插件（dependencies）",
+    detailDeps: "插件列表（dependencies）",
     detailPatch: "cordis.patch.yml 原文",
     detailPatchNone: "尚无 patch 层（首次启动时由 dsh 生成）",
-    detailEmptyDeps: "无额外依赖",
+    detailEmptyDeps: "本 Profile 还没有任何插件",
     detailClose: "关闭",
     // 插件清单（4.4①）：静态清单 + 运行态快照（复现点 11）
     pluginNotInstalled: "未安装",
@@ -477,7 +477,6 @@ export const t = {
     versionLatest: "最新",
     versionCurrent: "当前",
     versionsLoadFailed: "版本列表查询失败",
-    hiddenLayersHint: (n: number) => `另有 ${n} 个外挂插件层，见下方外挂插件清单`,
     pluginWithDsh: "版本随 dsh",
     // 2026-09-19 审美批次 3：原句「会话运行中 · 7 行运行中 · …」把"运行中"说了两遍
     // （会话态 + 行数），且会话态详情头部已有徽标。改成纯计数图例。
@@ -584,10 +583,44 @@ export const t = {
     searchPlaceholder: "搜索 Profile...",
     searchPluginsPlaceholder: "搜索已装插件...",
     searchAllPluginsPlaceholder: "搜索全域插件名称、描述或 Profile...",
-    tabPlugins: "外挂插件",
-    tabBundles: "底座组合",
-    // 底座组合里每一层的说明。**只有确实知道的那两层才具体说**——原来这里是个二元判断，
-    // 于是 agent-team 这类层也被写成「Web 界面与交互控制台渲染器」（2026-09-17 真机截图抓到）。
+    tabPlugins: "插件列表",
+    // 实验能力（ADR-0028：自插件中心迁入，与插件列表同页并列）。
+    tabCaps: "实验能力",
+    // ── 插件列表三类合一（2026-09-20，ADR-0028 第二批：底座 / 第三方 / 实验性一行，
+    //    「底座组合」tab 退役）────────────────────────────────────────────
+    // 筛选 chips（与三个行内标记同名）。「内置」筛选含 dsh 自带的实验层——它们
+    // 也带「内置」标，三类计数因此可以重叠（合计 ≥ 总数），不是分区。
+    listFilterAll: "全部",
+    listFilterBuiltin: "内置",
+    listFilterThirdParty: "第三方",
+    listFilterExperimental: "实验性",
+    listFilterEmpty: "当前筛选下没有插件",
+    // 三个行内标记（每个插件恰好一个主标记；dsh 自带的实验层额外补一枚「内置」）。
+    tagBuiltin: "内置",
+    tagBuiltinHint: "随 dsh 安装自带的内置层：不可卸载；要开关请到 dsh 自己的插件页",
+    tagThirdParty: "第三方",
+    tagThirdPartyHint: "你安装到本 Profile 的插件：可启停、可更新、可卸载",
+    tagExperimental: (cap: string) => `实验性 · ${cap}`,
+    tagExperimentalHint: (cap: string) =>
+      `来自「实验能力」面板的「${cap}」：开关与移除统一在那边（同一能力只有一个入口）`,
+    // 能力的**共用基座**标记（弱化）：一个能力 = 基座 + 一个生效后端，不是两个并列插件。
+    // 基座自身不提供工具（如 browser-use 官方描述 "adds no model-visible tools"），
+    // 只登记 provider 插槽；标识包（正在用的那个后端）才挂完整的「实验性 · <能力>」。
+    tagCapabilityBase: (cap: string) => `${cap} · 基座`,
+    tagCapabilityBaseHint: (cap: string) =>
+      `「${cap}」的共用基座：为各后端登记插槽、自身不提供工具。这一档真正干活的是挂在它下面的「后端」行；开关统一在「实验能力」面板`,
+    // 组内从属行的「后端」标记：provider 缩进挂在基座下，与其它后端互斥（同刻只生效一个）。
+    tagBackend: "后端",
+    tagBackendHint: "这一档正在生效的后端实现（与同能力的其它后端互斥）",
+    // 实验性行的唯一动作：跳去「实验能力」面板（开关与移除都在那边）。
+    goToggle: "去开关",
+    goToggleHint: (cap: string) => `「${cap}」的开关在「实验能力」面板：跳到那边操作`,
+    goToggleAria: (cap: string) => `去「实验能力」面板开关「${cap}」`,
+    // 能力目录读取失败（如 WSL 客体档暂不支持）时，插件列表如实说"标记不可用"，
+    // 不把没标的实验包默默显示成第三方。
+    capsTagUnavailable: "实验能力目录读取失败：「实验性」标记暂不可用（其余标记不受影响）",
+    // 内置层的说明。**只有确实知道的那两层才具体说**——原「底座组合」tab 的同一组
+    // 文案（2026-09-17 真机截图：agent-team 两层曾被写成「Web 界面渲染器」）。
     bundleDescBase: "Cordis 底座与通用服务插件集合",
     bundleDescWebApp: "Web 界面与交互控制台渲染器",
     bundleDescShipped: "随 dsh 安装自带的一层：在 dsh 自己的插件页里开关",
@@ -758,10 +791,7 @@ export const t = {
     desktopRuntimeName: "DeepSeek 官方桌面客户端底座运行时",
     desktopRuntimeTag: "官方桌面版",
     desktopRuntimeNote:
-      "注：这些核心组件由客户端底座统一部署维护，属于内置底座体系，不计入第三方外挂插件。在此 Profile 安装的自定义扩展将独立展示在「外挂插件」列表中。",
-    bundleIntroPre: "底座组合由 Profile 初始化时写入（",
-    bundleIntroPost: "），定义了工作台的基础界面宿主与系统能力：",
-    bundleBaseTag: "系统核心",
+      "注：这些核心组件由客户端底座统一部署维护，属于内置底座体系，不可卸载；它们与 dsh 内置层一样列在下方并带「内置」标记。你安装的第三方与实验能力插件同列，各带自己的标记。",
     copyYaml: "复制 YAML",
   },
   sessions: {
@@ -1079,8 +1109,6 @@ export const t = {
     // 文案纪律（2026-09-17 v3 版面重做后）：左栏**清单行**只出现"扫一眼就要知道"的东西
     // （名称 / 状态 / 当前插件名 / 开关）；价值、插件清单、前置、钉版本、行 id 全在右栏
     // 常驻的**详情面**里——那里不再需要"展开"，所以这些不再是"折叠区文案"。
-    capTab: "实验能力",
-
     capTitle: "实验能力",
     // 2026-09-17 维护者裁定「实验功能模块要突出是 dsh 官方实验功能，插件的名字和描述也要
     // 以官方为主」：面板与每张卡都带「DSH 官方」标记，说明来源与我们的角色；包名 = 官方名，
@@ -1092,18 +1120,12 @@ export const t = {
     capListLabel: "能力清单",
     capPaneLabel: (name: string) => `${name}的详情`,
     capBack: "返回清单",
-    // dsh 自带（optional bundle）那一档：dock 不代管，只说明 + 指路 + 清理遗留副本。
-    capStateShipped: "dsh 已内置",
-    capShippedPackages: "随 dsh 自带",
-    capShippedMeta: "随 dsh 安装自带 · 开关在 dsh 的插件页",
-    capShippedNote:
-      "这项能力现在由 dsh 安装包自带（官方实验功能）：它是 dsh 自己的插件，开关在 dsh 的插件页里，且 dsh 视其为不可卸载。dsh-dock 不再代管它——不安装、不卸载、也不写配置行，免得与你手上的 dsh 抢同一份插件。",
-    capLegacyCopy:
-      "本 Profile 里还留着 dsh-dock 早期按 profile 装的副本：它会遮蔽 dsh 自带的那一份（版本还可能不同）。建议清理掉，然后在 dsh 的插件页里打开内置的那一份。",
-    capLegacyCleanupBtn: "清理旧副本",
     capPluginsLabel: "插件",
-    // 单选组的可访问名：组里选的是"哪个插件提供这个能力"，用「插件」当组名会与节标混。
-    capBackendLabel: "后端插件",
+    // 「切换后端」溢出菜单（v4，左栏行尾）：触发钮的可访问名 + 菜单标题。
+    capMenuBackend: (cap: string) => `切换「${cap}」的后端`,
+    capMenuBackendLabel: "选择后端",
+    // 菜单项里标记"这个正在生效"（点它 = 无操作，菜单项本就禁用）。
+    capVariantActive: "当前生效",
     // 详情面「插件」节：后端以插件名逐行列出；共同前置与共用基座包只讲一次。
     capPrereqCommon: "各档共同前置",
     capBasePackages: (pkgs: string) => `各档共用基座包 ${pkgs}`,
@@ -1111,8 +1133,6 @@ export const t = {
     capOfficialDesc: "官方简介：",
     capOfficialDescPending: "装好这条后会显示它自带的官方简介",
     capDesc: "DeepSeek 官方以实验包形式发布的 dsh 能力：开启即安装并挂载，随时可以关掉。",
-    capTargetProfile: "目标 Profile",
-    capPickProfile: "请先选择一个已创建的 Profile",
     capLoadFailed: "读取实验能力失败",
     capReload: "重试",
     capSummary: (on: number, total: number) => `已启用 ${on} / ${total} 项`,

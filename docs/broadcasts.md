@@ -32,6 +32,73 @@
 
 ## 三、记录
 
+### 2026-09-20 ADR-0028 · 清单打标合并：「底座组合」tab 退役，三类插件一行各带标记 —— guan（AI 协作）
+
+- **变更**（frontend/src 8 文件 + docs 3 文件 + 新增 3 文件；本批为 ADR-0028 §5 行动项
+  第 5 条「下一次意图」的落地，与 ADR-0028 第一批——面板迁入 Profile 详情页、子页下线、
+  在途换档三道闸门——同一变更集提交）：
+  - 新增 `lib/pluginCatalog.ts`（纯函数：三类打标 + 层序合并 + 筛选判据）与
+    `__tests__/pluginCatalog.test.ts`（9 例）；
+  - `ProfileDetailPane.tsx`：「插件列表」三类合一（内置 / 第三方 / 实验性），
+    「底座组合」tab 退役；层栈成员在前、按**去重后**组合序，行内「层 N」标；目录 caps
+    改父级取数（带档位护栏，禁双源）并下发给能力面板；旧档回读作废护栏补齐到
+    reload/refreshRuntime；
+  - **判据修订（真机截图回退第一版后锚定 dsh 源码，ADR-0028 §6.1）**：
+    `dsh.profile.bundles` 是**激活的层列表**（reconcile 保留栈内重复、dsh 插件页自己也
+    按包名去重）→ 壳侧按包名折叠为一行（不再一个包 N 行）；「内置」= **dsh 安装提供**
+    （bundle 条目 ∧ 无依赖条目，镜像 dsh `removable = installed && !installation.dependencies`）
+    → 用户经 npm 装进 profile 的层归「第三方」（可更新可卸载）；安装提供的层版本显
+    「版本随 dsh」（bundle 行不再谎报「未安装」）。依据：`deepseek-harness`
+    `packages/boot/app-boot/src/profile.ts` / `profile-plugins.ts` /
+    `packages/boot/plugin-manager/src/index.ts::listBundles` 与设计笔记
+    `2026-09-15-shipped-optional-bundles.md`；
+  - `ExperimentalCapabilities.tsx`：目录数据受控 props 化，内部 load 退役，
+    动作侧三道闸门（落账复核 / 进度按发起档归属 / 迟到 onChanged 作废）保留；
+    新增 `focus` prop 承接「插件列表」的「去开关」跳转；
+  - 字典两份：删 tabBundles/bundleIntro/bundleBaseTag/hiddenLayersHint，新增筛选 chips、
+    三个行内标记、层序标、去开关、目录失败提示等键；删 `capTab`/`capTargetProfile`/
+    `capPickProfile`（随子页下线）；
+  - 闸门：`experimentalCapabilitiesGate.test.ts` 三条负载判据改指父级（判据跟架构走），
+    新增 `pluginListMergeGate.test.ts`（15 例：单一入口 / 层序折叠 / 打标 / 禁双源），
+    关键闸门均做先红后绿核验（拆守卫/改判据逐一复红后复原，含两条真机回归）。
+  - **第三批（2026-09-20 维护者裁定，ADR-0028 §6.2）**：dsh 随安装自带的 optional
+    bundle（Agent Teams 两层）**从能力面板移除**——官方插件页托管，dock 不摆第二套入口。
+    过滤规则单一（`lib/pluginCatalog.ts::dockCuratedCaps`，父级过滤一次、面板与列表共用）；
+    ShippedPane / 自带徽标 / 开关豁免 / 「清理旧副本」整条链删除，字典 6 键删除，
+    契约字段 `shippedByDsh` / `legacyCopy` 后端仍下发、本壳不再消费；启用后其层在插件
+    列表与模板层同列（内置 + 层 N + 版本随 dsh，无控制面）。
+  - **第四批（2026-09-20 真机截图，ADR-0028 §6.3）**：能力的**基座与后端不再并列**。
+    源码事实：`@deepseek-ai/dsh-browser-use` 官方描述 "Exclusive named browser-use
+    provider registration"、README "adds no model-visible tools"——它是登记插槽、
+    在每个变体里都有；provider 才互斥生效。新增 `capabilityRole`（出现在 1 个变体
+    = primary 标识包 / ≥2 = shared 基座）：标识包行挂完整「实验性 · <能力>」+「去开关」，
+    基座行挂弱化「<能力> · 基座」且不给跳转（该能力只装基座时才由基座承担入口）。
+  - **第五批（2026-09-20 维护者要求"布局和交互着着重构"，ADR-0028 §6.4）**：
+    「实验能力」模块**控制面/后果面拆分**。左栏 = 唯一控制面（一能力一行：图标 · 名称 ·
+    状态 · 生效后端包名 · 开关；多变体行尾「切换后端」溢出菜单，点选即发起）；右栏 = 后果面
+    （只读：后端对照 / 会发生什么 / 排障细节折叠 / 移除沉底）。**picked 中间态取消**
+    （行里显示的就是事实，misaligned 隐藏态死亡）。方案经 ui-ux-pro-max 规则核验后修订：
+    初稿行内 pills 被 compact-label-overflow / truncation-strategy / web-target-size
+    叠加枪毙（50+ 字符包名在 25rem 栏宽里放不下、不许截断、可点目标 ≥24px），改走
+    overflow-menu。闸门新增 ⑫ 五条，先红后绿核验（复活 picked / 放开生效档可点 → 复红）。
+  - **第六批（2026-09-20 维护者两条裁定，ADR-0028 §6.5）**：① 「层 N」号标撤除
+    （字典 tagLayer/tagLayerHint 删除，闸门翻面为反向：行内与字典都不得出现；组合序
+    仍保留在排列里）；② 基座/provider **从属分组**——同能力包相邻成组，基座在上
+    （anchor：完整能力标 + 去开关 + 「基座」标），provider 缩进其下（「后端」标 + 左侧
+    从属线），**整组 hover 联动**；输入序不翻转从属关系（provider 字典序在前也基座居首）。
+    先红后绿：组不拉相邻 / anchor 不优先基座 → 行为用例与闸门复红，复原全绿。
+- **影响**：仅周知。「插件列表」里实验性包不再有行内开关/卸载（单一入口：开关与移除
+  只在「实验能力」面板，行内「去开关」跳转）；用户装进 profile 的层与普通第三方控制面
+  一致（可更新可卸载）；dsh 安装提供的层无控制面；Agent Teams 等安装自带能力不在
+  「实验能力」面板出现（开关在 dsh 自己的插件页，启用后进插件列表）；切档时多一次
+  `list_experimental_capabilities` 回读（内部一次 `dsh --dump-config`，与行表回读同族），
+  开销记账在 ADR-0028 §6。
+- **凭据**：前端 typecheck 0 错误 / oxlint 0 warning / vitest **597 passed**（较批前 +38）
+  / 9 处闸门先红后绿核验；本批不触 Rust（`official_catalog.rs` 的自命名行修复属同变更集
+  第一批，其 cargo 闸门随第一批核验）。ADR-0028 §6 已落档三项开放问题的裁定
+  （层序保留 / dsh 自带层内置 / 实验性标到具体能力）与落地决策，§6.1 记录源码锚定后的
+  判据修订与已知边界，§6.2 记录 optional bundle 退出面板的裁定与遗留副本出路变化。
+
 ### 2026-09-20 快车道 · 修「弹窗一开就自动弹出解释悬浮」：挂载焦点 + 焦点开悬浮两条闸门 —— guan（AI 协作）
 
 - **触发**：维护者拿截图指出「这个 bug 也得修，每次打开都自动打开了这个 tip 黑窗」
