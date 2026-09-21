@@ -37,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --name) NAME="$2"; shift 2;;
     --id) ID="$2"; shift 2;;
     --icons-dir) ICONS_DIR="$2"; shift 2;;
+    --out) SRC_TAURI="$2"; shift 2;;   # 用法第 21 行早已声明，此前漏实现（2026-09-21 补）
     *) echo "未知参数: $1" >&2; exit 2;;
   esac
 done
@@ -53,8 +54,19 @@ snap="$SRC_TAURI/resources/dsh-snapshot"
 rm -rf "$snap"
 mkdir -p "$snap/node/bin" "$snap/dsh" "$snap/home"
 
-cp -f "$NODE_BIN" "$snap/node/bin/dsh-node"
-chmod +x "$snap/node/bin/dsh-node" 2>/dev/null || true
+# node 落位名随目标平台（2026-09-21，平台审计 A6）：Windows 的 node 叫 node.exe，
+# 若照旧一律落成无扩展名的 `dsh-node`，`child_cmd` 走 CreateProcess 时会自动追加
+# `.exe` 而找不到该文件 ⇒ Windows 快照档启动必败（contract.md 明写三平台各自注入
+# 自己的 node / node.exe，脚本此前只做了一平台）。判据 = 传入文件自身的扩展名，
+# 不猜平台、不新增参数。
+case "$NODE_BIN" in
+  *.exe) NODE_SUFFIX=".exe" ;;
+  *)     NODE_SUFFIX="" ;;
+esac
+NODE_REL="dsh-snapshot/node/bin/dsh-node${NODE_SUFFIX}"
+
+cp -f "$NODE_BIN" "$snap/node/bin/dsh-node${NODE_SUFFIX}"
+chmod +x "$snap/node/bin/dsh-node${NODE_SUFFIX}" 2>/dev/null || true
 cp -fR "$DSH_RUNTIME"/. "$snap/dsh/"
 cp -fR "$DSH_HOME"/. "$snap/home/"
 
@@ -75,7 +87,7 @@ cat > "$SRC_TAURI/resources/product.manifest.json" <<JSON
     "defaultProfile": "$PROFILE"
   },
   "snapshot": {
-    "nodeBin": "dsh-snapshot/node/bin/dsh-node",
+    "nodeBin": "$NODE_REL",
     "dshBinJs": "dsh-snapshot/dsh/@deepseek-ai/dsh/lib/bin.js",
     "dshHome": "dsh-snapshot/home",
     "profile": "$PROFILE"
