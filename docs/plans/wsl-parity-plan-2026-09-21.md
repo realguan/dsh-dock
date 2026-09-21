@@ -55,9 +55,21 @@ fn ensure_catalog_insert_row_in_guest(distro, profile, id, pkg, cfg) -> Result<b
 }
 ```
 
-**待确认一步（下一条命令）**：`PatchFile` 的**变更方法名与签名**（`ensure_insert_row` / `remove_row` / 停用桩写入分别叫什么、
-是否已带幂等返回值）—— 本轮仅确认了 `read` / `from_text` / `write` / `write_with_backup` / `render_checked`
-（`plugins.rs:1784-1939`），未读完 `impl` 全表即停手，**不凭猜写码**。
+**API 已确认（本轮读完 `impl PatchFile` 全表 + 决定性属性）**：
+
+| 需要的能力 | 现成实现 | 位置 |
+|:--|:--|:--|
+| 文本 → 内核 | `PatchFile::from_text(&text)`（`read()` 也只是读文件后转调它） | `plugins.rs:1787,1790` |
+| **纯变换（宿主/客体孪生共用）** | `apply_catalog_insert_row(&mut patch, id, pkg, cfg) -> bool`、`fill_required_config(...)` | `plugins.rs:2108+`（注释原文即"宿主 / 客体孪生共用"） |
+| 渲染**原文保真** | `render()` 是**文本级拼接器**：未改条目直接 `out.push_str(raw)` ⇒ 行间注释 / 排版 / CRLF 原样保留（非 YAML 重新序列化） | `plugins.rs:1900-1912` |
+| 写前**自证**（fail-closed） | `render_checked()` = 渲染后 `from_text` 回读解析，失败即中止、备份与原文都在 | `plugins.rs:1939-1943` |
+| 覆写前备份 | `guest::backup_file(distro, rel)` | `guest.rs:754+` |
+| **原子替换** | `guest::write_home_files` → `base64 -d > <p>.dsh-dock.tmp && … && mv -f … <p>`（并对 `credentials.y*` 补 chmod 600） | `guest.rs:252-257` |
+
+⇒ **三不变量（保真 / 备份 / 原子）+ 自证全部由既有原语提供，P0 确实只需接线**；此前四处 `World::Wsl => Err(...)` 是纯接线欠债 —— 与审计 A3 的判断一致。
+
+**还差一步就动手**：`remove_catalog_insert_row` 侧的同名纯变换（`remove_*` 对应的 `&mut PatchFile -> bool`）方法名尚未读出（本轮读到 2175 行处停手），下一条命令确认后即可照同一形状复制第二份。
+
 **写入点三处**：`commands/plugin.rs` 的 `apply_official_patch_row` / `remove_official_patch_row` 与
 `safe_mode` 的进入/退出（后者 `safe_mode.rs:246` 已在用同内核，客体档只需换成"读客体→渲回客体"）。
 **测试**：`PatchFile` 的既有单测**直接复用**（同一内核，无需重写）；新增客体包装的路径/参数纯函数测试；
