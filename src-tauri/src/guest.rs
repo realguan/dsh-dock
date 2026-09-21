@@ -573,6 +573,79 @@ pub(crate) fn read_files(
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
+/// 命令存在性帧前缀（P0 接线用，2026-09-21）。
+#[cfg(any(windows, test))]
+pub(crate) const CMD_PRESENT: &str = "@@DSH_DOCK_CMD_OK@@";
+#[cfg(any(windows, test))]
+pub(crate) const CMD_MISSING: &str = "@@DSH_DOCK_CMD_MISSING@@";
+
+/// 客体侧命令存在性检查：一次 `wsl.exe` 往返，返回**缺失**的命令名。
+///
+/// 为什么必须有：宿主档写行前有一道 PATH 前置硬门（`missing_prerequisites`），它查的是
+/// **宿主 PATH**；而客体档的插件服务器在**客体内部**启动 —— 照搬会**误拒**（客体有、宿主无）
+/// 或**误放**（反之，然后把一个起不来的 profile 写坏，而那正是这道门要防的）。
+/// 同一问题必须在**同一世界**里问。
+/// 生成命令存在性探测脚本（**纯函数**：`cfg(any(windows, test))` ⇒ 本机 bash 可真跑验证）。
+#[cfg(any(windows, test))]
+pub(crate) fn missing_commands_script(commands: &[&str]) -> String {
+    let mut script = String::from(guest_prep!());
+    for cmd in commands {
+        let q = sh_quote(cmd);
+        // 名称经 base64 回传：免疫引号/元字符（同 read_files 的帧内编码纪律）。
+        script.push_str(&format!(
+            "if command -v {q} >/dev/null 2>&1; then printf '{CMD_PRESENT}:%s\\n' \
+             \"$(printf '%s' {q} | base64 | tr -d '\\n')\" ; \
+             else printf '{CMD_MISSING}:%s\\n' \"$(printf '%s' {q} | base64 | tr -d '\\n')\" ; fi;"
+        ));
+    }
+    script
+}
+
+#[cfg(windows)]
+pub(crate) fn missing_commands(distro: &str, commands: &[&str]) -> Result<Vec<String>, String> {
+    if commands.is_empty() {
+        return Ok(Vec::new());
+    }
+    let script = missing_commands_script(commands);
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| format!("检查 {distro} 内命令失败：wsl.exe 调用失败或无输出（客体不可达？）"))?;
+    Ok(parse_missing_commands(&out))
+}
+
+/// 非 Windows 孪生：客体只存在于 Windows。保留同一签名，让**接线后的调用点**在所有平台
+/// 都参与编译与 lint（否则 `#[cfg(windows)]` 之外的分支永不被检查）。
+#[cfg(not(windows))]
+pub(crate) fn missing_commands(_distro: &str, _commands: &[&str]) -> Result<Vec<String>, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 解析命令存在性输出（纯函数，跨平台可测）：**只返回缺失的那些**。
+///
+/// 容错同 `parse_read_files`：非帧行（rc 噪音 / motd / bash 警告）忽略；
+/// 解不开的行跳过 —— 判不出存在就按"缺失"处理会误拒用户，按"存在"处理会误放坏行，
+/// 故这里**宁可按缺失**（失败方向更安全：拒绝写入并让用户看见原因）。
+#[cfg(any(windows, test))]
+pub(crate) fn parse_missing_commands(raw: &str) -> Vec<String> {
+    let mut missing = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        let Some(rest) = line
+            .strip_prefix(CMD_MISSING)
+            .and_then(|r| r.strip_prefix(':'))
+        else {
+            continue;
+        };
+        if let Some(name) = base64_decode(rest).and_then(|b| String::from_utf8(b).ok()) {
+            missing.push(name);
+        }
+    }
+    missing
+}
+
 /// 列客体 dsh home 下某目录（一次 `wsl.exe` 往返）。
 ///
 /// `Ok(None)` = 目录不存在（该世界尚未初始化，调用方按"只有内置模板"处理）；
@@ -1423,5 +1496,66 @@ rc 噪音一行
         assert!(!sess_dir.exists(), "会话目录应已被递归删除");
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+/// 客体侧命令存在性解析的闸门（2026-09-21，P0 接线配套）。
+#[cfg(test)]
+mod missing_commands_tests {
+    use super::*;
+
+    fn frame(prefix: &str, name: &str) -> String {
+        format!("{prefix}:{}", base64_encode(name.as_bytes()))
+    }
+
+    /// 只把**缺失**的挑出来；存在的不得误报（误报 = 把能用的机器判成缺件、拒绝写行）。
+    #[test]
+    fn only_missing_commands_are_reported() {
+        let raw = format!(
+            "motd 噪音\n{}\n{}\n{}\n",
+            frame(CMD_PRESENT, "node"),
+            frame(CMD_MISSING, "docker"),
+            frame(CMD_PRESENT, "pnpm"),
+        );
+        assert_eq!(parse_missing_commands(&raw), vec!["docker".to_string()]);
+    }
+
+    /// 容错：非帧行、空行、解不开的 base64 一律跳过（判不出就**不**追加，方向安全）。
+    #[test]
+    fn noise_and_broken_frames_are_ignored() {
+        let raw = "\nrc 噪音\n@@DSH_DOCK_CMD_MISSING:!!!not-base64!!!\n其它输出\n";
+        assert!(
+            parse_missing_commands(raw).is_empty(),
+            "解不开的帧不得当成缺失"
+        );
+    }
+
+    /// **脚本真跑**（本机 bash）：存在的命令不得出现在缺失清单里，不存在的必须在。
+    /// 这一步把"只在 Windows 编译"的脚本半边，变成了本机可验证的证据。
+    #[test]
+    fn generated_script_reports_presence_and_absence_for_real() {
+        let script = missing_commands_script(&["sh", "definitely-not-a-command-xyzzy"]);
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("本机 bash 应可用");
+        let raw = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            parse_missing_commands(&raw),
+            vec!["definitely-not-a-command-xyzzy".to_string()],
+            "脚本输出：{raw}"
+        );
+    }
+
+    /// 反例守卫：`OK` 帧里出现的名字**绝不**能落进缺失清单（前缀必须是精确匹配）。
+    #[test]
+    fn present_frames_never_leak_into_missing() {
+        let raw = format!(
+            "{}\n{}\n",
+            frame(CMD_PRESENT, "docker"),
+            frame(CMD_MISSING, "docker")
+        );
+        assert_eq!(parse_missing_commands(&raw), vec!["docker".to_string()]);
     }
 }

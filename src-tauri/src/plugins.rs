@@ -2325,15 +2325,44 @@ pub fn is_shell_row_id(row_id: &str) -> bool {
 ///   （幂等、可复核），也不误判成"已自动激活"而**漏挂**；
 /// - **必须在包已装之后调用**（ADR-0020 §7.4）：分类是从包自身的 `package.json` 读出来的，
 ///   安装前该文件不存在，任何"提前判定"都只是"没装"的同义词。
+///
+/// 激活契约的**唯一分类判据**（纯函数，宿主/客体孪生共用，2026-09-21 抽核）。
+///
+/// `dsh.bundle.patch` 非 null 才算声明 bundle（`dsh.client` 是浏览器侧插件，不算）。
+pub(crate) fn manifest_declares_bundle(manifest_text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(manifest_text)
+        .ok()
+        .and_then(|pkg| pkg.pointer("/dsh/bundle/patch").map(|v| !v.is_null()))
+        .unwrap_or(false)
+}
+
+/// 客体孪生：读**客体** profile 的同一份 manifest 作同一判定（P0 接线，2026-09-21）。
+///
+/// 读失败（客体不可达）**必须报错而不是判 false** —— false 意为"未声明 bundle ⇒ 需要写
+/// insert 行"，对已由 bundle 激活的包写行 = **重复挂载**（正是本判据要防的）。故 fail-closed。
+pub fn package_declares_bundle_in_guest(
+    distro: &str,
+    profile: &str,
+    package: &str,
+) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let rel = format!("profiles/{profile}/node_modules/{package}/package.json");
+    let files = crate::guest::read_files(distro, std::slice::from_ref(&rel))?;
+    Ok(files
+        .into_iter()
+        .next()
+        .and_then(|(_, content)| content)
+        .map(|text| manifest_declares_bundle(&text))
+        .unwrap_or(false))
+}
+
 pub fn package_declares_bundle(profile_dir: &Path, package: &str) -> bool {
     let path = profile_dir
         .join("node_modules")
         .join(package)
         .join("package.json");
     std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|pkg| pkg.pointer("/dsh/bundle/patch").map(|v| !v.is_null()))
+        .map(|text| manifest_declares_bundle(&text))
         .unwrap_or(false)
 }
 
@@ -3404,12 +3433,8 @@ fn write_guest_patch(distro: &str, rel: &str, patch: &PatchFile) -> Result<(), S
 
 /// 客体孪生：写入官方策展挂载行（与 [`ensure_catalog_insert_row`] 同内核、同幂等语义）。
 ///
-/// **尚未接线（2026-09-21）**：`apply_official_patch_row` 在写行前有一道前置硬门
-/// `missing_prerequisites(&data_dir, …)`，它查的是**宿主 PATH** —— 而客体档的服务器在
-/// **客体内部**启动，照搬会误拒（客体有、宿主无）或误放（反之）。接线前必须先定该门的
-/// 客体口径（补一个客体侧 `command -v` 原语，或明确按"写后自证兜底"降级并说明）。
-/// 删除侧（无此前置门）已接线，见 `remove_catalog_insert_row_in_guest`。
-#[allow(dead_code)] // 上述前置门定了即接线（本文件测试已覆盖其内核行为）
+/// 接线（2026-09-21）：`apply_official_patch_row` 的客体档分支已改用本函数；其前置硬门
+/// 同步改为**在客体里问**（`guest::missing_commands`，宿主 PATH 判不了客体的事）。
 pub fn ensure_catalog_insert_row_in_guest(
     distro: &str,
     profile: &str,

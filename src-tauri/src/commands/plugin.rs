@@ -76,23 +76,27 @@ pub async fn apply_official_patch_row(
 ) -> Result<crate::official_catalog::RowWriteOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 客体档（2026-09-21 下沉，P0）：写侧交客体孪生（同一内核）；宿主 home 仅在本地档需要。
     let home = match &world {
-        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
-        crate::mgmt::World::Wsl { .. } => {
-            return Err(
-                "官方策展的挂载行写入暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用\
-                 （有意不回落本地写入，以免写错 profile）。请在本地档使用。"
-                    .to_string(),
-            )
-        }
+        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Wsl { .. } => None,
     };
     let verify_profile = profile.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // 写前当场重判（见函数文档）：包已装，此时读它的 package.json 才是权威分类。
-        let declares_bundle = crate::plugins::package_declares_bundle(
-            &home.join("profiles").join(&profile),
-            &package,
-        );
+        let declares_bundle = match &world {
+            crate::mgmt::World::Local => crate::plugins::package_declares_bundle(
+                &home
+                    .as_deref()
+                    .expect("本地档必有 home")
+                    .join("profiles")
+                    .join(&profile),
+                &package,
+            ),
+            crate::mgmt::World::Wsl { distro } => {
+                crate::plugins::package_declares_bundle_in_guest(distro, &profile, &package)?
+            }
+        };
         if !crate::plugins::needs_insert_row(declares_bundle) {
             // 声明了 `dsh.bundle`：CLI 已把它追加进层栈完成激活，再写 insert 会**重复挂载**。
             return Ok(crate::official_catalog::RowWriteOutcome {
@@ -103,21 +107,42 @@ pub async fn apply_official_patch_row(
         // 宿主前置硬门（2026-09-16 §7.5）：前置未满足时**拒绝写行**——写下去就是
         // 一个起不来的 profile，而用户此时的处境是"应用再也进不去"。
         if let Some(command) = crate::official_catalog::required_command(&package) {
-            if !missing_prerequisites(&data_dir, &[package.as_str()]).is_empty() {
+            // 宿主档查宿主 PATH；**客体档必须查客体 PATH** —— 服务器是在客体里启动的，
+            // 拿宿主 PATH 判会误拒（客体有、宿主无）或误放（反之，然后把起不来的 profile
+            // 写坏，而那正是这道门要防的）。同一问题必须在同一世界里问（P0 接线，2026-09-21）。
+            let (missing, where_) = match &world {
+                crate::mgmt::World::Local => (
+                    missing_prerequisites(&data_dir, &[package.as_str()]).is_empty(),
+                    "本机 PATH",
+                ),
+                crate::mgmt::World::Wsl { distro } => (
+                    crate::guest::missing_commands(distro, &[command])?.is_empty(),
+                    "客体 PATH",
+                ),
+            };
+            if !missing {
                 return Err(format!(
-                    "已拒绝写入挂载行：本机 PATH 中找不到「{command}」，装上会让 dsh 在加载\
+                    "已拒绝写入挂载行：{where_} 中找不到「{command}」，装上会让 dsh 在加载\
                      插件时直接失败、工作台起不来。请先装好 {command}（或改用自包含的那一档能力），\
                      再重试。"
                 ));
             }
         }
-        let changed = crate::plugins::ensure_catalog_insert_row(
-            &home,
-            &profile,
-            &row_id,
-            &package,
-            crate::official_catalog::required_row_config(&package),
-        )?;
+        let row_config = crate::official_catalog::required_row_config(&package);
+        let changed = match &world {
+            crate::mgmt::World::Local => crate::plugins::ensure_catalog_insert_row(
+                home.as_deref().expect("本地档必有 home"),
+                &profile,
+                &row_id,
+                &package,
+                row_config,
+            )?,
+            crate::mgmt::World::Wsl { distro } => {
+                crate::plugins::ensure_catalog_insert_row_in_guest(
+                    distro, &profile, &row_id, &package, row_config,
+                )?
+            }
+        };
         // 写后自证（2026-09-15 补，ADR-0020）：回读 dump-config 组合树确认该行真的生效。
         // 理由：patch 写法不对时 DSH 会**退出码 0 地静默丢弃**条目，只校验"文件写成功"
         // 抓不到它。dump-config 自身失败时**不得谎报成功**——明确告知"已写入但未能复核"。
@@ -680,4 +705,70 @@ pub async fn copy_plugin_config(
     })
     .await
     .map_err(|e| format!("配置复制任务异常终止：{e}"))?
+}
+
+/// WSL 客体档接线不许回退的闸门（2026-09-21，P0）。
+///
+/// 这四处曾长期是 `World::Wsl => Err("需补客体侧 patch 写原语")` —— 审计 A3 判为**接线欠债**。
+/// 回归到"显式拒绝"不会让任何测试变红（错误路径也能"正常"工作），所以必须用结构闸门钉住。
+#[cfg(test)]
+mod wsl_wiring_tests {
+    /// 生产代码段（**剥掉本测试模块**）：`include_str!` 会把测试自身也读进来，
+    /// 直接断言会**命中 needle 自身**而变成永真/永假 —— 这是本仓库踩过的自匹配坑。
+    fn production_code() -> &'static str {
+        include_str!("plugin.rs")
+            .split("mod wsl_wiring_tests")
+            .next()
+            .expect("split 至少返回一段")
+    }
+
+    /// 两个写入命令都不得再对客体档整体拒绝，且都必须调用客体孪生。
+    #[test]
+    fn both_row_commands_are_wired_to_the_guest_twins() {
+        let src = production_code();
+        assert!(
+            !src.contains("官方策展的挂载行写入暂不支持 WSL 客体档"),
+            "写入命令不得退回「整体拒绝客体档」"
+        );
+        assert!(
+            !src.contains("官方策展的挂载行删除暂不支持 WSL 客体档"),
+            "删除命令不得退回「整体拒绝客体档」"
+        );
+        for call in [
+            "ensure_catalog_insert_row_in_guest(",
+            "remove_catalog_insert_row_in_guest(",
+        ] {
+            assert!(src.contains(call), "缺客体孪生接线：{call}");
+        }
+    }
+
+    /// 前置硬门必须**按世界**问：宿主查宿主 PATH，客体查客体 PATH。
+    /// 照搬宿主 PATH 判客体 = 误拒（客体有宿主无）或误放（反之，写坏 profile）。
+    #[test]
+    fn prerequisite_gate_asks_the_same_world() {
+        let src = production_code();
+        assert!(
+            src.contains("crate::guest::missing_commands(distro, &[command])"),
+            "客体档的前置硬门必须在客体里问（guest::missing_commands）"
+        );
+        assert!(
+            src.contains("missing_prerequisites(&data_dir"),
+            "本地档仍须查宿主 PATH（不得为了下沉而丢掉这道门）"
+        );
+    }
+
+    /// bundle 分类必须按世界取同一判据（读失败 fail-closed，不得静默判 false）。
+    #[test]
+    fn bundle_classification_is_world_dispatch() {
+        let src = production_code();
+        assert!(
+            src.contains("package_declares_bundle_in_guest("),
+            "客体档必须读客体 manifest"
+        );
+        let plugins = include_str!("../plugins.rs").replace("\r\n", "\n");
+        assert!(
+            plugins.contains("fn manifest_declares_bundle("),
+            "两侧必须共用同一个判定式（禁第二份判据）"
+        );
+    }
 }
