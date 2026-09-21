@@ -196,6 +196,28 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
         let _ = app.run_on_main_thread(move || crate::traffic_lights::align(&lights));
     }
 
+    // 「关窗 = 隐藏」而非销毁（2026-09-21，修维护者报的「关掉工作台窗口后，点控制台的
+    // 『返回工作台』没反应」）：
+    //
+    // 根因：窗口被 CloseRequested 默认**销毁**后，`get_webview_window("main")` 返回
+    // `None` ⇒ 三处唤回入口（控制台「返回工作台」IPC / 托盘左键 / 二次启动）全部落进
+    // "窗口不存在"分支 —— 用户侧表现就是**点了没反应**（此前连日志都没有）。
+    // 隐藏则窗口与工作台都保留（dsh 子进程不受影响），与 README「窗口可关，任务台仍在」
+    // 一致；退出仍走托盘 / 菜单栏的「退出」，语义不变。
+    //
+    // 与既有 macOS 红绿灯对齐监听**并存**：Tauri 的 `on_window_event` 是逐条
+    // `AddEventListener`（tauri-runtime-wry `lib.rs:1986`），不是覆盖式单槽。
+    {
+        let win = window.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = win.hide();
+                tracing::info!("主窗口 CloseRequested → 隐藏（窗口与工作台进程均保留）");
+            }
+        });
+    }
+
     Ok(window)
 }
 
@@ -275,6 +297,9 @@ pub(crate) fn build_app_menu(
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let profiles_manager =
         MenuItem::with_id(app, "profiles_manager", "控制中心", true, None::<&str>)?;
+    // 「显示工作台」（2026-09-21）：主窗口改成「关窗 = 隐藏」后，菜单栏必须有一个显式
+    // 唤回入口 —— macOS 无托盘，不能只靠"再点一次 Dock"（Dock 走 `RunEvent::Reopen`）。
+    let show_main = MenuItem::with_id(app, "show_main", "显示工作台", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
     // 非 macOS 之外无「打开方式」子菜单（2026-08-26 裁定）：本函数仅 macOS
@@ -282,6 +307,7 @@ pub(crate) fn build_app_menu(
 
     // App 子菜单（macOS 忽略其 text，标题自动为 app 名）
     let app_menu = SubmenuBuilder::new(app, "dsh-dock")
+        .item(&show_main)
         .item(&in_browser)
         .item(&profiles_manager)
         .item(&sep)
@@ -348,6 +374,7 @@ pub(crate) fn build_tray_menu(
 
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let show_main = MenuItem::with_id(app, "show_main", "显示工作台", true, None::<&str>)?;
     let in_browser =
         MenuItem::with_id(app, "open_in_browser", "在浏览器中打开", true, None::<&str>)?;
     let profiles_manager =
@@ -396,6 +423,9 @@ pub(crate) fn build_tray_menu(
         .transpose()?;
 
     let mut entries: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    // 「显示工作台」（2026-09-21）：主窗口改成「关窗 = 隐藏」后，托盘右键必须能唤回
+    // （左键唤起是快路径，但菜单项才可发现）。事件走同一个 on_menu_event 分派。
+    entries.push(&show_main);
     entries.push(&in_browser);
     entries.push(&profiles_manager);
     if let (Some(l), Some(w)) = (local_item.as_ref(), wsl_item.as_ref()) {
@@ -494,11 +524,9 @@ pub(crate) fn setup_update_tray(app: &tauri::AppHandle) -> Result<(), String> {
                 ..
             } = event
             {
-                if let Some(win) = tray.app_handle().get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
+                // 唤起序走 bring_to_front（同「返回工作台」修复：tao 的 macOS
+                // set_focus 在 minimized||!visible 时静默 no-op，2026-09-21）。
+                crate::commands::window::bring_to_front(tray.app_handle(), "main");
             }
         })
         .build(app)
@@ -926,5 +954,101 @@ mod tray_runtime_dependency_tests {
                 "bundle.linux.{format}.recommends 必须含 {pkg}（当前 {list:?}）"
             );
         }
+    }
+}
+
+/// 主窗口生命周期闸门（2026-09-21，修维护者报的「关掉工作台窗口后，点『返回工作台』没反应」）。
+///
+/// GUI 行为本机没法点，但**正确性全在这几处结构与顺序上**，故用源码契约钉住：
+/// 窗口被销毁 ⇒ 所有唤回入口静默落空；入口缺失 ⇒ 关窗后用户被困在隐藏态。
+#[cfg(test)]
+mod main_window_lifecycle_tests {
+    /// 关窗必须是「隐藏」而不是销毁，且**不得**只在 macOS 生效。
+    #[test]
+    fn main_window_close_hides_instead_of_destroying() {
+        let src = include_str!("ui.rs").replace("\r\n", "\n");
+        let create = src
+            .find("pub(crate) fn create_main_window")
+            .expect("找不到 create_main_window");
+        let end = src[create..]
+            .find("\n}\n")
+            .map(|i| create + i)
+            .unwrap_or(src.len());
+        let body = &src[create..end];
+
+        assert!(
+            body.contains("tauri::WindowEvent::CloseRequested"),
+            "主窗口必须处理 CloseRequested：默认销毁会让 get_webview_window(\"main\") 变 None，\
+             三处唤回入口全部静默落空（用户表现 = 点了没反应）"
+        );
+        assert!(
+            body.contains("api.prevent_close()"),
+            "必须 prevent_close，否则窗口照样被销毁"
+        );
+        assert!(
+            body.contains("win.hide()"),
+            "必须 hide：保留窗口与工作台进程"
+        );
+        assert!(
+            !body.contains("#[cfg(target_os = \"macos\")]\n    {\n        let win"),
+            "隐藏语义必须三平台一致（macOS 已有红绿灯监听，不得把关窗处理塞进它的 cfg 块）"
+        );
+    }
+
+    /// 「显示工作台」必须在两条常驻入口上都存在，且接到同一个分派：
+    /// macOS 菜单栏（无托盘）+ Windows/Linux 托盘右键。
+    #[test]
+    fn show_main_is_reachable_from_every_resident_entry() {
+        let src = include_str!("ui.rs").replace("\r\n", "\n");
+        let app_menu = src
+            .find("pub(crate) fn build_app_menu")
+            .expect("macOS 菜单构建");
+        let tray_menu = src
+            .find("pub(crate) fn build_tray_menu")
+            .expect("托盘菜单构建");
+        assert!(
+            src[app_menu..tray_menu].contains("\"show_main\""),
+            "macOS 菜单栏缺「显示工作台」：关窗=隐藏后 macOS 无托盘，用户没别的入口"
+        );
+        assert!(
+            src[tray_menu..].contains("\"show_main\""),
+            "托盘菜单缺「显示工作台」：关窗=隐藏后必须能从托盘右键唤回"
+        );
+        let lib = include_str!("lib.rs").replace("\r\n", "\n");
+        assert!(
+            lib.contains("\"show_main\" => commands::window::bring_to_front"),
+            "菜单事件分派必须处理 show_main（否则菜单项点了没反应 —— 正是本次修的那类缺陷）"
+        );
+    }
+
+    /// macOS 点 Dock 图标（无可视窗口）必须唤回主窗口 —— macOS 无托盘，这是最后的退路。
+    #[test]
+    fn dock_reopen_raises_the_main_window() {
+        let lib = include_str!("lib.rs").replace("\r\n", "\n");
+        let reopen = lib
+            .find("RunEvent::Reopen")
+            .expect("未处理 RunEvent::Reopen：关窗=隐藏后点 Dock 图标将毫无反应");
+        // 按**字符**取窗口：字节切片会撞上中文注释的 UTF-8 边界（本用例第一版就死在这）。
+        let tail: String = lib[reopen..].chars().take(200).collect();
+        assert!(
+            tail.contains("bring_to_front"),
+            "Reopen 分支必须唤回主窗口（当前分支体：{}）",
+            tail.lines().take(4).collect::<Vec<_>>().join(" / ")
+        );
+    }
+
+    /// IPC 命令缺失窗口时**必须报错**，不得静默 no-op（前端已挂 `.catch(showToast)`）。
+    #[test]
+    fn focus_main_window_reports_a_missing_window() {
+        let src = include_str!("commands/window.rs").replace("\r\n", "\n");
+        assert!(
+            src.contains("pub fn focus_main_window(app: tauri::AppHandle) -> Result<(), String>"),
+            "focus_main_window 必须返回 Result：返回 () 会让前端的 catch 永远不触发，\
+             用户侧表现就是『点了没反应』"
+        );
+        assert!(
+            src.contains("get_webview_window(\"main\").is_none()"),
+            "必须前置判存在并给出可行动错误"
+        );
     }
 }

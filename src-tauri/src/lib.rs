@@ -147,11 +147,10 @@ pub fn run() {
         // 二次启动的回调发生在主实例里——唤起主窗口即可（防多开导致的
         // 双份下载 / 双 dsh 子进程 / 同一私有 prefix 并发 npm 安装）。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-            }
+            // 唤起序走 bring_to_front（unminimize → show → set_focus + 补焦）：
+            // tao 的 macOS set_focus 有 `!minimized && visible` 守卫，裸三连会静默落空
+            // （2026-09-21，同「返回工作台」缺陷）。
+            crate::commands::window::bring_to_front(app, "main");
         }))
         // 桌面客户端自更新：check → download → install。只经壳内 IPC 调用
         // （updater.rs 封装），插件命令不暴露给远程页面（最小面纪律）。
@@ -352,6 +351,7 @@ pub fn run() {
             let state = app.state::<Arc<boot::ShellState>>().inner().clone();
             let handle = app.clone();
             match event.id().as_ref() {
+                "show_main" => commands::window::bring_to_front(&handle, "main"),
                 "about" => ui::open_about_window(&handle),
                 "profiles_manager" => commands::window::open_profiles_window(handle),
                 "open_in_browser" => {
@@ -448,6 +448,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")
         .run(|app_handle, event| {
+            // macOS：点 Dock 图标（应用仍在跑但无可视窗口）→ 唤回主窗口。
+            //
+            // 为什么必须有（2026-09-21）：主窗口现在是「关窗 = 隐藏」（见
+            // `ui::create_main_window`），而 **macOS 没有托盘** —— 若 Dock 图标与
+            // 菜单栏都不能唤回，用户就困在"应用在跑、界面看不见"的状态里。
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = event {
+                commands::window::bring_to_front(app_handle, "main");
+            }
             // 应用退出 → 会话式 teardown（壳退 = 环境停：停子进程 / 断隧道，同生命周期）。
             if let RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<Arc<boot::ShellState>>() {
