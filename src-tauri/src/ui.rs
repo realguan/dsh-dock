@@ -412,16 +412,72 @@ pub(crate) fn build_tray_menu(
     MenuBuilder::new(app).items(&entries).build()
 }
 
+/// 托盘运行期依赖的候选 soname（**顺序与 `libappindicator-sys` 0.9.0 一致**，
+/// 见该 crate `src/lib.rs:14,19,31,36`）。
+///
+/// **契约方向**：本表必须 ⊇ 该 crate 会尝试的名单——它加载成功而我们漏探 ⇒ 白崩；
+/// 我们多探到它不认的名字 ⇒ 只是跳过托盘（安全方向）。升级该 crate 时须复核本表
+/// （`ui.rs` 的 `tray_runtime_libs_cover_libappindicator_candidates` 钉住条目）。
+///
+/// 名单在 macOS/Windows 上无运行期消费者（探测只对 Linux 有意义），但**契约测试**
+/// 要用它，故保留并显式豁免 dead_code。
+#[allow(dead_code)]
+const TRAY_RUNTIME_LIBS: [&str; 4] = [
+    "libayatana-appindicator3.so.1",
+    "libappindicator3.so.1",
+    "libayatana-appindicator3.so",
+    "libappindicator3.so",
+];
+
+/// 建托盘**之前**的运行期依赖探测（2026-09-21，平台审计 A1 / AGENTS §0 红线 3）。
+///
+/// 为什么必须自己做：`tray-icon` 在 Linux 经 `libappindicator-sys` 用 `libloading`
+/// **dlopen** 系统库，四个候选名全失败即 `panic!`；本仓 release 档 `panic = "abort"`
+/// ⇒ **启动即崩**（用户什么都看不到），而 `lib.rs` 的 `if let Err` 与 `catch_unwind`
+/// 都拦不住 abort —— 只能在建托盘前自己先加载一次。
+///
+/// 探测失败 ⇒ 返回**可行动**错误（含包名与两条发行版命令）⇒ 跳过托盘、应用照常启动。
+/// 不静默：原因由 `lib.rs` 落 `warn` 日志（ADR-0007「应用不可用不可接受」边界不变）。
+#[cfg(target_os = "linux")]
+fn check_tray_runtime_libs() -> Result<(), String> {
+    for name in TRAY_RUNTIME_LIBS {
+        // SAFETY: 仅 dlopen/dlclose 探测命中与否，不解析、不调用任何符号。
+        if unsafe { libloading::Library::new(name) }.is_ok() {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "托盘不可用：系统缺少 ayatana/appindicator 动态库（已尝试 {names}）。\
+         影响：托盘图标与其上的「关于 / 检查更新」入口缺失，其余功能不受影响。\
+         补齐：Debian/Ubuntu 执行 `sudo apt install libayatana-appindicator3-1`；\
+         Fedora 执行 `sudo dnf install libayatana-appindicator-gtk3`。",
+        names = TRAY_RUNTIME_LIBS.join(" / ")
+    ))
+}
+
+/// Windows：托盘走 Win32 原生路径，无 dlopen 依赖 ⇒ 恒可用。
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+fn check_tray_runtime_libs() -> Result<(), String> {
+    Ok(())
+}
+
 /// setup 阶段创建托盘（非 macOS）：左键唤起主窗口，右键出菜单。
+///
+/// 返回 `Err` 时调用方只记日志、不阻断启动（ADR-0007 边界：常驻入口缺失可接受，
+/// 应用不可用不可接受）。错误串本身承载**可行动原因**，故此处不做二次包装。
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn setup_update_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+pub(crate) fn setup_update_tray(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-    let menu = build_tray_menu(app)?;
+    // 必须**先探测后建**：顺序颠倒即回到"缺库 panic ⇒ 启动即崩"的老路
+    // （`tray_dependency_is_probed_before_building_the_tray` 钉住本行位置）。
+    check_tray_runtime_libs()?;
+
+    let menu = build_tray_menu(app).map_err(|e| format!("构建托盘菜单失败：{e}"))?;
     let icon = app
         .default_window_icon()
         .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
+        .ok_or_else(|| "缺少默认窗口图标：托盘无法建立".to_string())?;
 
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -443,7 +499,8 @@ pub(crate) fn setup_update_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 }
             }
         })
-        .build(app)?;
+        .build(app)
+        .map_err(|e| format!("建立托盘图标失败：{e}"))?;
     Ok(())
 }
 
@@ -797,5 +854,75 @@ mod immersive_chrome_tests {
             !window_rs.contains("immersive"),
             "控制中心窗口（壳页面）不应引用沉浸式脚本"
         );
+    }
+}
+
+/// 托盘运行期依赖（平台审计 A1，2026-09-21）：Linux 缺库 ⇒ crate 内 `panic!`
+/// ⇒ `panic = "abort"` ⇒ 启动即崩。本组用例钉住"先探测后建"与"包声明"两条防线。
+#[cfg(test)]
+mod tray_runtime_dependency_tests {
+    use super::TRAY_RUNTIME_LIBS;
+
+    /// 名单覆盖 `libappindicator-sys` 0.9.0 的四个候选（该 crate `src/lib.rs:14,19,31,36`）。
+    ///
+    /// 升级该 crate 若改了名单，本用例会红 —— 提醒按"⊇ crate 名单"契约复核。
+    #[test]
+    fn tray_runtime_libs_cover_libappindicator_candidates() {
+        assert_eq!(
+            TRAY_RUNTIME_LIBS,
+            [
+                "libayatana-appindicator3.so.1",
+                "libappindicator3.so.1",
+                "libayatana-appindicator3.so",
+                "libappindicator3.so",
+            ],
+            "探测名单与 libappindicator-sys 的候选不一致：少了它会崩、多了只是跳托盘"
+        );
+    }
+
+    /// **顺序契约**：探测必须在建托盘之前（颠倒即回到"缺库 panic ⇒ 启动即崩"）。
+    #[test]
+    fn tray_dependency_is_probed_before_building_the_tray() {
+        let src = include_str!("ui.rs").replace("\r\n", "\n");
+        let probe = src
+            .find("check_tray_runtime_libs()?;")
+            .expect("setup_update_tray 里找不到前置探测调用——缺库平台会退回 panic 崩溃路径");
+        let build = src
+            .find("TrayIconBuilder::with_id(\"main\")")
+            .expect("找不到托盘创建点");
+        assert!(
+            probe < build,
+            "探测必须**先于**建托盘执行（当前 probe@{probe} build@{build}）"
+        );
+    }
+
+    /// 包声明契约：deb / rpm 都必须把该库声明为 `Recommends`。
+    ///
+    /// 为什么是 Recommends 而不是 Depends：`libayatana-appindicator3-1` 在 Ubuntu
+    /// 属 **universe**（2026-09-21 实查 packages.ubuntu.com）——硬依赖会让关掉
+    /// universe 的机器**根本装不上包**，比丢托盘严重；Recommends 在 apt/dnf 下
+    /// 默认安装、仓库里没有也不阻断安装，与"应用照常启动"的降级配合。
+    #[test]
+    fn linux_packages_recommend_the_tray_library() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json 非法");
+        let linux = conf
+            .get("bundle")
+            .and_then(|b| b.get("linux"))
+            .expect("bundle.linux 缺失：deb/rpm 将不声明任何托盘依赖");
+        for (format, pkg) in [
+            ("deb", "libayatana-appindicator3-1"),
+            ("rpm", "libayatana-appindicator-gtk3"),
+        ] {
+            let list = linux
+                .get(format)
+                .and_then(|f| f.get("recommends"))
+                .and_then(|r| r.as_array())
+                .unwrap_or_else(|| panic!("bundle.linux.{format}.recommends 缺失"));
+            assert!(
+                list.iter().any(|v| v.as_str() == Some(pkg)),
+                "bundle.linux.{format}.recommends 必须含 {pkg}（当前 {list:?}）"
+            );
+        }
     }
 }

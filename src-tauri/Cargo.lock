@@ -905,6 +905,7 @@ dependencies = [
  "anyhow",
  "ed25519-dalek",
  "flate2",
+ "libloading",
  "nix",
  "objc2",
  "open",

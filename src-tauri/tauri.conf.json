@@ -54,6 +54,14 @@
       "entitlements": "entitlements.plist",
       "minimumSystemVersion": "10.13"
     },
+    "linux": {
+      "deb": {
+        "recommends": ["libayatana-appindicator3-1"]
+      },
+      "rpm": {
+        "recommends": ["libayatana-appindicator-gtk3"]
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

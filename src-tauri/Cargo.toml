@@ -55,6 +55,16 @@ tauri = { version = "2", features = ["macos-private-api"] }
 # 此处仅把既有传递依赖提升为直接依赖，**不引入新 crate、不新增网络拉取**。
 objc2 = "0.6"
 
+# 托盘运行期依赖**前置探测**（2026-09-21，平台审计 A1 / AGENTS §0 红线 3）：
+# Linux 上 `tray-icon` 经 `libappindicator-sys` 用 libloading **dlopen** 系统库，
+# 四个候选名全失败即 `panic!`（该 crate `src/lib.rs:41,50`）；release 档
+# `panic = "abort"` ⇒ **启动即崩**，而 `lib.rs` 的 `if let Err` 与 `catch_unwind`
+# 都拦不住 abort。故建托盘前先自己加载一次（见 `ui::check_tray_runtime_libs`）。
+# libloading 0.7 本就在依赖树里（libappindicator-sys → libloading，Cargo.lock 在册），
+# 同 objc2 先例：仅把既有传递依赖提升为直接依赖，**不引入新 crate、不新增拉取**。
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.7"
+
 # 壳瘦身（2026-08-21）：release 单二进制最小化。
 # 安装包大头是快照载荷（打包侧负责）；壳自身 debug 35MB → release 目标 ~10MB。
 [profile.release]

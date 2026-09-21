@@ -256,6 +256,12 @@ DSH 长任务会话在遭遇断电、进程强杀后，日志序列可能出现�
 > [!WARNING]
 > **macOS 首次打开**：若被系统安全策略拦截，在「系统设置 → 隐私与安全性」中点击「仍要打开」即可。
 
+> [!NOTE]
+> **Linux 托盘依赖**：托盘图标（及其上的「关于 / 检查更新」入口）需要 `libayatana-appindicator3`。
+> 我们的 `.deb` / `.rpm` 已把它声明为 **Recommends**，`apt` / `dnf` 默认会装上；若系统确实没有它
+> （例如 AppImage + 精简桌面），应用**仍能正常启动**，只是没有托盘图标 —— 此时日志会给出原因与安装命令
+> （Debian/Ubuntu：`libayatana-appindicator3-1`，Fedora：`libayatana-appindicator-gtk3`）。
+
 <br />
 
 ---
