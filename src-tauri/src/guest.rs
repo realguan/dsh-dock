@@ -345,6 +345,9 @@ pub(crate) fn delete_profile_script(profile: &str) -> String {
 
 /// 备份成功哨兵。
 #[cfg(any(windows, test))]
+/// 备份成功哨兵。**带名字**时形如 `DSH_DOCK_BACKUP_OK:<备份相对路径 base64>`（2026-09-21 补）：
+/// 安全模式要记下备份以便之后一键还原，而原脚本只回哨兵本身、宿主无从得知备份落在哪
+/// （与宿主侧 `backup_before_overwrite_path` 回路径的形态不一致）。源文件不存在时只回哨兵。
 pub(crate) const BACKUP_OK: &str = "DSH_DOCK_BACKUP_OK";
 
 /// 组装「客体文件覆写前留备份」脚本（与 fs_backup.rs 同口径）。
@@ -354,6 +357,8 @@ pub(crate) const BACKUP_OK: &str = "DSH_DOCK_BACKUP_OK";
 pub(crate) fn backup_file_script(rel: &str) -> String {
     let label = sh_quote(rel);
     let path = format!("\"{HOME_EXPR}\"/{label}");
+    // 相对路径的 base64 字面量：客体内解码后与 `suffix` 拼接，得到**相对**备份名。
+    let rel_b64 = base64_encode(rel.as_bytes());
     format!(
         "{}target={path}; \
          if [ -f \"$target\" ]; then \
@@ -367,8 +372,9 @@ pub(crate) fn backup_file_script(rel: &str) -> String {
            if ! cp -p \"$target\" \"$bak\"; then \
              echo 'BACKUP_FAILED'; exit 0; \
            fi; \
-         fi; \
-         echo '{BACKUP_OK}'; exit 0",
+           suffix=${{bak#\"$target\"}}; \
+         printf '{BACKUP_OK}:%s\\n' \"$(printf '%s' \"$(printf '%s' {rel_b64} | base64 -d)$suffix\" | base64 | tr -d '\\n')\" ; \
+         else echo '{BACKUP_OK}'; fi; exit 0",
         guest_prep!()
     )
 }
@@ -822,9 +828,13 @@ pub(crate) fn delete_profile_dir(_distro: &str, _profile: &str) -> Result<(), St
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
-/// 覆写前留备份（客体版，与 fs_backup::backup_before_overwrite 契约一致）。
+/// 覆写前留备份（客体版，与 `fs_backup::backup_before_overwrite*` 契约一致）：
+/// **返回刚创建的备份相对路径**（源文件不存在 ⇒ `Ok(None)`，与宿主侧同形）。
+///
+/// 为什么必须回路径（2026-09-21）：安全模式的"进入时备份 → 之后一键还原"要**记住备份**，
+/// 而原脚本只回 `BACKUP_OK` —— 宿主无从得知备份落在哪，客体档那条路就断在这里。
 #[cfg(windows)]
-pub(crate) fn backup_file(distro: &str, rel_path: &str) -> Result<(), String> {
+pub(crate) fn backup_file_named(distro: &str, rel_path: &str) -> Result<Option<String>, String> {
     let script = backup_file_script(rel_path);
     let out = crate::executor::run_wsl_capture(
         Some(distro),
@@ -834,13 +844,50 @@ pub(crate) fn backup_file(distro: &str, rel_path: &str) -> Result<(), String> {
     .ok_or_else(|| {
         format!("在 {distro} 备份文件 {rel_path} 失败：wsl.exe 调用失败或无输出（客体不可达？）")
     })?;
+    if let Some(name) = parse_backup_name(&out) {
+        return Ok(Some(name));
+    }
     if out.contains(BACKUP_OK) {
-        return Ok(());
+        return Ok(None); // 源文件不存在：没有覆写就没有备份
     }
     Err(format!(
         "备份客体文件 {rel_path} 失败（已中止写入）：{}",
         out.trim()
     ))
+}
+
+/// 非 Windows 孪生。
+///
+/// 尚无调用者：调用方 = safe_mode 的客体档接线（P0-c，方案档在册，**下一步即做**）。
+/// 保留孪生是为了让那条接线在所有平台都参与编译与 lint（同 `read_files` 的既有口径）。
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn backup_file_named(_distro: &str, _rel_path: &str) -> Result<Option<String>, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 从脚本输出解析备份相对路径（**纯函数**，跨平台可测）。
+#[cfg(any(windows, test))]
+pub(crate) fn parse_backup_name(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        let Some(rest) = line
+            .strip_prefix(BACKUP_OK)
+            .and_then(|r| r.strip_prefix(':'))
+        else {
+            continue;
+        };
+        if let Some(name) = base64_decode(rest).and_then(|b| String::from_utf8(b).ok()) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// 覆写前留备份（只需成败；名字由 [`backup_file_named`] 提供，此处**单一来源转发**）。
+#[cfg(windows)]
+pub(crate) fn backup_file(distro: &str, rel_path: &str) -> Result<(), String> {
+    backup_file_named(distro, rel_path).map(|_| ())
 }
 
 /// 非 Windows 孪生。
@@ -1546,6 +1593,48 @@ mod missing_commands_tests {
             vec!["definitely-not-a-command-xyzzy".to_string()],
             "脚本输出：{raw}"
         );
+    }
+
+    /// **备份脚本真跑**（本机 bash + 临时 DSH_HOME）：回传的名字必须**真的是**刚建的备份，
+    /// 且是相对路径（宿主据此记账、之后一键还原）。
+    #[test]
+    fn backup_script_reports_the_real_backup_name() {
+        let home = std::env::temp_dir().join(format!("dsh-dock-bak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("profiles/web")).unwrap();
+        let rel = "profiles/web/cordis.patch.yml";
+        std::fs::write(home.join(rel), "- name: x\n").unwrap();
+
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(backup_file_script(rel))
+            .env("DSH_HOME", &home)
+            .output()
+            .expect("本机 bash 应可用");
+        let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+        let name = parse_backup_name(&raw).unwrap_or_else(|| panic!("未回传备份名：{raw}"));
+        assert!(name.starts_with(rel), "备份名应是同目录兄弟：{name}");
+        assert!(name.contains(".bak-"), "备份名应带 .bak-<unix秒>：{name}");
+        assert!(
+            home.join(&name).is_file(),
+            "回传的名字必须真实存在（还原路径靠它）：{name}"
+        );
+        // 源文件不存在 ⇒ 只回 OK、不回名字（没有覆写就没有备份）
+        let raw2 = String::from_utf8_lossy(
+            &std::process::Command::new("bash")
+                .arg("-c")
+                .arg(backup_file_script("profiles/web/absent.yml"))
+                .env("DSH_HOME", &home)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .into_owned();
+        assert!(
+            parse_backup_name(&raw2).is_none(),
+            "无源文件不得回传备份名：{raw2}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// 反例守卫：`OK` 帧里出现的名字**绝不**能落进缺失清单（前缀必须是精确匹配）。
