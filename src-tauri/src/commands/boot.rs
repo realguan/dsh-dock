@@ -137,6 +137,29 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
 ///
 /// 只读、零副作用（读壳自有记账 + 查那份备份在不在）；**不读运行态**——那是回环快照的职责。
 /// 前端用它渲染控制中心横幅（只说"停用了几个、去哪儿打开开关"；**没有恢复动作**）。
+/// 安全模式在 WSL 客体档的诚实拒绝文案（**读侧与写侧同一句**，2026-09-21 平台审计 A9）。
+fn wsl_safe_mode_unsupported() -> String {
+    "安全模式暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用（有意不回落宿主，以免改错 profile）。"
+        .to_string()
+}
+
+/// 安全模式记账该用哪个 home（**纯函数**，三平台可测）。
+///
+/// 2026-09-21（平台审计 A9）修：读侧此前直接 `boot_target_home().unwrap_or_else(user_dsh_home)`，
+/// 而 **WSL 执行器的 `dsh_home()` 返回 `None`**（`executor.rs:108-110`）⇒ 客体档下会拿
+/// **宿主世界**的 home 去查安全模式记账，界面上显示出另一个世界的状态 —— 属红线 3 明禁的
+/// 静默降级（"读错世界"比报错更坏）。此处与写侧（`terminal_action`）同口径：**显式拒绝**。
+pub(crate) fn safe_mode_home(
+    world: &crate::mgmt::World,
+    boot_home: Option<std::path::PathBuf>,
+    user_home: std::path::PathBuf,
+) -> Result<std::path::PathBuf, String> {
+    if let crate::mgmt::World::Wsl { .. } = world {
+        return Err(wsl_safe_mode_unsupported());
+    }
+    Ok(boot_home.unwrap_or(user_home))
+}
+
 #[tauri::command]
 pub async fn get_safe_mode_state(
     app: tauri::AppHandle,
@@ -144,8 +167,13 @@ pub async fn get_safe_mode_state(
 ) -> Result<crate::safe_mode::SafeModeState, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::profiles::validate_profile_name(&profile)?;
-    // home 判定同 `terminal_action` 的口径：**本次启动实际用的那个**（缺记录时退用户 home）。
-    let home = crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+    // home 判定同 `terminal_action` 的口径：**本次启动实际用的那个**（缺记录时退用户 home），
+    // 但客体档一律先拒绝（见 `safe_mode_home`）——绝不拿宿主 home 冒充客体档。
+    let home = safe_mode_home(
+        &crate::mgmt::current_world(&app)?,
+        crate::boot::boot_target_home(&app),
+        crate::resolve::user_dsh_home(),
+    )?;
     Ok(crate::safe_mode::state(&data_dir, &profile, &home))
 }
 
@@ -161,7 +189,11 @@ pub async fn dismiss_safe_mode_notice(
 ) -> Result<bool, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::profiles::validate_profile_name(&profile)?;
-    let home = crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+    let home = safe_mode_home(
+        &crate::mgmt::current_world(&app)?,
+        crate::boot::boot_target_home(&app),
+        crate::resolve::user_dsh_home(),
+    )?;
     crate::safe_mode::dismiss_notice(&data_dir, &profile, &home)
 }
 
@@ -263,11 +295,7 @@ pub fn terminal_action(
             };
             if let crate::mgmt::World::Wsl { .. } = world {
                 // 与实验能力目录/写行同口径：客体侧需补原语，宁可报错不回落宿主。
-                emit_boot_error(
-                    &handle,
-                    "安全模式暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用（有意不回落宿主，以免改错 profile）。",
-                    "",
-                );
+                emit_boot_error(&handle, &wsl_safe_mode_unsupported(), "");
                 return;
             }
             // **改哪个 home 必须用本次启动的实际值**（2026-09-16 独立复核 P1）：快照档的
@@ -414,5 +442,46 @@ mod tests {
         assert!(!evaluate_needs_mode_selection(true, false, true));
         // 既有默认又已激活：不需要
         assert!(!evaluate_needs_mode_selection(true, false, false));
+    }
+}
+
+/// WSL 客体档安全模式「读错世界」的回归闸门（2026-09-21，平台审计 A9）。
+#[cfg(test)]
+mod safe_mode_world_tests {
+    use super::safe_mode_home;
+    use crate::mgmt::World;
+    use std::path::PathBuf;
+
+    fn user_home() -> PathBuf {
+        PathBuf::from("/home/u/.dsh")
+    }
+
+    #[test]
+    fn local_world_uses_the_boot_home_then_falls_back_to_user_home() {
+        let boot = PathBuf::from("/data/runtimes/fallback-home");
+        assert_eq!(
+            safe_mode_home(&World::Local, Some(boot.clone()), user_home()).unwrap(),
+            boot,
+            "本地档必须用本次启动实际那个 home（快照档的 home 与用户 home 不是一个）"
+        );
+        assert_eq!(
+            safe_mode_home(&World::Local, None, user_home()).unwrap(),
+            user_home()
+        );
+    }
+
+    /// **核心**：客体档必须拒绝，而不是回落宿主 home（旧行为 = 静默读错世界）。
+    #[test]
+    fn guest_world_refuses_instead_of_reading_the_host_home() {
+        let err = safe_mode_home(
+            &World::Wsl {
+                distro: "Ubuntu-24.04".to_string(),
+            },
+            None, // WSL 执行器 dsh_home() 恒为 None —— 旧写法正是从这里回落宿主
+            user_home(),
+        )
+        .expect_err("客体档不得返回宿主 home");
+        assert!(err.contains("WSL 客体档"), "{err}");
+        assert!(err.contains("不回落宿主"), "必须说明为什么不回落：{err}");
     }
 }
