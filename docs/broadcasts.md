@@ -32,6 +32,42 @@
 
 ## 三、记录
 
+### 2026-09-21 平台对齐审计 · 深挖补充（三路并行复核）+ 宪法级失真校正 —— guan（AI 协作）
+
+- **原委**：上条广播（`663a77a`）是首轮扫描结论。随后三路并行深挖（Rust 分叉归类 / 构建发布链 /
+  系统集成面）返回，**发现首轮漏判与误判**，逐条回源核实后已重写审计档。
+- **新增 A 级（都比"功能缺失"更危险——它们不报错）**：
+  ① **Linux 托盘缺 `libayatana-appindicator3` 即 panic**（`libappindicator-sys-0.9.0/src/lib.rs:41,50` dlopen 失败
+  即 `panic!`；`Cargo.toml:65` release `panic="abort"` ⇒ **启动即崩**；`lib.rs:253` 的 `if let Err` 拦不住 panic）——
+  而 `tauri.conf.json` **无 `bundle.linux`** 块 ⇒ deb/rpm 不声明依赖、AppImage 不含（dlopen 无 DT_NEEDED）；
+  CI 装了库（`build.yml:157,537`）所以永不触发。**唯一"用户什么都看不到、应用起不来"的缺口**。
+  ② **Windows 登记表孤儿清扫第二层结构性失效**：`lifecycle.rs:551-558` 非 unix `attach` 空体 ⇒ 锁在
+  Windows 上恒无持有者 ⇒ `:721 Ok(()) => Stale` 恒成立 ⇒ 只删登记不杀进程；三条"活孤儿"测试全
+  `#[cfg(unix)]`（`:1249/1282/1320/1343`）；Job 三层失败仅 `warn`（`:301/313/340`）⇒ 此时两层全失，
+  而 `:554-557` 注释宣称第二层有效（**注释不实**）。【静态推断】
+  ③ **`get_app_logs` 无 World 分发**（`commands/console.rs:53`，console 里唯一一条）⇒ WSL 档读**宿主**日志，
+  与 ADR-0016"控制台 100% 支持客体模式"冲突；叠加 `diagnostics.rs` 的 `dsh` 源指向**无人写入**的
+  `app_data/dsh.log`、且用严格 UTF-8（未走现成的 `resolve::read_log_auto`）⇒ 日志台整块失效。
+  ④ **`render-product.sh:56`** 把 `node.exe` 落成无扩展名 `dsh-node`（manifest `:78` 同名字面量）⇒ Windows
+  快照档 spawn 必败；该脚本 **CI 零引用**。【静态推断】
+  ⑤ **取份交叉缺口**：`updates.rs:1055-1074`（运行期求名）与 `build.yml:60/67/183`（CI 取份）无任何交叉闸门——
+  把 `darwin-arm64`/`darwin-x64` 两字面量互换，现有闸门**仍全绿**，Intel 包引导必炸。
+  ⑥ **macOS Intel leg 一个断言都不执行**（`native_arch:false` ⇒ 只 `cargo test --no-run`），且 `boot-smoke.yml`
+  **无 macOS 作业**。⑦ WSL 档安全模式读宿主 home（`executor.rs:107-110/361-363` + `boot.rs:348`）。
+- **首轮两处误判已改**：① 前端 **typecheck 三平台都跑**（经 `beforeBuildCommand` 的 `tsc -b`），只有
+  oxlint/vitest 是 Linux-only；② **Linux 托盘不是"已就位"**（原判 B，现判 A，见上）。
+- **宪法级失真校正（§10 流程，依据 ADR-0010 §223 + `build.yml:181-183`）**：
+  `AGENTS.md` §0 红线 2 与 `docs/contract.md:217` 原称「Windows 包另带 **musl** 份供 WSL 客体」——
+  而 ADR-0010 §223 明写「2026-09-04 裁定统一不考虑 Alpine 后，**原 musl 静态份取消**」，CI 实取
+  `win32-x64 linux-x64`（后者为 **glibc**）⇒ 两处改为「**linux-x64（glibc）** 份 + 注明 musl 已取消、
+  客体仅支持 glibc 发行版」。**这是失真校正，不改规则**；如需保留原表述请指示。
+- **影响**：① 修复排序见审计档 §8（A1 Linux 托盘 → A4 凭据披露 → A5 日志台 → A3 WSL 5 项 → A7 闸门…）；
+  ② **依赖 Windows 运行时的 A 级结论（A2/A6）全部只能静态推断**，因 Windows 真机验证现为搁置（§7）；
+  ③ 上条广播中"A/B/C"结论**以本档为准**。
+- **凭据**：`docs/team/平台对齐审计-2026-09-21.md`（重写版，10 节，每条标【已核实】/【静态推断】）；
+  关键裁决点附 crate 行号（`libappindicator-sys-0.9.0/src/lib.rs:41,50`、`tauri-2.11.5/src/window/mod.rs:766,787,798-802`、
+  `tauri-utils-2.9.3/src/lib.rs:122-152,161`、`tauri-2.11.5/src/window/plugin.rs:243`）。
+
 ### 2026-09-21 平台对齐审计 · 依据 AGENTS §0 红线 3 的首轮全仓核查 —— guan（AI 协作）
 
 - **变更**：`d9f9523` — 新档 `docs/team/平台对齐审计-2026-09-21.md`（9 节：方法/边界 · 结论速览 ·
