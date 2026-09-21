@@ -104,9 +104,12 @@ describe("summarizeCreateOutcome（已创建未装插件 = pending 而非 failed
 })
 
 describe("profileListError（ADR-0016 §5-e 诚实错误面）", () => {
-  it("原样透出后端详情——WSL 客体模式的「暂不支持 + 替代路径」不得被盖掉", () => {
+  it("原样透出后端详情——WSL 档的诚实错误不得被盖掉", () => {
+    // fixture 取自 mgmt.rs `world_unresolved()` 的**活文案**（WSL 模式但未选定发行版）。
+    // 2026-09-21 平台审计 §2.10：原 fixture 抄的是 `unsupported_in_wsl()` 的文案，
+    // 而那条命令化整合后已成零调用点死码 —— 测试不该守着一句用户永远看不到的话。
     const detail =
-      "「profile 列表」在 WSL 客体模式下暂不支持：本版本只下沉了插件装卸与插件清单（ADR-0016 P1），当前操作世界为 Ubuntu 客体。替代路径：在该发行版的终端里直接执行 dsh 命令，或切回本地模式后再从控制中心操作。"
+      "无法确定当前管理世界：会话按 WSL 模式运行，但本次启动尚未选定发行版——管理面必须与运行中的会话同源，不回落本地世界（ADR-0016 §2.6）。请先在主窗口以 WSL 模式完成一次启动，再打开控制中心。"
     expect(profileListError(detail)).toBe(detail)
   })
 

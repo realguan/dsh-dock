@@ -22,9 +22,12 @@
 //!
 //! ## P0 诚实兜底（ADR-0016 §4/§5-e）
 //!
-//! 分期未下沉的动作（profile CRUD / 会话 / 控制台 / 插件开关与配置复制 …）在 WSL
-//! 世界一律经 [`require_local`] 返回「暂不支持 + 替代路径」——**不依赖任何分期**，
-//! 是 P0 交付物。禁止文案：任何形式的「请先启动应用完成引擎引导后重试」（与
+//! 未下沉到客体的动作（安全模式 / MCP 探测 / 官方挂载行增删 / 实验能力目录 …）在
+//! WSL 世界由**各命令逐条** `match current_world()` 后返回「暂不支持 + 替代路径」——
+//! **不依赖任何分期**，是 P0 交付物。（2026-09-21 平台审计 §2.10：原统一助手
+//! `require_local` / `unsupported_in_wsl` 两条命令化之后已成零调用点死码，删除；
+//! 逐命令文案由各自模块的测试钉住，本文件只保留世界判定内核。）
+//! 禁止文案：任何形式的「请先启动应用完成引擎引导后重试」（与
 //! ADR-0004「Windows 侧壳不触网」直接矛盾，重试是死路）；回归闸门见本文件测试。
 
 use std::sync::Arc;
@@ -68,20 +71,6 @@ fn world_unresolved() -> String {
         .to_string()
 }
 
-/// WSL 模式下「未下沉」动作的诚实兜底文案（原因 + 替代路径）。
-///
-/// 替代路径必须**真的可行**：WSL 终端里的 `dsh` 就是运行中会话用的那一个
-/// （ADR-0016 §2.1：网络与 CLI 都在客体进程内），切换本地模式则回到现状路径。
-#[allow(dead_code)]
-pub(crate) fn unsupported_in_wsl(action: &str, distro: &str) -> String {
-    format!(
-        "「{action}」在 WSL 客体模式下暂不支持：本版本只下沉了插件装卸与插件清单\
-         （ADR-0016 P1），当前操作世界为 {distro} 客体。\
-         替代路径：在该发行版的终端里直接执行 dsh 命令（如 `dsh --profile <名> ...`），\
-         或切回本地模式后再从控制中心操作。"
-    )
-}
-
 /// 解析本次管理操作的目标世界（会话内模式 + 实际选中发行版）。
 pub(crate) fn current_world(app: &tauri::AppHandle) -> Result<World, String> {
     let mode = crate::ui::current_active_mode(app);
@@ -93,17 +82,6 @@ fn active_wsl_distro(app: &tauri::AppHandle) -> Option<String> {
     let state = app.try_state::<Arc<ShellState>>()?;
     let distro = state.active_wsl_distro.lock().ok()?.clone();
     distro
-}
-
-/// **P0 守卫**：未下沉到客体的管理动作在 WSL 世界一律拒绝执行（诚实可行动）。
-///
-/// 本地世界（含非 Windows 平台）零行为变化——调用点只多一次世界判定。
-#[allow(dead_code)]
-pub(crate) fn require_local(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
-    match current_world(app)? {
-        World::Local => Ok(()),
-        World::Wsl { distro } => Err(unsupported_in_wsl(action, &distro)),
-    }
 }
 
 #[cfg(test)]
@@ -149,20 +127,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unsupported_message_names_action_distro_and_alternative() {
-        let msg = unsupported_in_wsl("创建 profile", "Ubuntu-24.04");
-        assert!(msg.contains("创建 profile"), "{msg}");
-        assert!(msg.contains("Ubuntu-24.04"), "{msg}");
-        assert!(msg.contains("替代路径"), "{msg}");
-    }
-
     /// **禁语回归闸门**（ADR-0016 §4）：诚实兜底文案绝不得包含与 ADR-0004 矛盾的
     /// 死路补救（"请先启动应用完成引擎引导后重试"）——WSL 模式下宿主引擎按设计
     /// 永不就绪，这句话指向的补救不可能成功。
     #[test]
     fn honest_fallbacks_never_advise_the_impossible_retry() {
-        for msg in [unsupported_in_wsl("会话列表", "Ubuntu"), world_unresolved()] {
+        // 2026-09-21 起本文件只剩世界判定内核这一条诚实文案；各命令的 WSL 兜底
+        // 文案由各自模块的测试负责（本轮已逐条核过，无死路补救）。
+        for msg in [world_unresolved()] {
             assert!(
                 !msg.contains("请先启动应用完成引擎引导后重试"),
                 "诚实兜底文案不得含死路补救：{msg}"
