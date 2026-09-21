@@ -172,7 +172,31 @@ pub fn read_journal(data_dir: &Path, profile: &str) -> Option<Journal> {
 
 /// 记账是否属于这个 dsh home（旧格式没有 `dsh_home` → 视为不属于，宁可少认也不误认）。
 fn journal_belongs_to(journal: &Journal, home: &Path) -> bool {
-    !journal.dsh_home.is_empty() && Path::new(&journal.dsh_home) == home
+    journal_belongs_to_world(journal, &world_id_for_host(home))
+}
+
+/// 宿主世界的记账身份 = dsh home 绝对路径（既有口径：dev 档与正式档共用同一份壳数据目录，
+/// 只按 profile 名记账会让另一侧显示"安全模式中"并给一个必然失败的恢复按钮）。
+fn world_id_for_host(home: &Path) -> String {
+    home.display().to_string()
+}
+
+/// 记账的**世界身份**（P0-c 前置，2026-09-21）：客体档记 `wsl:<distro>` ——
+/// 客体 dsh home 的绝对路径**宿主不可知**（要额外一次往返去问），而"这条记账属于哪个世界"
+/// 才是要判的事；同 distro 的两次会话仍认账，跨世界（本地 ↔ 客体、不同发行版）一律不认。
+///
+/// 尚无生产调用者：调用方 = 安全模式的 enter/exit 客体孪生（P0-c 下一片，方案档在册）。
+#[allow(dead_code)]
+pub(crate) fn journal_world_id(world: &crate::mgmt::World, host_home: &Path) -> String {
+    match world {
+        crate::mgmt::World::Local => world_id_for_host(host_home),
+        crate::mgmt::World::Wsl { distro } => format!("wsl:{distro}"),
+    }
+}
+
+/// 记账是否属于该世界（**单一判据**：非空且字符串相等）。
+pub(crate) fn journal_belongs_to_world(journal: &Journal, world_id: &str) -> bool {
+    !journal.dsh_home.is_empty() && journal.dsh_home == world_id
 }
 
 /// 读当前安全模式状态（无记账 / 属于别的 home = 未启用）。
@@ -627,5 +651,72 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&data);
+    }
+}
+
+/// 记账世界身份的闸门（P0-c 前置，2026-09-21）。
+#[cfg(test)]
+mod journal_world_tests {
+    use super::*;
+
+    fn journal_with(home: &str) -> Journal {
+        Journal {
+            disabled_rows: vec!["dsh-dock-a".to_string()],
+            dsh_home: home.to_string(),
+            applied_at: 1,
+            dismissed_at: None,
+        }
+    }
+
+    /// 宿主档：身份 = 绝对路径；dev 档与正式档互不认账（既有纪律不得回退）。
+    #[test]
+    fn host_identity_is_the_absolute_home_path() {
+        let dev = Path::new("/Users/x/.dsh-dock-dev");
+        let formal = Path::new("/Users/x/.dsh");
+        let id_dev = journal_world_id(&crate::mgmt::World::Local, dev);
+        assert_eq!(id_dev, "/Users/x/.dsh-dock-dev");
+        assert!(journal_belongs_to_world(&journal_with(&id_dev), &id_dev));
+        assert!(!journal_belongs_to_world(
+            &journal_with(&id_dev),
+            &journal_world_id(&crate::mgmt::World::Local, formal)
+        ));
+    }
+
+    /// 客体档：身份 = `wsl:<distro>`，且**同 distro 认账、跨发行版不认**。
+    #[test]
+    fn guest_identity_is_the_distro_not_a_host_path() {
+        let ubuntu = crate::mgmt::World::Wsl {
+            distro: "Ubuntu-24.04".to_string(),
+        };
+        let debian = crate::mgmt::World::Wsl {
+            distro: "Debian".to_string(),
+        };
+        let id = journal_world_id(&ubuntu, Path::new("/Users/x/.dsh"));
+        assert_eq!(id, "wsl:Ubuntu-24.04");
+        assert!(journal_belongs_to_world(&journal_with(&id), &id));
+        assert!(
+            !journal_belongs_to_world(
+                &journal_with(&id),
+                &journal_world_id(&debian, Path::new("/x"))
+            ),
+            "换发行版不得沿用另一侧的恢复指针"
+        );
+        assert!(
+            !journal_belongs_to_world(
+                &journal_with("/Users/x/.dsh"),
+                &journal_world_id(&ubuntu, Path::new("/Users/x/.dsh"))
+            ),
+            "本地档记账不得被客体档认账（反之亦然）"
+        );
+    }
+
+    /// 空身份（旧记账 / 手改文件）一律不认账。
+    #[test]
+    fn empty_identity_never_matches() {
+        assert!(!journal_belongs_to_world(
+            &journal_with(""),
+            "wsl:Ubuntu-24.04"
+        ));
+        assert!(!journal_belongs_to_world(&journal_with(""), ""));
     }
 }
