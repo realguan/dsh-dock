@@ -32,6 +32,21 @@
 
 ## 三、记录
 
+### 2026-09-21 平台对齐修复第一刀 · A1 / A7 / A4 / A5（四项，含闸门与负例）—— guan（AI 协作）
+
+- **变更（四处独立提交，各自带闸门与负例实测）**：
+  | 项 | commit | 修了什么 | 闸门 |
+  |:--|:--|:--|:--|
+  | **A1** | `5137af1` | Linux 缺 `libayatana-appindicator3` ⇒ crate 内 `panic!` + release `panic="abort"` ⇒ **启动即崩**。改为建托盘**前**按同一组四个候选名 dlopen 探测，失败即跳过托盘并给可行动错误（应用照常启动）；`ui.rs`；`.deb`/`.rpm` 声明 **Recommends**；README 披露 | 3 例（名单覆盖 / **探测先于建托盘** / 包声明）；负例：挪到建托盘后、删 `bundle.linux` 各自红灯 |
+  | **A7** | `0852000` | 「运行期取哪份 pnpm」与「CI 取哪份」两个真相源此前**无交叉校验**（互换 `darwin-arm64`/`darwin-x64` 仍全绿）。新闸门调用运行期同一函数求名并断言该文件真在 `resources/pnpm/`；Windows 另要求客体投递份 | 1 例；CI 打包态强制（`DSH_TEST_REQUIRE_PNPM_BUNDLE=1`，同 `DSH_TEST_REQUIRE_NODE` 套路），并把「多背两份」判红；负例：本目标那份不见 / 多带别的份各自红灯 |
+  | **A4** | `a531d55` | 凭据 `0600` 承诺在 Windows 上是**假声明**（代码整段 `#[cfg(unix)]`、无替代）。UI 文案 zh/en 12 处 + README ×2 + AGENTS §6 一律限定 Unix，并写明 Windows 依赖 profile 默认 ACL | 前端三闸门（typecheck / oxlint / vitest 674） |
+  | **A5** | `9c99f81` | 日志台：`get_app_logs` 是 console.rs 里**唯一**没有世界分发的命令（WSL 档静默读宿主日志）；`dsh` 源指向全仓无人写入的 `dsh.log`；解码用严格 UTF-8 不认 UTF-16LE。新增 `LogWorld` + 纯函数真值表，客体档 profile 日志改读客体 home | 4 例（真值表 / 客体读 / **反例**不得回退 / 命令层必须世界分发）；负例：改成恒本地世界 → 精确红灯 |
+- **为什么先修这四条**：审计把 A 级分成"功能缺失"与"静默降级 / 假实现"两类，后一类**不报错**、用户无从察觉，而 A1 更是唯一"应用起不来"的那条。四条都是小改动，且都能本地验证。
+- **诚实边界**：① **A1 的 Linux 运行期行为仍需 Linux 真机**（本机无 Linux，交叉 clippy 也跑不了——仓库既有约束，由 CI ubuntu leg 编译校验）；② A4 只做了**披露止损**，Windows 显式 DACL 待做且需 Windows 真机；③ A5 客体档日志内容需 Windows+WSL 真机复核。
+- **重要协作观察（需维护者知悉）**：本轮工作期间本树**另有并行写者**在改 `src-tauri/src/lib.rs`、`commands/window.rs`、`ui.rs`（`bring_to_front` 唤起序修复），其改动**未被我的提交卷入**（我按文件精确 `git add`，四次提交只含我方文件；其改动仍留在工作区）。共享工作区并发写同一 crate 有相互覆盖风险，建议约定"同一时间一人改 Rust 面"。
+- **影响**：① 修 A1 后 Linux 用户不再可能"启动即崩"，缺库时降级为无托盘 + 可行动日志；② A7 让"平台取份错配"在 CI 上编译期级别的早红；③ A4/A5 消除两处"对用户说了不成立的话 / 给错结果"。**无需他人动作，仅周知**。
+- **凭据**：`cargo test` **546 passed / 0 failed / 7 ignored**（v1.3.0 基线 536，本轮 +10）；`cargo fmt --check` ✓；宿主 `clippy --all-targets -D warnings` ✓；前端 typecheck ✓ / oxlint 0-0 ✓ / vitest 674 ✓；`python3 -m unittest discover -s scripts/tests` 22 ✓；负例五连（A1×2、A7×2、A5×1）各自精确红灯。审计档 §2.1/2.4/2.5/2.7 已回写「已修」状态。
+
 ### 2026-09-21 平台对齐审计 · 深挖补充（三路并行复核）+ 宪法级失真校正 —— guan（AI 协作）
 
 - **原委**：上条广播（`663a77a`）是首轮扫描结论。随后三路并行深挖（Rust 分叉归类 / 构建发布链 /
