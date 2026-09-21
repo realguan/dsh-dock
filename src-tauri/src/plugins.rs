@@ -3403,6 +3403,13 @@ fn write_guest_patch(distro: &str, rel: &str, patch: &PatchFile) -> Result<(), S
 }
 
 /// 客体孪生：写入官方策展挂载行（与 [`ensure_catalog_insert_row`] 同内核、同幂等语义）。
+///
+/// **尚未接线（2026-09-21）**：`apply_official_patch_row` 在写行前有一道前置硬门
+/// `missing_prerequisites(&data_dir, …)`，它查的是**宿主 PATH** —— 而客体档的服务器在
+/// **客体内部**启动，照搬会误拒（客体有、宿主无）或误放（反之）。接线前必须先定该门的
+/// 客体口径（补一个客体侧 `command -v` 原语，或明确按"写后自证兜底"降级并说明）。
+/// 删除侧（无此前置门）已接线，见 `remove_catalog_insert_row_in_guest`。
+#[allow(dead_code)] // 上述前置门定了即接线（本文件测试已覆盖其内核行为）
 pub fn ensure_catalog_insert_row_in_guest(
     distro: &str,
     profile: &str,

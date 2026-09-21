@@ -155,19 +155,24 @@ pub async fn remove_official_patch_row(
 ) -> Result<bool, String> {
     let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 客体档（2026-09-21 下沉，P0）：写侧交客体孪生（同一内核），**不再需要宿主 home**；
+    // 自证仍走 world-aware 的 `plugin_rows_blocking`（它本就按世界取组合树）。
     let home = match &world {
-        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
-        crate::mgmt::World::Wsl { .. } => {
-            return Err(
-                "官方策展的挂载行删除暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用\
-                 （有意不回落本地写入，以免删错 profile）。请在本地档使用。"
-                    .to_string(),
-            )
-        }
+        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Wsl { .. } => None,
     };
     let verify_profile = profile.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let changed = crate::plugins::remove_catalog_insert_row(&home, &profile, &row_id)?;
+        let changed = match &world {
+            crate::mgmt::World::Local => crate::plugins::remove_catalog_insert_row(
+                home.as_deref().expect("本地档必有 home"),
+                &profile,
+                &row_id,
+            )?,
+            crate::mgmt::World::Wsl { distro } => {
+                crate::plugins::remove_catalog_insert_row_in_guest(distro, &profile, &row_id)?
+            }
+        };
         // 删除后自证：回读 dump-config，确认该行真的不在组合树里了。
         let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
             .map_err(|e| {
