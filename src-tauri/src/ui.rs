@@ -35,8 +35,10 @@ pub(crate) const WINDOW_BACKGROUND: tauri::utils::config::Color =
 pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let hook_script = include_str!("../../frontend/src/injected/link-hook.js");
 
-    // DSH 工作台快捷切换悬浮胶囊与全局快捷键（2026-09-01 引入，零遮挡重构）：
-    // 1. 全局监听快捷键（默认 Cmd/Ctrl+, 或配置的快捷键）呼出控制中心；
+    // DSH 工作台快捷切换悬浮胶囊与应用内快捷键（2026-09-01 引入，零遮挡重构）：
+    // 1. 页内 keydown 监听（默认 Cmd/Ctrl+, 或配置的快捷键）呼出控制中心——
+    //    **非 OS 级全局热键**（`tao` 未启 global_shortcut、无 global-shortcut 插件；
+    //    ADR-0024 已裁"暂缓"）⇒ 窗口失焦时无效，文案不得写成"全局"（审计 §3.5）；
     // 2. 仅在真正的 DSH 工作台页挂载独立 Shadow DOM 磨砂胶囊——2026-09-08 裁定：
     //    挂载条件由「hostname 回环」收紧为「与 get_workbench_url 返回的 origin
     //    精确比对」。macOS 壳自身页面是 tauri://localhost（hostname 恰为

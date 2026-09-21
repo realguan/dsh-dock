@@ -1043,7 +1043,7 @@ export const enUS: AppCopy = {
     floatingSwitcherEnabled: "Floating pill enabled",
     floatingSwitcherDisabled: "Floating pill hidden (shortcut only)",
     shortcutLabel: "Control Center Shortcut",
-    shortcutDesc: "Global hotkey to toggle between DSH Workbench and Control Center",
+    shortcutDesc: "Shortcut to toggle between DSH Workbench and Control Center (works in-app; the window must be focused)",
     shortcutDefault: "Default (⌘ + , / Ctrl + ,)",
     shortcutShiftP: "Command Palette Style (⌘ + ⇧ + P / Ctrl + ⇧ + P)",
     saveSuccess: "Settings saved",

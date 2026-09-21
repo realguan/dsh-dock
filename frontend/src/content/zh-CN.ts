@@ -1046,7 +1046,7 @@ export const t = {
     floatingSwitcherEnabled: "已开启悬浮胶囊",
     floatingSwitcherDisabled: "已关闭（仅使用快捷键）",
     shortcutLabel: "控制中心呼出快捷键",
-    shortcutDesc: "在 DSH 主工作台与控制中心之间切换的全局快捷键",
+    shortcutDesc: "在 DSH 主工作台与控制中心之间切换的快捷键（应用内生效，窗口需在前台）",
     shortcutDefault: "默认快捷键（⌘ + , / Ctrl + ,）",
     shortcutShiftP: "命令面板风格（⌘ + ⇧ + P / Ctrl + ⇧ + P）",
     saveSuccess: "设置已保存",

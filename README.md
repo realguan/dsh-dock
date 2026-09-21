@@ -262,6 +262,10 @@ DSH 长任务会话在遭遇断电、进程强杀后，日志序列可能出现�
 > （例如 AppImage + 精简桌面），应用**仍能正常启动**，只是没有托盘图标 —— 此时日志会给出原因与安装命令
 > （Debian/Ubuntu：`libayatana-appindicator3-1`，Fedora：`libayatana-appindicator-gtk3`）。
 
+> [!NOTE]
+> **Windows 首次打开**：安装包目前**未做代码签名**（macOS 已签名并公证，Windows 侧待证书），因此 SmartScreen
+> 可能提示「未知发布者」；点「更多信息 → 仍要运行」即可。自动更新不受影响 —— 更新包用的是本项目自己的签名校验。
+
 <br />
 
 ---
