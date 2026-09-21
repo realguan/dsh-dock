@@ -32,6 +32,25 @@
 
 ## 三、记录
 
+### 2026-09-21 发版 · v1.3.0（插件模块整轮重做 + 沉浸式标题栏）—— guan（AI 协作）
+
+- **变更**：`release: v1.3.0` 提交 + 附注 tag `v1.3.0`。本版覆盖 **v1.2.7 之后的全部 49+ 提交**
+  （v1.3.0 此前只在源码里备好、从未打过 tag，故内容以打 tag 时的树为准）。两个主题：
+  ① **插件模块整轮重做**（插件列表 / 实验能力 / 插件中心三处收敛到同一套信息层级与命名规则：
+  「实验能力」是实验性插件的唯一操作入口、名字取插件原本的名字 + 中文为辅、同类标记不复述、
+  描述性文字收进 ⓘ）；② **ADR-0029 沉浸式标题栏**（macOS：隐藏标题栏 + Sidebar 材质 +
+  红绿灯按官方几何落位 + 平台标记注入与 `app-region` 映射；Windows/Linux 维持原生装饰）。
+- **影响**：发版 tag 已推 `origin`（GitHub）→ CI 触发三平台**签名**构建并生成 Release；
+  自此刻进入 **冻结期**（Release notes 发出至三平台产物验收通过期间 master 只收 fix 不收 feat，
+  见 `docs/contracts/README.md` §冻结期）。`cnb` 远端**未推**，需要时另行同步。
+- **凭据**：`cargo fmt --check` 净 · 宿主 `clippy --all-targets -D warnings` 净 ·
+  `cargo test` **536 passed** · `pnpm install --frozen-lockfile` ✓ · `typecheck` / `lint` 0 错 0 警 ·
+  `pnpm test` **674 passed（66 files）** · `vite build` ✓ · 发布脚本 `python3 -m unittest` **17 passed** ·
+  tag 双闸门自测通过（版本号三处一致 = 1.3.0；`docs/RELEASE_NOTES.md` 含 `## [v1.3.0]`）。
+- **留白（诚实标注）**：① 红绿灯落位与毛玻璃的**真机观感**尚待维护者复核（ADR-0029 追加二的
+  广播已记 "待验证（维护者侧）"）；② 交叉目标 clippy（Windows / Linux）本机跑不了
+  （`ring` 的 build script 需交叉 C 工具链），按 AGENTS §1 归 CI；③ `docs/acceptance-2026-09-16.md`
+  里仍有 9 项 🖐 待人工验收，与本版并发、不阻塞本版打 tag。
 ### 2026-09-21 ADR-0029（追加四）· 红绿灯容器扩充：对标 Electron 同款 52px 容器垂直居中，彻底消除 19px 贴顶错位 —— guan（AI 协作）
 
 - **真因定位**：AppKit 的 `NSTitlebarView` 默认高度仅为 32px 且坐标原点在底部（`isFlipped = false`）。此前直接对按钮设 `y = 18`，在 32px 容器内 `18 + 14 = 32px`，导致红绿灯直接**贴死在窗口最顶端天花板**（中心距顶仅 7px），与 DSH 侧边栏 `.topStrip`（52px 高度居中，中心距顶 26px）形成近 19px 的巨大高低差（截图里的红框）。
