@@ -28,7 +28,7 @@
 
 | # | 项 | 待定问题 |
 |:--|:--|:--|
-| C-1 | **A3** WSL 客体档 5 项下沉 | 收益最大（同一 Windows 用户多 5 项能力），但含**跨子系统 stdio**（MCP 探测）与客体写原语，建议单独一轮按 1→2/3→5→4 顺序做 |
+| C-1 | ~~**A3** WSL 客体档 5 项下沉~~ ⇒ **已升为最高优先级（2026-09-21 维护者裁定）**：这四项是核心能力，而 WSL 客体模式是红线 3 的适配目标，「需补原语」是欠债自陈不是限制。施工方案见 [`wsl-parity-plan-2026-09-21.md`](wsl-parity-plan-2026-09-21.md)（P0 客体 patch 内核 → P1 能力目录只读 → P2 MCP 探测） |
 | C-2 | **A8** macOS Intel 执行级验证 | 三条路各有代价：`macos-15-intel` 原生 leg（runner 可用性未确认）· arm64 runner 装 Rosetta 跑 x86_64 测试· 维持只编译。**且 macOS 侧无 boot 冒烟作业**（GUI 会话依赖） |
 | C-3 | **§3.6** Linux 无托盘宿主时 About/更新入口不可达（`host.ts` 恒 `clientUpdate: true`） | 需裁定：加窗口内入口，还是改能力矩阵措辞 |
 | C-4 | **§3.2** Windows 平台标记（`data-windows-titlebar`） | 与 B-4 同批；单独做有布局风险 |
