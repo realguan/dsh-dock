@@ -134,15 +134,14 @@ mod tests {
     fn honest_fallbacks_never_advise_the_impossible_retry() {
         // 2026-09-21 起本文件只剩世界判定内核这一条诚实文案；各命令的 WSL 兜底
         // 文案由各自模块的测试负责（本轮已逐条核过，无死路补救）。
-        for msg in [world_unresolved()] {
-            assert!(
-                !msg.contains("请先启动应用完成引擎引导后重试"),
-                "诚实兜底文案不得含死路补救：{msg}"
-            );
-            assert!(
-                !msg.contains("引擎未就绪"),
-                "兜底文案不应再指向宿主引擎：{msg}"
-            );
-        }
+        let msg = world_unresolved();
+        assert!(
+            !msg.contains("请先启动应用完成引擎引导后重试"),
+            "诚实兜底文案不得含死路补救：{msg}"
+        );
+        assert!(
+            !msg.contains("引擎未就绪"),
+            "兜底文案不应再指向宿主引擎：{msg}"
+        );
     }
 }
