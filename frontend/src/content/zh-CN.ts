@@ -401,11 +401,31 @@ export const t = {
     detailClose: "关闭",
     // 插件清单（4.4①）：静态清单 + 运行态快照（复现点 11）
     pluginNotInstalled: "未安装",
+    pluginAddBtn: "添加插件",
+    pluginAddTitle: (name: string) => `添加插件到「${name}」`,
+    pluginAddDesc: "在当前工作台直接浏览市场插件、从其他工作台导入或输入 npm 包名安装",
+    pluginAddTabMarket: "插件市场",
+    pluginAddTabImport: "从其他导入",
+    pluginAddTabCustom: "自定义安装",
+    pluginAddMarketSearch: "搜索社区插件名称、描述或标签...",
+    pluginAddAlreadyInstalled: "已安装于此工作台",
+    pluginAddInstallAction: "安装",
+    pluginAddInstalling: "安装中…",
+    pluginAddCustomPlaceholder: "输入 npm 包名或 spec，例如 dsh-plugin-xxx 或 @scope/pkg@^1.0.0",
+    pluginAddCustomSubmit: "安装到此工作台",
+    pluginAddCustomHint: "支持公开发布的 npm 包名、版本范围或预发布 tag",
+    pluginAddEmptyMarket: "没有找到匹配的社区插件",
+    pluginAddLoadMarketFailed: "插件市场加载失败，请检查网络后重试",
+    pluginAddMarketInstallDone: (name: string) => `插件「${name}」已加入安装队列`,
+    pluginAddCategoryLabel: "按分类筛选",
+    pluginAddMarketLoading: "正在拉取社区插件矩阵…",
+    pluginAddMoreHidden: (n: number) => `另有 ${n} 个未列出——用搜索或分类缩小范围`,
+    pluginAddImportDone: "导入队列已处理完毕",
+    pluginAddImportOk: "成功",
+    pluginAddImportFrom: "来自",
+    pluginAddSpecLabel: "npm 包名或版本范围",
+    pluginDesktopRuntimeToggle: "展开/收起底座说明",
     // 插件安装/卸载/更新（4.4②）：dsh plugin 转发链
-    pluginInstallBtn: "安装插件",
-    pluginInstallPlaceholder: "包名 或 包名@版本（如 dsh-xxx@^1.2）",
-    pluginInstallSubmit: "安装",
-    pluginInstallCancel: "取消",
     pluginInstallBusy: "安装中…（需要下载，可能数十秒到数分钟）",
     pluginUninstall: "卸载",
     pluginUninstallConfirm: (pkg: string) => `确定卸载插件「${pkg}」？`,
@@ -477,12 +497,12 @@ export const t = {
     versionLatest: "最新",
     versionCurrent: "当前",
     versionsLoadFailed: "版本列表查询失败",
-    pluginWithDsh: "版本随 dsh",
     // 2026-09-19 审美批次 3：原句「会话运行中 · 7 行运行中 · …」把"运行中"说了两遍
     // （会话态 + 行数），且会话态详情头部已有徽标。改成纯计数图例。
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `运行 ${s.active}${s.failed ? ` · 失败 ${s.failed}` : ""}${s.loading ? ` · 加载中 ${s.loading}` : ""}${s.disabled ? ` · 停用 ${s.disabled}` : ""}`,
     runtimeUnavailable: "该 profile 当前未运行，仅显示静态清单",
+    runtimeFailedSummary: (n: number) => `运行时 ${n} 个条目加载失败（详见系统控制台日志）`,
     // 官方桌面运行时说明（2026-09-11）：原内联「内含 240+ 项本地预置底座服务」——
     // 数字随 dsh 版本漂移且无壳侧事实源（本机 desktop-packages.json 为 239 项），
     // 故改不依赖具体数量。句子含两个 `<code>` 标识符，字典只存纯文本片段：
@@ -563,13 +583,8 @@ export const t = {
     overviewEmptyHint: "在任一 profile 的详情里安装后，这里会自动汇总",
     overviewNotInstalled: "未安装",
     // 从其他 profile 安装（4.4④）：多选批量 + 可选连配置（写入例外 #4）
-    importBtn: "从其他导入",
-    importBtnTitle: "把其他 profile 已安装的插件装到这里",
-    importTitle: (name: string) => `从其他 profile 安装到「${name}」`,
-    importNote: "默认安装来源同版本；「连配置」会把来源 profile 里该插件的配置行原样复制过来（目标已有配置时不覆盖）",
     importLoading: "正在扫描其他 profile…",
     importEmpty: "其他 profile 还没有已安装的第三方插件",
-    importRowsFailedNote: "部分行表查询失败，「连配置」可用性可能不准",
     importConfig: "连配置",
     importNoConfig: "无配置可带",
     importSelected: (n: number) => `已选 ${n} 项`,
@@ -577,8 +592,6 @@ export const t = {
     importRunning: (i: number, total: number) => `正在安装 ${i}/${total}`,
     importDone: (ok: number, fail: number) =>
       `从其他 profile 安装完成：${ok} 成功${fail ? ` · ${fail} 失败` : ""}`,
-    importDoneBtn: "完成",
-    importFailures: "失败明细",
     // 扩展文案（Master-Detail 工作台与交互升级）
     searchPlaceholder: "搜索 Profile...",
     searchPluginsPlaceholder: "搜索已装插件...",
@@ -590,32 +603,40 @@ export const t = {
     //    「底座组合」tab 退役）────────────────────────────────────────────
     // 筛选 chips（与三个行内标记同名）。「内置」筛选含 dsh 自带的实验层——它们
     // 也带「内置」标，三类计数因此可以重叠（合计 ≥ 总数），不是分区。
-    listFilterAll: "全部",
     listFilterBuiltin: "内置",
-    listFilterThirdParty: "第三方",
+    listFilterThirdParty: "社区",
     listFilterExperimental: "实验性",
-    listFilterEmpty: "当前筛选下没有插件",
+    listFilterEmpty: "这一类下暂时没有插件",
+    // 实验性行在插件列表里**只读**（2026-09-21 维护者裁定：操作唯一入口 = 「实验能力」）。
+    // 不说清这一点，用户只会看到一行行没有开关的插件，以为是界面坏了。
+    experimentalReadOnlyNote:
+      "实验性插件的启停、换后端与移除统一在「实验能力」里进行（本页只如实列出装了哪些包）",
+    experimentalManageEntry: "前往实验能力",
+    listFilterShowAll: (n: number) => `显示全部 ${n} 个插件`,
     // 三个行内标记（每个插件恰好一个主标记；dsh 自带的实验层额外补一枚「内置」）。
+    // 2026-09-21 三次修订：能力名**不再挂在这枚实验标上**——它上移到行内主标题旁的
+    // 辅助灰字（维护者："插件名取原本的名字，中文为辅"）。标只负责"类别"这一件事，
+    // 且已按类筛过时整枚不渲染（"已经按 tab 分类了，就不需要展示 tab 本身这类的标签"）。
     tagBuiltin: "内置",
     tagBuiltinHint: "随 dsh 安装自带的内置层：不可卸载；要开关请到 dsh 自己的插件页",
-    tagThirdParty: "第三方",
-    tagThirdPartyHint: "你安装到本 Profile 的插件：可启停、可更新、可卸载",
-    tagExperimental: (cap: string) => `实验性 · ${cap}`,
+    tagThirdParty: "社区",
+    tagThirdPartyHint: "来自社区（npm / GitHub）的插件：可启停、可更新、可卸载",
+    tagExperimental: "实验性",
     tagExperimentalHint: (cap: string) =>
-      `来自「实验能力」面板的「${cap}」：开关与移除统一在那边（同一能力只有一个入口）`,
-    // 能力的**共用基座**标记（弱化）：一个能力 = 基座 + 一个生效后端，不是两个并列插件。
-    // 基座自身不提供工具（如 browser-use 官方描述 "adds no model-visible tools"），
-    // 只登记 provider 插槽；标识包（正在用的那个后端）才挂完整的「实验性 · <能力>」。
-    tagCapabilityBase: (cap: string) => `${cap} · 基座`,
-    tagCapabilityBaseHint: (cap: string) =>
-      `「${cap}」的共用基座：为各后端登记插槽、自身不提供工具。这一档真正干活的是挂在它下面的「后端」行；开关统一在「实验能力」面板`,
-    // 组内从属行的「后端」标记：provider 缩进挂在基座下，与其它后端互斥（同刻只生效一个）。
-    tagBackend: "后端",
-    tagBackendHint: "这一档正在生效的后端实现（与同能力的其它后端互斥）",
-    // 实验性行的唯一动作：跳去「实验能力」面板（开关与移除都在那边）。
-    goToggle: "去开关",
-    goToggleHint: (cap: string) => `「${cap}」的开关在「实验能力」面板：跳到那边操作`,
-    goToggleAria: (cap: string) => `去「实验能力」面板开关「${cap}」`,
+      `属于「${cap}」实验能力的插件：启停、换后端与移除都在「实验能力」里`,
+    // 2026-09-21 三次修订：能力卡片退役（实验性插件的操作唯一入口 = 「实验能力」tab），
+    // 随之回收的键：tagCapabilityBase(Hint) / tagBackend(Hint) / goToggle* /
+    // capActiveBackend(Hint) / capNotToggleable(Hint) / capSwitchBackend(Hint) /
+    // capVariantSwitched / capVariantSwitchFailed / capToggle* / capState*Hint / capUnlocks。
+    // 状态与后端（状态 + 生效后端合并为单枚胶囊；措辞唯一来源 = StateBadge）。
+    capStateOn: "已启用",
+    capStateDisabled: "已停用",
+    capStateOff: "未启用",
+    capStateConflict: "后端冲突",
+    capStatePartial: "需要修复",
+    // 系统预置底座折叠附录（方案一：与用户扩展物理分开）。
+    // 行内 `···` 溢出菜单的无障碍名（一屏多行，必须说清是哪一行）。
+    rowMoreActions: (pkg: string) => `${pkg}：更多操作`,
     // 能力目录读取失败（如 WSL 客体档暂不支持）时，插件列表如实说"标记不可用"，
     // 不把没标的实验包默默显示成第三方。
     capsTagUnavailable: "实验能力目录读取失败：「实验性」标记暂不可用（其余标记不受影响）",
@@ -780,13 +801,18 @@ export const t = {
     distributeTargetVersion: "目标版本",
     distributeWithConfigDesc: "从首个来源 Profile 的 cordis.patch.yml 原样同步配置条目",
     distributeEnqueueBtn: "加入分发队列",
-    importSourceLabel: "来源：",
-    importSourceFrom: (name: string, version: string) => `从 ${name} (v${version}) 导入`,
-    importIncludesConfig: "·包含配置",
     importConfigCopyFailed: (reason: string) => `插件已安装，但配置行复制失败：${reason}`,
     // ==== 2026-09-18 Profiles 区 UI 收口：ProfileDetailPane 内联硬编码中文迁入 ====
     manifestNameLabel: "清单名: ",
     detailLoading: "正在加载配置档案...",
+    // 未物化 profile（目录还不存在：内置模板名首次启动 / 首次 plugin add 才创建）。
+    // 2026-09-21 真机 bug：这种档的四个读取全都必失败，而其中能力目录那条把 Rust 的
+    // 原始 OS 错误（`No such file or directory (os error 2)`）直接铺给了用户。
+    // 现在整页不发请求，只给这一句人话 + 唯一的出路（启动一次）。
+    notMaterializedTag: "未物化",
+    notMaterializedTitle: (name: string) => `profile「${name}」尚未物化`,
+    notMaterializedBody:
+      "工作目录还不存在：内置模板名（web / headless）首次启动或首次添加插件后才会创建。之后这里才有插件清单、实验能力与配置。",
     searchNoPlugin: "未匹配到搜索词对应的已装插件",
     desktopRuntimeName: "DeepSeek 官方桌面客户端底座运行时",
     desktopRuntimeTag: "官方桌面版",
@@ -1085,6 +1111,9 @@ export const t = {
     subtitle: "基于 awesome-dsh-plugin 官方聚合的社区插件与扩展生态",
     searchPlaceholder: "搜索插件名称、功能描述、NPM 包名或作者...",
     allCategories: "全部分类",
+    // 分类选项（筛选下拉里的单项）：与市场页的分类 pill 同一套「标签 + 计数」形态
+    // （2026-09-21 维护者真机："全部分类选项要与插件中心那边的分类保持一致"）。
+    categoryOption: (label: string, n: number) => `${label}（${n}）`,
     categoryCount: (n: number) => `${n} 个分类`,
     totalPlugins: (n: number) => `${n} 款插件`,
     sortStars: "最多星标",
@@ -1119,20 +1148,21 @@ export const t = {
     // 两栏（清单 / 详情面）：左栏标题、右栏无障碍名、窄窗口下钻的返回。
     capListLabel: "能力清单",
     capPaneLabel: (name: string) => `${name}的详情`,
-    capBack: "返回清单",
     capPluginsLabel: "插件",
     // 「切换后端」溢出菜单（v4，左栏行尾）：触发钮的可访问名 + 菜单标题。
-    capMenuBackend: (cap: string) => `切换「${cap}」的后端`,
     capMenuBackendLabel: "选择后端",
+    capBackendExclusiveNote: "同能力的后端互斥，同一时刻只生效一个：切换即让位",
     // 菜单项里标记"这个正在生效"（点它 = 无操作，菜单项本就禁用）。
     capVariantActive: "当前生效",
+    capSwitchToThis: "切换到此档",
     // 详情面「插件」节：后端以插件名逐行列出；共同前置与共用基座包只讲一次。
-    capPrereqCommon: "各档共同前置",
     capBasePackages: (pkgs: string) => `各档共用基座包 ${pkgs}`,
     capAlsoInstalls: (pkgs: string) => `另装共用包 ${pkgs}`,
-    capOfficialDesc: "官方简介：",
-    capOfficialDescPending: "装好这条后会显示它自带的官方简介",
     capDesc: "DeepSeek 官方以实验包形式发布的 dsh 能力：开启即安装并挂载，随时可以关掉。",
+    // 能力说明的单条悬浮文本（summary = 这是什么；unlocks = 开启后多出什么）。
+    // 2026-09-21 三次修订：两者原先平铺在展开体里（一段正文 + 一节带标题的正文），
+    // 把"选后端"这件正事挤到下面；现合并成头部 ⓘ 里的一条。
+    capTipText: (summary: string, unlocks: string) => `${summary} 开启后：${unlocks}`,
     capLoadFailed: "读取实验能力失败",
     capReload: "重试",
     capSummary: (on: number, total: number) => `已启用 ${on} / ${total} 项`,
@@ -1171,17 +1201,7 @@ export const t = {
     capQueueHint: "包下载与失败重试见「下载管理」",
     capRepair: "修复",
     capReadyToEnable: "已就位，可直接开启",
-    capUnlocks: "启用后会发生什么",
-    capImplTitle: "实现细节（排障用）",
-    capImplPackages: (n: number) => `${n} 个包`,
     capPinned: (spec: string) => `钉版本 ${spec}`,
-    capActivationAuto: "由 dsh 自动激活",
-    capActivationInsert: "需写入一条配置行",
-    capStepLive: "已生效",
-    capStepDisabled: "已停用",
-    capStepRowMissing: "配置行缺失（需要修复）",
-    capStepPackageMissing: "包缺失（配置行还在）",
-    capStepNotInstalled: "未安装",
     capRemoveBtn: "移除并卸载",
     capRemoveExplainedSoft: "关闭只停用配置行、保留已下载的包；彻底移除才卸载。",
     capRemoveExplainedLayer: "该能力由 profile 层提供，关闭即移除（会一并清理层列表）。",

@@ -42,15 +42,11 @@ import paneSrc from "@/components/profiles/ProfileDetailPane.tsx?raw"
 import catalogSrc from "@/lib/pluginCatalog.ts?raw"
 import mock from "@/lib/devMock.ts?raw"
 
-/** 左栏**清单行**函数体（"不点任何东西就能扫到的东西"都在这里）。v4 起切片终点是
- *  BackendMenu——「切换后端」菜单是**披露面**（overflow-menu），不算行内联内容。 */
+/** **卡片头部**（能力身份 · 状态 · 当前后端 · 开关 · 展开）——"不点任何东西就能
+ *  扫到的东西"全在这里。2026-09-21 三次重构：左栏清单行（CapabilityRow）并入
+ *  单栏卡片的头部（CapabilityPanel），切片锚点随之改指它。 */
 function listRegion(): string {
-  return slice("function CapabilityRow(", "function BackendMenu(")
-}
-
-/** 「切换后端」溢出菜单函数体（v4 新增的披露面）。 */
-function menuRegion(): string {
-  return slice("function BackendMenu(", "function CapabilityPane(")
+  return slice("function CapabilityPanel(", "function CapabilityPane(")
 }
 
 /** 右栏**详情面**函数体（常驻详情：插件 / 前置 / 排障 / 移除）。 */
@@ -84,37 +80,40 @@ describe("⑧ 版面预算：清单 / 详情分栏，详情**不得**内联展�
     expect(src, "详情面不该再包在高度动画里").not.toMatch(/AnimatePresence/)
   })
 
-  it("两栏布局：清单是左栏，详情面是右栏，窄窗口退化为下钻", () => {
-    // 结构调整 = 判据跟着走：v2 让详情内联展开；v3 要求两者并排（详情面常驻）。
-    // 两栏 = 「一条有上下限的轨 + 一条自适应轨」。只钉 `lg:grid-cols-[minmax(` 是不够的：
-    // 改成 `lg:grid-cols-[minmax(0,1fr)]`（退回纵向堆叠）照样命中，四条断言全绿
-    // ——2026-09-17 独立复核给出的正是这个"绿着退化"的反例。
-    expect(src, "必须是两栏栅格（左轨有宽度区间 + 右轨自适应）").toMatch(
-      /lg:grid-cols-\[minmax\([^\]_]*\)\s*_\s*minmax\(0,1fr\)\]/,
+  it("单栏手风琴：一屏看全能力，同一时刻只展开一个（2026-09-21 三次重构）", () => {
+    // 结构调整 = 判据跟着走：v2 详情内联展开（会把第二张卡推出屏幕，真机 1897px）；
+    // v3 改左右两栏（解决了高度，却让左右身份必然重复、且与「插件列表」范式分叉）；
+    // 本次改**单栏手风琴**——与「插件列表」同范式（一能力一卡片、头部控制、展开看细节），
+    // v3 担心的"越长越高"由"同时只展开一个"挡住。
+    expect(src, "不得再有左右分栏栅格").not.toContain("lg:grid-cols-[minmax(")
+    expect(stripComments(src), "不得再有窄窗下钻态（注释提及历史不算）").not.toContain("drilled")
+    // 手风琴的身份：一个 state + 互斥切换
+    expect(src, "展开态是受控 state").toContain("const [expandedId, setExpandedId]")
+    expect(src, "再点一次收起（互斥）").toMatch(/cur === cap\.id \? null : cap\.id/)
+    expect(src, "展开体复用 CapabilityPane（零功能丢失）").toMatch(
+      /\{expanded && \(\s*<CapabilityPane/,
     )
-    const grid = src.indexOf('className="grid items-start gap-4')
-    expect(grid, "找不到两栏栅格容器").toBeGreaterThan(-1)
-    expect(src.indexOf("t.market.capListLabel"), "清单必须在两栏容器之后（左栏）").toBeGreaterThan(
-      grid,
-    )
-    expect(src.indexOf("id={PANE_ID}"), "详情面必须在两栏容器之后（右栏）").toBeGreaterThan(grid)
-    expect(src, "窄窗口（<1024）要有下钻 + 返回出口").toContain("capBack")
-    expect(src, "窄窗口下钻态：清单与详情面互斥显示").toMatch(/drilled \? "hidden lg:block" : ""/)
   })
 
   it("行是**单行紧凑**结构（不给整块段落留位置）", () => {
     const row = listRegion()
-    // 行里出现块级段落 = 行会重新变高。行只允许 span / 按钮 / 开关。
+    // 行里出现块级段落 = 行会重新变高。行只允许 span / 按钮 / 开关 / ⓘ。
     expect(row, "清单行里出现了块级段落").not.toMatch(/<p[\s>]/)
     // 一个能力一行（而不是"一档一行"）：变体清单归详情面。
     expect(row, "清单行不得渲染完整变体清单").not.toContain("cap.variants.map(")
-    expect(row, "长描述归详情面").not.toContain("cap.summary")
-    // 插件名**完整显示（折行）**，不截断：官方包名动辄 50+ 字符，截断截掉的正好是
-    // 区分各档的那一段（`…cua-driver-mcp` 与 `…cua-driver-native` 会截成同一个前缀）。
-    // 能力名可以截断（短且同一份数据），**插件名不行**：它是唯一"要对得上 node_modules"
-    // 的字符串，截掉的正好是区分各档的尾部（`…cua-driver-mcp` / `…cua-driver-native`
-    // 会截成同一个前缀）。所以钉住插件名那一行的类名。
-    expect(row, "插件名要完整折行显示").toContain("break-words font-mono")
+    // 描述性信息**只在 ⓘ 里**（2026-09-21 三次修订，维护者口径："希望减少描述性信息，
+    // 若必须要则收敛到小 tip icon 里面去"）。判据随之改写：旧版是"长描述归详情面"
+    // （cap.summary 不许出现在行里），现在是"行里可以有它、但只能作为悬浮文本"——
+    // 平铺成段落即违约，故下面同时钉住"进了 Tip"与"没有 `<p>`"两条。
+    expect(row, "能力说明必须收进 ⓘ").toContain("capTipText(cap.summary, cap.unlocks)")
+    // 插件名（2026-09-21 维护者："实验能力这个模块的 UIUX 设计太差了"）：
+    // 原口径是"完整包名折行显示、不许截断"——不许截断是对的（截掉的正好是区分各档
+    // 的尾部），但**折行**的代价是每行两行高、且三个后端的前 40 字符完全相同
+    // （`@deepseek-ai/dsh-experimental-browser-use-`），眼睛扫不出区别。
+    // 现改为**去噪短名**：去掉 scope 与 `dsh`/`experimental` 噪音段，尾部（区分点）
+    // 完整保留——既不截断，也不再折行；完整包名进 `title`，排查/读屏仍可取。
+    expect(row, "插件名走去噪短名").toContain("variantShortName(cap, target.id)")
+    expect(row, "完整包名进 title（不丢信息）").toMatch(/title=\{name\}/)
   })
 
   it("清单行保住必须「扫一眼就有」的四件事：名称 / 状态 / 插件名 / 开关", () => {
@@ -125,7 +124,11 @@ describe("⑧ 版面预算：清单 / 详情分栏，详情**不得**内联展�
   })
 })
 
-describe("① 实现细节只能在详情面，不得进清单行", () => {
+describe("① 实现细节整节退役（2026-09-21 维护者真机裁定）", () => {
+  // 沿革：v2 把这批东西**收进详情面**（"清单行不许被实现细节污染"），2026-09-21 维护者
+  // 真机圈出「实现细节（排障用） 2 个包」整行："实现细节这个板块我觉得应该也不需要了"。
+  // 判据随之从"只能在详情面"变成"**哪里都不再有这一节**"——但反向那半条（清单行不许
+  // 出现）仍然成立，故保留在下面，并补一条"排障出口还在"的反转证（免得靠删功能假绿）。
   it("清单行里没有钉版本、激活方式、行 id 与版本提示", () => {
     const row = listRegion()
     for (const forbidden of [
@@ -142,6 +145,28 @@ describe("① 实现细节只能在详情面，不得进清单行", () => {
     }
   })
 
+  it("展开体里也没有这一节（板块整体删除，不是搬家）", () => {
+    for (const gone of [
+      "capImplTitle",
+      "capImplPackages",
+      "capActivationAuto",
+      "capActivationInsert",
+      "capOfficialDesc",
+      "capOfficialDescPending",
+      "capStepLive",
+      "capStepRowMissing",
+      "capStepPackageMissing",
+      "stepStatus",
+      "showImpl",
+    ]) {
+      expect(src, `「${gone}」应随本节退役`).not.toContain(gone)
+    }
+    expect(paneRegion(), "详情面不得再逐包渲染 steps").not.toContain("target.steps.map(")
+    // 反转证：排障出口没有跟着消失——进度导轨（正在装哪个包）与失败块仍在
+    expect(src, "进度导轨仍在").toContain("t.market.capRunning(")
+    expect(src, "失败块仍在").toContain("function FailureBlock(")
+  })
+
   it("插件名（官方名）在清单行与详情面都有，且由派生规则给出", () => {
     expect(src, "详情面缺「插件」节标").toContain("t.market.capPluginsLabel")
     // 名字必须来自**派生规则**（标识包 = 该档独有；基座包另标共用），而不是我们发明的
@@ -153,32 +178,24 @@ describe("① 实现细节只能在详情面，不得进清单行", () => {
     expect(src, "共用基座包要如实标注，不得省略").toContain("capAlsoInstalls")
   })
 
-  it("官方来源与官方简介文案齐备（面板与逐包两处）", () => {
+  it("官方来源仍在面板头（「这不是社区插件」的口径不能随该节一起丢）", () => {
     expect(src, "面板头缺官方标记").toContain("t.market.capOfficialBadge")
     expect(src, "面板头缺官方来源说明").toContain("t.market.capOfficialNote")
-    expect(src, "详情面缺逐包官方简介标签").toContain("t.market.capOfficialDesc")
-    expect(src, "未装时必须如实说明（不得用我们的文案冒充官方简介）").toContain(
-      "t.market.capOfficialDescPending",
+  })
+
+  it("包名仍由派生规则给出（承包的官方简介退役 ≠ 包名可以不来自事实）", () => {
+    expect(src, "变体行首必须渲染标识包（roles.primary）").toContain("roles.primary.map(")
+    expect(src, "共用基座包要如实标注，不得省略").toContain("capAlsoInstalls")
+    // 2026-09-21 三次修订的正面证据：`cap.summary` / `cap.unlocks` 搬进了头部 ⓘ
+    // （描述文本不是操作步骤）——它们必须还在（真删掉就是功能丢失），只是换了呈现面。
+    expect(listRegion(), "价值描述与简介搬进 ⓘ 后仍须在").toContain(
+      "capTipText(cap.summary, cap.unlocks)",
     )
   })
 
-  it("详情面**确实**承载这些实现细节（否则上一条是假绿）", () => {
-    const pane = paneRegion()
-    for (const required of [
-      "s.package",
-      "capPinned",
-      "capImplTitle",
-      "s.rowId",
-      "s.description",
-      "cap.summary",
-      "cap.unlocks",
-    ]) {
-      expect(pane, `详情面缺少「${required}」`).toContain(required)
-    }
-  })
-
   it("用户视角的信息必须在清单行或详情面上（价值 / 前置 / 状态）", () => {
-    expect(paneRegion(), "详情面缺少价值描述").toContain("cap.unlocks")
+    // 价值描述（unlocks）现在住头部 ⓘ，前置与状态仍在详情面/行里。
+    expect(listRegion(), "缺少价值描述（应挂在头部 ⓘ）").toContain("cap.unlocks")
     expect(paneRegion(), "详情面缺少前置").toContain("prerequisites")
     for (const required of ["cap.label", "Switch"]) {
       expect(listRegion(), `清单行缺少「${required}」`).toContain(required)
@@ -187,16 +204,27 @@ describe("① 实现细节只能在详情面，不得进清单行", () => {
 })
 
 describe("①b 行内状态徽标按**变体自己**的状态取词（2026-09-17）", () => {
-  it("activeVariant 也覆盖「已就位但停用」，因此变体行徽标不得无条件写「已启用」", () => {
-    // 后端契约：`official_catalog.rs` 的 Disabled 分支把 activeVariant 设成那条"包里齐了、
-    // 行被停用"的变体。所以变体行徽标必须按 v.state 分档——版面复盘时在 mock 数据上
-    // 真抓到"面板说已停用 / 行内说已启用"的自相矛盾。
+  it("「当前档」标记不承诺「运行中」（activeVariant 含已就位但停用）", () => {
+    // 2026-09-17 真机抓到的形态：变体行**无条件**写「已启用」，而 `activeVariant` 的
+    // 契约是"当前生效**或已就位但停用**"的那一档 —— 于是面板说「已停用」时，
+    // 卡片上还挂着「已启用」，自相矛盾。
+    //
+    // 2026-09-21 二次重构后，对照卡上只剩**形状**标记（实心 = 当前档），不再有任何
+    // 文字状态断言：措辞的唯一来源是 `StateBadge`，而它按 `cap.state` / `variant.state`
+    // 逐档取词（含 `off` / `disabled` / `partial` / `subsumedBy` / `conflict`）。
+    // 故本条翻转为**反向闸门**：卡内不得再出现状态文字，状态必须走 StateBadge。
+    // 三次修订（同日）把身份块（含 StateBadge）整体移出展开体 → 正向落点改指**卡片头部**
+    // （`listRegion()`）：状态徽标仍在，只是在"扫一眼"那一层，展开体里一个都不许有。
     const pane = paneRegion()
-    expect(pane).toContain('v.state === "on"')
-    expect(pane).toContain('v.state === "disabled"')
-    expect(pane).toContain("t.market.capStateDisabled")
-    expect(pane, "两档之外要有兜底").toContain("t.market.capStatePartial")
-    expect(pane, "单档能力不必在变体行里重复面板头已说过的状态").toContain("multi && isActive")
+    expect(pane, "卡内不得再写「已启用」").not.toContain("t.market.capStateOn")
+    expect(pane, "卡内不得再写其它状态词").not.toContain("t.market.capStatePartial")
+    expect(pane, "展开体不得再挂状态徽标（身份归头部）").not.toContain("<StateBadge")
+    expect(listRegion(), "状态措辞唯一来源 = StateBadge").toContain("<StateBadge")
+    // 反转证：StateBadge 本身仍逐档取词（否则上面那条就成了空防护）
+    const badge = slice("function StateBadge(", "function opLabel(")
+    expect(badge, "StateBadge 按状态取词").toMatch(/disabled: \{ text: t\.market\.capStateDisabled/)
+    expect(badge, "含 off 档").toMatch(/off: \{ text: t\.market\.capStateOff/)
+    expect(badge, "含被包含档").toContain("variant.subsumedBy")
   })
 })
 
@@ -244,11 +272,11 @@ describe("④ 无障碍与 i18n", () => {
     }
   })
 
-  it("清单行有「当前选中」的可访问状态（选中态不能只靠颜色）", () => {
-    const row = listRegion()
-    expect(row, "选中行必须有 aria-current").toContain('aria-current={selected ? "true"')
-    expect(row, "行要指向它控制的详情面").toContain("aria-controls={PANE_ID}")
-    expect(src, "详情面要有对应的 id").toContain("id={PANE_ID}")
+  it("头部有「可展开」的可访问状态（展开态不能只靠图标方向）", () => {
+    const head = listRegion()
+    expect(head, "头部要报展开/收起").toContain("aria-expanded={expanded}")
+    expect(head, "头部要指向它控制的展开体").toContain("aria-controls={panelId}")
+    expect(head, "展开体要有对应的 id").toContain("embeddedId={panelId}")
   })
 
   it("组件内没有内联中文文案，也没有内联 CJK 标点（一律走 t.market.* 字典）", () => {
@@ -356,10 +384,11 @@ describe("⑥ 失败态与状态衔接：不许说假话、不许两个按钮干
     expect(src).toMatch(/showRaw && \(/)
   })
 
-  it("动作一发起就切到该能力的详情面（分栏形态下，「就地呈现」= 选中它）", () => {
-    // v2 靠"卡片就地展开"，v3 没有展开这回事——所以必须把详情面切过去，否则进度与失败
-    // 会出现在用户没在看的另一栏里（改版时最容易漏的一条衔接）。
-    expect(src).toMatch(/setSelectedId\(cap\.id\)[\s\S]{0,120}setDrilled\(true\)/)
+  it("动作一发起就展开该能力（「就地呈现」= 那张卡片自己打开）", () => {
+    // v2 靠"卡片就地展开"，v3 靠"把右栏切过去"，本次单栏手风琴又回到"卡片自己展开"
+    // ——三版形态不同，衔接要求一样：进度与失败必须出现在用户正看着的地方
+    // （改版时最容易漏的一条）。
+    expect(src).toMatch(/setExpandedId\(cap\.id\)/)
     // 失败/进度在清单行上也要有标记，否则用户看不出是哪一项出的问题。
     const row = listRegion()
     expect(row, "行上要有在跑标记").toContain("animate-spin")
@@ -387,8 +416,11 @@ describe("⑩ 动作互斥：一次只能跑一个动作（2026-09-17 独立复�
     // `run` 是单槽，而行写（写/删/停用挂载行）不入队、`plugins.rs` 也没有互斥：
     // A 在跑时用户点 B，`setRun({capId:B})` 会把 A 的进度与 busy 一起顶掉，A 于是能再被启动
     // → 两条编排行交错，同一份 `cordis.patch.yml` 上的 read-modify-write 可能丢更新。
-    expect(src, "行与详情面都要收到全局 busy").toMatch(/busy=\{run !== null\}/)
-    expect((src.match(/busy=\{run !== null\}/g) ?? []).length, "两栏都要传（行 + 详情面）").toBeGreaterThanOrEqual(2)
+    // 单栏手风琴后的完整传参链：父级 → 卡片 → （头部开关 / 展开体）。
+    // 链路任何一环断了，都会出现"别人跑着时还能启动"的窗口——比数字面量更该钉的是链。
+    expect(src, "父级把全局 busy 传给卡片").toMatch(/busy=\{run !== null\}/)
+    expect(src, "卡片把 busy 透给展开体").toMatch(/busy=\{busy\}/)
+    expect(listRegion(), "卡片头部的开关也吃 busy").toMatch(/disabled=\{busy \|\|/)
   })
 
   it("档位受控于父级（ADR-0028）：面板内不再有自持档位切换机制", () => {
@@ -507,18 +539,32 @@ describe("⑫ v4 控制面/后果面：行内即事实、换后端走溢出菜�
     expect(src, "行的开关目标来自 rowTarget（生效档 → 首个可用档）").toMatch(
       /const rowTarget = useCallback/,
     )
-    expect(src, "右栏同样用 rowTarget（详情与移除作用于事实档）").toContain("target={rowTarget(selected)}")
+    expect(src, "每张卡片同样用 rowTarget（详情与移除作用于事实档）").toContain("target={rowTarget(cap)}")
   })
 
-  it("换后端是溢出菜单（Popover），不是行内 pills", () => {
-    const menu = menuRegion()
-    expect(menu, "菜单必须是 Popover 基座（外点/ESC 由 Radix 兜底）").toContain("<Popover")
-    expect(menu, "触发钮要有可访问名（图标-only）").toContain("t.market.capMenuBackend(")
-    expect(menu, "包名完整折行不截断（截断会砍掉区分各档的尾部）").toContain("break-all")
-    expect(menu, "当前生效档不可点（点了也是无操作）").toMatch(/const disabled = isActive \|\| vBlocked \|\| vSubsumed/)
-    expect(menu, "当前生效档要有徽标说明").toContain("t.market.capVariantActive")
-    // 行内联区域不得出现变体清单（它在菜单里）
+  it("换后端只有一个入口：右栏对照列表（2026-09-21 二次重构）", () => {
+    // 旧形态有两处入口做同一件事：左栏一个**无文字的 ⇄ 图标**（BackendMenu 触发器）
+    // + 右栏的「切换到此档」按钮。前者既看不懂（只能 hover 猜），又是纯冗余。
+    // 现在只保留右栏那处（带文字），并**保留**"清单行不得内联变体清单"这条老防护
+    // ——它拦的是"把三档铺回左栏行里"（会撑爆 21–25rem 栏宽）。
+    expect(src, "BackendMenu 已退役").not.toContain("function BackendMenu(")
+    expect(src, "左栏不再有第二处换后端入口").not.toContain("t.market.capMenuBackend(")
     expect(listRegion(), "清单行不得内联渲染变体清单").not.toContain("cap.variants.map(")
+    expect(paneRegion(), "唯一入口在右栏对照列表").toContain("t.market.capSwitchToThis")
+    expect(src, "右栏换档复用 switchBackend（无第二套启用路径）").toContain(
+      "onSwitchBackend={(v) => switchBackend(cap, v)}",
+    )
+  })
+
+  it("对照列表用单选标记：一眼看出「互斥、选一个」", () => {
+    // 三张并排卡原先看不出是"三选一"（像三个独立插件）。加形状可辨的单选标记
+    // （实心/空心，不只靠颜色），生效档**不再挂文字徽标**——左栏那一行已经写着
+    // 同一件事，同屏说两遍是最典型的冗余。
+    const pane = paneRegion()
+    expect(pane, "有单选标记（实心=生效 / 空心=可选）").toMatch(
+      /isActive \? "border-brand bg-brand" : "border-line bg-panel"/,
+    )
+    expect(pane, "生效档不重复能力级徽标").not.toContain("t.market.capStateOn")
   })
 
   it("菜单点选与开关同链：都经 activate（该确认的确认）", () => {
@@ -529,16 +575,69 @@ describe("⑫ v4 控制面/后果面：行内即事实、换后端走溢出菜�
     expect(src, "要装新包/要拆旧档 → 先确认").toMatch(/willReplace \|\| variant\.state === "off"/)
   })
 
-  it("后果面只读：右栏不再有开关/单选组，后端对照是纯列表", () => {
+  it("后果面不持**能力级开关**，但可就地换档（2026-09-21 裁定变更）", () => {
+    // v4 曾定"右栏纯只读、换后端只走左栏溢出菜单"。真机上用户看到三张并列卡却点不动，
+    // 只能回左栏找一个图标-only 的入口——选项就在眼前却不能选，是反直觉的。
+    // 现改为：右栏对照面**就地可换档**，但仍**不持能力级开关**（避免出现两个开关）。
+    // 防护意图不变：一个能力只能有一个"开/关"，换档不是开关。
     const pane = paneRegion()
-    expect(pane, "右栏不得再有开关").not.toContain("<Switch")
-    expect(pane, "右栏不得再有单选组").not.toContain("radiogroup")
-    expect(pane, "右栏不得再有 picked 回调").not.toContain("onPick")
+    expect(pane, "右栏不得再有开关（能力级开/关仍只在左栏）").not.toContain("<Switch")
+    expect(pane, "仍不引入单选组（换了另一套等价控件也是双入口）").not.toContain("radiogroup")
     expect(pane, "后端对照仍由 variantPackageRoles 派生").toContain("variantPackageRoles(cap, v.id)")
+    // 换档入口：当前生效档不给按钮（点了也是无操作）
+    expect(pane, "非生效档给「切换到此档」").toContain("t.market.capSwitchToThis")
+    expect(pane, "生效档/被挡住的档不给按钮").toMatch(/\{!isActive && !vBlocked && !v\.subsumedBy &&/)
     expect(pane, "恢复/危险区入口仍在（busy 互斥）").toContain("disabled={busy}")
+    // 与左栏菜单**同一条链**（不是第二套启用路径）
+    expect(src, "卡片换档复用 switchBackend").toContain("onSwitchBackend={(v) => switchBackend(cap, v)}")
+  })
+
+  it("换档只有一条链：activate（右栏与左栏菜单共用）", () => {
+    expect(src, "switchBackend 收口到 activate").toMatch(
+      /const switchBackend = \(cap: Capability, variant: CapabilityVariant\) => \{[\s\S]{0,160}activate\(cap, variant\)/,
+    )
   })
 
   it("汇总计数用等宽数字（number-tabular：状态变化时行不跳）", () => {
     expect(src, "汇总计数要 tabular-nums").toContain("tabular-nums")
+  })
+})
+
+describe("⑨ 描述性信息只在 ⓘ 里（2026-09-21 三次修订）", () => {
+  // 维护者口径原文："实验功能这个模块提供唯一的对实验性插件的操作入口，希望减少
+  // 描述性信息，若必须要则收敛到小 tip icon 里面去。" —— 本段钉的就是"操作面不许
+  // 再被说明文字占位"，同时反转钉住"收敛 ≠ 删掉"（信息必须仍然可达）。
+  it("模块与能力两级说明都收进 ⓘ，不再平铺成正文", () => {
+    expect(src, "模块说明挂标题旁的 ⓘ").toMatch(/<Tip text=\{t\.market\.capDesc\}/)
+    expect(src, "能力说明（简介 + 开启后）合成的单条悬浮").toContain(
+      "capTipText(cap.summary, cap.unlocks)",
+    )
+    expect(src, "后端说明挂同名 ⓘ").toContain("text={v.note}")
+    // 反转证：旧形态（正文段落）不许回来
+    expect(paneRegion(), "能力简介不得再平铺成段落").not.toMatch(/<p[^>]*>\{cap\.summary\}/)
+    expect(paneRegion(), "后端说明不得再平铺成块").not.toMatch(
+      /<span className="mt-1 block[^>]*>\{v\.note\}/,
+    )
+    // 收敛 ≠ 删掉：两块文本都必须仍然可达（否则本条会靠"功能被删"假绿）
+    expect(src, "简介仍可达").toContain("cap.summary")
+    expect(src, "开启后说明仍可达").toContain("cap.unlocks")
+  })
+
+  it("展开体不再重复卡片头部的身份（同一张卡不说两遍）", () => {
+    // 身份块（图标 + 能力名 + 状态徽标 + 简介段落）原先在展开体里又摆了一遍，
+    // 而卡片头部已经写着同样四样。整块删除后，展开体只留"要动手才需要"的内容。
+    const pane = paneRegion()
+    expect(pane, "不得再挂能力名标题").not.toContain("<h3")
+    expect(pane, "不得再挂状态徽标（头部独家）").not.toContain("<StateBadge")
+    expect(pane, "不得再挂能力图标（头部独家）").not.toContain("capabilityIcon(")
+    expect(src, "头部仍是身份的唯一出处").toContain("{cap.label}")
+  })
+
+  it("「互斥，切换即让位」这条规则可键盘可达（原先是 title 属性）", () => {
+    // `title` 只有鼠标够得着，读屏与键盘用户拿不到——而它是"选后端之前就该知道"的规则。
+    expect(src, "规则走 ⓘ").toMatch(/text=\{t\.market\.capBackendExclusiveNote\}/)
+    expect(paneRegion(), "不得再退回 title 属性").not.toMatch(
+      /title=\{multi \? t\.market\.capBackendExclusiveNote/,
+    )
   })
 })

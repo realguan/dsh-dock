@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest"
 import { t as zhCN } from "@/content/zh-CN"
 import { enUS } from "@/content/en-US"
 import paneSrc from "@/components/profiles/ProfileDetailPane.tsx?raw"
+import rowSrc from "@/components/profiles/pluginRows/PluginListRow.tsx?raw"
 
 /** 结构断言剥离注释（注释里会写"为什么"，含中文，属正常）。 */
 function stripComments(src: string): string {
@@ -25,6 +26,8 @@ function stripComments(src: string): string {
 }
 
 const pane = stripComments(paneSrc)
+/** 行内渲染区域：2026-09-21 结构收敛后行组件独立成文件（判据不变，落点跟着搬）。 */
+const row = stripComments(rowSrc)
 
 describe("插件开关：运行态必须在写完后自己追平（不再靠切页自愈）", () => {
   it("写完后立刻重取运行态，并短轮询到落定", () => {
@@ -36,8 +39,8 @@ describe("插件开关：运行态必须在写完后自己追平（不再靠切�
 
   it("落定前该行显示「生效中」而不是留着旧徽标", () => {
     expect(pane).toContain("setPending({ ...pendingRef.current, [pkg]: wantEnabled })")
-    expect(pane).toContain("t.profiles.chip.applying")
-    expect(pane).toContain("t.profiles.chipHint.applying")
+    expect(row).toContain("t.profiles.chip.applying")
+    expect(row).toContain("t.profiles.chipHint.applying")
   })
 
   it("多行连点不互相挤掉结论（待定集合而非单个 ref）", () => {
@@ -56,9 +59,9 @@ describe("插件开关：运行态必须在写完后自己追平（不再靠切�
   })
 
   it("两个真相源的徽标分别带上自解释 title", () => {
-    expect(pane).toContain("t.profiles.chipHint[chip.kind]")
-    expect(pane).toContain("t.profiles.pluginDisabledHint")
-    expect(pane, "配色由 chipTone 按种类给").toContain("chipTone(chip)")
+    expect(row).toContain("t.profiles.chipHint[chip.kind]")
+    expect(row).toContain("t.profiles.pluginDisabledHint")
+    expect(row, "配色由 chipTone 按种类给").toContain("chipTone(chip)")
   })
 
   // 2026-09-17 独立复核抓到的 P0：写面用 `disabled` 口径、文案/判据用 `enabled` 口径，

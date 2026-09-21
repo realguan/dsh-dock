@@ -3,12 +3,14 @@ import {
   detectInstallSource,
   extractInstallSpec,
   filterMarketPlugins,
+  getMarketCategoryLabel,
   getPluginDescription,
   getPluginDisplayName,
   installedProfilesFor,
+  marketCategoryOptions,
   sortMarketPlugins,
 } from "@/lib/market"
-import type { MarketPlugin } from "@/types/market"
+import type { MarketPlugin, MarketRegistry } from "@/types/market"
 
 describe("lib/market.ts", () => {
   describe("extractInstallSpec", () => {
@@ -315,6 +317,72 @@ describe("lib/market.ts", () => {
       const info = detectInstallSource(p)
       expect(info.type).toBe("github")
       expect(info.spec).toBe("github:someuser/custom-plugin")
+    })
+  })
+  describe("getMarketCategoryLabel / marketCategoryOptions（2026-09-21：分类两处同源）", () => {
+    /** 最小 registry 夹具：两个分类有元数据、一个键只在插件里出现（元数据缺失）。 */
+    const registry: MarketRegistry = {
+      name: "awesome-dsh-plugin",
+      url: "",
+      updated: "",
+      count: 4,
+      categories: {
+        agi: { en: "AGI", zh: "智能体" },
+        ui: { en: "UI", zh: "界面" },
+      },
+      plugins: [
+        plugin("a", "agi"),
+        plugin("b", "agi"),
+        plugin("c", "ui"),
+        plugin("d", "orphan"),
+      ],
+    }
+
+    function plugin(name: string, category: string): MarketPlugin {
+      return {
+        name,
+        owner: "tester",
+        url: "",
+        page: "",
+        category,
+        description: "",
+        npm: null,
+        stars: 0,
+        downloads: 0,
+        install: "",
+        added: "2025-01-01",
+      }
+    }
+
+    it("标签按语言取，元数据缺失回退原键（不瞎翻译）", () => {
+      expect(getMarketCategoryLabel(registry, "agi", "zh-CN")).toBe("智能体")
+      expect(getMarketCategoryLabel(registry, "agi", "en-US")).toBe("AGI")
+      expect(getMarketCategoryLabel(registry, "orphan", "zh-CN")).toBe("orphan")
+      expect(getMarketCategoryLabel(registry, "", "zh-CN")).toBe("")
+      expect(getMarketCategoryLabel(null, "agi", "zh-CN")).toBe("agi")
+    })
+
+    it("zh 缺译时回落 en，en 缺译时回落 zh（两个方向都不留空）", () => {
+      const partial = {
+        ...registry,
+        categories: { agi: { en: "AGI", zh: "" }, ui: { en: "", zh: "界面" } },
+      } as MarketRegistry
+      expect(getMarketCategoryLabel(partial, "agi", "zh-CN")).toBe("AGI")
+      expect(getMarketCategoryLabel(partial, "ui", "en-US")).toBe("界面")
+    })
+
+    it("选项清单 = 元数据键 ∪ 插件用到的键，带计数、按数量降序", () => {
+      const opts = marketCategoryOptions(registry, "zh-CN")
+      expect(opts.map((o) => o.key)).toEqual(["agi", "ui", "orphan"])
+      expect(opts.map((o) => o.count)).toEqual([2, 1, 1])
+      expect(opts.map((o) => o.label)).toEqual(["智能体", "界面", "orphan"])
+      // 同数量保持既有相对次序（市场页 pill 与下拉同一份，顺序必须稳定）
+      expect(opts.map((o) => o.key).slice(1)).toEqual(["ui", "orphan"])
+    })
+
+    it("没有 registry 就没有选项（面板与弹窗都调它，不必各自判空）", () => {
+      expect(marketCategoryOptions(null, "zh-CN")).toEqual([])
+      expect(marketCategoryOptions(undefined, "en-US")).toEqual([])
     })
   })
 })

@@ -495,7 +495,7 @@ export function ProfileManager() {
           >
             <ProfileDetailPane
               name={currentSelectedProfile?.name ?? null}
-              isDefault={defaultProfile === currentSelectedProfile?.name}
+              materialized={currentSelectedProfile?.materialized ?? false}
               isRunning={rowIsRunning(
                 activeProfile,
                 handoff,
@@ -508,9 +508,6 @@ export function ProfileManager() {
               onLaunch={() => currentSelectedProfile && handleLaunch(currentSelectedProfile.name)}
               onRestart={() =>
                 currentSelectedProfile && handleRestart(currentSelectedProfile.name)
-              }
-              onSetDefault={() =>
-                currentSelectedProfile && handleSetDefault(currentSelectedProfile.name)
               }
               onCopy={() =>
                 currentSelectedProfile &&

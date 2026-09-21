@@ -1,5 +1,67 @@
 // lib/market.ts —— 插件市场纯函数工具集 (可单元测试)
-import type { MarketPlugin, MarketPluginDescription, MarketSortOption } from "@/types/market"
+import type {
+  MarketPlugin,
+  MarketPluginDescription,
+  MarketRegistry,
+  MarketSortOption,
+} from "@/types/market"
+
+/**
+ * 分类键 → **本地化标签**。
+ *
+ * 为什么要抽出来（2026-09-21 维护者真机）：同一份 registry 的分类在两个面各写一套，
+ * 「插件中心」的市场页渲染的是 `categories[key].zh`（中文标签），而「添加插件」弹窗
+ * 的筛选下拉直接渲染**原始键**（`agi` / `ui` / `usage`…）。同一个东西两种写法，
+ * 用户在弹窗里看到的是一串英文枚举。
+ *
+ * 回退链：元数据缺失 → 原键原样（宁可露出原始键，也不瞎翻译）。
+ */
+export function getMarketCategoryLabel(
+  registry: MarketRegistry | null | undefined,
+  key: string,
+  locale: string,
+): string {
+  if (!key) return ""
+  const obj = registry?.categories?.[key]
+  if (!obj) return key
+  return locale.startsWith("zh") ? obj.zh || obj.en : obj.en || obj.zh
+}
+
+export interface MarketCategoryOption {
+  key: string
+  label: string
+  count: number
+}
+
+/**
+ * 分类清单（带计数、**按数量降序**）——市场页的分类矩阵与「添加插件」弹窗的筛选下拉
+ * 共用同一份（禁双源：两处的集合/标签/顺序必须逐项一致，否则"这个下拉里的分类
+ * 跟那边不一样"就是必然）。
+ *
+ * 集合取**元数据键 ∪ 插件实际用到的键**：元数据可能缺某个键（卡片那时也只能显示原始
+ * 键），而插件用到的分类必须可选，否则那个分类下的插件无处可筛。
+ * 排序只在数量上定序，同数量的保持既有相对次序（`Array#sort` 稳定）。
+ */
+export function marketCategoryOptions(
+  registry: MarketRegistry | null | undefined,
+  locale: string,
+): MarketCategoryOption[] {
+  if (!registry) return []
+  const counts: Record<string, number> = {}
+  for (const p of registry.plugins) {
+    if (!p.category) continue
+    counts[p.category] = (counts[p.category] || 0) + 1
+  }
+  const keys = new Set<string>(Object.keys(registry.categories ?? {}))
+  for (const key of Object.keys(counts)) keys.add(key)
+  return Array.from(keys)
+    .map((key) => ({
+      key,
+      label: getMarketCategoryLabel(registry, key, locale),
+      count: counts[key] || 0,
+    }))
+    .sort((a, b) => b.count - a.count)
+}
 
 /**
  * 市场条目在本机已安装的 profile 列表（ADR-0011）。npm 来源按 npm 包名

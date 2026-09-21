@@ -14,6 +14,7 @@ import { api } from "@/lib/tauri"
 import { useQueueStore } from "@/stores/queueStore"
 import { useInstallFlightStore } from "@/stores/installFlightStore"
 import { getPaginationPages, PROFILE_CHIP_CLASS } from "@/lib/format"
+import { pluginShortId } from "@/lib/pluginDisplay"
 import { useI18n } from "@/stores/i18nStore"
 import type { AggregatePlugin, ProfileSummary } from "@/types/ipc"
 import { Button } from "@/components/ui/button"
@@ -315,15 +316,23 @@ export function PluginOverview({
                 className="flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs transition-all hover:border-brand/40 hover:shadow-xs"
               >
                 <div className="space-y-2.5">
-                  {/* 头部：包名与版本 */}
+                  {/* 头部：包名与版本。
+                      2026-09-21 维护者裁定：**名字格式与「插件市场」保持一致**——市场卡片
+                      显示的是去 scope 的名字（`dsh-browser-use`），已安装这边却一直显示带
+                      scope 的 npm 全名（`@deepseek-ai/dsh-browser-use`）：14 个字符的 scope
+                      把卡片里那点宽度吃光，名字被截成 `@deepseek-ai/dsh-br…`，
+                      同一个插件在两个子页里长得完全不一样。
+                      现统一走 `pluginShortId`（去 scope，保留 npm 上可对照的名字），
+                      完整包名留在 `title`；名字给 `flex-1 min-w-0` 吃满剩余宽度，
+                      不再因为 flex 收缩而提前截断。 */}
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
                       <IconChip icon={Package} tone="brand" />
                       <span
-                        className="font-mono text-xs font-semibold text-ink truncate"
+                        className="min-w-0 flex-1 truncate font-mono text-xs font-semibold tracking-tight text-ink"
                         title={item.name}
                       >
-                        {item.name}
+                        {pluginShortId(item.name)}
                       </span>
                     </div>
                     <span className="shrink-0 rounded-md bg-line px-1.5 py-0.5 font-mono text-meta text-dim">

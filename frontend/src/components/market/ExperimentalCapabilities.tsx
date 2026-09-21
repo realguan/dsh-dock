@@ -74,18 +74,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, useReducedMotion } from "framer-motion"
 import {
-  ArrowLeft,
   ArrowLeftRight,
   BadgeCheck,
-  Bot,
   Check,
   ChevronRight,
-  Globe,
   Info,
   LoaderCircle,
-  MonitorSmartphone,
   RotateCw,
-  ShieldCheck,
   TriangleAlert,
   Wrench,
 } from "lucide-react"
@@ -94,7 +89,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Tip } from "@/components/ui/info-tip"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -108,9 +102,12 @@ import {
   runCapabilityOps,
   variantDisplayName,
   variantPackageRoles,
+  variantShortName,
   type CapabilityOp,
 } from "@/lib/experimentalCapabilities"
 import { useI18n } from "@/stores/i18nStore"
+import { capabilityIcon } from "@/components/ui/capability-icon"
+import { commonPackagePrefix, packageTail } from "@/lib/pluginDisplay"
 import type {
   Capability,
   CapabilityStep,
@@ -118,27 +115,11 @@ import type {
   FailureKind,
 } from "@/types/ipc"
 
-/** 能力 id → 图标（呈现归前端；后端不给 UI 资源）。未知 id 有兜底，不崩。 */
-const ICONS: Record<string, typeof Bot> = {
-  "agent-team": Bot,
-  "browser-use": Globe,
-  "computer-use": MonitorSmartphone,
-  "auto-review": ShieldCheck,
-}
-
 /** 详情面的 DOM id：左栏的行用 `aria-controls` 指向它（屏幕阅读器知道"这行控制谁"）。 */
-const PANE_ID = "cap-pane"
 
 /** 清单行的 DOM id（窄窗口"返回清单"时把焦点还给刚才那一行）。 */
 const rowId = (capId: string) => `cap-row-${capId}`
 
-/** 是否走**下钻**形态（<1024：应用最小窗口 960，此时清单与详情面互斥显示）。
- *  只用于焦点管理——版面切换本身由 Tailwind 的 `lg:` 类完成，不靠 JS 量宽度。 */
-function isDrillLayout(): boolean {
-  // 与 Tailwind v4 的 `lg` 同口径（默认 64rem）——写死 1024px 会在根字号非 16px 时
-  // 与版面的断点分叉：清单已经 `display:none`、焦点却按"宽窗口"不搬。
-  return typeof window !== "undefined" && !window.matchMedia("(min-width: 64rem)").matches
-}
 
 /** 状态色（图标底 / 徽标同源）：off 保持中性，不制造噪音。 */
 function stateTone(state: Capability["state"] | CapabilityVariant["state"]): string {
@@ -169,9 +150,6 @@ interface Props {
   onRestart?: (profile: string) => void
   /** 写操作完成后回调：父级据此刷新同页「插件列表」的行表/清单。 */
   onChanged?: () => void
-  /** 从「插件列表」的「去开关」跳过来：选中并展开这个能力的详情面。
-   *  `nonce` 保证同一个能力连跳两次也能再次触发（id 相同也要重新选中）。 */
-  focus?: { id: string; nonce: number } | null
 }
 
 /** 正在执行的一次动作（进度导轨的数据源）。
@@ -200,7 +178,6 @@ export function ExperimentalCapabilities({
   onNotice,
   onRestart,
   onChanged,
-  focus,
 }: Props) {
   const { t } = useI18n()
   const [run, setRun] = useState<RunState | null>(null)
@@ -212,10 +189,10 @@ export function ExperimentalCapabilities({
   >({})
   /** 每次成功动作后置位：提示"重启后生效"。 */
   const [dirty, setDirty] = useState(false)
-  /** 详情面正在看哪个能力（`null` = 用第一个）。点左栏的行 = 换详情面内容。 */
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  /** 窄窗口下的下钻态：为真时只显示详情面（列表被"返回"带走）。宽窗口无影响。 */
-  const [drilled, setDrilled] = useState(false)
+  /** 手风琴：当前展开的能力（`null` = 全部收起，一屏看全所有能力）。
+   *  2026-09-21 单栏化后，原先的 `selectedId` / `drilled` 那套"选谁看详情 / 窄窗下钻"
+   *  状态一并退役——展开态本身就是"我在看谁"。 */
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   // 待确认的动作（启用 / 移除都走确认；停用可逆，不拦）。
   const [pending, setPending] = useState<PendingAction | null>(null)
@@ -234,20 +211,9 @@ export function ExperimentalCapabilities({
   // 「立即重启」打在没改过的档上）。
   useEffect(() => {
     setFailures({})
-    setSelectedId(null)
-    setDrilled(false)
+    setExpandedId(null)
     setDirty(false)
   }, [profile])
-
-  // 「插件列表」的「去开关」跳转：选中该能力并展开详情面（窄窗口同款焦点搬运）。
-  useEffect(() => {
-    if (!focus) return
-    setSelectedId(focus.id)
-    setDrilled(true)
-    if (isDrillLayout()) {
-      requestAnimationFrame(() => document.getElementById(PANE_ID)?.focus())
-    }
-  }, [focus])
 
   /** 行的**开关目标**：当前生效（或已就位但停用）的档 → 首个**可用**档 → 首个档。
    *
@@ -269,11 +235,8 @@ export function ExperimentalCapabilities({
     async (cap: Capability, variantId: string, ops: readonly CapabilityOp[]) => {
       // 动作一发起就把详情面切到该能力：进度与失败都在用户正看着的那一栏里出现
       // （v3 的分栏形态下，"就地呈现"= 选中它，而不是把卡片往下长）。
-      setSelectedId(cap.id)
-      setDrilled(true)
-      if (isDrillLayout()) {
-        requestAnimationFrame(() => document.getElementById(PANE_ID)?.focus())
-      }
+      // 动作一发起就展开该能力：进度与失败都在用户正看着的那张卡里出现
+      setExpandedId(cap.id)
       if (ops.length === 0) {
         // 无事可做（状态已就绪）：让父级重取一次目录即回报真实状态。
         onRefreshCaps()
@@ -397,33 +360,16 @@ export function ExperimentalCapabilities({
     }
   }, [caps])
 
-  // 详情面归属：显式选中 → 第一项。列表随 profile 变化时 selectedId 已被清空。
-  const selected = caps?.find((c) => c.id === selectedId) ?? caps?.[0] ?? null
-  /** 点清单行 = 换详情面内容。窄窗口下这一步会隐藏整个清单，所以焦点必须跟着搬到
-   *  详情面（否则它留在一个 `display:none` 的按钮上，键盘用户从此失踪）。 */
-  const select = (cap: Capability) => {
-    setSelectedId(cap.id)
-    setDrilled(true)
-    if (isDrillLayout()) {
-      requestAnimationFrame(() => document.getElementById(PANE_ID)?.focus())
-    }
-  }
-
-  /** 窄窗口的「返回清单」：把焦点还给刚才那一行（下钻的对称动作）。 */
-  const backToList = (capId: string | null) => {
-    setDrilled(false)
-    if (isDrillLayout() && capId) {
-      requestAnimationFrame(() => document.getElementById(rowId(capId))?.focus())
-    }
-  }
-
   return (
     <div className="flex flex-col gap-2.5">
-      {/* 页头压成两行：身份 + 目标 Profile 同一行（v2 这里是 4 行 + 一条汇总条）。
-          官方来源说明（capOfficialNote）2026-09-19 起挂在官方徽标上：它仍然是页头
-          的一部分（"这不是社区插件"的口径不能挪进详情面），只是不再平铺一段散文。 */}
+      {/* 页头压成**一行**（2026-09-21 三次修订）：这是"操作台"，不是"说明书"。
+          身份 + 官方来源 + 模块说明三件事，只留前两件的表面文字，模块说明（capDesc）
+          收进标题旁的 ⓘ——维护者口径："减少描述性信息，若必须要则收敛到小 tip icon"。 */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
+        <span className="flex items-center gap-1">
+          <h2 className="text-lead font-semibold text-ink">{t.market.capTitle}</h2>
+          <Tip text={t.market.capDesc} label={t.tip.ariaFor(t.market.capTitle)} />
+        </span>
         <span className="flex items-center gap-1">
           <Badge
             variant="outline"
@@ -433,9 +379,6 @@ export function ExperimentalCapabilities({
             {t.market.capOfficialBadge}
           </Badge>
           <Tip text={t.market.capOfficialNote} label={t.tip.ariaFor(t.market.capOfficialBadge)} />
-        </span>
-        <span className="min-w-0 flex-1 basis-56 text-label leading-relaxed text-dim">
-          {t.market.capDesc}
         </span>
       </header>
 
@@ -479,86 +422,69 @@ export function ExperimentalCapabilities({
       )}
 
       {caps && (
-        // 两栏：[清单 | 详情面]。窄窗口（<1024）退化为下钻——列表与详情面互斥显示。
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(21rem,25rem)_minmax(0,1fr)]">
-          <section
-            aria-label={t.market.capListLabel}
-            className={drilled ? "hidden lg:block" : ""}
-          >
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 px-0.5 text-meta text-faint">
-              <span className="font-medium tracking-wider">{t.market.capListLabel}</span>
-              <span className="text-ink tabular-nums">
-                {t.market.capSummary(summary.on, caps.length)}
+        /* 单栏手风琴（2026-09-21 第三次布局范式变更，理由见 `CapabilityPanel` 文档注释）：
+           收起态一屏看全所有能力；点头部展开对照与细节，同一时刻只展开一个。
+           这里只可能是 dock 策展的能力——dsh 安装自带的（OPTIONAL_BUNDLES）已由父级
+           过滤（`dockCuratedCaps`）：它们归 dsh 官方插件页托管，dock 不再摆第二套入口
+           （2026-09-20 维护者裁定，ADR-0020 §2.8）。 */
+        <section aria-label={t.market.capListLabel}>
+          <div className="text-meta text-faint mb-1.5 flex flex-wrap items-center gap-x-2 px-0.5">
+            <span className="font-medium tracking-wider">{t.market.capListLabel}</span>
+            <span className="text-ink tabular-nums">
+              {t.market.capSummary(summary.on, caps.length)}
+            </span>
+            {summary.other > 0 && (
+              <span className="text-warn tabular-nums">
+                {t.market.capSummaryNeedsWork(summary.other)}
               </span>
-              {summary.other > 0 && (
-                <span className="text-warn tabular-nums">
-                  {t.market.capSummaryNeedsWork(summary.other)}
-                </span>
-              )}
-              {/* 「已停用」用中性色：它是**用户自己关的**（关而不卸），拿警示色等于
-                  给一个正常状态报警（2026-09-17 独立复核）。 */}
-              {summary.disabled > 0 && (
-                <span className="text-dim tabular-nums">
-                  {t.market.capSummaryDisabled(summary.disabled)}
-                </span>
-              )}
-              {summary.off > 0 && (
-                <span className="tabular-nums">{t.market.capSummaryOff(summary.off)}</span>
-              )}
-            </div>
-            <ul className="flex flex-col gap-1.5">
-              {caps.map((cap, i) => (
-                <CapabilityRow
-                  key={cap.id}
-                  index={i}
-                  cap={cap}
-                  target={rowTarget(cap)}
-                  selected={selected?.id === cap.id}
-                  // 进度只画在**发起时那个档**的行上（`run.profile`）：换档后在途动作仍在跑，
-                  // 但转圈不该出现在新档的能力上（两档的能力 id 同名，单看 capId 必然误挂）。
-                  running={run?.capId === cap.id && run.profile === profile}
-                  busy={run !== null}
-                  failed={Boolean(failures[cap.id])}
-                  onSelect={select}
-                  onToggle={handleSwitch}
-                  onSwitchBackend={switchBackend}
-                  t={t}
-                />
-              ))}
-            </ul>
-          </section>
-
-          {/* 详情面：常驻，没有展开/收起。`key` = 换能力时重新入场（轻淡入，不动高度）。
-              这里只可能是 dock 策展的能力——dsh 安装自带的（OPTIONAL_BUNDLES）已由父级
-              过滤（`dockCuratedCaps`）：它们归 dsh 官方插件页托管，dock 不再摆第二套入口
-              （2026-09-20 维护者裁定，ADR-0020 §2.8）。 */}
-          <div className={drilled ? "" : "hidden lg:block"}>
-            {selected && (
-              <CapabilityPane
-                key={selected.id}
-                cap={selected}
-                target={rowTarget(selected)}
-                // 同理按发起档归属：换档后这条进度不属于当前详情面（见 `CapabilityRow` 处说明）。
-                run={run?.capId === selected.id && run.profile === profile ? run : null}
+            )}
+            {/* 「已停用」用中性色：它是**用户自己关的**（关而不卸），拿警示色等于
+                给一个正常状态报警（2026-09-17 独立复核）。 */}
+            {summary.disabled > 0 && (
+              <span className="text-dim tabular-nums">
+                {t.market.capSummaryDisabled(summary.disabled)}
+              </span>
+            )}
+            {summary.off > 0 && (
+              <span className="tabular-nums">{t.market.capSummaryOff(summary.off)}</span>
+            )}
+          </div>
+          <ul className="flex flex-col gap-2">
+            {caps.map((cap, i) => (
+              <CapabilityPanel
+                key={cap.id}
+                index={i}
+                cap={cap}
+                target={rowTarget(cap)}
+                expanded={expandedId === cap.id}
+                onToggleExpanded={() =>
+                  setExpandedId((cur) => (cur === cap.id ? null : cap.id))
+                }
+                // 进度只画在**发起时那个档**的卡上（`run.profile`）：换档后在途动作仍在跑，
+                // 但转圈不该出现在新档的能力上（两档的能力 id 同名，单看 capId 必然误挂）。
+                running={run?.capId === cap.id && run.profile === profile}
                 busy={run !== null}
-                failure={failures[selected.id]?.error ?? null}
-                failureKind={failures[selected.id]?.failureKind ?? null}
-                failedVariantId={failures[selected.id]?.variantId ?? null}
-                                onRepair={(v) => runEnable(selected, v)}
-                onBack={() => backToList(selected.id)}
+                failed={Boolean(failures[cap.id])}
+                run={run?.capId === cap.id && run.profile === profile ? run : null}
+                failure={failures[cap.id]?.error ?? null}
+                failureKind={failures[cap.id]?.failureKind ?? null}
+                failedVariantId={failures[cap.id]?.variantId ?? null}
+                onToggle={handleSwitch}
+                onSwitchBackend={(v) => switchBackend(cap, v)}
+                onRepair={(v) => runEnable(cap, v)}
                 // 续跑目标 = **失败时那个变体**（不是此刻选中的那个）：`planReplace` 会按
                 // 回读到的真实状态补缺口，重跑同一个变体才是"继续剩余步骤"。
                 onResume={(v) => {
-                  const id = failures[selected.id]?.variantId
-                  const target = id ? selected.variants.find((x) => x.id === id) : undefined
-                  runEnable(selected, target ?? v)
+                  const id = failures[cap.id]?.variantId
+                  const target = id ? cap.variants.find((x) => x.id === id) : undefined
+                  runEnable(cap, target ?? v)
                 }}
-                onRemove={(v) => setPending({ kind: "remove", cap: selected, variantId: v.id })}
+                onRemove={(v) => setPending({ kind: "remove", cap, variantId: v.id })}
                 t={t}
               />
-            )}
-          </div>
-        </div>
+            ))}
+          </ul>
+        </section>
       )}
 
       <ConfirmDialog
@@ -686,54 +612,74 @@ function confirmPoints(
  *  · **换后端不放行内 pills**（ui-ux-pro-max `compact-label-overflow` /
  *    `truncation-strategy` / `web-target-size` 叠加致死，见文件头）：走行尾溢出菜单
  *    （`overflow-menu`），点选即发起。 */
-function CapabilityRow({
+/** **能力卡片**（2026-09-21 单栏手风琴：本模块的第三次布局范式变更）。
+ *
+ * ## 为什么推倒左右分栏（v3 定稿的形态）
+ * v3 的分栏（左清单 / 右常驻详情）是为了解决 v2 的"内联展开把第二张卡推出屏幕"
+ * （真机实测整页 1897px、一屏只装得下一张卡）。但它带来了更贵的问题：
+ *   ① **左右必然重复**——分栏 UI 里右栏要讲清"我在说谁"，就只能把左栏选中行的身份
+ *      再说一遍；去重去到最后，右栏顶着一行**孤儿 summary**（2026-09-21 真机截图）；
+ *   ② **范式分叉**——同一个应用里，「插件列表」用*单栏卡片 + 头部控制 + 子行*表达能力，
+ *      本模块却用分栏。同一个东西两种长相，用户每换一个 tab 就要重新学一遍；
+ *   ③ 左右两栏**视觉重量失衡**：左栏三行很轻、右栏一大块很重，而右栏其实是次要
+ *      信息（对照 / 排障）。
+ *
+ * ## 现在：与「插件列表」同范式
+ * 单栏 + 手风琴。头部一行读完 **身份 · 状态 · 当前后端 · 开关 · 展开**（收起态一屏
+ * 能看到全部能力，这正是单栏的价值）；点头部展开出对照与细节，**同一时刻只展开一个**
+ * ——v3 担心的"越长越高"由手风琴挡住（最多一张卡展开，高度可控）。
+ *
+ * 展开体直接复用 `CapabilityPane`（功能与文案一字未改，只是不再自带外框），
+ * 所以这次换范式是**纯布局改动**，零功能丢失。 */
+function CapabilityPanel({
   cap,
   target,
-  selected,
+  expanded,
+  onToggleExpanded,
   running,
   busy,
   failed,
-  index,
-  onSelect,
+  run,
+  failure,
+  failureKind,
+  failedVariantId,
   onToggle,
   onSwitchBackend,
+  onRepair,
+  onResume,
+  onRemove,
+  index,
   t,
 }: {
   cap: Capability
-  /** 行的开关目标：当前生效档 → 首个可用档（v4 无 picked，行里显示的就是事实）。 */
   target: CapabilityVariant
-  /** 是否是后果面正在展示的那一项（选中 ≠ 状态，用品牌色表达）。 */
-  selected: boolean
-  /** **本能力**正在跑一次动作（给行内转圈用）。 */
+  expanded: boolean
+  onToggleExpanded: () => void
   running: boolean
-  /** **任意能力**正在跑一次动作 → 关掉所有动作入口（`run` 是单槽，见 `RunState`）。 */
   busy: boolean
-  /** 该能力有未处理的失败（行内给一个警示标记，免得用户只看得到"需要修复"却找不到原因）。 */
   failed: boolean
-  /** 序号：只用于入场错峰（≤6 行，延迟封顶，不做长尾）。 */
-  index: number
-  onSelect: (cap: Capability) => void
+  run: RunState | null
+  failure: string | null
+  failureKind: FailureKind | null
+  failedVariantId: string | null
   onToggle: (cap: Capability, variant: CapabilityVariant, next: boolean) => void
-  /** 「切换后端」菜单的点选（点当前生效档 = 无操作）。 */
-  onSwitchBackend: (cap: Capability, variant: CapabilityVariant) => void
+  onSwitchBackend: (variant: CapabilityVariant) => void
+  onRepair: (variant: CapabilityVariant) => void
+  onResume: (variant: CapabilityVariant) => void
+  onRemove: (variant: CapabilityVariant) => void
+  index: number
   t: ReturnType<typeof useI18n>["t"]
 }) {
   const reduceMotion = useReducedMotion()
-  const Icon = ICONS[cap.id] ?? Bot
+  const Icon = capabilityIcon(cap.id)
   const on = target.state === "on"
-  // 被超集档包含的档（如"自建档"之于"Web 档"）：不提供独立开关——它的包就是超集档的
-  // 基础层，单独关掉会把超集档一起拆坏。真机暴露于 2026-09-16。
-  // **用 Boolean() 而不是 `!== null`**：这两个字段在契约里是 `T | null`，但"字段缺省"
-  // 会静默变成 `undefined`，而 `undefined !== null` 为真 —— 2026-09-17 真机渲染复盘就是
-  // 被 dev mock 少写一个 `prerequisiteMissing` 撞出来的：四行全亮红灯、开关全灰。
+  // 与清单行同一套判据（Boolean() 的由来见 CapabilityRow 处的长注释：
+  // 字段缺省会静默变 undefined，`!== null` 会把 undefined 判成"有值"）。
   const subsumedBy = Boolean(target.subsumedBy)
-  // 宿主前置缺失（2026-09-16 真机事故）：开关必须**禁用**，原因原样展示。
-  // 只做提示是不够的——这类包装上去的代价是"工作台起不来"，用户根本没有回退余地。
   const blocked = Boolean(target.prerequisiteMissing)
   const name = variantDisplayName(cap, target.id)
-  /** 开关为什么不可用 / 行内的额外事实：只挂在 aria-describedby 上。
-   *  图标（lucide）自带 `aria-hidden`，悬停 `title` 键盘也触发不了——不写这段，
-   *  读屏用户只会听到"开关，已禁用"，听不到"缺 cua-driver"这类真正的原因 */
+  const shortName = variantShortName(cap, target.id)
+  const panelId = `${rowId(cap.id)}-panel`
   const descId = `${rowId(cap.id)}-why`
   const why = [
     blocked ? target.prerequisiteMissing : null,
@@ -750,177 +696,94 @@ function CapabilityRow({
         ease: "easeOut",
         delay: reduceMotion ? 0 : Math.min(index, 6) * 0.03,
       }}
-      className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-colors ${
-        selected ? "border-brand/40 bg-wash" : "border-line bg-panel hover:border-brand/25"
+      className={`group bg-panel overflow-hidden rounded-xl border transition-colors ${
+        expanded ? "border-brand/40" : "border-line hover:border-brand/30"
       }`}
     >
-      <button
-        id={rowId(cap.id)}
-        type="button"
-        aria-current={selected ? "true" : undefined}
-        aria-controls={PANE_ID}
-        onClick={() => onSelect(cap)}
-        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-      >
-        <span
-          className={`flex size-7 shrink-0 items-center justify-center rounded-lg border ${stateTone(
-            target.state === "off" ? cap.state : target.state,
-          )}`}
+      {/* 头部：身份 · 状态 · 当前后端 · 开关 · 展开。一行读完，收起态也能看出在跑什么。 */}
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        <button
+          id={rowId(cap.id)}
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={panelId}
+          onClick={onToggleExpanded}
+          className="focus-visible:ring-brand/40 flex min-w-0 flex-1 items-center gap-2.5 rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
         >
-          <Icon className="size-3.5" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-label font-medium text-ink">{cap.label}</span>
-            <StateBadge cap={cap} variant={target} t={t} />
-            {running && <LoaderCircle className="size-3 shrink-0 animate-spin text-brand-deep" />}
-            {!running && failed && <TriangleAlert className="size-3 shrink-0 text-danger" />}
+          <span
+            className={`flex size-7 shrink-0 items-center justify-center rounded-lg border ${stateTone(
+              target.state === "off" ? cap.state : target.state,
+            )}`}
+          >
+            <Icon className="size-3.5" />
           </span>
-          {/* 行内第二行只讲一件事：**哪个插件**在提供它（生效档；未启用时是开关会启用的
-              那个档）。包名折行完整显示，理由见上方文档注释。 */}
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5">
-            <span className="break-words font-mono text-meta leading-snug text-faint">{name}</span>
-            {subsumedBy && <Check className="size-3 shrink-0 text-faint" />}
-            {blocked && <TriangleAlert className="size-3 shrink-0 text-danger" />}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5">
+              <span className="text-label text-ink truncate font-medium">{cap.label}</span>
+              <StateBadge cap={cap} variant={target} t={t} />
+              {running && <LoaderCircle className="text-brand-deep size-3 shrink-0 animate-spin" />}
+              {!running && failed && <TriangleAlert className="text-danger size-3 shrink-0" />}
+            </span>
+            {/* 第二行只讲一件事：**哪个插件**在提供它（完整包名进 title）。 */}
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5">
+              <span className="text-dim font-mono text-meta leading-snug" title={name}>
+                {shortName}
+              </span>
+              {subsumedBy && <Check className="text-faint size-3 shrink-0" />}
+              {blocked && <TriangleAlert className="text-danger size-3 shrink-0" />}
+            </span>
           </span>
-        </span>
-      </button>
-      <Switch
-        aria-label={t.market.capSwitchLabel(`${cap.label} · ${name}`)}
-        aria-describedby={why.length > 0 ? descId : undefined}
-        checked={on}
-        disabled={busy || subsumedBy || blocked}
-        onCheckedChange={(next) => onToggle(cap, target, next)}
-        className="shrink-0"
-      />
-      {why.length > 0 && (
-        <span id={descId} className="sr-only">
-          {why.join(t.market.capWhyJoin)}
-        </span>
+          <ChevronRight
+            className={`text-faint group-hover:text-brand-deep size-3.5 shrink-0 transition-all ${
+              expanded ? "rotate-90" : ""
+            }`}
+          />
+        </button>
+        {/* 能力说明（summary + unlocks）挂在这颗 ⓘ 上，不再铺进展开体：
+            它们是"这是干什么的"的解释文本，而展开体是"怎么操作"的地方。
+            悬浮触发器是 button，**不能**塞进上面那个展开按钮里（button 不许嵌套）。 */}
+        <Tip
+          text={t.market.capTipText(cap.summary, cap.unlocks)}
+          label={t.tip.ariaFor(cap.label)}
+          className="max-w-72 text-label leading-relaxed"
+        />
+        <Switch
+          aria-label={t.market.capSwitchLabel(`${cap.label} · ${name}`)}
+          aria-describedby={why.length > 0 ? descId : undefined}
+          checked={on}
+          disabled={busy || subsumedBy || blocked}
+          onCheckedChange={(next) => onToggle(cap, target, next)}
+          className="shrink-0"
+        />
+        {why.length > 0 && (
+          <span id={descId} className="sr-only">
+            {why.join(t.market.capWhyJoin)}
+          </span>
+        )}
+      </div>
+
+      {/* 展开体：复用 CapabilityPane（外框归卡片，故传 embeddedId）。 */}
+      {expanded && (
+        <CapabilityPane
+          cap={cap}
+          target={target}
+          run={run}
+          busy={busy}
+          failure={failure}
+          failureKind={failureKind}
+          failedVariantId={failedVariantId}
+          onRepair={onRepair}
+          onResume={onResume}
+          onRemove={onRemove}
+          onSwitchBackend={onSwitchBackend}
+          embeddedId={panelId}
+          t={t}
+        />
       )}
-      {cap.variants.length > 1 && (
-        <BackendMenu cap={cap} busy={busy} onSwitchBackend={onSwitchBackend} t={t} />
-      )}
-      <ChevronRight className="size-3.5 shrink-0 text-faint lg:hidden" />
     </motion.li>
   )
 }
 
-/** **「切换后端」溢出菜单**（v4，ui-ux-pro-max `overflow-menu`：动作放不下时用溢出
- *  菜单，别硬塞进行内）。
- *
- *  为什么不是行内 pills：50+ 字符包名在 21–25rem 栏宽里 nowrap 放不下、截断会砍掉
- *  区分各档的尾部（2026-09-17 裁定不许截断）、折行就不是 pill；且可点目标需
- *  ≥24×24 CSSpx（WCAG 2.2 AA）。菜单宽度不受栏宽限制，包名可完整折行。
- *
- *  点选即发起（无 picked 中间态）：点当前生效档 = 无操作（菜单项禁用 + 徽标说明）；
- *  点别的档 = 与"开开关"同一条启用链，该确认的确认（换后端要拆旧档，破坏面说清楚）。 */
-function BackendMenu({
-  cap,
-  busy,
-  onSwitchBackend,
-  t,
-}: {
-  cap: Capability
-  busy: boolean
-  onSwitchBackend: (cap: Capability, variant: CapabilityVariant) => void
-  t: ReturnType<typeof useI18n>["t"]
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={t.market.capMenuBackend(cap.label)}
-          title={t.market.capMenuBackend(cap.label)}
-          disabled={busy}
-        >
-          <ArrowLeftRight className="size-3.5 text-faint" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-1.5">
-        <span className="block px-2 py-1 text-meta font-medium tracking-wider text-faint">
-          {t.market.capMenuBackendLabel}
-        </span>
-        <ul className="flex flex-col gap-0.5">
-          {cap.variants.map((v) => {
-            const isActive = cap.activeVariant === v.id
-            const vBlocked = Boolean(v.prerequisiteMissing)
-            const vSubsumed = Boolean(v.subsumedBy)
-            // 当前生效 / 被前置门挡 / 被包含：都不可点（点了要么无操作、要么必然失败）
-            const disabled = isActive || vBlocked || vSubsumed
-            return (
-              <li key={v.id}>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => {
-                    setOpen(false)
-                    onSwitchBackend(cap, v)
-                  }}
-                  className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors enabled:hover:bg-wash focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:opacity-50"
-                >
-                  <span className="min-w-0 flex-1">
-                    {/* 包名完整折行（同清单行口径）：截断会砍掉区分各档的尾部 */}
-                    <span className="block break-all font-mono text-label leading-snug text-ink">
-                      {variantDisplayName(cap, v.id)}
-                    </span>
-                    {v.note && (
-                      <span className="mt-0.5 block text-meta leading-relaxed text-dim">
-                        {v.note}
-                      </span>
-                    )}
-                    {vBlocked && (
-                      <span className="mt-1 flex items-start gap-1.5 text-meta leading-relaxed text-danger">
-                        <TriangleAlert className="mt-0.5 size-3 shrink-0" />
-                        <span>{v.prerequisiteMissing}</span>
-                      </span>
-                    )}
-                    {vSubsumed && (
-                      <span className="mt-1 block text-meta leading-relaxed text-faint">
-                        {t.market.capStateSubsumed}
-                      </span>
-                    )}
-                  </span>
-                  {isActive && (
-                    <Badge
-                      variant="outline"
-                      className="h-4.5 shrink-0 gap-1 rounded-full border-ok/30 bg-ok-soft px-1.5 text-micro font-normal text-ok"
-                    >
-                      <Check className="size-2.5" />
-                      {t.market.capVariantActive}
-                    </Badge>
-                  )}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/** **后果面（v4）**：选中能力的常驻解释——身份 → 进度/失败 → 后端对照（**只读**）→
- *  会发生什么 + 共同前置 → 排障细节（默认折叠）→ 移除（危险区，沉底）。
- *
- *  v4 起这一面**只读不动**（除恢复与危险区）：状态与开关只在左栏控制面，换后端是左栏
- *  菜单的点选即发起。右栏不再重复状态/开关，也不再是"十节平铺"——分组顺序 = 用户的
- *  问题顺序："正在发生什么（进度/失败）→ 有哪些后端、哪个在跑（对照）→ 开了会怎样
- *  （unlocks/前置）→ 出问题怎么查（排障）→ 怎么撤（移除）"。
- *
- *  常驻是关键：这里的东西**不再需要"点详情"才能看到**，也永远不会把清单挤下去
- *  （v2 的病灶）。它是一列**不裁剪内容**的面板：内容多的能力（如三后端那一项）仍会让
- *  整页长出一些并出现轻微滚动——有意取舍，不引入 `max-h-[calc(100vh-…)]` 这类靠魔数
- *  对齐全站吸顶头高度的做法。
- *
- *  版面规范（沿用仓库既有 token，不另造风格）：
- *   · 刻度：正文 note(13) / 次要 label(11) / 节标与元信息 meta(10) / 角标 micro(9)；
- *   · 圆角按角色：面 xl(14)、行与控制件 md(10)、状态徽标胶囊；
- *   · 品牌色只承担"选中 / 主操作"，状态色只承担状态；
- *   · 官方包名（`roles.primary`）就是后端名，我们发明的「Web 档」这类名字一律不出现。 */
 function CapabilityPane({
   cap,
   target,
@@ -932,7 +795,8 @@ function CapabilityPane({
   onRepair,
   onResume,
   onRemove,
-  onBack,
+  onSwitchBackend,
+  embeddedId,
   t,
 }: {
   cap: Capability
@@ -949,15 +813,16 @@ function CapabilityPane({
   onRepair: (variant: CapabilityVariant) => void
   onResume: (variant: CapabilityVariant) => void
   onRemove: (variant: CapabilityVariant) => void
-  /** 窄窗口下钻态的返回（宽窗口不渲染这个按钮）。 */
-  onBack: () => void
+  /** 对照面就地点选某个后端（与左栏溢出菜单同一条 activate 链）。 */
+  onSwitchBackend: (variant: CapabilityVariant) => void
+  /** 展开体的 DOM id：外框归卡片（本组件只画 `border-t` 分隔），
+   *  这个 id 供头部 `aria-controls` 指向。单栏手风琴之后**没有"非嵌入"形态**，
+   *  故它是必填——留成可选等于留一段永不执行的死分支。 */
+  embeddedId: string
   t: ReturnType<typeof useI18n>["t"]
 }) {
-  const reduceMotion = useReducedMotion()
-  const Icon = ICONS[cap.id] ?? Bot
   const multi = cap.variants.length > 1
   // 排障信息默认收起：它是"出问题时才看"的东西，铺在详情面里会让每次选能力都要多滚一屏。
-  const [showImpl, setShowImpl] = useState(false)
   // 层类能力：关闭 = 移除。这条**必须在按下开关之前就看得见**，否则用户以为能秒关。
   // 但只在"真的就位"（on/disabled）时才成立：`toggle_off_supported` 对**没装齐**的档
   // 也是 false（分类要读包自己的 manifest，没装就不知道），若照它判断，一次失败的安装
@@ -978,51 +843,24 @@ function CapabilityPane({
   // 变体行里只留"这一档额外带的"共用包：全体共有的那句已经在下面统一讲过一次。
   const extraShared = (shared: readonly string[]) =>
     shared.filter((p) => !commonShared.includes(p))
+  // 所有变体的标识包共有的前缀（`@deepseek-ai/dsh-experimental-browser-use-`）：
+  // 提到分节标题讲一次，卡内只留区分段——否则三张卡的首行都是同样的 40 个字符。
+  const commonPrefix = commonPackagePrefix(
+    cap.variants.flatMap((v) => variantPackageRoles(cap, v.id).primary),
+  )
 
   return (
     <motion.section
-      id={PANE_ID}
+      id={embeddedId}
       tabIndex={-1}
       aria-label={t.market.capPaneLabel(cap.label)}
-      initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
-      className="flex flex-col rounded-xl border border-line bg-panel shadow-2xs"
+      className="border-line/70 flex flex-col border-t"
     >
-      {/* 身份 + 状态：一行读全"这是什么 / 现在怎样"。 */}
-      <div className="flex items-start gap-3 border-b border-line/70 px-4 py-3">
-        <span
-          className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${stateTone(
-            target.state === "off" ? cap.state : target.state,
-          )}`}
-        >
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="text-note font-semibold text-ink">{cap.label}</h3>
-            <Badge
-              variant="outline"
-              className="h-4.5 shrink-0 rounded-full border-line bg-wash px-1.5 text-micro font-normal text-faint"
-            >
-              {t.market.capOfficialBadge}
-            </Badge>
-            <StateBadge cap={cap} variant={target} t={t} />
-          </div>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.summary}</p>
-        </div>
-        {/* 窄窗口：下钻态的唯一出口（宽窗口隐藏）。 */}
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-panel px-2 py-1 text-meta text-dim transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden"
-        >
-          <ArrowLeft className="size-3" />
-          {t.market.capBack}
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-3 px-4 py-3">
+      {/* 展开体从"后端对照"直接开始（2026-09-21 三次修订）：原先这里还有一块身份头
+          （图标 + 能力名 + 状态徽标 + summary 段落），但**卡片头部已经写着同样四样**——
+          同一张卡里说两遍。身份块整体删掉，summary 移进头部的 ⓘ。
+          展开体只留三件"要动手才需要"的事：状态/进度与失败、后端对照、排障细节。 */}
+      <div className="flex flex-col gap-3 px-3 py-3">
         {run && (
           <div className="rounded-md border border-brand/25 bg-wash px-3 py-2.5">
             <div className="flex items-center gap-2 text-label text-ink">
@@ -1102,11 +940,22 @@ function CapabilityPane({
             </div>
           )}
 
-        {/* 后端对照（**只读**，v4）：有哪些后端、哪个在跑、谁被挡住。选择即动作在左栏
-            菜单——这一面只回答"看看"，不再承担交互（也不重复状态徽标）。 */}
+        {/* 后端对照（2026-09-21：v4 的"纯只读"改为**就地可换档**）。
+            多变体时标题用「选择后端」而不是「插件」——三张卡是**互斥的选项**，
+            叫"插件"会让用户以为它们是三个各自独立的插件（真机截图的困惑点之一）。
+            单变体时仍叫「插件」（那时它确实只是"这个能力装了哪些包"）。 */}
         <div>
-          <span className="text-meta font-medium tracking-wider text-faint">
-            {t.market.capPluginsLabel}
+          <span className="text-meta font-medium tracking-wider text-faint flex items-center gap-1">
+            {multi ? t.market.capMenuBackendLabel : t.market.capPluginsLabel}
+            {/* 「互斥，切换即让位」是**选之前就该知道**的规则，原先挂在 `title` 上
+                （鼠标可及、键盘不可及）。这里与其它说明统一收成 ⓘ。 */}
+            {multi && (
+              <Tip
+                text={t.market.capBackendExclusiveNote}
+                label={t.tip.ariaFor(t.market.capMenuBackendLabel)}
+                className="max-w-64 text-label leading-relaxed"
+              />
+            )}
           </span>
           <ul className="mt-1.5 flex flex-col gap-1.5">
             {cap.variants.map((v) => {
@@ -1118,37 +967,48 @@ function CapabilityPane({
                 <li
                   key={v.id}
                   className={`rounded-lg border px-3 py-2 ${
-                    isActive ? "border-ok/30 bg-ok-soft/30" : "border-line bg-panel"
+                    isActive ? "border-brand/40 bg-wash" : "border-line bg-panel"
                   }`}
                 >
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {/* 单选标记：一眼看出"这几张是**互斥的选项**，只能要一个"。
+                        形状（实心/空心）而非仅颜色区分，色盲可辨。
+                        生效档**不再挂「已启用」文字徽标**——左栏那一行已经写着同一件事，
+                        同屏说两遍是最典型的冗余（2026-09-21 二次重构）。 */}
+                    <span
+                      title={
+                        isActive
+                          ? t.market.capVariantActive
+                          : vBlocked || v.subsumedBy
+                            ? undefined
+                            : t.market.capSwitchToThis
+                      }
+                      className={`flex size-3.5 shrink-0 items-center justify-center rounded-full border ${
+                        isActive ? "border-brand bg-brand" : "border-line bg-panel"
+                      }`}
+                    >
+                      {isActive && <span className="bg-panel size-1.5 rounded-full" />}
+                    </span>
+                    {/* 包名去掉公共前缀（前缀已在分节标题讲过一次）：60 字符 → 15 字符，
+                        三个后端一眼可辨。完整包名进 title，排查时可取。 */}
                     {roles.primary.map((pkg) => (
                       <span
                         key={pkg}
-                        className="break-all font-mono text-label font-medium text-ink"
+                        title={pkg}
+                        className="font-mono text-label font-medium text-ink"
                       >
-                        {pkg}
+                        {packageTail(pkg, commonPrefix)}
                       </span>
                     ))}
-                    {/* 「当前生效」徽标按变体自己的状态取词：后端契约里 `activeVariant` 是
-                        "当前生效**或已就位但停用**的那一档"，照抄「已启用」会在面板说
-                        「已停用」时自相矛盾——2026-09-17 版面复盘真抓到过这一处。 */}
-                    {multi && isActive && (
-                      <Badge
-                        className={`h-4.5 rounded-full px-1.5 text-micro font-normal ${
-                          v.state === "on"
-                            ? "border-ok/30 bg-ok-soft text-ok"
-                            : v.state === "disabled"
-                              ? "border-warn/30 bg-warn-soft text-warn"
-                              : "border-danger/30 bg-danger-soft text-danger"
-                        }`}
-                      >
-                        {v.state === "on"
-                          ? t.market.capStateOn
-                          : v.state === "disabled"
-                            ? t.market.capStateDisabled
-                            : t.market.capStatePartial}
-                      </Badge>
+                    {/* 后端说明（note）同样只留一颗 ⓘ：三张对照卡各铺一句描述，
+                        正是"选项被描述淹没"的来源——选后端要看的是包名与前置，
+                        不是三行广告词（2026-09-21 三次修订）。 */}
+                    {v.note && (
+                      <Tip
+                        text={v.note}
+                        label={t.tip.ariaFor(variantDisplayName(cap, v.id))}
+                        className="max-w-72 text-label leading-relaxed"
+                      />
                     )}
                     {v.subsumedBy && (
                       <Badge
@@ -1158,30 +1018,48 @@ function CapabilityPane({
                         {t.market.capStateSubsumed}
                       </Badge>
                     )}
+                    {/* 2026-09-21 裁定变更：v4 曾定"右栏纯只读、换后端只走左栏溢出菜单"，
+                        但真机上用户看到三张并列卡却点不动，只能回左栏找一个图标-only 的
+                        入口——选项就在眼前却不能选，是反直觉的。现在对照面**就地可切**，
+                        与左栏同一条 activate 链（该确认的确认），不是第二套路径。
+                        **整卡不可点**（换后端要拆旧档、带确认，误触代价高）：可点的
+                        只有这个按钮——所以卡片也不做 hover 高亮，免得暗示"点我有反应"。 */}
+                    {!isActive && !vBlocked && !v.subsumedBy && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => onSwitchBackend(v)}
+                        className="ml-auto shrink-0 gap-1"
+                      >
+                        <ArrowLeftRight className="size-3" />
+                        {t.market.capSwitchToThis}
+                      </Button>
+                    )}
                   </span>
-                  {v.note && (
-                    <span className="mt-1 block text-label leading-relaxed text-dim">{v.note}</span>
-                  )}
                   {extraShared(roles.shared).length > 0 && (
                     <span className="mt-1 block break-all font-mono text-meta text-faint">
                       {t.market.capAlsoInstalls(extraShared(roles.shared).join(" · "))}
                     </span>
                   )}
                   {extras.length > 0 && (
-                    <span className="mt-1.5 flex flex-col gap-0.5">
+                    /* 前置条件用 `·` 项目符号 + 小字 + 紧行距（2026-09-21 二次重构）：
+                       原先每条挂一枚 ⓘ（占一列图标宽）且用正文号，三张卡里出现三次，
+                       把右栏撑成一条长滚动带——而 stagehand 那两条本来就是**同一条
+                       信息的两个后果**，紧凑列出比逐条立牌更好读。 */
+                    <ul className="text-dim mt-1 flex flex-col gap-0.5">
                       {extras.map((p) => (
-                        <span
-                          key={p}
-                          className="flex items-start gap-1.5 text-label leading-relaxed text-dim"
-                        >
-                          <Info className="mt-0.5 size-3 shrink-0 text-faint" />
+                        <li key={p} className="flex items-start gap-1.5 text-meta leading-snug">
+                          <span aria-hidden="true" className="text-faint">
+                            ·
+                          </span>
                           <span>{p}</span>
-                        </span>
+                        </li>
                       ))}
-                    </span>
+                    </ul>
                   )}
                   {vBlocked && (
-                    <span className="mt-1.5 flex items-start gap-1.5 text-label leading-relaxed text-danger">
+                    <span className="text-danger mt-1.5 flex items-start gap-1.5 text-label leading-relaxed">
                       <TriangleAlert className="mt-0.5 size-3 shrink-0" />
                       <span>{vBlocked}</span>
                     </span>
@@ -1191,38 +1069,36 @@ function CapabilityPane({
             })}
           </ul>
 
-          {commonShared.length > 0 && (
-            <span className="mt-2 flex items-start gap-1.5 text-label text-dim">
-              <Info className="mt-0.5 size-3 shrink-0 text-faint" />
-              <span className="break-all font-mono text-meta text-faint">
-                {t.market.capBasePackages(commonShared.join(" · "))}
-              </span>
-            </span>
-          )}
-
-          {commonPrereqs.length > 0 && (
-            <span className="mt-2 flex flex-col gap-0.5">
-              <span className="text-meta text-faint">{t.market.capPrereqCommon}</span>
+          {/* 「所有档共有」的两种事实（共用基座包 / 共同前置）合并成一段紧凑列表：
+              原先一个是光秃秃的 `ⓘ …`、另一个带独立小标题「各档共同前置」而其下只有
+              一行——标题比内容重，还被夹在两张卡之间像第三张卡。 */}
+          {(commonShared.length > 0 || commonPrereqs.length > 0) && (
+            <ul className="text-faint mt-2 flex flex-col gap-0.5">
+              {commonShared.length > 0 && (
+                <li className="flex items-start gap-1.5 text-meta leading-snug">
+                  <span aria-hidden="true">·</span>
+                  <span className="break-all font-mono">
+                    {t.market.capBasePackages(commonShared.join(" · "))}
+                  </span>
+                </li>
+              )}
               {commonPrereqs.map((p) => (
-                <span
-                  key={p}
-                  className="flex items-start gap-1.5 text-label leading-relaxed text-dim"
-                >
-                  <Info className="mt-0.5 size-3 shrink-0 text-faint" />
+                <li key={p} className="flex items-start gap-1.5 text-meta leading-snug">
+                  <span aria-hidden="true">·</span>
                   <span>{p}</span>
-                </span>
+                </li>
               ))}
-            </span>
+            </ul>
           )}
 
           {/* 同族替换与"包含关系"：说清开关会连带动到谁（名字一律用插件名）。 */}
           {subsumedBy ? (
-            <p className="mt-2 text-label leading-relaxed text-faint">
+            <p className="text-faint mt-2 text-label leading-relaxed">
               {t.market.capSubsumedBy(subsumedBy)}
             </p>
           ) : (
             otherActive && (
-              <p className="mt-2 text-label leading-relaxed text-warn">
+              <p className="text-warn mt-2 text-label leading-relaxed">
                 {otherActive.state === "on"
                   ? t.market.capOtherActive(variantDisplayName(cap, otherActive.id))
                   : t.market.capOtherReady(variantDisplayName(cap, otherActive.id))}
@@ -1230,93 +1106,17 @@ function CapabilityPane({
             )
           )}
           {offIsRemove && (
-            <p className="mt-1 text-label leading-relaxed text-faint">{t.market.capOffIsRemove}</p>
+            <p className="text-faint mt-1 text-label leading-relaxed">{t.market.capOffIsRemove}</p>
           )}
         </div>
 
-        {/* "启用后会发生什么"是用户视角，单独一节；逐包细节是排障视角，默认折叠。 */}
-        <section className="border-t border-line/70 pt-3">
-          <h4 className="text-meta font-semibold tracking-wider text-faint">
-            {t.market.capUnlocks}
-          </h4>
-          <p className="mt-1 text-label leading-relaxed text-dim">{cap.unlocks}</p>
-        </section>
-
-        <section className="border-t border-line/70 pt-3">
-          <button
-            type="button"
-            aria-expanded={showImpl}
-            aria-controls={`${PANE_ID}-impl`}
-            onClick={() => setShowImpl((v) => !v)}
-            className="flex w-full items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-          >
-            {/* 用 span 而不是 h4：button 只允许 phrasing content，标题元素会被浏览器从
-                按钮名里拆出来（读屏念不到完整按钮名）。视觉样式照旧。 */}
-            <span className="text-meta font-semibold tracking-wider text-faint">
-              {t.market.capImplTitle}
-            </span>
-            <span className="text-meta text-faint">
-              {t.market.capImplPackages(target.steps.length)}
-            </span>
-            <ChevronRight
-              className={`ml-auto size-3 shrink-0 text-faint transition-transform ${
-                showImpl ? "rotate-90" : ""
-              }`}
-            />
-          </button>
-          {/* 列表**常驻**、用 `hidden` 收起：`aria-controls` 指向的 id 必须一直存在
-              （收起时引向不存在的 id 是无效引用）。 */}
-          <ul
-            id={`${PANE_ID}-impl`}
-            hidden={!showImpl}
-            className="mt-1.5 flex flex-col gap-2.5"
-          >
-            {target.steps.map((s) => (
-              <li key={s.package} className="text-label">
-                <div className="flex flex-wrap items-baseline gap-x-1.5 font-mono text-meta">
-                  <span className="text-faint">{s.ordinal}.</span>
-                  <span className="break-all text-ink">{s.package}</span>
-                  <span
-                    className={
-                      s.installed && s.rowPresent && !s.disabled
-                        ? "text-ok"
-                        : s.installed || s.rowPresent
-                          ? "text-warn"
-                          : "text-faint"
-                    }
-                  >
-                    {stepStatus(s, t)}
-                  </span>
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <Badge
-                    variant="outline"
-                    className="h-4.5 rounded-full border-line bg-panel px-1.5 text-micro font-normal text-dim"
-                  >
-                    {s.activation === "auto_bundle"
-                      ? t.market.capActivationAuto
-                      : t.market.capActivationInsert}
-                  </Badge>
-                  <span className="break-all font-mono text-meta text-faint">
-                    {t.market.capPinned(s.spec)}
-                    {s.activation === "insert_row" && ` · ${s.rowId}`}
-                  </span>
-                </div>
-                {s.description ? (
-                  <p className="mt-1 text-label leading-relaxed text-dim">
-                    <span className="text-faint">{t.market.capOfficialDesc}</span>
-                    {s.description}
-                  </p>
-                ) : (
-                  <p className="mt-1 text-label text-faint">{t.market.capOfficialDescPending}</p>
-                )}
-                {s.versionNotice && (
-                  <p className="mt-1 text-label leading-relaxed text-warn">{s.versionNotice}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        {/* "启用后会发生什么"（unlocks）已并入头部 ⓘ（与 summary 同一条悬浮）：
+            它是一句价值描述，不是操作步骤——放在展开体里只会把后端对照挤下去。
+            「实现细节（排障用）」整节已退役（2026-09-21 维护者真机裁定："实现细节这个
+            板块我觉得应该也不需要了"）：它铺的是逐包安装状态 / 激活方式 / 包自带官方
+            简介 / 未钉版本提示——**排障时才看**的东西，而排障现场已经有更准的两处：
+            进度导轨（正在装哪个包）与失败块（一句人话 + 原始输出）。留一节的代价是
+            每次展开都要多滚一屏，收益只是"偶尔查一次包版本"。 */}
 
         {/* 危险区沉底（`destructive-nav-separation`：破坏性动作与常规操作空间分离） */}
         {!subsumedBy &&
@@ -1476,11 +1276,3 @@ function opLabel(op: CapabilityOp, t: ReturnType<typeof useI18n>["t"]): string {
   }
 }
 
-/** 一步的落位状态（详情里逐包显示）。 */
-function stepStatus(step: CapabilityStep, t: ReturnType<typeof useI18n>["t"]): string {
-  if (step.disabled) return t.market.capStepDisabled
-  if (step.installed && step.rowPresent) return t.market.capStepLive
-  if (step.installed && !step.rowPresent) return t.market.capStepRowMissing
-  if (!step.installed && step.rowPresent) return t.market.capStepPackageMissing
-  return t.market.capStepNotInstalled
-}

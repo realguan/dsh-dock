@@ -396,10 +396,31 @@ export const enUS: AppCopy = {
     detailEmptyDeps: "This profile has no plugins yet",
     detailClose: "Close",
     pluginNotInstalled: "Not Installed",
-    pluginInstallBtn: "Install Plugin",
-    pluginInstallPlaceholder: "Package name or pkg@version (e.g. dsh-xxx@^1.2)",
-    pluginInstallSubmit: "Install",
-    pluginInstallCancel: "Cancel",
+    pluginAddBtn: "Add Plugin",
+    pluginAddTitle: (name: string) => `Add Plugin to "${name}"`,
+    pluginAddDesc: "Browse marketplace plugins, import from other profiles, or enter an npm package spec",
+    pluginAddTabMarket: "Marketplace",
+    pluginAddTabImport: "Import from Other",
+    pluginAddTabCustom: "Custom Spec",
+    pluginAddMarketSearch: "Search community plugins by name, desc, or tag...",
+    pluginAddAlreadyInstalled: "Installed in this profile",
+    pluginAddInstallAction: "Install",
+    pluginAddInstalling: "Installing…",
+    pluginAddCustomPlaceholder: "Enter npm package or spec, e.g. dsh-plugin-xxx or @scope/pkg@^1.0.0",
+    pluginAddCustomSubmit: "Install to Profile",
+    pluginAddCustomHint: "Supports public npm package names, version ranges, or prerelease tags",
+    pluginAddEmptyMarket: "No matching community plugins found",
+    pluginAddLoadMarketFailed: "Failed to load marketplace plugins. Please check network and retry",
+    pluginAddMarketInstallDone: (name: string) => `Plugin "${name}" enqueued for installation`,
+    pluginAddCategoryLabel: "Filter by category",
+    pluginAddMarketLoading: "Loading the community plugin registry…",
+    pluginAddMoreHidden: (n: number) =>
+      `${n} more not listed — narrow down with search or a category`,
+    pluginAddImportDone: "Import queue finished",
+    pluginAddImportOk: "OK",
+    pluginAddImportFrom: "from",
+    pluginAddSpecLabel: "npm package name or version range",
+    pluginDesktopRuntimeToggle: "Toggle runtime details",
     pluginInstallBusy: "Installing… (Downloading may take up to minutes)",
     pluginUninstall: "Uninstall",
     pluginUninstallConfirm: (pkg: string) => `Uninstall plugin "${pkg}"?`,
@@ -476,11 +497,12 @@ export const enUS: AppCopy = {
     versionLatest: "Latest",
     versionCurrent: "Current",
     versionsLoadFailed: "Failed to query versions",
-    pluginWithDsh: "Version follows DSH",
     // 2026-09-19 审美批次 3：去掉与详情头徽标重复的 "Session active ·" 前缀，改纯计数图例。
     runtimeSummary: (s: { active: number; failed: number; loading: number; disabled: number }) =>
       `Running ${s.active}${s.failed ? ` · Failed ${s.failed}` : ""}${s.loading ? ` · Loading ${s.loading}` : ""}${s.disabled ? ` · Disabled ${s.disabled}` : ""}`,
     runtimeUnavailable: "Profile is not currently running; showing static manifest",
+    runtimeFailedSummary: (n: number) =>
+      `${n} runtime entries failed to load (see System Console logs)`,
     // Official desktop runtime note (2026-09-11): see zh-CN.ts for the ruling —
     // no hardcoded service count. Split into plain-text segments around the two
     // `<code>` identifiers, keeping surrounding punctuation and spaces.
@@ -551,13 +573,8 @@ export const enUS: AppCopy = {
     overviewEmpty: "No third-party plugins installed yet",
     overviewEmptyHint: "Plugins will be summarized here once installed in any profile",
     overviewNotInstalled: "Not Installed",
-    importBtn: "Import from Other",
-    importBtnTitle: "Install plugins from other profiles here",
-    importTitle: (name: string) => `Import plugins into "${name}"`,
-    importNote: "Installs same version by default; \"With Config\" copies patch entries verbatim (does not overwrite existing)",
     importLoading: "Scanning other profiles…",
     importEmpty: "No third-party plugins in other profiles",
-    importRowsFailedNote: "Failed to query some plugin rows; \"With Config\" availability may be imprecise",
     importConfig: "With Config",
     importNoConfig: "No config to carry",
     importSelected: (n: number) => `Selected ${n}`,
@@ -565,8 +582,6 @@ export const enUS: AppCopy = {
     importRunning: (i: number, total: number) => `Installing ${i}/${total}`,
     importDone: (ok: number, fail: number) =>
       `Import complete: ${ok} succeeded${fail ? ` · ${fail} failed` : ""}`,
-    importDoneBtn: "Done",
-    importFailures: "Failure Details",
     searchPlaceholder: "Search profiles...",
     searchPluginsPlaceholder: "Search installed plugins...",
     searchAllPluginsPlaceholder: "Search plugins across all profiles...",
@@ -578,38 +593,41 @@ export const enUS: AppCopy = {
     // Filter chips (same names as the three row markers). The "Built-in" filter includes
     // dsh-shipped experimental layers — they carry a Built-in marker too, so the three
     // counts can overlap (their sum can exceed the total); they are not a partition.
-    listFilterAll: "All",
     listFilterBuiltin: "Built-in",
-    listFilterThirdParty: "Third-party",
+    listFilterThirdParty: "Community",
     listFilterExperimental: "Experimental",
-    listFilterEmpty: "No plugins under this filter",
+    listFilterEmpty: "No plugins in this category yet",
+    // Experimental rows are read-only in the plugin list (2026-09-21 ruling: the single
+    // operation entry is the Experimental tab). Without saying so, users just see rows
+    // with no switches and assume the UI is broken.
+    experimentalReadOnlyNote:
+      "Enabling, backend switching and removal for experimental plugins all happen under Experimental (this page only lists which packages are installed)",
+    experimentalManageEntry: "Go to Experimental",
+    listFilterShowAll: (n: number) => `Show all ${n} plugins`,
     // The three row markers (each plugin gets exactly one primary marker; dsh-shipped
     // experimental layers get an extra Built-in marker on top).
     tagBuiltin: "Built-in",
     tagBuiltinHint:
       "A layer shipped with the dsh installation: it cannot be uninstalled; switch it on the dsh plugins page",
-    tagThirdParty: "Third-party",
-    tagThirdPartyHint: "Installed by you into this profile: can be toggled, updated, and uninstalled",
-    tagExperimental: (cap: string) => `Experimental · ${cap}`,
+    tagThirdParty: "Community",
+    tagThirdPartyHint: "Community plugins (npm / GitHub): can be toggled, updated, and uninstalled",
+    tagExperimental: "Experimental",
     tagExperimentalHint: (cap: string) =>
-      `From the "${cap}" experimental capability: switching and removal live only in the Experimental panel (one entry per capability)`,
-    // Muted marker for a capability's shared base: one capability = base + one active
-    // backend, not two parallel plugins. The base provides no tools itself (see the
-    // browser-use package description, "adds no model-visible tools"); it only reserves
-    // the provider slot. The full "Experimental · <capability>" tag belongs to the
-    // identifying package of the backend actually in use.
-    tagCapabilityBase: (cap: string) => `${cap} · base`,
-    tagCapabilityBaseHint: (cap: string) =>
-      `The shared base of "${cap}": it reserves the provider slot and provides no tools itself. The package doing the work is the one tagged "Experimental · ${cap}"; the switch lives only in the Experimental panel`,
-    // The "backend" marker on a group's subordinate row: the provider is indented under
-    // its base and is mutually exclusive with the capability's other backends.
-    tagBackend: "Backend",
-    tagBackendHint: "The backend implementation currently in effect (mutually exclusive with the capability's other backends)",
-    // The only action on an experimental row: jump to the Experimental panel (switching
-    // and removal both live there).
-    goToggle: "Switch",
-    goToggleHint: (cap: string) => `The switch for "${cap}" lives in the Experimental panel: jump there`,
-    goToggleAria: (cap: string) => `Switch "${cap}" in the Experimental panel`,
+      `Belongs to the "${cap}" experimental capability: enabling, backend switching and removal all live under Experimental`,
+    // 2026-09-21 third revision: the capability card is retired (the single operation
+    // entry for experimental plugins is the "Experimental" tab), so these keys were
+    // recycled: tagCapabilityBase(Hint) / tagBackend(Hint) / goToggle* /
+    // capActiveBackend(Hint) / capNotToggleable(Hint) / capSwitchBackend(Hint) /
+    // capVariantSwitched / capVariantSwitchFailed / capToggle* / capState*Hint / capUnlocks.
+    capStateOn: "Enabled",
+    capStateDisabled: "Disabled",
+    capStateOff: "Not enabled",
+    capStateConflict: "Backend conflict",
+    capStatePartial: "Needs repair",
+    // System base packages, collapsed appendix (Plan 1: physically separated from user extensions).
+    // Accessible name for the row's `···` overflow menu (many rows per screen: it must
+    // say which row it belongs to).
+    rowMoreActions: (pkg: string) => `${pkg}: more actions`,
     // When the capability catalog fails to load (e.g. WSL guest profiles), the plugin
     // list says so instead of silently showing experimental packages as third-party.
     capsTagUnavailable:
@@ -780,13 +798,18 @@ export const enUS: AppCopy = {
     distributeTargetVersion: "Target version",
     distributeWithConfigDesc: "Copies the config entry verbatim from the first source Profile's cordis.patch.yml",
     distributeEnqueueBtn: "Add to distribute queue",
-    importSourceLabel: "Source:",
-    importSourceFrom: (name: string, version: string) => `Import from ${name} (v${version})`,
-    importIncludesConfig: " · includes config",
     importConfigCopyFailed: (reason: string) => `Plugin installed, but config copy failed: ${reason}`,
     // ==== 2026-09-18 Profiles 区 UI 收口：ProfileDetailPane 内联硬编码中文迁入 ====
     manifestNameLabel: "Package: ",
     detailLoading: "Loading profile...",
+    // Unmaterialized profile (no directory yet: created on first launch or first plugin add).
+    // 2026-09-21 real-machine bug: all four reads necessarily fail for such a profile, and
+    // the capability catalog one surfaced the raw OS error to the user. Now the page issues
+    // no requests at all and shows this one sentence plus the only way out (launch it).
+    notMaterializedTag: "Not created",
+    notMaterializedTitle: (name: string) => `Profile "${name}" does not exist on disk yet`,
+    notMaterializedBody:
+      "There is no working directory yet: built-in template names (web / headless) are created on first launch or on the first plugin add. The plugin list, experimental capabilities and configuration appear here afterwards.",
     searchNoPlugin: "No installed plugins match the search.",
     desktopRuntimeName: "DeepSeek official desktop client runtime",
     desktopRuntimeTag: "Official desktop",
@@ -1085,6 +1108,8 @@ export const enUS: AppCopy = {
     subtitle: "Community plugins and extensions from the awesome-dsh-plugin registry",
     searchPlaceholder: "Search plugins by name, description, npm package, or author...",
     allCategories: "All Categories",
+    // Category option in the filter dropdown: same "label + count" shape as the market pills.
+    categoryOption: (label: string, n: number) => `${label} (${n})`,
     categoryCount: (n: number) => `${n} Categories`,
     totalPlugins: (n: number) => `${n} Plugins`,
     sortStars: "Most Stars",
@@ -1121,21 +1146,23 @@ export const enUS: AppCopy = {
     // back control used by the narrow-window drill-down.
     capListLabel: "Capabilities",
     capPaneLabel: (name: string) => `${name} details`,
-    capBack: "Back to list",
     capPluginsLabel: "Plugins",
     // "Switch backend" overflow menu (v4, at the end of each rail row): accessible name for
     // the trigger and the menu heading.
-    capMenuBackend: (cap: string) => `Switch the backend of "${cap}"`,
     capMenuBackendLabel: "Choose a backend",
+    capBackendExclusiveNote:
+      "Backends of one capability are mutually exclusive — switching hands over",
     // Marks the menu item that is currently active (clicking it is a no-op; the item is
     // disabled anyway).
     capVariantActive: "Active",
-    capPrereqCommon: "Shared prerequisites",
+    capSwitchToThis: "Switch to this",
     capBasePackages: (pkgs: string) => `shared base ${pkgs}`,
     capAlsoInstalls: (pkgs: string) => `also installs shared ${pkgs}`,
-    capOfficialDesc: "Official description: ",
-    capOfficialDescPending: "The package's own description appears here once installed",
     capDesc: "dsh capabilities that upstream marks as experimental. Turn one on to install and mount it; you can turn it off at any time.",
+    // Single tooltip text for a capability (summary = what it is; unlocks = what you get).
+    // 2026-09-21 third revision: both used to be laid out in the expanded body (one
+    // paragraph plus a titled section), pushing "pick a backend" below the fold.
+    capTipText: (summary: string, unlocks: string) => `${summary} When enabled: ${unlocks}`,
     capLoadFailed: "Failed to load experimental capabilities",
     capReload: "Retry",
     capSummary: (on: number, total: number) => `${on} of ${total} enabled`,
@@ -1177,17 +1204,7 @@ export const enUS: AppCopy = {
     capQueueHint: "Package downloads and retries live in Downloads",
     capRepair: "Repair",
     capReadyToEnable: "Ready to turn on",
-    capUnlocks: "What happens when you turn it on",
-    capImplTitle: "Implementation details (for troubleshooting)",
-    capImplPackages: (n: number) => `${n} packages`,
     capPinned: (spec: string) => `Pinned to ${spec}`,
-    capActivationAuto: "Activated automatically by dsh",
-    capActivationInsert: "Needs a config row",
-    capStepLive: "Active",
-    capStepDisabled: "Disabled",
-    capStepRowMissing: "Config row missing (needs repair)",
-    capStepPackageMissing: "Package missing (config row still there)",
-    capStepNotInstalled: "Not installed",
     capRemoveBtn: "Remove and uninstall",
     capRemoveExplainedSoft: "Turning it off only disables the config row and keeps the downloaded packages. Only a full removal uninstalls them.",
     capRemoveExplainedLayer: "This capability comes from a profile layer, so turning it off removes it, including the entry in the layer list.",

@@ -20,6 +20,7 @@ import type {
   PluginOpOutcome,
   RowWriteOutcome,
 } from "@/types/ipc"
+import { pluginMemberLabel } from "@/lib/pluginDisplay"
 
 /** 编排所需的最小 IO 面（注入以便纯逻辑单测；生产绑定见 `capabilityIO`）。 */
 export interface CapabilityIO {
@@ -287,6 +288,20 @@ export function commonSharedPackages(cap: Capability): readonly string[] {
  *  ——各处对"哪个后端"的称呼保持一致，不再出现卡片上已不存在的「Web 档」这类名字。 */
 export function variantDisplayName(cap: Capability, variantId: string): string {
   return variantPackageRoles(cap, variantId).primary.join(" + ")
+}
+
+/**
+ * 变体的**去噪显示名**（界面用）：primary 包名去掉 scope 与 `dsh`/`experimental`
+ * 噪音段后 join。完整包名仍由 {@link variantDisplayName} 供给 `aria-label` 与
+ * `title`——读屏与排查要能拿到全名，眼睛不该被 60 字符前缀占满。
+ *
+ * 2026-09-21（维护者："实验能力这个模块的 UIUX 设计太差了"）：三个后端的完整包名
+ * 前 40 字符完全相同（`@deepseek-ai/dsh-experimental-browser-use-`），清单行里
+ * 既看不出区别、又把行撑成两行。去前缀后 `playwright-mcp` / `chrome-devtools-mcp` /
+ * `stagehand-native` 一眼可辨，且**没有截断**（去掉的只是共有前缀）。
+ */
+export function variantShortName(cap: Capability, variantId: string): string {
+  return variantPackageRoles(cap, variantId).primary.map(pluginMemberLabel).join(" + ")
 }
 
 /** 插件操作失败：把后端的分类一起带出来（组件据此选文案，不再自己正则判一次）。 */

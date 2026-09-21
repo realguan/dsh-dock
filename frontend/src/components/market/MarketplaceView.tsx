@@ -25,7 +25,14 @@ import type {
   MarketRegistry,
   MarketSortOption,
 } from "@/types/market"
-import { filterMarketPlugins, installedProfilesFor, sortMarketPlugins } from "@/lib/market"
+import {
+  filterMarketPlugins,
+  getMarketCategoryLabel,
+  installedProfilesFor,
+  marketCategoryOptions,
+  sortMarketPlugins,
+} from "@/lib/market"
+import { loadMarketRegistry, peekMarketRegistry } from "@/lib/marketRegistry"
 import { getPaginationPages } from "@/lib/format"
 import { MarketPluginCard } from "@/components/market/MarketPluginCard"
 import { MarketInstallDialog } from "@/components/market/MarketInstallDialog"
@@ -43,9 +50,6 @@ import {
 const PAGE_SIZE_OPTIONS = [12, 24, 36, 48]
 const DEFAULT_CATEGORY_LIMIT = 10
 
-// 内存单例缓存，避免在同一个 session 内频繁切换 Tab 时重复拉取大 JSON
-let cachedRegistry: MarketRegistry | null = null
-
 export function MarketplaceView({
   onNotice,
 }: {
@@ -53,10 +57,10 @@ export function MarketplaceView({
 }) {
   const { t, activeLocale } = useI18n()
 
-  const [registry, setRegistry] = useState<MarketRegistry | null>(cachedRegistry)
+  const [registry, setRegistry] = useState<MarketRegistry | null>(peekMarketRegistry)
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [installedMap, setInstalledMap] = useState<Map<string, string[]>>(new Map())
-  const [loading, setLoading] = useState(!cachedRegistry)
+  const [loading, setLoading] = useState(peekMarketRegistry() === null)
   const [error, setError] = useState<string | null>(null)
 
   // 搜索、分类与排序
@@ -101,31 +105,28 @@ export function MarketplaceView({
     }
   }, [])
 
-  // 加载 Registry 数据
-  const loadRegistry = useCallback(
-    async (forceRefresh = false) => {
-      if (!forceRefresh && cachedRegistry) {
-        setRegistry(cachedRegistry)
-        setLoading(false)
-        return
-      }
+  // 加载 Registry 数据（缓存 / 并发去重 / force 刷新全在 lib/marketRegistry.ts，
+  // 与「添加插件」弹窗**共用同一份**——2026-09-21 收口前两处各持一份模块级缓存，
+  // 从插件中心切到弹窗必然重拉）
+  const loadRegistry = useCallback(async (forceRefresh = false) => {
+    const known = peekMarketRegistry()
+    if (known !== null && !forceRefresh) {
+      setRegistry(known)
+      setLoading(false)
+      return
+    }
 
-      setLoading(true)
-      setError(null)
+    setLoading(true)
+    setError(null)
 
-      try {
-        const rawJson = await api.fetchMarketRegistry()
-        const parsed = JSON.parse(rawJson) as MarketRegistry
-        cachedRegistry = parsed
-        setRegistry(parsed)
-      } catch (err) {
-        setError(String(err))
-      } finally {
-        setLoading(false)
-      }
-    },
-    [],
-  )
+    try {
+      setRegistry(await loadMarketRegistry(forceRefresh))
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     void loadLocalData()
@@ -141,25 +142,14 @@ export function MarketplaceView({
     return set
   }, [installedMap])
 
-  // 分类列表计算与对应数量统计（按数量降序）
-  const categoriesWithCounts = useMemo(() => {
-    if (!registry) return []
-    const counts: Record<string, number> = {}
-    for (const p of registry.plugins) {
-      counts[p.category] = (counts[p.category] || 0) + 1
-    }
-
-    const items = Object.entries(registry.categories || {}).map(([key, labelObj]) => {
-      const label = activeLocale.startsWith("zh") ? labelObj.zh || labelObj.en : labelObj.en || labelObj.zh
-      return {
-        key,
-        label,
-        count: counts[key] || 0,
-      }
-    })
-
-    return items.sort((a, b) => b.count - a.count)
-  }, [registry, activeLocale])
+  // 分类清单（带计数、按数量降序）：与「添加插件」弹窗的筛选下拉**共用同一个纯函数**
+  // （2026-09-21 维护者真机："全部分类选项要与插件中心那边的分类保持一致"）。
+  // 原先两处各写一份：这里是「元数据键 + zh 标签」，弹窗那边是「插件用到的键 + 原始键」，
+  // 集合/标签/顺序三样全对不上。
+  const categoriesWithCounts = useMemo(
+    () => marketCategoryOptions(registry, activeLocale),
+    [registry, activeLocale],
+  )
 
   // 过滤后的插件列表
   const filteredPlugins = useMemo(() => {
@@ -424,12 +414,8 @@ export function MarketplaceView({
           {paginatedPlugins.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {paginatedPlugins.map((plugin) => {
-                const catObj = registry?.categories?.[plugin.category]
-                const catLabel = catObj
-                  ? activeLocale.startsWith("zh")
-                    ? catObj.zh || catObj.en
-                    : catObj.en || catObj.zh
-                  : plugin.category
+                // 卡片分类徽标与筛选下拉同源（同一份字典、同一个回退链）
+                const catLabel = getMarketCategoryLabel(registry, plugin.category, activeLocale)
 
                 // 本地安装在哪些 Profile（名字命中优先，安装 spec 兜底）
                 const installedProfs = installedProfilesFor(plugin, installedMap)
