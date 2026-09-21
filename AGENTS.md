@@ -153,7 +153,9 @@
   （写入例外 #2，2026-08-28）属 profile 生命周期管理（ADR-0009）；profile 的
   `pnpm-workspace.yaml` 顶层键 `dangerouslyAllowAllBuilds: true` 单键受控写入
   （写入例外 #5 重立，2026-09-09，ADR-0013：pnpm 构建脚本**默认批准**，非三件套
-  成员；原 allowBuilds 逐包裁决链已退役）；`.credentials.yaml` 保持 0600、顶层仅三键、原子写；
+  成员；原 allowBuilds 逐包裁决链已退役）；`.credentials.yaml` 顶层仅三键、原子写，
+  **权限收紧仅 Unix（0600）**——Windows 无等价文件模式、依赖 profile 默认 ACL，
+  不得对外宣称为三平台同等（2026-09-21 平台审计 A4）；
   会话目录只读不删；`profiles/node_modules` 符号链接农场不得直写（陷阱清单见 roadmap §1）。
 - 壳与 dsh 严格 1:1 生命周期：退出 / 崩溃 / **硬杀（`SIGKILL`、强制退出）**都收干净
   子进程，不留孤儿（2026-09-10 扩展，ADR-0015：原口径只覆盖"父进程临死前能跑代码"的

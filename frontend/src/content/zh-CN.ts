@@ -936,7 +936,7 @@ export const t = {
     tabLogs: "运行日志",
     // 凭据安全管理（4.5）
     credentialsTitle: "大模型与服务凭据",
-    credentialsSubtitle: "安全管理 $DSH_HOME/.credentials.yaml（严格 0600 权限 + 脱敏存储）",
+    credentialsSubtitle: "安全管理 $DSH_HOME/.credentials.yaml（原子写入 + 脱敏存储）",
     configuredProviders: "已配置提供商",
     availableProviders: "可用模型提供商",
     configuredTag: "已配置",
@@ -944,7 +944,7 @@ export const t = {
     editKey: "配置 Key",
     deleteKey: "清除",
     keyModalTitle: (p: string) => `配置 ${p} API Key`,
-    keyModalDesc: "请输入新的 API Key。保存后将写入 .credentials.yaml 并严格维持 0600 权限。",
+    keyModalDesc: "请输入新的 API Key。保存后将原子写入 .credentials.yaml（Unix 下并维持 0600 权限）。",
     // 输入框无障碍名称（placeholder「sk-...」不足以当标签，2026-09-08 批次 B2）
     keyInputLabel: "API Key",
     keySaved: "API Key 已成功更新",
@@ -959,13 +959,14 @@ export const t = {
     credentialsOverwritePoints: [
       "以编辑框当前内容整体重写该文件（不是增量合并）",
       "原文件会先备份为 .credentials.yaml.bak-<时间戳>",
-      "写回仍保持 0600 权限与原子替换",
+      "写回保持原子替换（Unix 下并维持 0600 权限）",
     ],
-    credentialsSaved: "凭据文件已安全保存（权限 0600）",
+    credentialsSaved: "凭据文件已安全保存",
     credentialsSaveFailed: "保存凭据失败",
     credentialsEmpty: "当前尚未配置任何凭据（文件未创建或为空）",
     insertTemplate: "快速插入模板",
-    permHint: "权限保障：此文件受 Unix 0600 文件级安全保护，仅本机当前用户可读写",
+    permHint:
+      "权限保障：Unix 下此文件受 0600 文件级安全保护，仅本机当前用户可读写；Windows 下依赖用户 profile 的默认 ACL（未显式收紧）",
     // DSH 引擎全局设置
     dshSettingsTitle: "DSH 引擎全局配置",
     dshSettingsSubtitle: "管理 $DSH_HOME/settings.yaml 权威核心运行策略与全局默认参数",
@@ -1091,7 +1092,7 @@ export const t = {
     // 2026-09-18 UI 收口：原为凭据/引擎配置面板内硬编码中文，逐一入字典。
     // permMaskNote 刻意以「。」开头——既有键 permHint 按追加式纪律不改动。
     cardView: "卡片视图",
-    permTitle: "0600 权限保障与前端脱敏",
+    permTitle: "文件权限与前端脱敏",
     permMaskNote: "。前端界面绝不持有全量明文 API Key，仅显示脱敏掩码。",
     keyNotConfigured: "尚未配置 API Key",
     saveApiKey: "保存 API Key",

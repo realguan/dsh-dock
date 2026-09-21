@@ -934,7 +934,7 @@ export const enUS: AppCopy = {
     tabLogs: "Live Logs",
     // 凭据安全管理（4.5）
     credentialsTitle: "LLM & Service Credentials",
-    credentialsSubtitle: "Securely manage $DSH_HOME/.credentials.yaml (0600 file permission + masked storage)",
+    credentialsSubtitle: "Securely manage $DSH_HOME/.credentials.yaml (atomic writes + masked storage)",
     configuredProviders: "Configured Providers",
     availableProviders: "Available Model Providers",
     configuredTag: "Configured",
@@ -942,7 +942,7 @@ export const enUS: AppCopy = {
     editKey: "Set Key",
     deleteKey: "Clear",
     keyModalTitle: (p: string) => `Configure ${p} API Key`,
-    keyModalDesc: "Enter new API Key. Saved directly to .credentials.yaml with 0600 permission.",
+    keyModalDesc: "Enter new API Key. Atomic write to .credentials.yaml (keeps 0600 mode on Unix).",
     // Accessible name for the input (placeholder "sk-..." is not a label, batch B2)
     keyInputLabel: "API Key",
     keySaved: "API Key updated successfully",
@@ -957,13 +957,14 @@ export const enUS: AppCopy = {
     credentialsOverwritePoints: [
       "Rewrites the whole file with the editor's current content (not a merge)",
       "The previous file is backed up first as .credentials.yaml.bak-<timestamp>",
-      "The write still keeps 0600 permissions and atomic replacement",
+      "The write keeps atomic replacement (and 0600 mode on Unix)",
     ],
-    credentialsSaved: "Credentials saved securely (0600 permission)",
+    credentialsSaved: "Credentials saved securely",
     credentialsSaveFailed: "Failed to save credentials",
     credentialsEmpty: "No credentials configured yet (file empty or not created)",
     insertTemplate: "Insert Template",
-    permHint: "Security: Protected with Unix 0600 file mode (read/write by current user only)",
+    permHint:
+      "Security: on Unix this file uses 0600 mode (read/write by the current user only); on Windows it relies on the user profile's default ACL (not explicitly tightened)",
     // DSH 引擎全局设置
     dshSettingsTitle: "DSH Engine Global Configuration",
     dshSettingsSubtitle: "Manage $DSH_HOME/settings.yaml core runtime policies and global defaults",
@@ -1089,7 +1090,7 @@ export const enUS: AppCopy = {
     // DshSettingsPane (was hardcoded Chinese there). permMaskNote keeps the
     // leading "." because the existing permHint value stays untouched.
     cardView: "Card View",
-    permTitle: "0600 Permissions & UI Masking",
+    permTitle: "File Permissions & UI Masking",
     permMaskNote: ". The UI never holds full plaintext API keys — only masked values are shown.",
     keyNotConfigured: "No API key configured",
     saveApiKey: "Save API Key",
