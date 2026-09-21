@@ -21,28 +21,47 @@
 **可直接复用的客体原语**（`src-tauri/src/guest.rs`）：`read_files` · `write_home_files` · `backup_file` · `list_dir` · `dsh_cli_script`（经 `executor::run_wsl_capture` 跑 `wsl.exe -e bash -lic`，stdin 走管道规避 32K 命令行上限）。
 **既有"往客体投脚本"的成熟套路**：`guest.rs:883` 用 `include_str!("../../scripts/repair-session.mjs")` 把仓库内的 `.mjs` 投进客体执行 —— 客体**必有 node**（引擎引导链保证）。本方案的新写入内核与探测脚本**都走这条路**，不新增任何网络面（红线：唯一网络面 = `updates.rs`）。
 
-## 1. P0 · 客体侧 patch 写入内核（keystone：一次实现，解锁三项）
+## 1. P0 · 客体侧 patch 写入（keystone：一次接线，解锁三项）
 
-**为什么要内核**：`apply_official_patch_row` / `remove_official_patch_row` / 安全模式三者都要**同一组不变量**，
-本地档由 `plugins.rs::PatchFile` 保证（AGENTS §6）：**未改条目原文保真（含行间注释）+ 覆写前 `.bak-<unix秒>` 备份 + 原子替换（同目录临时文件 + rename）**。
-客体档缺的正是这个内核。
+> **方案修正（2026-09-21 开工第一天，落码前）**：本节原方案是"新写 `scripts/patch-row.mjs` 在内核侧复刻
+> `PatchFile` 的三不变量"。**这是错的** —— 那会造出**第二个内核**，直接违 AGENTS §6 的
+> 「宿主/客体**同一内核**：未改条目原文保真含行间注释 + 覆写前备份 + 原子替换」，且两侧必然漂移。
+> 开工核查发现两条事实，使正确方案更小：
+> 1. **内核本就是文本进文本出**：`safe_mode.rs:246` 已在用 `crate::plugins::PatchFile::from_text(&text)`
+>    （`plugins.rs:1787` 的 `read()` 也只是读文件后转调 `from_text`）⇒ **同一个 `PatchFile` 就能服务客体**：
+>    `guest::read_files` 拿到原文 → `PatchFile::from_text` → 变更 → `render_checked()` → 写回客体。
+> 2. **客体写已经是原子的**：`guest::write_home_files_script`（`guest.rs:252-257`）是
+>    `base64 -d > <path>.dsh-dock.tmp && … && mv -f … <path>`（tmp + rename，并对 `credentials.y*` 补 chmod 600）
+>    ⇒ 「原子替换」不变量**既有原语已满足**，配合 `guest::backup_file` 即凑齐三不变量。
+>
+> ⇒ **P0 的正确形态**：**零新内核**，只加一层 ~20 行的客体包装 + 三处接线。
 
-**做法**：新增 `scripts/patch-row.mjs`（客体侧执行，node 已就位），CLI 契约：
+**接线形状**（每个操作一份，形状相同）：
 
+```rust
+// 宿主档（既有，不动）：ensure_catalog_insert_row(&home, &profile, id, pkg, cfg)
+// 客体档（新增）：同内核 + 既有原语
+fn ensure_catalog_insert_row_in_guest(distro, profile, id, pkg, cfg) -> Result<bool, String> {
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let text = guest::read_files(distro, &[rel.clone()])?          // 读客体原文（缺失 → "[]\n"）
+        .into_iter().next().and_then(|(_, c)| c).unwrap_or_else(|| "[]\n".into());
+    let mut patch = PatchFile::from_text(&text)?;                   // ★ 同一个内核
+    let changed = patch.<变更方法>(id, pkg, cfg)?;                  // 幂等：未改即返回 false，零写入
+    if !changed { return Ok(false); }
+    let next = patch.render_checked()?;                             // 渲染自检（顶层数组契约）
+    guest::backup_file(distro, &rel)?;                              // 不变量②：覆写前备份
+    guest::write_home_files(distro, &[(rel, next)])?;               // 不变量③：原子替换（既有 tmp+mv）
+    Ok(true)
+}
 ```
-node patch-row.mjs apply  --home <abs> --rel <profile 相对路径> --row <base64(json)>   # 追加壳写过的挂载行
-node patch-row.mjs remove --home <abs> --rel <...> --id  <dsh-dock-...>                # 按 id 删行 + 清同 id 停用桩
-node patch-row.mjs disable-all --home <abs> --rel <...> --ids <base64(json[])>         # 安全模式：把指定行写成 disabled: true
-node patch-row.mjs restore  --home <abs> --rel <...> --backup <abs 路径>               # 安全模式退出：用备份覆盖回去
-```
-stdout 恒为**单行 JSON**（`{"ok":true,...}` / `{"ok":false,"error":"..."}`），与 `WRITE_OK`/`WRITE_FAILED` 哨兵同口径（非零退出会被 `run_with_timeout_raw` 折叠成"无输出"，会丢诊断）。
-**文本级保真**，不做 YAML 重新序列化（重新序列化会吃掉注释与顺序 —— 本地内核刻意避免的正是这个）。
 
-**Rust 侧**：`guest.rs` 增 `patch_row_in_guest(distro, op, rel, payload) -> Result<String, String>`（投脚本 + 解析单行 JSON）。
-**接线**：`commands/plugin.rs` 的 `apply_official_patch_row` / `remove_official_patch_row` 与 `commands/boot.rs` 的安全模式进入/退出，
-把 `World::Wsl { distro } => Err(...)` 改成 `World::Wsl { distro } => patch_row_in_guest(&distro, ...)`。
-**测试**：`.mjs` 本机可真跑（bundled node + 临时 fixture）：原文保真（恶意夹具：行间注释、CRLF、无尾换行）、幂等零写入、备份存在性、原子性（rename 后旧 inode 不变）；
-Rust 侧纯函数测 CLI 参数拼装与 JSON 解析（正反例）；`#[cfg(unix)]` 门控实跑（同 `guest.rs` 既有纪律）。
+**待确认一步（下一条命令）**：`PatchFile` 的**变更方法名与签名**（`ensure_insert_row` / `remove_row` / 停用桩写入分别叫什么、
+是否已带幂等返回值）—— 本轮仅确认了 `read` / `from_text` / `write` / `write_with_backup` / `render_checked`
+（`plugins.rs:1784-1939`），未读完 `impl` 全表即停手，**不凭猜写码**。
+**写入点三处**：`commands/plugin.rs` 的 `apply_official_patch_row` / `remove_official_patch_row` 与
+`safe_mode` 的进入/退出（后者 `safe_mode.rs:246` 已在用同内核，客体档只需换成"读客体→渲回客体"）。
+**测试**：`PatchFile` 的既有单测**直接复用**（同一内核，无需重写）；新增客体包装的路径/参数纯函数测试；
+客体实跑仍归 Windows 真机（道 B 阻塞项）。
 
 ## 2. P1 · 实验能力目录（只读，风险最低）
 
