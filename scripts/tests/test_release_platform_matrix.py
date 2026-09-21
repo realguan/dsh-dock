@@ -141,6 +141,30 @@ def expand_artifact(name: str, leg: dict[str, str]) -> str:
     )
 
 
+def guest_bundle_platform() -> str:
+    """`guest_pnpm_bundle()` 的落位名（去掉 `.tgz`）—— 从 Rust 源码解析，保持单源。
+
+    Windows 包必须内置这一份供 WSL 客体投递（ADR-0010 台账「客体投递」）；
+    漏取 = 用户切 WSL 时才炸（`docs/team/平台对齐审计-2026-09-21.md` §3.9）。
+    """
+    text = _read(_UPDATES_RS)
+    body = text.split("pub fn guest_pnpm_bundle", 1)[1].split("\n}\n", 1)[0]
+    found = re.findall(r'"(\w[\w-]*)\.tgz"', body)
+    assert found, "未能从 guest_pnpm_bundle 解析出客体投递份名"
+    return found[0]
+
+
+def windows_leg_fetch_args() -> list[str]:
+    """Windows leg 的 `fetch-pnpm-bundle.sh` 显式参数（CI 里写死的那一行）。"""
+    text = _read(_WORKFLOW)
+    match = re.search(
+        r'RUNNER_OS" = "Windows" \]\s*;?\s*then\s*\n\s*scripts/fetch-pnpm-bundle\.sh ([^\n]+)',
+        text,
+    )
+    assert match is not None, "未能从 build.yml 解析 Windows leg 的 fetch 参数"
+    return match.group(1).split()
+
+
 class PlatformWorld(NamedTuple):
     """一个必须被适配的「运行世界」及其两端工件名。"""
 
@@ -290,6 +314,22 @@ class PlatformCoverageTests(unittest.TestCase):
             published,
             f"构建/发布工件集合不一致 —— 建了不发：{sorted(built - published)}；"
             f"发了没建：{sorted(published - built)}",
+        )
+
+    def test_windows_leg_fetches_both_bundles(self) -> None:
+        """**Windows leg 必须取两份**：壳/宿主用 win32-x64 + WSL 客体投递用客体份。
+
+        闸门此前只查「leg 声明的份 ⊆ 白名单」，**不查 leg 是否取全** —— 改成只取
+        win32-x64 仍会全绿，直到用户切 WSL 才炸（boot-smoke 的 WSL 作业能抓，但它
+        只手动触发）。本用例把"取全"钉住。
+        """
+        args = set(windows_leg_fetch_args())
+        guest = guest_bundle_platform()
+        missing = {"win32-x64", guest} - args
+        self.assertFalse(
+            missing,
+            f"Windows leg 少取了 {sorted(missing)}（当前参数={sorted(args)}）—— "
+            f"客体份 {guest} 缺失时，用户切 WSL 才暴露（ADR-0010 台账「客体投递」）",
         )
 
     def test_no_build_leg_is_made_non_blocking(self) -> None:
