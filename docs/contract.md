@@ -214,6 +214,8 @@ native/helper install scripts 经 pnpm 的 `--allow-build` 显式放行。
 - **升级**：node 与 dsh 一律显式（更新入口提示 → 用户决定 → 下次启动生效）；
   node 版本源 = `@dsh-dock/node-map`（验签定版本；SHA 字段保留不消费）；dsh 比对
   排除预发布。
-- **WSL 客体**：musl pnpm 随 Windows 包 resources 内置，壳自动投递；客体 pnpm 属
+- **WSL 客体**：**linux-x64（glibc）pnpm** 随 Windows 包 resources 内置（原 musl 静态份
+  2026-09-04 取消，ADR-0010 §223；客体仅支持 glibc 发行版，识别到 musl 系出可行动提示），
+  壳自动投递；客体 pnpm 属
   壳资产，下载源走壳注入镜像链（npmmirror → 官方；ADR-0004 修订：用户镜像主权
   条款只约束用户自身的 npm/pnpm 配置）。
