@@ -207,8 +207,13 @@ jobs:
         # DSH_TEST_REQUIRE_NODE=1（2026-09-08，架构评审批次 5）：sessions 的修复链用例
         # 依赖 PATH 上的 node 真跑；缺 node 时本地允许跳过，CI 必须硬失败——
         # 否则「静默 0 断言」会让红灯不亮、绿灯失真。
+        # DSH_TEST_REQUIRE_PNPM_BUNDLE=1（2026-09-21，平台审计 A7）：本 leg 取进
+        # resources/pnpm/ 的那一份，必须正是运行期 engine_pnpm_bundle() 会去找的名字
+        # （两个真相源此前无交叉校验：互换 darwin-arm64/darwin-x64 仍全绿）；同时把
+        # 「多带了别的份」也判红（macOS leg 多背两份 = 包体积白涨）。
         env:
           DSH_TEST_REQUIRE_NODE: "1"
+          DSH_TEST_REQUIRE_PNPM_BUNDLE: "1"
         run: cargo test ${{ matrix.rust_target != '' && format('--target {0}', matrix.rust_target) || '' }}
 
       # 非原生架构 leg（macOS x86_64）：在 arm64 runner 上**运行** x86_64 测试

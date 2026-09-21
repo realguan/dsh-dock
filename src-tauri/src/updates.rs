@@ -2343,3 +2343,106 @@ mod packument_tests {
         assert!(!display_version(&plan.version).starts_with('v'));
     }
 }
+
+/// 引擎档「取份交叉闸门」（2026-09-21，平台审计 A7）。
+///
+/// ## 为什么需要它
+///
+/// "运行期会读哪一份 pnpm"有两个**独立**真相源：
+/// ① `engine_pnpm_bundle()`（本文件，按 `cfg!(target_os/arch)` 求名）；
+/// ② CI matrix 的 `pnpm_platform` + `scripts/fetch-pnpm-bundle.sh`（决定哪一份真的被
+///    打进 `resources/pnpm/`）。
+/// 此前**没有任何交叉校验** —— `scripts/tests/test_release_platform_matrix.py` 只断言
+/// "函数体内出现的全部平台字面量 ⊆ 脚本白名单"（集合包含），把 `darwin-arm64` 与
+/// `darwin-x64` **两个字面量互换仍然全绿**，而 Intel 包真机引导会去找错名
+/// （`tar -xzf` 失败，`engines.rs` 阶段化报错）—— 只在用户机器上暴露。
+///
+/// ## 判据
+///
+/// 本用例调用**运行期同一个函数**求名，再看文件是否真在 `resources/pnpm/` 里 ——
+/// 两处一旦不一致即红（例：把 `darwin-arm64` 与 `darwin-x64` 互换，arm64 leg 立刻红）。
+/// Windows 目标另要求客体投递份（`guest_pnpm_bundle`）也在，堵住"只取一份"的静默退化。
+///
+/// `resources/pnpm/` **永不入库**（AGENTS §2），故本机未打包时跳过；开发机可能残留
+/// 多次 fetch 的历史份，故「**恰好等于**本目标应携带的集合」（多一份 = 包体积白背）
+/// 只在 CI 打包态断言 —— 与既有 `DSH_TEST_REQUIRE_NODE` 同款：本机可跳过、CI 必须真判。
+#[cfg(test)]
+mod engine_bundle_coverage_tests {
+    use super::{engine_pnpm_bundle, guest_pnpm_bundle};
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    fn required_bundle_names(resources: &Path) -> BTreeSet<String> {
+        let mut want: BTreeSet<String> = BTreeSet::new();
+        want.insert(
+            engine_pnpm_bundle(resources)
+                .file_name()
+                .expect("引擎档名")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        // Windows 包另带一份供 WSL 客体投递（ADR-0010 台账「客体投递」）。
+        if cfg!(windows) {
+            want.insert(
+                guest_pnpm_bundle(resources)
+                    .file_name()
+                    .expect("客体档名")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        want
+    }
+
+    #[test]
+    fn shipped_bundles_match_what_this_target_will_look_for() {
+        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let dir = resources.join("pnpm");
+        // CI 打包态：连"目录不存在"与"多了别的份"都算红；本机默认只看"该有的在不在"。
+        let packaging = std::env::var("DSH_TEST_REQUIRE_PNPM_BUNDLE").as_deref() == Ok("1");
+        if !dir.is_dir() {
+            assert!(
+                !packaging,
+                "DSH_TEST_REQUIRE_PNPM_BUNDLE=1（CI 打包态）但 {} 不存在：\
+                 fetch 步骤必须先于 cargo 命令（build.yml）",
+                dir.display()
+            );
+            eprintln!(
+                "跳过：{} 不存在（resources/pnpm 永不入库；CI 在 fetch 后必然存在）",
+                dir.display()
+            );
+            return;
+        }
+
+        let want = required_bundle_names(&resources);
+        let mut have: BTreeSet<String> = BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".tgz") {
+                    have.insert(name);
+                }
+            }
+        }
+
+        let missing: Vec<&String> = want.difference(&have).collect();
+        assert!(
+            missing.is_empty(),
+            "本目标（os={} arch={}）运行期会去找 {missing:?}，但它不在 resources/pnpm/ 里 —— \
+             CI matrix 的 pnpm_platform 与 engine_pnpm_bundle() 求名不一致（审计 A7）；\
+             实际目录内容 = {have:?}",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        );
+
+        let extra: Vec<&String> = have.difference(&want).collect();
+        if packaging {
+            assert!(
+                extra.is_empty(),
+                "resources/pnpm/ 里多了本目标用不到的份 {extra:?}（应恰为 {want:?}）—— \
+                 macOS 两 leg 各自只取自己那份（否则包里多背另两份，实测 54MB vs 19MB）；\
+                 Windows 恰为 win32-x64 + linux-x64 两份",
+            );
+        }
+    }
+}
