@@ -32,6 +32,32 @@
 
 ## 三、记录
 
+### 2026-09-21 平台对齐修复第二刀 · 快车道一轮（道 A 五项 + 开发计划）—— guan（AI 协作）
+
+- **计划**：`docs/plans/platform-parity-plan-2026-09-21.md` —— 审计剩余项按**能否在本机验证**分三道（道 A 本机可验 5 项 / 道 B 依赖 Windows 真机 5 项 / 道 C 待裁定 6 项），
+  分道的理由写死在档里：**不许把没验的东西说成验过了**。
+- **道 A 五项全部落地（快车道直推 master，各自独立提交 + 闸门/可复跑验证 + 负例）**：
+
+  | 项 | commit | 修了什么 | 证据 |
+  |:--|:--|:--|:--|
+  | **A-1（审计 A6）** | `462d6fb` | `render-product.sh` 把 Windows 的 `node.exe` 落成无扩展名 `dsh-node` ⇒ CreateProcess 自动追加 `.exe` 找不到 ⇒ Windows 快照档启动必败；该脚本 CI 零引用，无人会发现。改为按**传入文件扩展名**定落位名，manifest 引同一变量单源 | 新闸门 3 例**真跑脚本**（临时 `--out`，绝不碰仓库）：Windows 保留 `.exe` 且不留残影 / 非 Windows 不加 `.exe` / **`--out` 生效**（若被忽略仓库 manifest 会被写脏即红）；负例：退回忽略 `.exe` → 精确红灯 |
+  | **A-2（§3.9）** | `29026e2` | 闸门只查"leg 声明的份 ⊆ 白名单"，不查"取全" ⇒ Windows leg 只取一份仍全绿，用户切 WSL 才炸 | 新用例从 build.yml 解析 fetch 参数、从 `guest_pnpm_bundle()` 解析客体份名（单源）断言两份都取；负例：只取 `win32-x64` → 精确红灯 |
+  | **A-3（§2.10）** | `43027bc`+`0e4c7ff` | `require_local` / `unsupported_in_wsl` 零调用点死码（唯一引用是前端单测里逐字复制的文案 = 测试守着一句用户看不到的话）；文档死链一并改事实 | 删码 + fixture 换活文案；**宿主 clippy 立刻抓到单元素循环退化**（`-D warnings`），已修 —— 又一例"fmt 过 ≠ clippy 过" |
+  | **A-4（§3.5）** | `fcdd4eb` | 文案写"全局快捷键"，实为**页内 keydown**（失焦即无效，ADR-0024 已裁暂缓） | zh/en 改为"应用内生效，窗口需在前台"；`ui.rs` 注释写明非 OS 级；RELEASE_NOTES 的 v1.3.0 措辞**不动**（已发行正文来源，随下版覆盖） |
+  | **A-5（§3.7）** | `fcdd4eb` | macOS 有 Gatekeeper 提示、Windows 无对应披露 | README 增 SmartScreen 提示 + 说明自动更新用的是本项目签名校验、不受影响 |
+
+- **顺带修一处**：`render-product.sh` 的 `--out` 此前"用法第 21 行写了、参数解析里没实现"（传了就报未知参数）。
+- **并发写者的一次真实教训（已自查修复，未推前）**：A-4 那次提交我用了 `git add src-tauri/src/ui.rs`，
+  而该文件**同时含并行写者未提交的托盘 hunk**（`bring_to_front` 调用）—— 其定义在同样未提交的
+  `commands/window.rs` 里 ⇒ **那条提交树会编译失败**。**未推送前**已重写该提交（只留我方注释改动，
+  他们的 hunk 原样退回工作区），并做**隔离验证**：把他们的三个文件 stash 后工作区 == HEAD 树，
+  `clippy --all-targets -D warnings` ✓、`cargo test` 543 passed ✓，再 pop 还原。
+  教训：**动到共享文件时必须按 hunk 而不是按文件 add**（`git add -p` 或先重建目标态）；此前
+  "按文件精确 add"的做法只在"文件不重叠"时成立。
+- **诚实边界（道 B/C 未动的理由，不是没时间）**：道 B（A2 Windows 孤儿清扫第二层 / A4 尾 DACL / A6 尾实机 / §3.1 Windows 毛玻璃 / §3.4 关窗语义）**依赖 Windows 真机验证**——现在改完无法证明，只会把"已知失效"变成"未知是否失效"；道 C 里 C-1（A3 WSL 5 项下沉）是独立一轮的活、C-2（macOS Intel 执行验证）三条路各有代价需先选路、C-3/C-6 需裁定。
+- **影响**：① Linux/Windows 用户不再踩 A6/§3.9 这两条"只在用户机器上炸"的坑；② 三项过时/虚假文案（快捷键、Windows 披露、死码 fixture）已校正；③ 剩余项的道与前置已写死，接续不需重新调研。**无需他人动作，仅周知**。
+- **凭据**：`cargo test` **545 passed / 0 failed / 7 ignored**；`cargo fmt --check` ✓；宿主 `clippy --all-targets -D warnings` ✓；`python3 -m unittest discover -s scripts/tests` **26 passed**（+4）；前端 typecheck ✓ / oxlint 0-0 ✓ / vitest **674 passed** ✓；负例 7 连（A1×2 · A7×2 · A5×1 · A-1×1 · A-2×1）各自精确红灯。
+
 ### 2026-09-21 平台对齐修复第一刀 · A1 / A7 / A4 / A5（四项，含闸门与负例）—— guan（AI 协作）
 
 - **变更（四处独立提交，各自带闸门与负例实测）**：

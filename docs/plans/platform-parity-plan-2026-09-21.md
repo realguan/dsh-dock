@@ -4,15 +4,15 @@
 > 第一刀已落地：**A1**（Linux 托盘启动即崩）· **A7**（取份交叉闸门）· **A4**（凭据 0600 披露）· **A5**（日志台读错世界）。
 > 本计划排剩余项，按**能否在本机验证**分三条道 —— 分道是为了"不许把没验的东西说成验过了"。
 
-## 道 A｜本机可完成且可验证（本轮做完）
+## 道 A｜本机可完成且可验证（**本轮 5/5 完成**）
 
 | # | 项 | 动作 | 验收 |
 |:--|:--|:--|:--|
-| A-1 | **A6** `render-product.sh` 快照档 | Windows 上 `node.exe` 被 `cp` 成无扩展名 `dsh-node` ⇒ CreateProcess 找不到。改按目标平台落 `dsh-node(.exe)` 并同步 manifest `nodeBin` | 脚本文本闸门（三平台名映射 + manifest 同步）+ 本机跑一次 dry 校验 |
-| A-2 | **§3.9** Windows 包"必须含两份 tgz" | 闸门只查"leg 声明的份 ⊆ 白名单"，不查"leg 取全"。补 `leg → 必需份` 断言 | python 闸门新增用例；负例：把 Windows leg 改成只取一份即红 |
-| A-3 | **§2.10** `mgmt.rs` 死码 | `unsupported_in_wsl` / `require_local` 零调用点，唯一引用是前端单测里逐字复制的文案 | 删除 + 前端 fixture 清理；`cargo test` / vitest 全绿 |
-| A-4 | **§3.5** 「全局快捷键」措辞 | 实际是页内 `keydown`（ADR-0024 已裁"暂缓"），文案却写"全局" | zh/en 双侧 + RELEASE_NOTES 措辞校正；字典对称测试绿 |
-| A-5 | **§3.7** README 补 Windows 提示 | macOS 有 Gatekeeper 提示、Windows 无 SmartScreen 提示（披露不对称，签名是成本问题另说） | README 增补；零成本 |
+| A-1 | **A6** `render-product.sh` 快照档 | Windows 上 `node.exe` 被 `cp` 成无扩展名 `dsh-node` ⇒ CreateProcess 找不到。改按目标平台落 `dsh-node(.exe)` 并同步 manifest `nodeBin` | 脚本文本闸门（三平台名映射 + manifest 同步）+ 本机跑一次 dry 校验 | ✅ `462d6fb`
+| A-2 | **§3.9** Windows 包"必须含两份 tgz" | 闸门只查"leg 声明的份 ⊆ 白名单"，不查"leg 取全"。补 `leg → 必需份` 断言 | python 闸门新增用例；负例：把 Windows leg 改成只取一份即红 | ✅ `29026e2`
+| A-3 | **§2.10** `mgmt.rs` 死码 | `unsupported_in_wsl` / `require_local` 零调用点，唯一引用是前端单测里逐字复制的文案 | 删除 + 前端 fixture 清理；`cargo test` / vitest 全绿 | ✅ `43027bc` + `0e4c7ff`
+| A-4 | **§3.5** 「全局快捷键」措辞 | 实际是页内 `keydown`（ADR-0024 已裁"暂缓"），文案却写"全局" | zh/en 双侧 + RELEASE_NOTES 措辞校正；字典对称测试绿 | ✅ `fcdd4eb`
+| A-5 | **§3.7** README 补 Windows 提示 | macOS 有 Gatekeeper 提示、Windows 无 SmartScreen 提示（披露不对称，签名是成本问题另说） | README 增补；零成本 | ✅ `fcdd4eb`
 
 ## 道 B｜依赖 Windows 真机（本轮不做，理由与前置写死）
 
@@ -40,3 +40,12 @@
 - 每条独立提交、带闸门或可复跑验证；**负例实测**后才算完成（本轮 A-2 必带负例）。
 - 快车道 = 直推 master + 广播落档；不裸打 tag、不动版本号。
 - 诚实边界随条目走：本机验不了的一律标进道 B/C，不写成"已修"。
+
+## 执行记录（2026-09-21 快车道本轮）
+
+- **道 A 全部完成**：A-1 `462d6fb` · A-2 `29026e2` · A-3 `43027bc`+`0e4c7ff` · A-4/A-5 `fcdd4eb`。
+  每条都带闸门或可复跑验证，A-1/A-2 另有负例实测（见广播）。
+- **道 B 未动**：前置是"恢复 Windows 真机验证"（维护者裁定项），不是工作量问题。
+- **道 C 未动**：C-1（A3 WSL 5 项）是独立一轮的活；C-2（Intel 执行验证）三条路各有代价，
+  需先选路；C-3/C-6 需裁定；C-4 与 B-4 同批；C-5 属产品功能排期。
+- 本轮顺带修正：`render-product.sh` 的 `--out` 此前"用法写了、解析没实现"。
