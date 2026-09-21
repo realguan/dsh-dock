@@ -3376,3 +3376,129 @@ mod aggregate_copy_tests {
         std::fs::remove_dir_all(&home).ok();
     }
 }
+
+// ---------------- 客体孪生（WSL 客体档，P0） ----------------
+// 2026-09-21：四处 `World::Wsl => Err("需补客体侧 patch 写原语")` 是**接线欠债**，不是能力缺失
+// （审计 A3）。内核本就为两侧共用（`apply_catalog_insert_row` 注释原文「宿主 / 客体孪生共用」），
+// 三不变量 + 写前自证全部由既有原语提供：
+//   保真 = `PatchFile::render()`（文本级拼接，未改条目 push_str(raw)，注释/排版原样保留）
+//   自证 = `render_checked()`（写前 from_text 回读解析，失败即中止）
+//   备份 = `guest::backup_file`　原子 = `guest::write_home_files`（tmp + mv -f）
+
+/// 读客体 profile 的 patch 原文（一次 `wsl.exe` 往返）；**文件缺失 ⇒ 空 patch**。
+fn read_guest_patch(distro: &str, rel: &str) -> Result<PatchFile, String> {
+    let files = crate::guest::read_files(distro, std::slice::from_ref(&rel.to_string()))?;
+    match files.into_iter().next().and_then(|(_, content)| content) {
+        Some(text) => PatchFile::from_text(&text),
+        None => Ok(PatchFile::empty()),
+    }
+}
+
+/// 写回客体：渲染**自证** → 覆写前**备份** → **原子替换**（三者皆既有原语）。
+fn write_guest_patch(distro: &str, rel: &str, patch: &PatchFile) -> Result<(), String> {
+    let out = patch.render_checked()?;
+    crate::guest::backup_file(distro, rel)?;
+    crate::guest::write_home_files(distro, &[(rel.to_string(), out)])?;
+    Ok(())
+}
+
+/// 客体孪生：写入官方策展挂载行（与 [`ensure_catalog_insert_row`] 同内核、同幂等语义）。
+pub fn ensure_catalog_insert_row_in_guest(
+    distro: &str,
+    profile: &str,
+    row_id: &str,
+    package: &str,
+    config: &[(&str, crate::official_catalog::ConfigValue)],
+) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let mut patch = read_guest_patch(distro, &rel)?;
+    let changed = apply_catalog_insert_row(&mut patch, row_id, package, config);
+    if changed {
+        write_guest_patch(distro, &rel, &patch)?;
+    }
+    Ok(changed) // 未改动即零写入（免 mtime 抖动，同 ADR-0013 纪律）
+}
+
+/// 客体孪生：删除壳写过的策展挂载行（与 [`remove_catalog_insert_row`] 同内核、同所有权边界）。
+pub fn remove_catalog_insert_row_in_guest(
+    distro: &str,
+    profile: &str,
+    row_id: &str,
+) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    validate_row_id(row_id)?;
+    if !is_shell_row_id(row_id) {
+        return Err(format!(
+            "拒绝删除「{row_id}」：只有 `{SHELL_ROW_PREFIX}` 前缀的挂载行归壳所有，\
+             其余行属于 bundle 或用户手写，壳不得代删"
+        ));
+    }
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let mut patch = read_guest_patch(distro, &rel)?;
+    let removed_row = apply_catalog_remove_row(&mut patch, row_id);
+    let removed_stub = remove_disabled_stub(&mut patch, row_id);
+    if !removed_row && !removed_stub {
+        return Ok(false);
+    }
+    write_guest_patch(distro, &rel, &patch)?;
+    Ok(true)
+}
+
+/// 客体档写入路径的内核闸门（2026-09-21，P0）：**不依赖 WSL 即可验证** ——
+/// 客体路径与宿主路径共用同一个内核，故这里用 `from_text → 纯变换 → render_checked`
+/// 复现客体侧的每一步（读/写端点的真机行为仍归 Windows+WSL2 验收）。
+#[cfg(test)]
+mod guest_patch_kernel_tests {
+    use super::*;
+
+    /// **原文保真**：未改条目的行间注释与排版必须逐字保留（客体路径同样走 render()）。
+    #[test]
+    fn guest_path_preserves_inline_comments_of_untouched_rows() {
+        let text = "# 头部注释：勿删\n- name: '@deepseek-ai/other'\n  # 行内注释\n  config:\n    keep: 1\n";
+        let mut patch = PatchFile::from_text(text).unwrap();
+        let changed = apply_catalog_insert_row(&mut patch, "dsh-dock-x", "@deepseek-ai/x", &[]);
+        assert!(changed, "新行必须产生改动");
+        let out = patch.render_checked().unwrap();
+        for keep in ["# 头部注释：勿删", "# 行内注释", "keep: 1"] {
+            assert!(out.contains(keep), "客体路径必须保真 {keep:?}：{out}");
+        }
+        assert!(out.contains("dsh-dock-x"), "{out}");
+    }
+
+    /// **幂等零写入**：行已存在且 config 齐备 ⇒ 返回 false（调用方据此不写回，不动 mtime）。
+    #[test]
+    fn guest_path_reports_unchanged_so_caller_skips_the_write() {
+        let text = "- insert:\n    - id: dsh-dock-x\n      name: '@deepseek-ai/x'\n";
+        let mut patch = PatchFile::from_text(text).unwrap();
+        assert!(!apply_catalog_insert_row(
+            &mut patch,
+            "dsh-dock-x",
+            "@deepseek-ai/x",
+            &[]
+        ));
+    }
+
+    /// **所有权边界**：客体侧同样只允许删壳自己的行（防误删 bundle / 用户手写行）。
+    #[test]
+    fn guest_path_refuses_foreign_row_ids() {
+        let mut patch = PatchFile::from_text("- name: '@deepseek-ai/other'\n").unwrap();
+        assert!(!is_shell_row_id("some-bundle-row"));
+        assert!(is_shell_row_id("dsh-dock-y"));
+        assert!(!apply_catalog_remove_row(&mut patch, "some-bundle-row"));
+    }
+
+    /// **删净 + 自证**：删行并清停用桩后仍能通过 `render_checked`（写坏即中止）。
+    #[test]
+    fn guest_path_removes_row_and_stub_then_self_verifies() {
+        let text = "# 头\n- insert:\n    - id: dsh-dock-a\n      name: '@deepseek-ai/a'\n- id: dsh-dock-a\n  disabled: true\n";
+        let mut patch = PatchFile::from_text(text).unwrap();
+        let removed_row = apply_catalog_remove_row(&mut patch, "dsh-dock-a");
+        let removed_stub = remove_disabled_stub(&mut patch, "dsh-dock-a");
+        assert!(removed_row && removed_stub);
+        let out = patch.render_checked().unwrap();
+        assert!(!out.contains("dsh-dock-a"), "行与桩都必须清掉：{out}");
+        assert!(out.contains("# 头"), "注释仍在：{out}");
+    }
+}
