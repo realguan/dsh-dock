@@ -44,6 +44,7 @@ mod resolve;
 mod sessions;
 mod settings;
 mod shell;
+mod traffic_lights;
 mod ui;
 mod updater;
 mod updates;

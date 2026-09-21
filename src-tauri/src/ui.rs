@@ -58,6 +58,15 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     // 与 switcher.js 的分工：幕布管"进/出工作台的过渡"，胶囊管"常驻互跳入口"。
     let handoff_curtain_script = include_str!("../../frontend/src/injected/handoff-curtain.js");
 
+    // 沉浸式标题栏（2026-09-21，ADR-0029）：官方客户端的沉浸式 chrome 真相源在 dsh
+    // 自己的 web 前端（`packages/client` 里按 `html[data-platform='darwin']` 生效的
+    // 一整批桌面 CSS：透明底、侧栏 tint、topStrip 与红绿灯共行、
+    // `-webkit-app-region: drag/no-drag`；源锚见 ADR-0029 §1 表）。壳里它们休眠，
+    // 本脚本补打 dsh 官方 Electron preload 同款标记并把 app-region 计算样式翻译成
+    // Tauri 的 `data-tauri-drag-region`。仅 macOS 生效（与下方窗口配置的 cfg 同门），
+    // 只认工作台 origin，扫描落空即静默降级回原生标题栏。
+    let immersive_script = include_str!("../../frontend/src/injected/immersive-chrome.js");
+
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
     // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
@@ -72,62 +81,120 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
 
     // 2026-08-27 前端迁移：所有窗口加载 SPA 根路径，React 按窗口 label 路由
     // （frontend-migration §3.1）；子页面经 pathname 可达（get_asset 兜底链）。
-    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-        .title("DSH Dock")
-        .inner_size(1280.0, 820.0)
-        .min_inner_size(960.0, 640.0)
-        .resizable(true)
-        .center()
-        // 2026-09-10 批次 E：底色见 WINDOW_BACKGROUND 常量（三处一致性有测试锁定）。
-        .background_color(WINDOW_BACKGROUND)
-        .on_navigation(move |url| {
-            // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
-            //
-            // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
-            // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
-            // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
-            // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
-            // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
-            // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
-            let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
-                || matches!(url.host_str(), Some("tauri.localhost"));
-            let loopback_dsh = matches!(
-                url.host_str(),
-                Some("127.0.0.1") | Some("localhost") | Some("[::1]")
-            );
-            if shell_page || loopback_dsh {
-                return true;
-            }
-            if matches!(url.scheme(), "http" | "https") {
+    // 2026-09-21 ADR-0029：`mut` 仅供下方 macOS 段的 overlay/vibrancy 重新赋值——
+    // 非 macOS 目标该段被 cfg 掉，`mut` 看似多余；按目标显式 allow，避免三平台
+    // clippy（-D warnings）在 Win/Linux 上被 unused_mut 炸掉。
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+            .title("DSH Dock")
+            .inner_size(1280.0, 820.0)
+            .min_inner_size(960.0, 640.0)
+            .resizable(true)
+            .center()
+            // 2026-09-10 批次 E：底色见 WINDOW_BACKGROUND 常量（三处一致性有测试锁定）。
+            .background_color(WINDOW_BACKGROUND)
+            .on_navigation(move |url| {
+                // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
+                //
+                // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
+                // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
+                // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
+                // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
+                // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
+                // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
+                let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
+                    || matches!(url.host_str(), Some("tauri.localhost"));
+                let loopback_dsh = matches!(
+                    url.host_str(),
+                    Some("127.0.0.1") | Some("localhost") | Some("[::1]")
+                );
+                if shell_page || loopback_dsh {
+                    return true;
+                }
+                if matches!(url.scheme(), "http" | "https") {
+                    let allowed = is_allowed_external_url(url.as_str());
+                    tracing::info!("外链导航拦截：url={url} allowed={allowed}");
+                    if allowed {
+                        if let Err(e) = open::that_detached(url.as_str()) {
+                            tracing::error!("外链打开失败：{e}");
+                        }
+                    }
+                    // 非白名单：既不导航也不打开（壳不成为任意跳板）。
+                } else {
+                    tracing::info!("未知协议导航拦截：{url}");
+                }
+                false
+            })
+            .on_new_window(move |url, _features| {
+                // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
                 let allowed = is_allowed_external_url(url.as_str());
-                tracing::info!("外链导航拦截：url={url} allowed={allowed}");
+                tracing::info!("新窗口请求：url={url} allowed={allowed}");
                 if allowed {
                     if let Err(e) = open::that_detached(url.as_str()) {
-                        tracing::error!("外链打开失败：{e}");
+                        tracing::error!("外链打开失败（新窗口路径）：{e}");
                     }
                 }
-                // 非白名单：既不导航也不打开（壳不成为任意跳板）。
-            } else {
-                tracing::info!("未知协议导航拦截：{url}");
+                tauri::webview::NewWindowResponse::Deny
+            })
+            .initialization_script(&platform_script)
+            .initialization_script(hook_script)
+            .initialization_script(switcher_script)
+            .initialization_script(handoff_curtain_script);
+
+    // 沉浸式标题栏（ADR-0029）——仅 macOS：overlay 标题栏（红绿灯浮在内容左上角、
+    // 原生标题文字隐去）+ Sidebar 材质 vibrancy（对标官方 Electron 的
+    // `vibrancy:'sidebar'` + `visualEffectState:'active'`，main.ts:125-132）。
+    // 窗口底色**保持不透明**（WINDOW_BACKGROUND 三处一致性不动）：毛玻璃靠 dsh
+    // 工作台页面自身的 `html[data-platform='darwin']{background:transparent}` 透出，
+    // 壳页面（启动屏等）仍画不透明底，首帧不闪色口径不变。
+    // Windows/Linux 无红绿灯且 Tauri 稳定版无 titleBarOverlay 等价物 → 保持原生装饰。
+    //
+    // 2026-09-21：上面这句"原生标题文字隐去"原先只是**注释里的承诺**——代码只设了
+    // `title_bar_style(Overlay)`，而 Overlay 仅让红绿灯浮起，**不会**隐去 `.title()`
+    // 的文字，于是红绿灯旁边长期挂着一行「DSH Dock」（维护者截图圈出）。补上真正
+    // 隐去它的那一项：`hidden_title(true)`（macOS-only）。注意**窗口标题本身不动**
+    // ——它仍供窗口切换器/任务栏/关于弹窗使用，这里只关掉标题栏里的那份渲染。
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .effects(
+                tauri::window::EffectsBuilder::new()
+                    .effects([tauri::window::Effect::Sidebar])
+                    .state(tauri::window::EffectState::Active)
+                    .build(),
+            );
+    }
+
+    let window = builder.initialization_script(immersive_script).build()?;
+
+    // 红绿灯定位（ADR-0029）：目标 = 与侧边栏收起按钮（dsh darwin topStrip 的 toggle，
+    // 52px 条带垂直居中）同一水平线，即官方 Electron 的 trafficLightPosition x16/y18。
+    // 建窗后先落一次（主线程、未 show，用户看不到跳变）。
+    // 调用点三平台同构：函数内部按 target_os 分叉（非 macOS = no-op）。
+    crate::traffic_lights::align(&window);
+
+    // 落位不是一次性的：探针实测 AppKit 在 resize 时把标准按钮弹回默认位（show 不会）。
+    // 且 reset 可能发生在**不发 Tauri 窗口事件**的时机（tao 建窗后的内部 setFrame、
+    // vibrancy 视图插入等）——所以三管齐下：
+    //   ① 任何窗口事件都重放（align 内部幂等 + 变化检测，已就位即静默，不刷屏）；
+    //   ② setup 结束后经主线程事件循环补一枪（覆盖"建窗后内部 reset 无事件"）；
+    //   ③ 首次落位打 info 并读回帧坐标——实机核对"到底生效没有"以日志为凭据。
+    #[cfg(target_os = "macos")]
+    {
+        let lights = window.clone();
+        window.on_window_event(move |event| {
+            if !matches!(event, tauri::WindowEvent::Destroyed) {
+                crate::traffic_lights::align(&lights);
             }
-            false
-        })
-        .on_new_window(move |url, _features| {
-            // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
-            let allowed = is_allowed_external_url(url.as_str());
-            tracing::info!("新窗口请求：url={url} allowed={allowed}");
-            if allowed {
-                if let Err(e) = open::that_detached(url.as_str()) {
-                    tracing::error!("外链打开失败（新窗口路径）：{e}");
-                }
-            }
-            tauri::webview::NewWindowResponse::Deny
-        })
-        .initialization_script(&platform_script)
-        .initialization_script(hook_script)
-        .initialization_script(switcher_script)
-        .initialization_script(handoff_curtain_script)
-        .build()
+        });
+        let lights = window.clone();
+        let _ = app.run_on_main_thread(move || crate::traffic_lights::align(&lights));
+    }
+
+    Ok(window)
 }
 
 /// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
@@ -577,6 +644,38 @@ mod window_background_tests {
         assert!(result.is_err(), "缺少 --color-bg 时解析器应报错");
     }
 
+    /// 沉浸式标题栏（ADR-0029）的**实现**闸门。
+    ///
+    /// 事故形态：注释一直写着「原生标题文字隐去」，代码却只设了
+    /// `title_bar_style(Overlay)`——Overlay 仅让红绿灯浮到内容上，**不会**隐去
+    /// `.title()` 的文字，于是红绿灯旁边长期挂着一行「DSH Dock」（维护者截图圈出）。
+    /// 这是"注释承诺 ≠ 代码事实"的典型，靠人读注释永远发现不了。
+    ///
+    /// 断言从**生产段源码**取（截到测试模块之前），避免测试自身的字面量把闸门
+    /// 变成永远为真——同 `lifecycle::tests::production_code_view_truncates_at_the_real_test_module`。
+    #[test]
+    fn macos_titlebar_hides_native_title_text() {
+        let src = include_str!("ui.rs");
+        let production = src
+            .split("mod window_background_tests")
+            .next()
+            .expect("ui.rs 应含 window_background_tests 模块");
+        assert!(
+            production.contains("TitleBarStyle::Overlay"),
+            "macOS 应使用 overlay 标题栏（红绿灯浮在内容左上角）"
+        );
+        assert!(
+            production.contains("hidden_title(true)"),
+            "macOS 段必须 `hidden_title(true)`：Overlay 只让红绿灯浮起，\
+             **不会**隐去 `.title()` 的文字——漏掉它，红绿灯旁会一直挂着一行窗口名"
+        );
+        assert!(
+            production.contains(r#".title("DSH Dock")"#),
+            "窗口标题本身要保留（窗口切换器/任务栏/关于弹窗仍用它），\
+             被隐藏的只是标题栏里的那份渲染"
+        );
+    }
+
     /// **v1.1.0 Windows 实测 1.6 的回归闸门**：正式包（`dev=false`）**绝不允许**
     /// 返回 dev 服务器地址——那会把主窗口导航到已死的 Vite 端口
     /// （症状：重启/切换期间 `localhost 拒绝连接`）。
@@ -650,6 +749,53 @@ mod window_background_tests {
         assert!(
             !has_literal,
             "检测到硬编码 Color(...) 字面量——请改用 crate::ui::WINDOW_BACKGROUND"
+        );
+    }
+}
+
+/// 沉浸式标题栏（ADR-0029）注入脚本的**内容契约闸门**。
+///
+/// 脚本跑在 dsh 工作台文档里、无打包器、无单测环境，Rust 侧只能按内容钉契约。
+/// 钉的是四件「被误删也不会立刻炸、但沉浸式会静默死掉」的事：
+///   ① 双重注入 guard（同文档重入防护，与既有脚本同款）；
+///   ② macOS 平台门（v1 仅 macOS；Win/Linux 保持原生装饰，与窗口配置的 cfg 同门）；
+///   ③ 标记值 `darwin`（必须与 dsh 官方 preload 打的同款，见 ADR-0029 §1）；
+///   ④ app-region → `data-tauri-drag-region` 翻译键名。
+#[cfg(test)]
+mod immersive_chrome_tests {
+    #[test]
+    fn immersive_script_carries_its_contract() {
+        let src = include_str!("../../frontend/src/injected/immersive-chrome.js");
+        for needle in [
+            "window.__dshDockImmersiveInjected", // ① 重入 guard
+            "platform.os !== 'macos'",           // ② v1 平台门
+            "dataset.platform",                  // ③ 补打 dsh 官方标记的落点
+            "'darwin'",                          // ③ 标记值（= DSH_PLATFORM_MARKER）
+            "data-tauri-drag-region",            // ④ Tauri 拖拽属性
+            "-webkit-app-region",                // ④ dsh 侧计算样式键
+        ] {
+            assert!(
+                src.contains(needle),
+                "immersive-chrome.js 缺少契约要素 `{needle}`——ADR-0029 §5 的降级链\
+                 会因此静默失效（工作台回退原生标题栏）。若确有重构，请同步本闸门与 ADR。"
+            );
+        }
+    }
+
+    /// 主窗口注入链必须挂上沉浸式脚本（接线闸门：只进主窗口，控制中心窗口
+    /// label=profiles 是壳页面，不得挂——它由 `commands/window.rs` 单独创建）。
+    #[test]
+    fn main_window_wires_immersive_script() {
+        let src = include_str!("ui.rs");
+        assert!(
+            src.contains(".initialization_script(immersive_script)"),
+            "主窗口注入链缺少 immersive_script——ADR-0029 的唤醒步（①）没接上"
+        );
+        // 反例守卫：控制中心窗口不得挂沉浸式脚本（壳页面无 dsh 桌面 CSS，挂了也是空转）。
+        let window_rs = include_str!("commands/window.rs");
+        assert!(
+            !window_rs.contains("immersive"),
+            "控制中心窗口（壳页面）不应引用沉浸式脚本"
         );
     }
 }

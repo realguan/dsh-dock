@@ -32,6 +32,83 @@
 
 ## 三、记录
 
+### 2026-09-21 ADR-0029（追加四）· 红绿灯容器扩充：对标 Electron 同款 52px 容器垂直居中，彻底消除 19px 贴顶错位 —— guan（AI 协作）
+
+- **真因定位**：AppKit 的 `NSTitlebarView` 默认高度仅为 32px 且坐标原点在底部（`isFlipped = false`）。此前直接对按钮设 `y = 18`，在 32px 容器内 `18 + 14 = 32px`，导致红绿灯直接**贴死在窗口最顶端天花板**（中心距顶仅 7px），与 DSH 侧边栏 `.topStrip`（52px 高度居中，中心距顶 26px）形成近 19px 的巨大高低差（截图里的红框）。
+- **对齐官方 Electron 实现**（`shell/browser/ui/cocoa/window_buttons_proxy.mm`）：
+  ① 将 `NSTitlebarContainerView` 与 `NSTitlebarView` 同步扩充到 52px（与 DSH `.topStrip` 高度一致）；
+  ② 在 52px 容器内将按钮垂直居中放置于 `y = (52 - 14) / 2 = 19px`（窗口全局坐标中心距顶恰为 `52 / 2 = 26px`），与侧边栏收起按钮 `◫` 完美处于**同一水平线**；
+  ③ 水平方向以 `TRAFFIC_LIGHT_X = 16.0` 起始，自适应保留原生按钮间距（~23px）；
+  ④ 全量窗口事件幂等重放，已就位（误差 < 0.5pt）静默，彻底解决 resize 弹回问题。
+- **凭据**：Cocoa 原生探针实测通过（全局坐标中线距顶精确 26.0px）· `cargo fmt --check` 净 · `cargo test` 536 过 · clippy `-D warnings` 净 · 非 macOS 模拟编译净。
+
+### 2026-09-21 ADR-0029（追加三）· 红绿灯重放加固：全量窗口事件 + 变化检测 + setup 后补刀 —— guan（AI 协作）
+
+- **触发**：维护者点明目标——红绿灯须与**侧边栏收起按钮水平对齐**（此前表述绕了）。
+  目标值不变（(16,18) → 灯光中心 24 ≈ toggle 中心 25）；问题是落位未生效。
+- **变更**（`traffic_lights.rs` + `ui.rs`）：① 事件重放从三类扩到**任何窗口事件**
+  （Destroyed 除外）；② align 改**幂等 + 变化检测**——已就位不写不打日志，挂全量
+  事件零刷屏；③ 新增 setup 结束后 `run_on_main_thread` 补一枪，覆盖"tao 建窗后
+  内部 setFrame / vibrancy 插入导致 reset 但不发 Tauri 事件"的时机；④ 首次落位
+  info 日志带读回帧坐标。
+- **凭据**：fmt/test 536 过 / 宿主 clippy 净 / 非 macOS 三点 cfg 模拟编译净。
+- **待验证（维护者侧）**：**重启 dev**（Rust 不走 HMR）→ 终端应出现
+  `红绿灯已定位 #0=(16.0,18.0) #1=(39.0,18.0) #2=(62.0,18.0)`；无此行 = 跑的旧
+  二进制。然后再截图与官方比对。
+
+### 2026-09-21 ADR-0029（追加二）· 红绿灯重放：实测 resize 会把按钮弹回默认位，落位改事件驱动 —— guan（AI 协作）
+
+- **触发**：维护者截图——红绿灯仍停在系统默认位（距顶 ≈0，toggle 行中心低约 18px），
+  「你调整成这样？」。
+- **实证**（探针续测）：`makeKeyAndOrderFront`（show）**不**重置按钮；`setFrame:`
+  （resize）把三个按钮**全部弹回 (9,9)**——即建窗时的一次性落位会被任何 resize 冲掉。
+- **变更**（`traffic_lights.rs` + `ui.rs`）：落位后挂 `on_window_event`
+  （Resized / Focused(true) / ScaleFactorChanged）重放；首次落位改 info 且**读回帧
+  坐标**写日志（`红绿灯已定位 #0=(16.0,18.0) …`），实机核对生效与否以该行为凭据；
+  重放打 debug（resize 高频）。
+- **待办**：Rust 改动不走 Vite 热更新——须**重启 dev / 重新构建**后再截图比对；
+  若日志无 `红绿灯已定位` 行 = 二进制未含本模块（排查方向：跑的是旧进程）。
+- **凭据**：fmt/test 536 过 / 宿主 clippy 净 / 非 macOS 三点 cfg 模拟编译净。
+
+### 2026-09-21 ADR-0029（追加）· 红绿灯定位补立：AppKit FFI 逐按钮 setFrameOrigin 对标官方 x16/y18 —— guan（AI 协作）
+
+- **触发**：维护者截图比对——壳侧红绿灯比官方高约 10px，与 dsh 顶栏条带垂直对不齐。
+  官方显式 `trafficLightPosition {x:16,y:18}`（`main.ts:127`），Tauri Overlay 无此 API。
+- **变更**（src-tauri 2 文件）：新增 `traffic_lights.rs`（objc2 裸 msg_send，仅 macOS；
+  `Cargo.toml` target-gated `objc2 = "0.6"`——传递依赖提升，lock 在册无新 crate）；
+  `ui.rs` 建窗后无条件调用（函数内分平台）。ADR-0029 补 §3.1 小节。
+- **实证**（原生探针 /tmp/tltest，2026-09-21）：① 按钮 frame 在 theme frame（flipped）
+  里，y 从窗口顶部下量，与 Electron 语义一致，(16,18) 无需换算；② `setFrameOrigin:`
+  绝对定位，三按钮同点会叠成一坨（首版踩中）——按各按钮默认 x 相对 close 的偏移平移
+  （实测系统间距 23px），结果 close(16,18)/mini(39,18)/zoom(62,18)。
+- **凭据**：`cargo fmt --check` 净 · `cargo test` 536 过（含常量闸门）· 宿主 clippy
+  `-D warnings` 净 · 非 macOS 分支经合法 cfg 名模拟编译净（早前"报错"系自造 cfg 名触发
+  unexpected_cfgs 的假象，已排除）。前端三闸门仍待补跑（本机无 node）。
+- **影响**：仅周知。失败只记日志、停系统默认位，功能零影响；实机红绿灯位置待验。
+
+### 2026-09-21 ADR-0029 · 沉浸式标题栏：唤醒 dsh 自带桌面 CSS（标记补打 + app-region→拖拽区映射） —— guan（AI 协作）
+
+- **变更**（src-tauri 2 文件 + frontend 4 文件 + docs 2 文件）：
+  - 新增 `docs/adr/0029-immersive-titlebar-marker-injection.md`（含 README 索引一行）；
+  - 新增 `frontend/src/lib/immersiveChrome.ts`（纯逻辑）+ `__tests__/immersiveChrome.test.ts`；
+  - 新增 `frontend/src/injected/immersive-chrome.js`（document-start，仅主窗口、仅工作台
+    origin、v1 仅 macOS）：补打 dsh 官方 Electron preload 同款 `data-platform="darwin"`
+    标记 → dsh 自己的桌面 CSS（透明底/侧栏 tint/topStrip）全量生效；再把 dsh CSS 的
+    `-webkit-app-region` 计算样式翻译成 Tauri `data-tauri-drag-region`
+    （drag→deep、no-drag→false），MutationObserver 跟随 SPA 重渲染；
+  - `src-tauri/src/ui.rs`：主窗口 `#[cfg(target_os = "macos")]` 加
+    `TitleBarStyle::Overlay` + `Effect::Sidebar/Active`（vibrancy）；窗口底色保持
+    不透明（三处一致性不动）；新增两条内容契约闸门测试；
+  - `src-tauri/Cargo.toml`：target-gated `tauri = { features = ["macos-private-api"] }`。
+- **影响**：仅周知。不改 dsh 源码（红线 1）；Win/Linux 行为不变（原生装饰）；
+  扫描/标记落空即静默降级回原生标题栏。dsh 升级须按 ADR-0029 §5 表复核渲染层依赖。
+- **凭据**：dsh 源码实证（`/Users/guan/git/deepseek-harness`：`apps/desktop/src/main.ts:111-133`、
+  两个 preload、`packages/client` 六处桌面 CSS，2026-09-21 读）；`cargo test` 534 过 /
+  `cargo fmt --check` 净 / 宿主 clippy `-D warnings` 净 / 非 macOS 分支经 cfg 翻转模拟
+  编译净。**前端 typecheck/lint/test 本机无 node 工具链未跑——合入前须补跑**
+  （`cd frontend && pnpm run typecheck && pnpm run lint && pnpm run test`）。
+  实机验证（拖拽/红绿灯避让/vibrancy/未聚焦态）待排。
+
 ### 2026-09-20 ADR-0028 · 清单打标合并：「底座组合」tab 退役，三类插件一行各带标记 —— guan（AI 协作）
 
 - **变更**（frontend/src 8 文件 + docs 3 文件 + 新增 3 文件；本批为 ADR-0028 §5 行动项

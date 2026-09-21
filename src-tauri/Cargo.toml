@@ -42,6 +42,19 @@ tracing-subscriber = "0.3"
 # 既有依赖加 feature，不新增 crate。
 nix = { version = "0.29", features = ["signal", "process", "fs"] }
 
+# 沉浸式标题栏 vibrancy（ADR-0029）：主窗口 Sidebar 材质毛玻璃。target-gated——
+# 仅 macOS 目标启用，Windows/Linux 构建面零变化（feature 本身跨平台存在，为显式
+# 起见仍按目标收窄）。tauri 官方文档口径：窗口效果需 macOSPrivateApi。
+# 与上方 [dependencies] 的同名条目按「同 crate 同版本 → feature 并集」合并。
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+
+# 红绿灯定位（ADR-0029 配套）：裸 msg_send 调 AppKit `standardWindowButton:` +
+# `setFrameOrigin:`（Tauri 无此 API，官方 Electron 用 trafficLightPosition x16/y18）。
+# objc2 0.6.4 本就在依赖树里（tauri → objc2，Cargo.lock 在册、registry 缓存有源），
+# 此处仅把既有传递依赖提升为直接依赖，**不引入新 crate、不新增网络拉取**。
+objc2 = "0.6"
+
 # 壳瘦身（2026-08-21）：release 单二进制最小化。
 # 安装包大头是快照载荷（打包侧负责）；壳自身 debug 35MB → release 目标 ~10MB。
 [profile.release]

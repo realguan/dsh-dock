@@ -906,6 +906,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "nix",
+ "objc2",
  "open",
  "serde",
  "serde_json",
