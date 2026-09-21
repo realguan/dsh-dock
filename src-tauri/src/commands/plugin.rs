@@ -247,35 +247,73 @@ pub async fn list_experimental_capabilities(
 ) -> Result<Vec<crate::official_catalog::CapabilityView>, String> {
     let lang = crate::official_catalog::CopyLang::from_tag(lang.as_deref());
     // 世界择源（ADR-0016 §5-b/c，**绝不回落本地**）：本地 = 宿主 home 直读；
-    // **WSL 客体档当前显式报错**——客体侧需补一组客体文件读原语才能拼出同一份事实
-    // 快照，本轮未实现。此处宁可如实报"该档暂不支持"，也**不**去读宿主 home
-    // （那会把客体 profile 的插件全报成"未安装"＝静默错数据）。
+    // 客体档（2026-09-21 下沉，P1）= 读**客体** profile 的同一组文件（一次批量往返），
+    // 分类判据与后续分类逻辑**两侧共用**。绝不读宿主 home —— 那会把客体 profile 的插件
+    // 全报成"未安装"（静默错数据，比报错更坏）。
     let world = crate::mgmt::current_world(&app)?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let home = match world {
-        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
-        crate::mgmt::World::Wsl { .. } => {
-            return Err(
-                "实验能力目录暂不支持 WSL 客体档：需补客体侧 profile 读原语后方可启用\
-                 （有意不回落本地读取，以免把客体插件误报成未安装）。请在本地档使用。"
-                    .to_string(),
-            )
-        }
+    let home = match &world {
+        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Wsl { .. } => None,
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = home.join("profiles").join(&profile);
-        let manifest = std::fs::read_to_string(dir.join("package.json"))
-            .map_err(|e| format!("读取 profile 清单失败（{profile}）：{e}"))?;
-        let installed = crate::plugins::dependency_names(&manifest)?;
-
-        // 逐个依赖读其自身 package.json：声明 `dsh.bundle.patch` 即在册（判据单源在
-        // `plugins::package_declares_bundle`）。读不到按**未声明**处理——保守方向：
-        // 宁可让壳多写一条 `insert` 行（幂等、可复核），也不误判成"已自动激活"而漏挂。
-        let declared_bundles: Vec<String> = installed
-            .iter()
-            .filter(|name| crate::plugins::package_declares_bundle(&dir, name))
-            .cloned()
-            .collect();
+        // 插件事实（已装依赖 + 哪些声明了 dsh.bundle）—— **按世界取，同一组判据**。
+        // 第三个元素 = 客体档一次批量读到的各包 manifest（本地档为 None，走直读）。
+        let (installed, declared_bundles, guest_manifests) = match &world {
+            crate::mgmt::World::Local => {
+                let dir = home
+                    .as_deref()
+                    .expect("本地档必有 home")
+                    .join("profiles")
+                    .join(&profile);
+                let manifest = std::fs::read_to_string(dir.join("package.json"))
+                    .map_err(|e| format!("读取 profile 清单失败（{profile}）：{e}"))?;
+                let installed = crate::plugins::dependency_names(&manifest)?;
+                // 逐个依赖读其自身 package.json：声明 `dsh.bundle.patch` 即在册（判据单源在
+                // `plugins::manifest_declares_bundle`）。读不到按**未声明**处理——保守方向：
+                // 宁可让壳多写一条 `insert` 行（幂等、可复核），也不误判成"已自动激活"而漏挂。
+                let declared: Vec<String> = installed
+                    .iter()
+                    .filter(|name| crate::plugins::package_declares_bundle(&dir, name))
+                    .cloned()
+                    .collect();
+                (installed, declared, None)
+            }
+            crate::mgmt::World::Wsl { distro } => {
+                let rel_manifest = format!("profiles/{profile}/package.json");
+                let files = crate::guest::read_files(distro, std::slice::from_ref(&rel_manifest))?;
+                let manifest = files
+                    .into_iter()
+                    .next()
+                    .and_then(|(_, content)| content)
+                    .ok_or_else(|| {
+                        format!("读取 profile 清单失败（{profile}）：客体内不存在 {rel_manifest}")
+                    })?;
+                let installed = crate::plugins::dependency_names(&manifest)?;
+                // **一次批量往返**读全部依赖的 package.json（逐个调用会是 N 次 wsl.exe）。
+                let rels: Vec<String> = installed
+                    .iter()
+                    .map(|name| format!("profiles/{profile}/node_modules/{name}/package.json"))
+                    .collect();
+                let contents: std::collections::HashMap<String, String> =
+                    crate::guest::read_files(distro, &rels)?
+                        .into_iter()
+                        .filter_map(|(rel, content)| content.map(|c| (rel, c)))
+                        .collect();
+                let declared: Vec<String> = installed
+                    .iter()
+                    .filter(|name| {
+                        let rel = format!("profiles/{profile}/node_modules/{name}/package.json");
+                        contents
+                            .get(&rel)
+                            .map(|text| crate::plugins::manifest_declares_bundle(text))
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect();
+                (installed, declared, Some(contents))
+            }
+        };
 
         // 行态：一次 dump-config 拿全量行表（含 bundle 段落的贡献行合成条目）。
         let rows = crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)?;
@@ -293,8 +331,20 @@ pub async fn list_experimental_capabilities(
         let descriptions = installed
             .iter()
             .filter_map(|name| {
-                crate::plugins::installed_description(&home, &profile, name)
-                    .map(|d| (name.clone(), d))
+                // 客体档用**已批量读到**的那份 manifest（零额外往返）；本地档直读宿主文件。
+                let desc = match &guest_manifests {
+                    None => crate::plugins::installed_description(
+                        home.as_deref().expect("本地档必有 home"),
+                        &profile,
+                        name,
+                    ),
+                    Some(map) => map
+                        .get(&format!(
+                            "profiles/{profile}/node_modules/{name}/package.json"
+                        ))
+                        .and_then(|text| crate::plugins::manifest_description(text)),
+                };
+                desc.map(|d| (name.clone(), d))
             })
             .collect();
 
@@ -754,6 +804,24 @@ mod wsl_wiring_tests {
         assert!(
             src.contains("missing_prerequisites(&data_dir"),
             "本地档仍须查宿主 PATH（不得为了下沉而丢掉这道门）"
+        );
+    }
+
+    /// P1：实验能力目录必须按世界取插件事实，且**不得**再对客体档整体拒绝。
+    #[test]
+    fn capability_catalog_reads_the_running_world() {
+        let src = production_code();
+        assert!(
+            !src.contains("实验能力目录暂不支持 WSL 客体档"),
+            "能力目录不得退回「整体拒绝客体档」"
+        );
+        assert!(
+            src.contains("crate::guest::read_files(distro, &rels)"),
+            "客体档必须**一次批量**读各包 manifest（逐个调用 = N 次 wsl.exe 往返）"
+        );
+        assert!(
+            src.contains("manifest_description(text)"),
+            "官方简介必须与宿主共用同一判据（禁第二份 manifest 解析）"
         );
     }
 

@@ -195,7 +195,12 @@ pub fn installed_description(home: &Path, profile: &str, package: &str) -> Optio
             .join("package.json"),
     )
     .ok()?;
-    installed_info(&manifest).1
+    manifest_description(&manifest)
+}
+
+/// 同一份 manifest 文本 → 官方简介（**纯函数**，宿主/客体孪生共用；2026-09-21 抽核）。
+pub(crate) fn manifest_description(manifest_text: &str) -> Option<String> {
+    installed_info(manifest_text).1
 }
 
 /// manifest 原文 → 依赖包名（字典序；缺失 `dependencies` = 空表，非法 JSON = Err）。
