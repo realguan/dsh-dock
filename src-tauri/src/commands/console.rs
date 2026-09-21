@@ -56,9 +56,24 @@ pub async fn get_app_logs(
     tail_lines: Option<usize>,
 ) -> Result<crate::diagnostics::LogQueryResult, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 2026-09-21 平台审计 A5：本命令此前是 console.rs 里**唯一**没有世界分发的命令
+    // —— WSL 客体档下会静默读宿主世界的日志（给错结果比报错更坏）。日志源随世界
+    // 解析：`dsh` 在宿主档是 dsh-shell.log、客体档是 dsh-wsl.log；profile 级日志
+    // 在客体档改读**客体** home（`diagnostics::resolve_log_target` 真值表）。
+    let world = crate::mgmt::current_world(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let home = crate::resolve::user_dsh_home();
-        crate::diagnostics::read_app_logs(&source, &data_dir, &home, tail_lines.unwrap_or(500))
+        let log_world = match &world {
+            crate::mgmt::World::Local => crate::diagnostics::LogWorld::Local,
+            crate::mgmt::World::Wsl { distro } => crate::diagnostics::LogWorld::Guest { distro },
+        };
+        crate::diagnostics::read_app_logs(
+            &source,
+            log_world,
+            &data_dir,
+            &home,
+            tail_lines.unwrap_or(500),
+        )
     })
     .await
     .map_err(|e| format!("读取日志任务异常终止：{e}"))?
