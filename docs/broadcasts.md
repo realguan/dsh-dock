@@ -32,6 +32,39 @@
 
 ## 三、记录
 
+### 2026-09-21 快车道修复 · 关掉工作台窗口后「返回工作台」没反应（维护者真机报告）—— guan（AI 协作）
+
+- **变更**：`18c0cf3` —— 两半根因一并修，缺一不可：
+  ① **窗口被销毁**：`CloseRequested` 默认销毁窗口 ⇒ `get_webview_window("main")` 返回 `None`
+  ⇒ 三处唤回入口（控制台 IPC / 托盘左键 / 二次启动）全部落进"窗口不存在"分支，且旧写法
+  `if let Some` 把它**静默吞掉**（连日志都没有）——用户侧就是"点了没反应"。
+  ② **即便窗口还在，裸三连也会落空**：tao 0.35.3 的 macOS `set_focus()` 在
+  `is_minimized || !is_visible` 时**整个调用直接返回**（静默 no-op），而 `unminimize()` 是
+  **异步**动画 ⇒ 旧顺序常把 focus 跑在 deminiaturize 落地之前，既没提到前台也没走到
+  `NSApp.activateIgnoringOtherApps`。
+- **修法**：**关窗 = 隐藏**（三平台一致，`prevent_close()` + `hide()`，窗口与工作台进程都保留，
+  对齐 README「窗口可关，任务台仍在」；退出仍走托盘/菜单栏「退出」）＋ `bring_to_front`
+  唤起序（unminimize → show → set_focus ＋ 320ms 补焦，窗口缺失时响亮记日志）＋ **新增显式
+  唤回入口**（macOS 菜单栏「显示工作台」、托盘右键「显示工作台」、macOS 点 Dock 图标经
+  `RunEvent::Reopen`——macOS 无托盘，缺这些用户就困在"应用在跑、界面看不见"）＋
+  `focus_main_window` 改返回 `Result`（前端 `ProfileManager` 早有 `.catch(showToast)`，
+  返回 `()` 让那条路径**永远亮不起来**，这正是"没反应"的可见性缺口）。
+- **署名与协作（需并行工作流知悉）**：本修复的**基座**（`bring_to_front` 及其 2 例测试、单实例与
+  托盘左键改走它）来自**你方留在工作区的未提交改动**。维护者指示"你来继续把那个 bug 修了"
+  ⇒ 我接手补全（关窗=隐藏、菜单入口、Reopen、Result 返回、4 例闸门）并**连同基座一并提交**，
+  否则我的提交会引用未提交的 `bring_to_front` 而**编译不过**。若你方对基座有后续改动，
+  请直接在其上迭代（`18c0cf3` 之后工作区已干净）。
+- **闸门 6 例**（4 新 + 基座 2）：关窗必须 hide 且**不得只在 macOS** / 「显示工作台」在 macOS 菜单
+  与托盘两处都存在且接同一分派 / Dock Reopen 必须唤回 / 命令必须返回 Result 并前置判存在 /
+  raise 顺序 unminimize→show→set_focus / 三入口共用 helper。**负例实测**：去掉 `prevent_close`、
+  去掉 `show_main` 分派、命令不再判存在 ⇒ 各自精确红灯。
+- **影响**：① 关窗不再等于退出（行为变更，README 已写明唤回与退出方式）；② 控制台「返回工作台」、
+  托盘左键、二次启动、macOS Dock 四条路径行为一致。**无需他人动作，仅周知**。
+- **诚实边界**：GUI 行为本机点不了，闸门钉的是**结构与顺序**；关窗=隐藏与 Dock 唤回仍需维护者
+  在 macOS 真机点一次（本机即可，不依赖 Windows）。
+- **凭据**：`cargo test` **549 passed / 0 failed / 7 ignored**；`cargo fmt --check` ✓；宿主
+  `clippy --all-targets -D warnings` ✓；`python3 -m unittest discover -s scripts/tests` 26 ✓。
+
 ### 2026-09-21 平台对齐修复第二刀 · 快车道一轮（道 A 五项 + 开发计划）—— guan（AI 协作）
 
 - **计划**：`docs/plans/platform-parity-plan-2026-09-21.md` —— 审计剩余项按**能否在本机验证**分三道（道 A 本机可验 5 项 / 道 B 依赖 Windows 真机 5 项 / 道 C 待裁定 6 项），
