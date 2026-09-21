@@ -65,8 +65,10 @@ fn catalog_packages() -> Vec<&'static str> {
 /// （`dsh plugin add` 转发链）与前端串行安装队列。前端按变体的 `steps` **按序**执行
 /// 「装 → 确保行」，任一步失败即停在一致态（可续装）。
 ///
-/// 世界择源同 `list_experimental_capabilities`：WSL 客体档暂不支持（**显式报错，不回落本地写**
-/// ——写错 profile 比报错严重得多）。
+/// 世界择源同 `list_experimental_capabilities`：**两侧都已下沉**（2026-09-21，P0/P1）——
+/// 本地走宿主内核，客体走同一内核的孪生（读客体原文 → 变更 → 渲回客体，备份与原子替换
+/// 由 `guest::backup_file` / `guest::write_home_files` 保证）；前置硬门与 bundle 分类
+/// 也按世界分派（**同一问题在同一世界问**）。绝不回落本地写 —— 写错 profile 比报错严重得多。
 #[tauri::command]
 pub async fn apply_official_patch_row(
     app: tauri::AppHandle,
