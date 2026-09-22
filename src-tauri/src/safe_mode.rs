@@ -224,6 +224,137 @@ pub fn state(data_dir: &Path, profile: &str, home: &Path) -> SafeModeState {
     }
 }
 
+/// 已有记账且属于**别的世界** → 先归档，别静默抹掉那一侧的恢复指针（它还能用）。
+fn archive_foreign_journal(data_dir: &Path, profile: &str, world_id: &str) {
+    if let Some(existing) = read_journal(data_dir, profile) {
+        if !journal_belongs_to_world(&existing, world_id) {
+            let path = journal_path(data_dir, profile);
+            let archived = path.with_file_name(format!("{profile}.json.other-home-{}", now_unix()));
+            let _ = std::fs::rename(&path, &archived);
+        }
+    }
+}
+
+/// 客体孪生：进入安全模式（P0-c，2026-09-21）。
+///
+/// 与宿主档**同一内核**（`PatchFile::from_text` + `apply_disabled_toggle` + `render_checked`），
+/// 差别只在端点：patch 原文从**客体**读、备份与覆写走客体原语（`backup_file_named` /
+/// `write_home_files`，后者是 tmp+mv 原子替换）；记账世界身份 = `wsl:<distro>`。
+pub fn enter_in_guest(
+    distro: &str,
+    data_dir: &Path,
+    profile: &str,
+    ids: &[String],
+) -> Result<EnterOutcome, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    if ids.is_empty() {
+        return Err(
+            "没有可停用的三方挂载行（该 profile 的挂载行全部来自随包插件）——\
+             这类失败不是安全模式能解决的。"
+                .to_string(),
+        );
+    }
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, content)| content)
+        .ok_or_else(|| {
+            format!("读取客体 {rel} 失败：文件不存在（profile 尚未初始化？壳不代 dsh 生成三件套）")
+        })?;
+    let mut patch = crate::plugins::PatchFile::from_text(&text)?;
+    let mut changed = false;
+    for id in ids {
+        crate::plugins::validate_row_id(id)?;
+        changed |= crate::plugins::apply_disabled_toggle(&mut patch, id, true);
+    }
+    if !changed {
+        return Ok(EnterOutcome {
+            changed: false,
+            backup: None,
+        });
+    }
+    let rendered = patch.render_checked()?;
+    // 备份**必须先于**覆写；名字回传（相对客体 dsh home）以便之后一键还原。
+    let backup = crate::guest::backup_file_named(distro, &rel)?
+        .ok_or_else(|| format!("客体 {rel} 不存在，无法备份"))?;
+    crate::guest::write_home_files(distro, &[(rel, rendered)])?;
+
+    let world_id = format!("wsl:{distro}");
+    archive_foreign_journal(data_dir, profile, &world_id);
+    let journal = Journal {
+        disabled_rows: ids.to_vec(),
+        dsh_home: world_id,
+        applied_at: now_unix(),
+        dismissed_at: None,
+    };
+    write_journal(data_dir, profile, &journal)?;
+    remove_legacy_overlay(data_dir, profile);
+    Ok(EnterOutcome {
+        changed: true,
+        backup: Some(std::path::PathBuf::from(backup)),
+    })
+}
+
+/// 已有记账且属于**别的 dsh home** → 先归档，别静默抹掉那一侧的恢复指针（它还能用）。
+///
+/// 判据与宿主档**同一份**：记账世界身份（`wsl:<distro>`）比对 + `disabled_row_ids_from_text`
+/// 求"此刻仍停用"的交集；差别只在于 patch 原文是从**客体**取回来的。
+pub fn state_in_guest(
+    distro: &str,
+    data_dir: &Path,
+    profile: &str,
+) -> Result<SafeModeState, String> {
+    let world_id = format!("wsl:{distro}");
+    let Some(journal) =
+        read_journal(data_dir, profile).filter(|j| journal_belongs_to_world(j, &world_id))
+    else {
+        return Ok(SafeModeState {
+            active: false,
+            disabled_rows: Vec::new(),
+            notice_dismissed: false,
+        });
+    };
+    let rel = format!("profiles/{profile}/cordis.patch.yml");
+    let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
+        .into_iter()
+        .next()
+        .and_then(|(_, content)| content)
+        .unwrap_or_default();
+    let live = crate::plugins::disabled_row_ids_from_text(&text);
+    let disabled_rows: Vec<String> = journal
+        .disabled_rows
+        .into_iter()
+        .filter(|id| live.contains(id))
+        .collect();
+    Ok(SafeModeState {
+        active: !disabled_rows.is_empty(),
+        disabled_rows,
+        notice_dismissed: journal.dismissed_at.is_some(),
+    })
+}
+
+/// 客体孪生：关掉本轮横幅（只动宿主侧记账，故**不需要客体调用**，本地可测）。
+pub fn dismiss_notice_in_guest(
+    distro: &str,
+    data_dir: &Path,
+    profile: &str,
+) -> Result<bool, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let world_id = format!("wsl:{distro}");
+    let Some(mut journal) =
+        read_journal(data_dir, profile).filter(|j| journal_belongs_to_world(j, &world_id))
+    else {
+        return Ok(false);
+    };
+    if journal.dismissed_at.is_some() {
+        return Ok(true);
+    }
+    journal.dismissed_at = Some(now_unix());
+    write_journal(data_dir, profile, &journal)?;
+    Ok(true)
+}
+
 /// 关闭本轮的横幅（"不再提示"）：只改壳自有记账，**不碰 dsh 配置**。
 ///
 /// 幂等；不是本 home 的记账 → `Ok(false)`（不做任何事，也不报错）。
@@ -282,17 +413,10 @@ pub fn enter(
     let backup = patch
         .write_with_backup(&patch_path)?
         .ok_or_else(|| format!("{} 不存在，无法备份", patch_path.display()))?;
-    // 已有记账且属于**别的 dsh home** → 先归档，别静默抹掉那一侧的恢复指针（它还能用）。
-    if let Some(existing) = read_journal(data_dir, profile) {
-        if !journal_belongs_to(&existing, home) {
-            let path = journal_path(data_dir, profile);
-            let archived = path.with_file_name(format!("{profile}.json.other-home-{}", now_unix()));
-            let _ = std::fs::rename(&path, &archived);
-        }
-    }
+    archive_foreign_journal(data_dir, profile, &world_id_for_host(home));
     let journal = Journal {
         disabled_rows: ids.to_vec(),
-        dsh_home: home.display().to_string(),
+        dsh_home: world_id_for_host(home),
         applied_at: now_unix(),
         // 新的安全模式事件 → 横幅重新出现（关闭只对"本轮"生效）。
         dismissed_at: None,

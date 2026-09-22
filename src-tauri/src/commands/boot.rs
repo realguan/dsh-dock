@@ -137,29 +137,6 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
 ///
 /// 只读、零副作用（读壳自有记账 + 查那份备份在不在）；**不读运行态**——那是回环快照的职责。
 /// 前端用它渲染控制中心横幅（只说"停用了几个、去哪儿打开开关"；**没有恢复动作**）。
-/// 安全模式在 WSL 客体档的诚实拒绝文案（**读侧与写侧同一句**，2026-09-21 平台审计 A9）。
-fn wsl_safe_mode_unsupported() -> String {
-    "安全模式暂不支持 WSL 客体档：需补客体侧 patch 写原语后方可启用（有意不回落宿主，以免改错 profile）。"
-        .to_string()
-}
-
-/// 安全模式记账该用哪个 home（**纯函数**，三平台可测）。
-///
-/// 2026-09-21（平台审计 A9）修：读侧此前直接 `boot_target_home().unwrap_or_else(user_dsh_home)`，
-/// 而 **WSL 执行器的 `dsh_home()` 返回 `None`**（`executor.rs:108-110`）⇒ 客体档下会拿
-/// **宿主世界**的 home 去查安全模式记账，界面上显示出另一个世界的状态 —— 属红线 3 明禁的
-/// 静默降级（"读错世界"比报错更坏）。此处与写侧（`terminal_action`）同口径：**显式拒绝**。
-pub(crate) fn safe_mode_home(
-    world: &crate::mgmt::World,
-    boot_home: Option<std::path::PathBuf>,
-    user_home: std::path::PathBuf,
-) -> Result<std::path::PathBuf, String> {
-    if let crate::mgmt::World::Wsl { .. } = world {
-        return Err(wsl_safe_mode_unsupported());
-    }
-    Ok(boot_home.unwrap_or(user_home))
-}
-
 #[tauri::command]
 pub async fn get_safe_mode_state(
     app: tauri::AppHandle,
@@ -167,14 +144,18 @@ pub async fn get_safe_mode_state(
 ) -> Result<crate::safe_mode::SafeModeState, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::profiles::validate_profile_name(&profile)?;
-    // home 判定同 `terminal_action` 的口径：**本次启动实际用的那个**（缺记录时退用户 home），
-    // 但客体档一律先拒绝（见 `safe_mode_home`）——绝不拿宿主 home 冒充客体档。
-    let home = safe_mode_home(
-        &crate::mgmt::current_world(&app)?,
-        crate::boot::boot_target_home(&app),
-        crate::resolve::user_dsh_home(),
-    )?;
-    Ok(crate::safe_mode::state(&data_dir, &profile, &home))
+    // 按世界取源（2026-09-21 P0-c 下沉）：本地档用本次启动实际那个 home；
+    // 客体档读**客体** patch（记账世界身份 = wsl:<distro>）—— 绝不拿宿主 home 冒充。
+    match crate::mgmt::current_world(&app)? {
+        crate::mgmt::World::Local => {
+            let home =
+                crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+            Ok(crate::safe_mode::state(&data_dir, &profile, &home))
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::safe_mode::state_in_guest(&distro, &data_dir, &profile)
+        }
+    }
 }
 
 /// 关掉本轮的安全模式横幅（"不再提示"）：只写壳自有记账，**不碰 dsh 配置**。
@@ -189,12 +170,16 @@ pub async fn dismiss_safe_mode_notice(
 ) -> Result<bool, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::profiles::validate_profile_name(&profile)?;
-    let home = safe_mode_home(
-        &crate::mgmt::current_world(&app)?,
-        crate::boot::boot_target_home(&app),
-        crate::resolve::user_dsh_home(),
-    )?;
-    crate::safe_mode::dismiss_notice(&data_dir, &profile, &home)
+    match crate::mgmt::current_world(&app)? {
+        crate::mgmt::World::Local => {
+            let home =
+                crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
+            crate::safe_mode::dismiss_notice(&data_dir, &profile, &home)
+        }
+        crate::mgmt::World::Wsl { distro } => {
+            crate::safe_mode::dismiss_notice_in_guest(&distro, &data_dir, &profile)
+        }
+    }
 }
 
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
@@ -293,11 +278,23 @@ pub fn terminal_action(
                     return;
                 }
             };
-            if let crate::mgmt::World::Wsl { .. } = world {
-                // 与实验能力目录/写行同口径：客体侧需补原语，宁可报错不回落宿主。
-                emit_boot_error(&handle, &wsl_safe_mode_unsupported(), "");
-                return;
-            }
+            // 客体档（2026-09-21 P0-c 下沉）：`split_by_layer` 要拿"本 profile 的 patch 路径"
+            // 比对 dsh 从**客体视角**报出的层序路径 —— 宿主自己的 home 拼出来必然不等，
+            // 会把可停行全判成"够不到"。故先把客体侧 `${DSH_HOME:-$HOME/.dsh}` 问回来。
+            let guest_home: Option<String> = match &world {
+                crate::mgmt::World::Wsl { distro } => match crate::guest::dsh_home_abs(distro) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        emit_boot_error(
+                            &handle,
+                            &format!("安全模式无法定位客体 dsh home：{e}"),
+                            "",
+                        );
+                        return;
+                    }
+                },
+                crate::mgmt::World::Local => None,
+            };
             // **改哪个 home 必须用本次启动的实际值**（2026-09-16 独立复核 P1）：快照档的
             // home 是 `<data_dir>/runtimes/fallback-home`，每次启动被重同步覆写；按用户 home
             // 写会改错文件（动用户的 `~/.dsh` 同名 profile）且不可能生效。故显式拒绝该档，
@@ -325,10 +322,16 @@ pub fn terminal_action(
                 .and_then(|rows| {
                     // 层序：profile 层的停用桩停不到 **home 层**（更晚层）的行——如实区分，
                     // 否则会出现"报成功、再点一次改口早已停用"（2026-09-16 独立复核 P5）。
-                    let (ids, unreachable) = crate::safe_mode::split_by_layer(
-                        &rows,
-                        &crate::safe_mode::profile_patch_path(&home, &profile),
-                    );
+                    // 层序比对必须用**同一世界**的 patch 路径：客体档用问回来的客体 home 拼，
+                    // 否则可停行会被全判成"够不到"（见上方 guest_home 的说明）。
+                    let patch_path = match &guest_home {
+                        Some(gh) => crate::safe_mode::profile_patch_path(
+                            std::path::Path::new(gh),
+                            &profile,
+                        ),
+                        None => crate::safe_mode::profile_patch_path(&home, &profile),
+                    };
+                    let (ids, unreachable) = crate::safe_mode::split_by_layer(&rows, &patch_path);
                     let kept = rows.len() - ids.len() - unreachable.len();
                     // **无可停行**：如实报错、不空转启动。文案只陈述已知事实（0 条行时不能说
                     // "全部来自随包插件"）。
@@ -362,7 +365,15 @@ pub fn terminal_action(
                             unreachable.join("、")
                         )
                     };
-                    crate::safe_mode::enter(&home, &data_dir, &profile, &ids).map(|outcome| {
+                    let entered = match &world {
+                        crate::mgmt::World::Local => {
+                            crate::safe_mode::enter(&home, &data_dir, &profile, &ids)
+                        }
+                        crate::mgmt::World::Wsl { distro } => {
+                            crate::safe_mode::enter_in_guest(distro, &data_dir, &profile, &ids)
+                        }
+                    };
+                    entered.map(|outcome| {
                         if outcome.changed {
                             format!(
                                 "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）{partial}；\
@@ -445,43 +456,47 @@ mod tests {
     }
 }
 
-/// WSL 客体档安全模式「读错世界」的回归闸门（2026-09-21，平台审计 A9）。
+/// WSL 客体档安全模式接线不许回退（2026-09-21，P0-c）。
+///
+/// 语义演进留痕：A9 时期这里是"客体档**显式拒绝**读侧"（防读错世界）；本轮下沉后改为
+/// "客体档读**客体**世界"。退回任何一种旧形态（整体拒绝 / 拿宿主 home 冒充）都必须红。
 #[cfg(test)]
-mod safe_mode_world_tests {
-    use super::safe_mode_home;
-    use crate::mgmt::World;
-    use std::path::PathBuf;
-
-    fn user_home() -> PathBuf {
-        PathBuf::from("/home/u/.dsh")
+mod safe_mode_world_wiring_tests {
+    fn production_code() -> &'static str {
+        include_str!("boot.rs")
+            .split("mod safe_mode_world_wiring_tests")
+            .next()
+            .expect("split 至少返回一段")
     }
 
     #[test]
-    fn local_world_uses_the_boot_home_then_falls_back_to_user_home() {
-        let boot = PathBuf::from("/data/runtimes/fallback-home");
-        assert_eq!(
-            safe_mode_home(&World::Local, Some(boot.clone()), user_home()).unwrap(),
-            boot,
-            "本地档必须用本次启动实际那个 home（快照档的 home 与用户 home 不是一个）"
+    fn safe_mode_dispatches_by_world_on_both_sides() {
+        let src = production_code();
+        assert!(
+            !src.contains("安全模式暂不支持 WSL 客体档"),
+            "不得退回「整体拒绝客体档」"
         );
-        assert_eq!(
-            safe_mode_home(&World::Local, None, user_home()).unwrap(),
-            user_home()
-        );
+        for call in [
+            "crate::safe_mode::state_in_guest(",
+            "crate::safe_mode::dismiss_notice_in_guest(",
+            "crate::safe_mode::enter_in_guest(",
+            "crate::guest::dsh_home_abs(",
+        ] {
+            assert!(src.contains(call), "缺客体档接线：{call}");
+        }
     }
 
-    /// **核心**：客体档必须拒绝，而不是回落宿主 home（旧行为 = 静默读错世界）。
+    /// 客体档的层序比对必须用**客体** patch 路径：拿宿主 home 拼会让可停行全判成"够不到"。
     #[test]
-    fn guest_world_refuses_instead_of_reading_the_host_home() {
-        let err = safe_mode_home(
-            &World::Wsl {
-                distro: "Ubuntu-24.04".to_string(),
-            },
-            None, // WSL 执行器 dsh_home() 恒为 None —— 旧写法正是从这里回落宿主
-            user_home(),
-        )
-        .expect_err("客体档不得返回宿主 home");
-        assert!(err.contains("WSL 客体档"), "{err}");
-        assert!(err.contains("不回落宿主"), "必须说明为什么不回落：{err}");
+    fn layer_split_uses_the_guest_patch_path_in_guest_world() {
+        let src = production_code();
+        assert!(
+            src.contains("let patch_path = match &guest_home"),
+            "层序比对必须先按世界取 patch 路径"
+        );
+        assert!(
+            src.contains("split_by_layer(&rows, &patch_path)"),
+            "split_by_layer 必须收到按世界算出的路径"
+        );
     }
 }

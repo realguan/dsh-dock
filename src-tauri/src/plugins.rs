@@ -1589,7 +1589,13 @@ fn build_row_states(
 /// 用途（ADR-0026 第三次裁定后）：安全模式横幅要显示"**现在**还有几个插件行是停用的"
 /// ——用户逐个打开后数字要跟着降，不能停留在进入安全模式那一刻的快照。
 pub(crate) fn disabled_row_ids(patch_path: &Path) -> Vec<String> {
-    patch_entry_map(patch_path)
+    disabled_row_ids_from_text(&std::fs::read_to_string(patch_path).unwrap_or_default())
+}
+
+/// 文本版（**纯函数**，宿主/客体孪生共用；2026-09-21 P0-c）：客体档的 patch 原文由
+/// `guest::read_files` 取回，不能走路径读，但停用行的判据必须与宿主**同一份**。
+pub(crate) fn disabled_row_ids_from_text(text: &str) -> Vec<String> {
+    patch_entry_map_text(text)
         .into_iter()
         .filter(|(_, (disabled, _))| *disabled)
         .map(|(id, _)| id)

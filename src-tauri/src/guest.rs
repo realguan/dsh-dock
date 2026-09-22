@@ -591,6 +591,49 @@ pub(crate) const CMD_MISSING: &str = "@@DSH_DOCK_CMD_MISSING@@";
 /// **宿主 PATH**；而客体档的插件服务器在**客体内部**启动 —— 照搬会**误拒**（客体有、宿主无）
 /// 或**误放**（反之，然后把一个起不来的 profile 写坏，而那正是这道门要防的）。
 /// 同一问题必须在**同一世界**里问。
+/// 客体 dsh home 的**绝对路径**（一次 `wsl.exe` 往返）。
+///
+/// 为什么需要（P0-c，2026-09-21）：`safe_mode::split_by_layer` 要拿"本 profile 的 patch 路径"
+/// 去比对 dsh 从**客体视角**报出来的 `contributed_by` 路径 —— 宿主拿自己的 home 拼出来的路径
+/// 与客体路径必然不等，会把可停行全判成"够不到"，于是安全模式在客体档只能报"没有可停用的行"。
+/// 判据必须在同一世界里成立，故直接把客体侧 `${DSH_HOME:-$HOME/.dsh}` 问回来。
+#[cfg(windows)]
+pub(crate) fn dsh_home_abs(distro: &str) -> Result<String, String> {
+    let script = format!(
+        "{}printf '%s\\n' \"${{DSH_HOME:-$HOME/.dsh}}\"",
+        guest_prep!()
+    );
+    let out = crate::executor::run_wsl_capture(
+        Some(distro),
+        &["-e", "bash", "-lic", &script],
+        std::time::Duration::from_secs(30),
+    )
+    .ok_or_else(|| {
+        format!("取 {distro} 内 dsh home 失败：wsl.exe 调用失败或无输出（客体不可达？）")
+    })?;
+    parse_dsh_home_abs(&out).ok_or_else(|| {
+        format!(
+            "取 {distro} 内 dsh home 失败：输出中无绝对路径（{}）",
+            out.trim()
+        )
+    })
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+pub(crate) fn dsh_home_abs(_distro: &str) -> Result<String, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 从输出里挑出绝对路径行（**纯函数**，跨平台可测）：忽略 rc 噪音 / motd / 警告。
+#[cfg(any(windows, test))]
+pub(crate) fn parse_dsh_home_abs(raw: &str) -> Option<String> {
+    raw.lines()
+        .map(|l| l.trim().trim_end_matches('\r'))
+        .rfind(|l| l.starts_with('/') && l.len() > 1)
+        .map(|l| l.to_string())
+}
+
 /// 生成命令存在性探测脚本（**纯函数**：`cfg(any(windows, test))` ⇒ 本机 bash 可真跑验证）。
 #[cfg(any(windows, test))]
 pub(crate) fn missing_commands_script(commands: &[&str]) -> String {
@@ -1635,6 +1678,16 @@ mod missing_commands_tests {
             "无源文件不得回传备份名：{raw2}"
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 客体 home 解析：只认绝对路径行，噪音与相对路径一律忽略。
+    #[test]
+    fn dsh_home_abs_picks_the_absolute_path_line() {
+        let raw = "motd 噪音\nwarning: something\n/home/u/.dsh\n";
+        assert_eq!(parse_dsh_home_abs(raw).as_deref(), Some("/home/u/.dsh"));
+        // 只有噪音 / 相对路径 ⇒ None（宁可报错，不拿错路径去比对层序）
+        assert!(parse_dsh_home_abs("hello\nrelative/path\n").is_none());
+        assert!(parse_dsh_home_abs("/").is_none(), "根目录不算有效 home");
     }
 
     /// 反例守卫：`OK` 帧里出现的名字**绝不**能落进缺失清单（前缀必须是精确匹配）。
