@@ -1698,6 +1698,9 @@ mod missing_commands_tests {
 
     /// **脚本真跑**（本机 bash）：存在的命令不得出现在缺失清单里，不存在的必须在。
     /// 这一步把"只在 Windows 编译"的脚本半边，变成了本机可验证的证据。
+    // 实跑仅 unix 侧（同本文件既有 6 处）：Windows 宿主的路径/环境语义
+    // 不同（`$DSH_HOME` 在 Git Bash 下是 `C:\...`），断言会失真；客体真机复核归 Windows+WSL2 清单。
+    #[cfg(unix)]
     #[test]
     fn generated_script_reports_presence_and_absence_for_real() {
         let script = missing_commands_script(&["sh", "definitely-not-a-command-xyzzy"]);
@@ -1716,6 +1719,9 @@ mod missing_commands_tests {
 
     /// **备份脚本真跑**（本机 bash + 临时 DSH_HOME）：回传的名字必须**真的是**刚建的备份，
     /// 且是相对路径（宿主据此记账、之后一键还原）。
+    // 实跑仅 unix 侧（同本文件既有 6 处）：Windows 宿主的路径/环境语义
+    // 不同（`$DSH_HOME` 在 Git Bash 下是 `C:\...`），断言会失真；客体真机复核归 Windows+WSL2 清单。
+    #[cfg(unix)]
     #[test]
     fn backup_script_reports_the_real_backup_name() {
         let home = std::env::temp_dir().join(format!("dsh-dock-bak-{}", std::process::id()));
