@@ -77,6 +77,10 @@ export const api = {
   getWorkbenchUrl: () => invoke<string | null>("get_workbench_url"),
   openProfilesWindow: () => invoke<void>("open_profiles_window"),
   focusMainWindow: () => invoke<void>("focus_main_window"),
+  /** 壳能力（2026-09-21 §3.6）：`residentEntryAvailable === false` ⇒ 无托盘宿主的桌面上，
+   *  用户没有别的路进「关于 / 更新」，前端须在窗口内补一个入口。 */
+  getShellCapabilities: () => invoke<{ residentEntryAvailable: boolean }>("get_shell_capabilities"),
+  openAbout: () => invoke<void>("open_about"),
 
   // Profile 管理器（4.3；Rust 侧 profiles.rs；「已创建未装插件」为合法中间态）
   listProfiles: () => invoke<ProfileSummary[]>("list_profiles"),

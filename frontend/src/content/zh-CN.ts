@@ -353,6 +353,8 @@ export const t = {
   },
   // 控制中心（4.3 前端刀）。
   profiles: {
+    aboutEntry: "关于 / 更新",
+    aboutEntryTip: "打开关于窗口（本机没有托盘 / 菜单栏入口时的备用入口）",
     moreActions: "更多操作",
     listLabel: "Profile 列表",
     detailWorkspaceLabel: "Profile 详情工作区",

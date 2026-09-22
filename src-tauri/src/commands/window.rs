@@ -64,6 +64,38 @@ fn raise_once(app: &tauri::AppHandle, label: &str) -> bool {
     true
 }
 
+/// 壳能力查询（2026-09-21，§3.6）：前端据 `residentEntryAvailable` 决定是否在窗口内补
+/// 「关于 / 更新」入口。**只读进程内状态**，不碰文件、不触网。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellCapabilities {
+    /// 常驻入口（macOS 菜单栏 / 其余平台托盘）是否可达。false ⇒ 用户没有别的路进「关于 / 更新」。
+    pub resident_entry_available: bool,
+}
+
+#[tauri::command]
+pub fn get_shell_capabilities(app: tauri::AppHandle) -> Result<ShellCapabilities, String> {
+    let state = app
+        .try_state::<std::sync::Arc<crate::boot::ShellState>>()
+        .ok_or_else(|| "壳状态尚未就绪（setup 未完成？）".to_string())?;
+    Ok(ShellCapabilities {
+        resident_entry_available: state
+            .resident_entry_available
+            .load(std::sync::atomic::Ordering::SeqCst),
+    })
+}
+
+/// 打开「关于」窗口（**2026-09-21 恢复**，§3.6 裁定）。
+///
+/// 历史：原 `open_about` IPC 于 **2026-08-27 删除**，理由是「与原生常驻入口重复」——
+/// 该前提在**无 StatusNotifier 宿主的 Linux 桌面**上不成立（托盘建不起来 ⇒ 既看不到更新、
+/// 也打不开关于）。故恢复它，并由前端**只在 `residentEntryAvailable === false` 时**渲染入口：
+/// 既不重现当年的重复按钮，也不让用户困在没有入口的状态里。
+#[tauri::command]
+pub fn open_about(app: tauri::AppHandle) {
+    crate::ui::open_about_window(&app);
+}
+
 /// Profile 管理器窗口（控制中心）：独立窗口（label=profiles，React 渲染
 /// pages/ProfileManager.tsx）。独立窗口与 about 同理——主窗口 boot 后会
 /// 导航进 dsh 工作台（remote），壳页不可达；管理器要随时可达。

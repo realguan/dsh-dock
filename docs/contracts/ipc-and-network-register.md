@@ -26,7 +26,7 @@
 
 **Profile**：`list_profiles` `get_profile_detail` `create_profile` `copy_profile`
 `rename_profile` `delete_profile` `set_default_profile` `get_default_profile`
-`switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window`。
+`switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window` `open_about` `get_shell_capabilities`（2026-09-21 立，§3.6：无托盘宿主的 Linux 桌面上，「关于 / 更新」原本**没有任何入口** —— 原 `open_about` 于 2026-08-27 因「与常驻入口重复」删除，而该前提在此场景失效。前端**只在 `residentEntryAvailable === false` 时**渲染入口；两命令均只读进程内状态 / 开壳自有窗口，不碰文件与网络）。
 
 **插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
 `update_plugin` `get_plugin_rows` `get_safe_mode_state`（2026-09-16 立，ADR-0026 第三版口径：安全模式的

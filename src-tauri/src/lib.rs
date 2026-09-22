@@ -215,6 +215,10 @@ pub fn run() {
                 // 首启线程用 begin_boot() 领 1（ADR-0014）。
                 boot: boot::BootRound::default(),
                 shutting_down: AtomicBool::new(false),
+                // 默认 false（"尚不可达"）：由下方平台 setup 阶段据实置位 ——
+                // macOS 无托盘但有菜单栏，那里直接置 true。默认值取"不可达"是**安全方向**：
+                // 万一置位路径漏了，用户仍能在窗口内找到关于/更新入口，而不是两者皆无。
+                resident_entry_available: AtomicBool::new(false),
                 handoff: Mutex::new(None),
             });
             app.manage(state.clone());
@@ -250,9 +254,25 @@ pub fn run() {
                 // 不阻断启动——常驻更新入口缺失可接受，应用不可用不可接受；
                 // ADR-0007 边界澄清，落档 broadcasts。
                 #[cfg(not(target_os = "macos"))]
-                if let Err(e) = ui::setup_update_tray(&app_handle) {
-                    tracing::warn!("托盘初始化失败（常驻更新入口缺失，应用继续）：{e}");
+                {
+                    let ok = match ui::setup_update_tray(&app_handle) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!("托盘初始化失败（常驻更新入口缺失，应用继续）：{e}");
+                            false
+                        }
+                    };
+                    // §3.6：把"常驻入口是否可达"如实告知前端 —— 无 StatusNotifier 宿主的桌面上
+                    // 用户否则既看不到更新、也打不开关于（2026-08-27 删 open_about IPC 的前提失效）。
+                    state
+                        .resident_entry_available
+                        .store(ok, std::sync::atomic::Ordering::SeqCst);
                 }
+                // macOS：无托盘但**有菜单栏**（"关于/显示工作台"都在），常驻入口恒可达。
+                #[cfg(target_os = "macos")]
+                state
+                    .resident_entry_available
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 ui::refresh_app_menu(&app_handle, &state);
                 boot::emit_update(&app_handle, &status);
             }
@@ -443,6 +463,8 @@ pub fn run() {
             commands::market::fetch_market_registry,
             commands::window::open_profiles_window,
             commands::window::focus_main_window,
+            commands::window::open_about,
+            commands::window::get_shell_capabilities,
             commands::boot::get_boot_status,
         ])
         .build(tauri::generate_context!())

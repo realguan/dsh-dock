@@ -192,6 +192,11 @@ pub(crate) struct ShellState {
     /// 应用退出中（2026-09-10，ADR-0014）：RunEvent::Exit 先置位再收会话，
     /// 阻断在途启动线程在退出之后 spawn 出无人认领的 dsh。
     pub(crate) shutting_down: AtomicBool,
+    /// **常驻入口是否可达**（2026-09-21，§3.6）：macOS 走菜单栏（恒可达）；其余平台取决于托盘
+    /// 是否创建成功 —— 无 StatusNotifier 宿主的桌面（i3/sway/精简环境）会失败，此时"关于 / 更新"
+    /// 在壳内**没有任何入口**（原 `open_about` IPC 于 2026-08-27 因"与常驻入口重复"被删）。
+    /// 前端据本标志**仅在该场景**在窗口内补一个入口。
+    pub(crate) resident_entry_available: AtomicBool,
     /// 交接意图（2026-09-10，ADR-0014）：重启/切换的贯穿状态，两窗共用；
     /// 经 get_boot_status 暴露给前端（含主窗口整文档替换后的首次补水）。
     pub(crate) handoff: Mutex<Option<Handoff>>,

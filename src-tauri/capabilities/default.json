@@ -75,6 +75,8 @@
     "allow-fetch-market-registry",
     "allow-open-profiles-window",
     "allow-focus-main-window",
+    "allow-open-about",
+    "allow-get-shell-capabilities",
     "allow-get-boot-status"
   ]
 }

@@ -18,6 +18,12 @@ import { deriveHandoff } from "@/lib/handoff"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
 import { HandoffRail } from "@/components/boot/HandoffRail"
+import {
+  CAPABILITIES_FALLBACK,
+  fetchShellCapabilities,
+  shouldShowAboutEntry,
+  type ShellCapabilities,
+} from "@/lib/shellCapabilities"
 import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginHub } from "@/components/market/PluginHub"
@@ -157,6 +163,13 @@ export function ProfileManager() {
   // 列表只在**交接落定**（就绪/失败）时刷一次：那才是真相变化的时刻。
   const bootSteps = useBootStore((s) => s.steps)
   const bootIntent = useBootStore((s) => s.intent)
+  // §3.6：常驻入口是否可达 —— 决定要不要在窗口内补「关于 / 更新」。
+  // 拉取失败按"补入口"处理（见 shellCapabilities 的理由：漏补是功能缺失）。
+  const [caps, setCaps] = useState<ShellCapabilities | null>(null)
+  useEffect(() => {
+    void fetchShellCapabilities().then(setCaps, () => setCaps(CAPABILITIES_FALLBACK))
+  }, [])
+
   const handoff = useMemo(() => deriveHandoff(bootIntent, bootSteps), [bootIntent, bootSteps])
   const handoffPhase = handoff?.phase ?? null
   const handoffGeneration = bootIntent?.generation ?? -1
@@ -342,6 +355,24 @@ export function ProfileManager() {
           <QuickDshSwitcher />
         </div>
         </div>
+
+        {/* §3.6：**只在本机没有常驻入口时**才渲染 —— 无 StatusNotifier 宿主的 Linux 桌面上，
+            托盘建不起来，用户否则既看不到更新、也打不开关于（原 open_about 于 2026-08-27
+            因"与常驻入口重复"删除，该前提在此场景失效）。 */}
+        {shouldShowAboutEntry(caps) && (
+          <button
+            type="button"
+            onClick={() => {
+              api.openAbout().catch((e) => {
+                showToast(String(e), "warn")
+              })
+            }}
+            title={t.profiles.aboutEntryTip}
+            className="text-meta text-dim hover:text-ink mt-2 self-start underline underline-offset-2 transition-colors"
+          >
+            {t.profiles.aboutEntry}
+          </button>
+        )}
 
         {/* 交接导轨（ADR-0014）：吸顶块内、标题行下方——重启的贯穿进度
             （四段 + 计时 + 「查看进度」跳主窗口）在任何视图下都不会滚走。

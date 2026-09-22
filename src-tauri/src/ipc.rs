@@ -73,6 +73,8 @@ pub const COMMANDS: &[&str] = &[
     "fetch_market_registry",
     "open_profiles_window",
     "focus_main_window",
+    "open_about",
+    "get_shell_capabilities",
     "get_boot_status",
 ];
 

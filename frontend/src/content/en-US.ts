@@ -351,6 +351,8 @@ export const enUS: AppCopy = {
     versionFilterLabel: "Version filter",
   },
   profiles: {
+    aboutEntry: "About / Update",
+    aboutEntryTip: "Open the About window (fallback when this machine has no tray / menu-bar entry)",
     moreActions: "More actions",
     listLabel: "Profile list",
     detailWorkspaceLabel: "Profile detail workspace",
