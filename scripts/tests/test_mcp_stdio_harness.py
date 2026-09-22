@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 import unittest
@@ -30,14 +31,26 @@ def _node() -> str | None:
     return shutil.which("node")
 
 
-@unittest.skipIf(_node() is None, "本机无 node（CI 的 Linux leg 有）：跳过搬运器实跑")
+def _node_or_fail() -> str | None:
+    """取 node；**CI 硬失败、本机可跳过**（同 `DSH_TEST_REQUIRE_NODE=1` 的既有纪律）。
+
+    为什么不能一味 skip：静默跳过 = 0 断言 = 绿灯失真（本仓 2026-09-08 架构评审的教训）。
+    本闸门验的是"搬运器真能把子进程喂通、超时真能杀掉"，CI 上必须真跑。
+    """
+    node = _node()
+    if node is None and os.environ.get("DSH_TEST_REQUIRE_NODE") == "1":
+        raise AssertionError("DSH_TEST_REQUIRE_NODE=1 但 PATH 上没有 node：搬运器闸门不允许静默跳过")
+    return node
+
+
+@unittest.skipIf(_node() is None, "本机无 node（CI 的 Linux leg 有 node）：跳过搬运器实跑")
 class McpStdioHarnessTests(unittest.TestCase):
     """搬运器：端到端实跑（起真实子进程 + 真管道）。"""
 
     def _run(self, request: dict) -> dict:
         payload = base64.b64encode(json.dumps(request).encode("utf-8")).decode("ascii")
         proc = subprocess.run(
-            [_node(), str(_HARNESS), payload],
+            [_node_or_fail(), str(_HARNESS), payload],
             capture_output=True,
             text=True,
             timeout=60,
