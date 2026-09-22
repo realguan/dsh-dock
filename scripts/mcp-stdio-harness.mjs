@@ -8,7 +8,16 @@
 // 协议请求由宿主生成、响应由宿主解析。
 //
 // 用法：node mcp-stdio-harness.mjs <base64(JSON 请求)>
-// 请求：{ command, args[], cwd?, envPath?, stdin, timeoutMs }
+// 请求：{ command, args[], cwd?, envPath?, stdin?, steps?, timeoutMs }
+//
+// **两种模式**：
+//   ① `stdin`：一次性把整段文本喂进去（适合无握手的普通进程）。
+//   ② `steps`：**脚本化对话** —— 由宿主给出步骤序列，脚本逐步执行：
+//        [{ write: "<一行>" }, { awaitId: 1 }, { write: "..." }, { awaitId: 2 }, ...]
+//      为什么必须有它：MCP 握手**有序**（initialize ⇒ 等响应 ⇒ initialized ⇒ 才能 list）。
+//      一次性喂完等于并发发请求，违反协议顺序，部分服务器会直接忽略后续请求。
+//      但"等待哪个 id"这类知识仍属**宿主**（步骤由宿主生成）—— 脚本只认 write / awaitId，
+//      零 MCP 知识，故不存在第二份协议实现。
 // 输出：**单行 JSON**（下游按行解析，与 guest 其它脚本同口径）：
 //   { ok: true, code, elapsedMs, stdoutB64: [...], stderrTail }
 //   { ok: false, error, code?, elapsedMs, stderrTail }
@@ -51,7 +60,21 @@ const stdout = []
 let stderrTail = ""
 child.stdout.on("data", (d) => {
   for (const line of d.toString("utf8").split("\n")) {
-    if (line.trim()) stdout.push(Buffer.from(line, "utf8").toString("base64"))
+    if (!line.trim()) continue
+    stdout.push(Buffer.from(line, "utf8").toString("base64"))
+    try {
+      const msg = JSON.parse(line)
+      if (typeof msg.id === "number") {
+        seenIds.add(msg.id)
+        const resolve = pending.get(msg.id)
+        if (resolve) {
+          pending.delete(msg.id)
+          resolve()
+        }
+      }
+    } catch {
+      // 非 JSON 行（服务器的日志）：照样收进 stdout，交给宿主判断
+    }
   }
 })
 child.stderr.on("data", (d) => {
@@ -87,11 +110,45 @@ child.on("close", (code) => {
   process.exit(0)
 })
 
-// 一次性喂完（JSON-RPC 在 stdio 上按序处理）：宿主已把 initialize / initialized /
-// list 请求按序拼好，这里只负责写进去并关掉 stdin（多数服务器据此判定"客户端说完了"）。
-try {
-  child.stdin.write(req.stdin ?? "")
+// ---- 投递：脚本化对话（steps）或一次性喂入（stdin） ----
+const pending = new Map() // id -> resolve，供 awaitId 等待
+const seenIds = new Set()
+
+function awaitId(id, deadline) {
+  if (seenIds.has(id)) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    pending.set(id, resolve)
+    const left = deadline - Date.now()
+    if (left <= 0) return reject(new Error(`等待 id=${id} 超时`))
+    setTimeout(() => {
+      if (pending.delete(id)) reject(new Error(`等待 id=${id} 超时`))
+    }, left)
+  })
+}
+
+async function runSteps(steps, deadline) {
+  for (const step of steps) {
+    if (Date.now() > deadline) throw new Error("步骤执行超时")
+    if (typeof step.write === "string") {
+      child.stdin.write(step.write.endsWith("\n") ? step.write : step.write + "\n")
+    } else if (typeof step.awaitId === "number") {
+      await awaitId(step.awaitId, deadline)
+    } else {
+      throw new Error(`未知步骤：${JSON.stringify(step)}`)
+    }
+  }
   child.stdin.end()
-} catch (e) {
-  fail(`写入 stdin 失败：${e.message}`, { elapsedMs: Date.now() - started })
+}
+
+if (Array.isArray(req.steps)) {
+  runSteps(req.steps, started + timeoutMs).catch((e) =>
+    fail(`对话失败：${e.message}`, { elapsedMs: Date.now() - started, stderrTail }),
+  )
+} else {
+  try {
+    child.stdin.write(req.stdin ?? "")
+    child.stdin.end()
+  } catch (e) {
+    fail(`写入 stdin 失败：${e.message}`, { elapsedMs: Date.now() - started })
+  }
 }

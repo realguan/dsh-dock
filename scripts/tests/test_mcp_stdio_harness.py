@@ -93,6 +93,58 @@ class McpStdioHarnessTests(unittest.TestCase):
         tools = [t["name"] for t in json.loads(lines[1])["result"]["tools"]]
         self.assertEqual(tools, ["alpha", "beta"])
 
+    def _requests(self) -> list[str]:
+        return [
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 3, "method": "resources/list", "params": {}}),
+        ]
+
+    def test_scripted_dialogue_respects_handshake_order(self) -> None:
+        """`steps` 模式必须**等响应再发下一条** —— 守顺序的服务器才肯回 list。"""
+        reqs = self._requests()
+        steps = [
+            {"write": reqs[0]},
+            {"awaitId": 1},
+            {"write": reqs[1]},
+            {"write": reqs[2]},
+            {"awaitId": 2},
+            {"write": reqs[3]},
+            {"awaitId": 3},
+        ]
+        result = self._run(
+            {
+                "command": _node(),
+                "args": [str(_FAKE), "--strict"],
+                "steps": steps,
+                "timeoutMs": 20000,
+            }
+        )
+        self.assertTrue(result["ok"], result)
+        lines = [base64.b64decode(b).decode("utf-8") for b in result["stdoutB64"]]
+        ids = [json.loads(l)["id"] for l in lines]
+        self.assertEqual(ids, [1, 2, 3], f"三步都必须拿到响应：{lines}")
+
+    def test_batch_mode_fails_against_a_strict_server(self) -> None:
+        """反例：一次性喂完在守顺序的服务器上**拿不到** list 响应 —— 这正是必须有 steps 的理由。
+
+        这条同时是"搬运器真能区分两种模式"的证明：若哪天有人在宿主侧图省事退回一次性喂完，
+        真实服务器（守顺序的那些）会静默少响应，而这条用例把该行为钉在这里。
+        """
+        result = self._run(
+            {
+                "command": _node(),
+                "args": [str(_FAKE), "--strict"],
+                "stdin": "\n".join(self._requests()) + "\n",
+                "timeoutMs": 20000,
+            }
+        )
+        self.assertTrue(result["ok"], result)
+        lines = [base64.b64decode(b).decode("utf-8") for b in result["stdoutB64"]]
+        ids = [json.loads(l)["id"] for l in lines]
+        self.assertEqual(ids, [1], f"守顺序的服务器只会回 initialize：{lines}")
+
     def test_missing_command_fails_loudly_without_hanging(self) -> None:
         result = self._run(
             {
