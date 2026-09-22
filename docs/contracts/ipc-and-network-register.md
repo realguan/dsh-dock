@@ -42,14 +42,14 @@
 `list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
 2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
 三级事实视图，状态含 `off/on/disabled/partial/conflict`，由后端按「包 × 挂载行 × disabled」
-一次算全；另附 `toggleOffSupported` / `displaced`；**WSL 客体档显式报错**，不回落本地读）
+一次算全；另附 `toggleOffSupported` / `displaced`；**已下沉客体档**（2026-09-21，P0/P2：同一内核 + 客体原语），不回落本地读）
 `apply_official_patch_row`（2026-09-15 立、2026-09-16 §7.4 改为**写前当场重判**：包已装后
 重读其 `package.json` 判定是否声明 `dsh.bundle`，声明者**拒绝写行**并回报
 `autoActivated`（安装前判定会给 profile 层多写一条 = 重复挂载）；幂等、经 `PatchFile`、
-写后回读组合树自证；**WSL 客体档显式报错**）`remove_official_patch_row`（2026-09-16，
+写后回读组合树自证；**已下沉客体档**（2026-09-21，P0/P2：同一内核 + 客体原语））`remove_official_patch_row`（2026-09-16，
 ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并清同 id 的停用桩，
 只接受 `dsh-dock-` 前缀（bundle 自带行与用户手写行不得代删），删除后回读自证该行已不在
-组合树；幂等；**WSL 客体档显式报错**）`copy_plugin_config`（patch 行原样复制，
+组合树；幂等；**已下沉客体档**（2026-09-21，P0/P2：同一内核 + 客体原语））`copy_plugin_config`（patch 行原样复制，
 写入例外 #4，ADR-0009 五修 2026-08-30）。
 
 **会话 / 控制台 / 凭据 / 设置 / MCP**（2026-08-31 批）：`list_sessions` `repair_session`
@@ -59,7 +59,7 @@ ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并
 `get_credentials_summary` `set_credential_key` `get_dsh_settings_raw`
 `save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`
 `probe_mcp_server`（2026-09-15，ADR-0022：探测 MCP 能力；**stdio 分支**经 `lifecycle`
-seam 起子进程，http 分支为条目级网络豁免，WSL 客体档显式报错）。
+seam 起子进程，http 分支为条目级网络豁免；**stdio 分支已下沉客体档**（2026-09-21，P2：宿主生成有序对话、客体搬运器执行、宿主同一套纯函数解析），**streamable-http 在客体档显式拒绝**并说明理由（url 指客体内部地址，从宿主发是错结论；非平台收窄，是语义边界））。
 
 > **2026-09-18 生效范围建模（命令条数不变；参数与语义变更）**：
 > - `list_mcp_servers` 改为读**两层**（`profiles/<名>/cordis.patch.yml` +

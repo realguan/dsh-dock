@@ -96,7 +96,7 @@ fn ensure_catalog_insert_row_in_guest(distro, profile, id, pkg, cfg) -> Result<b
 | **P0** | ✅ **已完成（2026-09-21）** `3bb7fc3`→`e9cbde0`：**未新写内核**（原 .mjs 方案作废，见 §1 修正），改用 `PatchFile::from_text` 同一内核；写入/删除两侧接线 + 客体侧前置门 `guest::missing_commands` | 三不变量+自证全由既有原语提供；闸门：内核 4 例、命令探测 4 例（含**本机 bash 真跑**）、接线不许回退 3 例 |
 | **P1** | ✅ **已完成** `e7c7449`：实验能力目录下沉（插件事实按世界取，客体**一次批量** read_files；简介判据抽核共用） | 闸门 1 例（不得退回整体拒绝 + 一次批量 + 共用判据） |
 | **P0-c** | ⏳ 进行中：① ✅ 客体备份**可寻址**（`backup_file_named` 回传相对路径，`c849e2e`）；② ✅ 记账**世界身份**（`journal_world_id` = `wsl:<distro>`，旧记账向后兼容，`6c53c83`）；③ ⏳ 待做：`enter`/`exit` 客体孪生（同一内核 `apply_disabled_toggle` + 上述两片原语）+ `commands/boot.rs` 接线 | ①② 已有闸门（备份本机 bash 真跑 / 世界身份 3 例） |
-| **P2** | ⏳ MCP 探测客体内执行 | 待做 |
+| **P2** | ✅ **已完成**（`15d7574`→`89ae6b2`）：通用 stdio 搬运器（零 MCP 知识，支持**有序对话** steps）+ 客体执行入口 + `collect_probe_results` 归位 + `probe_stdio_in_guest` + console.rs 接线；http 分支在客体档**显式拒绝并说明理由**（语义边界，非平台收窄） | 闸门：搬运器端到端 6 例（含反例）+ 归位映射 2 例 + 接线 2 例 |
 | **P1** | 实验能力目录客体读 | 客体档返回与本地档**同形状**的三级视图；一次 `wsl.exe` 往返 |
 | **P2** | MCP 探测客体内执行 | 真实服务器在客体档探出工具/资源；超时有界；失败原因原样透出 |
 | **收尾** | 删除 `commands/*.rs` 中四处 `World::Wsl => Err(...)` 分支与 `wsl_safe_mode_unsupported()`；`docs/contracts/ipc-and-network-register.md` 五处「WSL 客体档显式报错」改为「已下沉」；发布日志「补齐项」相应收敛 | grep 归零 + 文档一致 |
