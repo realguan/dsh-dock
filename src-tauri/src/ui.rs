@@ -170,6 +170,26 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
             );
     }
 
+    // Windows 沉浸式标题栏（2026-09-21，**对标官方 dsh 桌面客户端**）：
+    //
+    // 官方（Electron，`apps/desktop/src/main.ts:111-133`，**仅主窗口**）用
+    // `titleBarStyle:'hidden'` + `titleBarOverlay{height:40, color, symbolColor}`：隐藏原生标题栏，
+    // 由系统在 40px 带里绘制最小化/最大化/关闭；`preload-windows.ts:12` 再打
+    // `data-windows-titlebar` + `--dsh-windows-titlebar-height:40px`，页面据此预留该带并自绘拖拽条。
+    //
+    // Tauri **没有** `titleBarOverlay` 等价 API（`TitleBarStyle` 文档原文 "on macOS"），故等价映射为：
+    //   ① 这里 `decorations(false)`（= 隐藏原生标题栏，对应官方的 `titleBarStyle:'hidden'`）；
+    //   ② 注入脚本打**同一套标记**（页面行为与官方逐字一致，含 40px 带与拖拽条）；
+    //   ③ 控件由壳**自绘**（`frontend/src/injected/immersive-chrome.js` 的 Windows 分支）——
+    //      这是与官方唯一的偏差，已登记在 ADR-0029/广播里。
+    //
+    // **待 Windows 真机验收（道 B 阻塞项）**：① 观感是否与官方一致；② `decorations(false)` 后
+    //   缩放/贴靠（snap）/投影是否退化 —— 若退化则回退本 cfg 块（改动集中在此，回退成本 = 一行）。
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.decorations(false);
+    }
+
     let window = builder.initialization_script(immersive_script).build()?;
 
     // 红绿灯定位（ADR-0029）：目标 = 与侧边栏收起按钮（dsh darwin topStrip 的 toggle，
@@ -1049,6 +1069,81 @@ mod main_window_lifecycle_tests {
         assert!(
             src.contains("get_webview_window(\"main\").is_none()"),
             "必须前置判存在并给出可行动错误"
+        );
+    }
+}
+
+/// Windows 沉浸式标题栏接线闸门（2026-09-21，维护者裁定「参照官方 dsh 客户端方案」）。
+#[cfg(test)]
+mod windows_immersive_wiring_tests {
+    fn ui_source() -> &'static str {
+        include_str!("ui.rs")
+            .split("mod windows_immersive_wiring_tests")
+            .next()
+            .expect("split 至少返回一段")
+    }
+
+    /// 隐藏原生标题栏必须**只在 Windows** 生效：macOS 走 Overlay+vibrancy、其余平台保持原生装饰
+    /// （把关窗/菜单/托盘那套既有语义一起收窄会波及三平台）。
+    #[test]
+    fn decorations_off_is_windows_only() {
+        let src = ui_source();
+        let at = src
+            .find("builder = builder.decorations(false);")
+            .expect("缺 Windows 的 decorations(false)：官方方案的等价映射点");
+        let before = &src[..at];
+        let cfg = before.rfind("#[cfg(target_os = \"windows\")]");
+        assert!(
+            cfg.is_some(),
+            "decorations(false) 必须包在 #[cfg(target_os = \"windows\")] 里"
+        );
+        // 反例方向：不得无条件关装饰（那会把 macOS/Linux 的窗口一起改坏）
+        assert!(
+            !src.contains("\n    builder = builder.decorations(false);"),
+            "不得无条件关装饰"
+        );
+    }
+
+    /// 注入脚本必须**自称**对标官方 preload-windows.ts，并打同一套标记与 40px 高度。
+    #[test]
+    fn injected_script_carries_the_official_windows_markers() {
+        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
+        assert!(
+            injected.contains("data-windows-titlebar"),
+            "缺官方标记 data-windows-titlebar（页面据此预留 40px 带）"
+        );
+        assert!(
+            injected.contains("--dsh-windows-titlebar-height"),
+            "缺官方 CSS 变量（高度必须与官方一致）"
+        );
+        assert!(
+            injected.contains("WINDOWS_TITLEBAR_HEIGHT = 40"),
+            "高度常量必须与官方 windows-layout.ts:4 一致（40）"
+        );
+        for api in ["minimize()", "toggleMaximize()", "close()"] {
+            assert!(injected.contains(api), "自绘控件缺 {api} 接线");
+        }
+    }
+
+    /// 零裸色值（paletteTokens 闸门的同一条纪律，这里再钉一次口径）：
+    /// 自绘控件不得绕过 token —— 官方用系统原生控件，我们自绘就必须从主题继承/派生。
+    #[test]
+    fn drawn_controls_use_no_literal_colors() {
+        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
+        // `.split(..).last()` = **函数定义之后的全部**（该词出现两处：平台分支的调用
+        // 与函数定义；`.nth(1)` 只拿到两者之间的空段 —— 本闸门第一版就栽在这里）。
+        let controls = injected
+            .split("installWindowsTitlebar")
+            .last()
+            .filter(|seg| seg.contains("WINDOWS_TITLEBAR_HEIGHT"))
+            .expect("缺 Windows 分支实现");
+        assert!(
+            !controls.contains("background:#"),
+            "自绘控件不得使用裸 hex 背景色（paletteTokens 闸门的同一条纪律）"
+        );
+        assert!(
+            controls.contains("color-mix(in srgb,currentColor"),
+            "hover 必须从当前文字色派生（color-mix），而不是另立色值"
         );
     }
 }

@@ -16,6 +16,8 @@ import {
   immersivePlatformAttrFor,
   isWorkbenchHostnameSync,
   syncWorkbenchProbe,
+  WINDOWS_TITLEBAR_HEIGHT,
+  windowsTitlebarPlanFor,
 } from "@/lib/immersiveChrome"
 
 describe("immersivePlatformAttrFor", () => {
@@ -94,5 +96,24 @@ describe("syncWorkbenchProbe", () => {
     for (const origin of ["tauri://localhost", "http://tauri.localhost", "http://localhost:1420"]) {
       expect(syncWorkbenchProbe(origin, new URL(origin).hostname, null)).toBe("defer")
     }
+  })
+})
+
+describe("Windows 标题栏标记（对标官方 preload-windows.ts）", () => {
+  it("Windows ⇒ 打 data-windows-titlebar 并给 40px 高度变量（与官方常量一致）", () => {
+    const plan = windowsTitlebarPlanFor("windows")
+    expect(plan).not.toBeNull()
+    expect(plan!.attr).toBe("data-windows-titlebar")
+    expect(plan!.cssVar).toBe("--dsh-windows-titlebar-height")
+    expect(plan!.cssValue).toBe("40px")
+    expect(WINDOWS_TITLEBAR_HEIGHT).toBe(40)
+  })
+
+  it("反例守卫：仅 Windows 生效 —— macOS 走 darwin 标记、Linux 两者都不打", () => {
+    expect(windowsTitlebarPlanFor("macos")).toBeNull()
+    expect(windowsTitlebarPlanFor("linux")).toBeNull()
+    expect(windowsTitlebarPlanFor(undefined)).toBeNull()
+    expect(immersivePlatformAttrFor("windows")).toBeNull()
+    expect(immersivePlatformAttrFor("macos")).toBe("darwin")
   })
 })

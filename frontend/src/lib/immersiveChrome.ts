@@ -40,6 +40,34 @@ export function immersivePlatformAttrFor(os: string | undefined): string | null 
   return os === "macos" ? DSH_PLATFORM_MARKER : null
 }
 
+/** 官方 Windows 标题栏带高度（`apps/desktop/src/windows-layout.ts:4` 的 WINDOWS_TITLEBAR_HEIGHT；
+ *  2026-09-21 源锚）。改值 = 与官方分叉，须有依据。 */
+export const WINDOWS_TITLEBAR_HEIGHT = 40
+
+/** Windows 标记（对标官方 `preload-windows.ts:12` 的两件事）。
+ *
+ * 官方在 Windows 上是 `titleBarStyle:'hidden'` + `titleBarOverlay`（**原生**绘制最小化/最大化/
+ * 关闭，40px 带，颜色随主题）；Tauri 无 `titleBarOverlay` 等价 API（`TitleBarStyle` 文档原文
+ * "on macOS"），故壳侧映射为：`decorations(false)` + **同一套标记**（页面据此预留 40px 带并
+ * 自绘拖拽条，与官方逐字一致）+ **自绘控件**（唯一偏差，已登记）。 */
+export interface WindowsTitlebarPlan {
+  /** 要打在 `<html>` 上的属性名（`dataset.windowsTitlebar = ''`） */
+  attr: "data-windows-titlebar"
+  /** 要写入的 CSS 变量名与值 */
+  cssVar: "--dsh-windows-titlebar-height"
+  cssValue: string
+}
+
+/** 壳平台 → Windows 标题栏标记计划（纯函数；非 Windows ⇒ null）。 */
+export function windowsTitlebarPlanFor(os: string | undefined): WindowsTitlebarPlan | null {
+  if (os !== "windows") return null
+  return {
+    attr: "data-windows-titlebar",
+    cssVar: "--dsh-windows-titlebar-height",
+    cssValue: `${WINDOWS_TITLEBAR_HEIGHT}px`,
+  }
+}
+
 /** Tauri 2.11.5 `drag.js` 的属性取值（语义：deep=子树可拖，可点击子元素自动阻断）。 */
 export type DragRegionAttr = "deep" | "false"
 

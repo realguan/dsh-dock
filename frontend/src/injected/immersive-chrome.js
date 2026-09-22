@@ -27,9 +27,19 @@
   if (window.__dshDockImmersiveInjected) return;
   window.__dshDockImmersiveInjected = true;
 
-  // ---- v1 平台门：仅 macOS（与 ui.rs 的 #[cfg(target_os = "macos")] 窗口配置配对）----
+  // ---- 平台分支（2026-09-21 扩展）----
+  // macOS：打 darwin 标记 + 翻译 app-region 拖拽（ADR-0029 原范围）。
+  // Windows：对标官方 preload-windows.ts —— 打 data-windows-titlebar + 40px 高度变量
+  //   （页面据此预留标题栏带并自绘拖拽条，与官方逐字一致），外加**自绘**最小化/最大化/关闭
+  //   （官方用 Electron 的原生 titleBarOverlay，Tauri 无等价 API ⇒ 唯一偏差，已登记）。
+  // Linux 与其它：不打任何桌面标记（官方客户端无 Linux 版，无可对标形态）。
   var platform = window.__DSH_PLATFORM__;
-  if (!platform || platform.os !== 'macos') return;
+  if (!platform) return;
+  if (platform.os === 'windows') {
+    installWindowsTitlebar();
+    return;
+  }
+  if (platform.os !== 'macos') return;
 
   var MARKER = 'darwin'; // = immersiveChrome.ts 的 DSH_PLATFORM_MARKER
   var DRAG_ATTR = 'data-tauri-drag-region';
@@ -152,4 +162,68 @@
   // DOMContentLoaded（dsh 官方 preload-platform.ts 同款防御）。
   if (document.documentElement) start();
   else window.addEventListener('DOMContentLoaded', function () { start(); }, { once: true });
+
+  // ---- Windows 标题栏（对标 apps/desktop/src/preload-windows.ts:12 + windows-layout.ts:4）----
+  var WINDOWS_TITLEBAR_HEIGHT = 40;
+
+  function installWindowsTitlebar() {
+    var mark = function () {
+      var root = document.documentElement;
+      if (!root) return false;
+      root.setAttribute('data-windows-titlebar', '');
+      root.style.setProperty('--dsh-windows-titlebar-height', WINDOWS_TITLEBAR_HEIGHT + 'px');
+      return true;
+    };
+    mark();
+    // 自绘控件（官方由 Electron 原生 overlay 绘制；Tauri 无等价 API）——
+    // 只在**主工作台页**挂载，且用 Shadow DOM 隔离样式（同胶囊的既有做法）。
+    var mount = function () {
+      if (document.getElementById('dsh-dock-window-controls')) return;
+      if (!document.body) return;
+      var host = document.createElement('div');
+      host.id = 'dsh-dock-window-controls';
+      host.style.cssText =
+        'position:fixed;top:0;right:0;height:' + WINDOWS_TITLEBAR_HEIGHT +
+        'px;display:flex;align-items:stretch;z-index:2147483000;';
+      var shadow = host.attachShadow({ mode: 'open' });
+      // **零裸色值**（paletteTokens 闸门 + AGENTS §4.3）：颜色一律从页面继承/派生 ——
+      // `:host` 继承宿主元素的 color，按钮 `color:inherit`，hover 用 `color-mix` 从
+      // 当前文字色派生。官方客户端让 Windows **原生**绘制这三个按钮（有系统红关闭态），
+      // 自绘版改用主题派生色，正是为了不绕过本仓的 token 纪律。
+      shadow.innerHTML =
+        '<style>' +
+        ':host{all:initial;color:inherit}' +
+        'div{display:flex;height:100%;font-family:system-ui,sans-serif}' +
+        'button{width:46px;height:100%;border:0;background:transparent;cursor:default;' +
+        'color:inherit;display:grid;place-items:center;font-size:10px}' +
+        'button:hover{background:color-mix(in srgb,currentColor 10%,transparent)}' +
+        'button.dsh-close:hover{background:color-mix(in srgb,currentColor 22%,transparent)}' +
+        '</style>' +
+        '<div>' +
+        '<button data-dsh-control="minimize" title="最小化">&#x2500;</button>' +
+        '<button data-dsh-control="maximize" title="最大化">&#x25A1;</button>' +
+        '<button data-dsh-control="close" class="dsh-close" title="关闭">&#x2715;</button>' +
+        '</div>';
+      document.body.appendChild(host);
+      shadow.addEventListener('click', function (event) {
+        var target = event.target;
+        var action = target && target.getAttribute && target.getAttribute('data-dsh-control');
+        if (!action) return;
+        var win = window.__TAURI__ && window.__TAURI__.window;
+        var current = win && win.getCurrentWindow ? win.getCurrentWindow() : null;
+        if (!current) return;
+        // 全部 .catch：关窗/最大化失败不得静默半途（AGENTS §4.3 的 Promise 纪律）。
+        if (action === 'minimize') current.minimize().catch(function () {});
+        else if (action === 'maximize') current.toggleMaximize().catch(function () {});
+        else if (action === 'close') current.close().catch(function () {});
+      });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', mark);
+      document.addEventListener('DOMContentLoaded', mount);
+    } else {
+      mount();
+    }
+  }
+
 })();
