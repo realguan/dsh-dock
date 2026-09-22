@@ -1036,6 +1036,86 @@ pub(crate) fn scan_sessions_raw_in_guest(_distro: &str) -> Result<Vec<(String, u
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }
 
+/// 在客体中跑**通用 stdio 搬运器**（P2，2026-09-21）：把宿主拼好的 stdin 喂给客体里的
+/// 服务器命令，收回它的 stdout 行（base64）。
+///
+/// 为什么是"通用搬运"而不是"客体版 MCP 探测"：协议件（请求生成 / 响应解析）在本仓已是
+/// 纯函数（`mcp_probe.rs`），在客体侧重写一份就会造**第二个内核**（违 §6，且必然漂移）。
+/// 故脚本零 MCP 知识，只做"起进程、喂 stdin、收 stdout"；成败与协议语义由宿主判定。
+///
+/// 投递方式照抄 [`run_repair_in_guest`] 的既有套路（`cat > /tmp/*.mjs` 经 stdin 投脚本 +
+/// 参数走 argv），不另立通道。
+///
+/// 尚无调用者：调用方 = `commands/console.rs` 的 MCP 探测客体档分支（P2 收尾，下一步即做；
+/// 还差一层"把收回的行按 id 归位"的共用判据，见方案档）。
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn run_stdio_harness(distro: &str, request_json: &str) -> Result<String, String> {
+    let script_content = include_str!("../../scripts/mcp-stdio-harness.mjs");
+    // 请求经 argv 传入（base64 免疫引号/换行；长度远小于 32K 命令行上限）。
+    let arg = sh_quote(&base64_encode(request_json.as_bytes()));
+    let runner_script = format!(
+        "{}node_bin=$(which node 2>/dev/null || true); \
+         if [ -z \"$node_bin\" ]; then \
+           echo '客体中未检测到 Node.js——请先在该发行版安装 Node.js（引擎引导通常会补齐）' >&2; exit 1; \
+         fi; \
+         tmp=\"/tmp/dsh-dock-stdio-$$.mjs\"; \
+         trap 'rm -f \"$tmp\"' EXIT; \
+         cat > \"$tmp\" || exit 1; \
+         exec \"$node_bin\" \"$tmp\" {arg}",
+        guest_prep!()
+    );
+
+    let mut cmd = crate::executor::wsl_command(Some(distro));
+    cmd.args(["-e", "bash", "-lic", &runner_script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("拉起客体 stdio 搬运器失败：{e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(script_content.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("等待客体 stdio 搬运器失败：{e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!(
+            "客体 stdio 搬运器失败（{}）：{}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    parse_harness_result(&stdout).ok_or_else(|| {
+        format!(
+            "客体 stdio 搬运器未回传结果行（原始输出：{}）",
+            stdout.trim()
+        )
+    })
+}
+
+/// 非 Windows 孪生。
+#[cfg(not(windows))]
+#[allow(dead_code)] // 同上：接线后移除
+pub(crate) fn run_stdio_harness(_distro: &str, _request_json: &str) -> Result<String, String> {
+    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
+}
+
+/// 从搬运器输出里取**最后一条**合法结果行（纯函数，跨平台可测）。
+///
+/// 取最后一条：`bash -lic` 可能在前面吐 rc/motd 噪音；结果行由脚本最后打印且必为单行 JSON。
+#[cfg(any(windows, test))]
+pub(crate) fn parse_harness_result(raw: &str) -> Option<String> {
+    raw.lines()
+        .map(|l| l.trim().trim_end_matches('\r'))
+        .rfind(|l| l.starts_with('{') && l.ends_with('}'))
+        .map(|l| l.to_string())
+}
+
 /// 在客体中运行自愈脚本进行会话修复。
 #[cfg(windows)]
 pub(crate) fn run_repair_in_guest(
@@ -1678,6 +1758,17 @@ mod missing_commands_tests {
             "无源文件不得回传备份名：{raw2}"
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 搬运器结果行解析：忽略 rc 噪音，取最后一条 JSON；没有结果行 ⇒ None（上层如实报错）。
+    #[test]
+    fn harness_result_line_is_parsed_from_noisy_output() {
+        let raw = "motd 噪音\nnot json\n{\"ok\":true,\"code\":0}\n";
+        assert_eq!(
+            parse_harness_result(raw).as_deref(),
+            Some("{\"ok\":true,\"code\":0}")
+        );
+        assert!(parse_harness_result("只有噪音\n").is_none());
     }
 
     /// 客体 home 解析：只认绝对路径行，噪音与相对路径一律忽略。
