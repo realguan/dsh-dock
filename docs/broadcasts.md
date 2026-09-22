@@ -32,6 +32,38 @@
 
 ## 三、记录
 
+### 2026-09-21 平台待裁定项 · 维护者裁定与两项实现（§3.6 窗口内入口 / Windows 沉浸式）—— guan（AI 协作）
+
+- **裁定（维护者 2026-09-21，落档备查）**：
+  | 项 | 裁定 | 处置 |
+  |:--|:--|:--|
+  | §3.1/§3.2 Windows 沉浸式 | **参照官方 dsh 桌面客户端方案做** | ✅ 已实现 `73c6af1`（见下） |
+  | §3.3 ARM64 覆盖 | **维持现状（x64），只在 README 说明** | 无需改动（README 已显式说明非静默） |
+  | §2.8 macOS Intel 执行验证 | **维持现状（只编译）** | 无需改动（注释已写明理由） |
+  | §3.6 Linux 无托盘宿主入口 | **加窗口内「关于 / 更新」入口** | ✅ 已实现 `995f61e`（见下） |
+  | §3.4 关窗即退 | （无需裁定）| 已随 v1.3.1 修复（`18c0cf3`：关窗=隐藏 + 四路唤回） |
+- **§3.6 实现** `995f61e`：`ShellState.resident_entry_available`（据托盘成败置位、macOS 恒 true、
+  默认取"不可达"这一安全方向）+ 两个 IPC（`get_shell_capabilities` / `open_about`，四处登记同步 +
+  登记册）+ 前端 `shouldShowAboutEntry` 纯判据，**只在无可达常驻入口时**于控制中心渲染入口。
+  历史留痕：原 `open_about` 于 2026-08-27 因「与常驻入口重复」被删 —— 那个前提在无 StatusNotifier
+  宿主的 Linux 桌面上不成立；新入口**只在该场景**出现，故不重现当年的重复按钮。
+- **Windows 沉浸式实现** `73c6af1`：先读官方源码定位做法（`apps/desktop/src/main.ts:111-133`
+  `titleBarStyle:'hidden'` + `titleBarOverlay{height:40}`；`preload-windows.ts:12` 打
+  `data-windows-titlebar` + `--dsh-windows-titlebar-height:40px`；页面 `AppFrame.module.css:20-40`
+  预留 40px 带并自绘拖拽条），再等价映射 —— Tauri **无** `titleBarOverlay` 等价 API
+  （`TitleBarStyle` 文档原文 "on macOS"），故：`decorations(false)` ≡ 官方 hidden 标题栏；
+  **同一套标记**保证页面行为与官方逐字一致；三控件由壳**自绘**（唯一偏差）。
+  自绘件**零裸色值**（`color:inherit` + `color-mix` 派生）—— 官方那套是系统原生画，
+  自绘就必须守本仓 token 纪律（`paletteTokens` 闸门当场抓过我一次，已改）。
+- **闸门**：Windows 沉浸式 3 例（标记与官方常量一致 + 仅 Windows 生效的反例 / `decorations(false)`
+  只在 Windows / 自绘件零裸 hex）、前端 2 例、§3.6 前端 4 例（含"回退常量必须偏向补入口"的反例）；
+  IPC 闸门 7 例（COMMANDS ↔ handler ↔ capabilities ↔ tauri.ts）。
+- **诚实边界**：两项均**只在真机才可验收** ⇒ 记「已实现（待真机验收）」：Windows 观感 +
+  `decorations(false)` 后缩放/贴靠/投影是否退化（退化则回退该 cfg 块，成本一行）；无托盘宿主的
+  Linux 桌面上入口是否如期出现并可用。
+- **凭据**：rust **576 passed / 0 failed**；前端 **680 passed**；python 32 passed；fmt ✓；
+  clippy `-D warnings` ✓（pipefail 判退出码）。
+
 ### 2026-09-21 WSL 客体档能力对齐 · **完成**（P0 / P0-c / P1 / P2 + 收尾）—— guan（AI 协作）
 
 - **结论**：四处 `World::Wsl => Err(...)`（挂载行写入 / 删除 / 实验能力目录 / MCP 探测）**全部清零**；
