@@ -290,6 +290,140 @@ pub fn probe_stdio(
     outcome
 }
 
+/// 把客体搬运器收回的行**按 id 归位**（纯函数，P2，2026-09-21）。
+///
+/// 为什么要有它：`probe_stdio` 是**交互式**的（写一条、等一条），而客体档跨 `wsl.exe`
+/// 无法携带长连接 stdio（`executor.rs:607` 实测 90s 不 flush），只能把整个对话交给客体里的
+/// 搬运器、把行一次带回。于是需要一层"按 id 归位"，把行还原成 `assemble_probe` 要的四个输入。
+///
+/// **降级口径不在这里**：本函数只负责"取到 / 没取到、成功 / 报错"，"tools 挂了算整单失败、
+/// resources/templates 挂了降级为空+说明"一律留在 [`assemble_probe`]（一处口径，两分支共用）。
+/// 四路响应：initialize（必需）+ 三次枚举（各带自己的成败）。降级口径见 `assemble_probe`。
+type ProbeResponses = (
+    Option<serde_json::Value>,
+    Result<serde_json::Value, String>,
+    Result<serde_json::Value, String>,
+    Result<serde_json::Value, String>,
+);
+
+fn collect_probe_results(lines: &[String]) -> ProbeResponses {
+    let mut init = None;
+    let mut slots: [Option<Result<serde_json::Value, String>>; 3] = [None, None, None];
+    for line in lines {
+        let Some((id, outcome)) = parse_rpc_envelope(line) else {
+            continue; // 服务器日志 / 通知：跳过（与交互式路径同一容忍度）
+        };
+        match id {
+            1 => {
+                if let Ok(value) = outcome {
+                    init = Some(value);
+                } else if let Err(e) = outcome {
+                    slots[0] = Some(Err(format!("initialize 失败：{e}")));
+                }
+            }
+            2..=4 => {
+                let idx = (id - 2) as usize;
+                if slots[idx].is_none() {
+                    slots[idx] = Some(outcome);
+                }
+            }
+            _ => {}
+        }
+    }
+    let missing = |method: &str| -> Result<serde_json::Value, String> {
+        Err(format!(
+            "服务器未在期限内回应 {method}（客体档经搬运器带回的行里没有该 id 的响应）"
+        ))
+    };
+    (
+        init,
+        slots[0].take().unwrap_or_else(|| missing("tools/list")),
+        slots[1].take().unwrap_or_else(|| missing("resources/list")),
+        slots[2]
+            .take()
+            .unwrap_or_else(|| missing("resources/templates/list")),
+    )
+}
+
+/// 客体档 MCP 探测（P2，2026-09-21）：宿主生成**有序对话**步骤 → 客体搬运器执行 →
+/// 宿主用同一套纯函数解析。
+///
+/// 与 `probe_stdio` 的**残余差异（如实记录，不掩饰）**：
+/// 1. 服务器在**客体**内启动，故 PATH 用客体自己的（不传 `envPath`）——宿主 PATH 在这里
+///    既不可达也不该用；客体 `bash -lic` 会带上引擎目录。
+/// 2. 跨子系统 stdio 无法交互，故对话是"脚本化"的：写一条 → 等该 id 的响应 → 再写下一条
+///    （顺序由宿主给出的 steps 保证，脚本零 MCP 知识）。
+/// 3. 探测发生在客体世界，UI 文案须说明这一点（同 `guest::run_stdio_harness` 的返回值）。
+pub fn probe_stdio_in_guest(
+    distro: &str,
+    server: &McpServerConfig,
+    timeout: Duration,
+) -> Result<McpProbe, String> {
+    if server.command.trim().is_empty() {
+        return Err(format!(
+            "MCP 服务器「{}」的 transport 是 stdio，但配置里没有 command，无法探测\
+             （若它其实是 streamable-http，请把 transport 改为 streamable-http 并填 url）",
+            server.name
+        ));
+    }
+    let steps = serde_json::json!([
+        { "write": initialize_request(1) },
+        { "awaitId": 1 },
+        { "write": initialized_notification() },
+        { "write": list_request(2, "tools/list") },
+        { "awaitId": 2 },
+        { "write": list_request(3, "resources/list") },
+        { "awaitId": 3 },
+        { "write": list_request(4, "resources/templates/list") },
+        { "awaitId": 4 },
+    ]);
+    let budget_ms = timeout.as_millis().min(u64::MAX as u128) as u64;
+    let mut request = serde_json::json!({
+        "command": server.command,
+        "args": server.args,
+        "steps": steps,
+        // 硬杀上限留 3s 余量：让"某步没等到"先被记为 timedOutIds 带回来，
+        // 而不是让整轮变成进程级失败（可选项降级口径在 assemble_probe）。
+        "timeoutMs": budget_ms.saturating_add(3000),
+        "stepTimeoutMs": budget_ms,
+    });
+    if !server.cwd.trim().is_empty() {
+        request["cwd"] = serde_json::Value::String(server.cwd.clone());
+    }
+    let raw = crate::guest::run_stdio_harness(distro, &request.to_string())?;
+    let result: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("客体搬运器结果行不是合法 JSON（{e}）：{raw}"))?;
+    if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        return Err(format!(
+            "客体内探测失败：{}",
+            result
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("（搬运器未给出原因）")
+        ));
+    }
+    let lines: Vec<String> = result
+        .get("stdoutB64")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(crate::guest::base64_decode)
+                .filter_map(|bytes| String::from_utf8(bytes).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let (init, tools, resources, templates) = collect_probe_results(&lines);
+    let init = init.ok_or_else(|| {
+        format!(
+            "客体档探测失败：服务器「{}」未完成 initialize 握手（收回 {} 行响应）",
+            server.name,
+            lines.len()
+        )
+    })?;
+    assemble_probe(&server.name, &init, tools, resources, templates)
+}
+
 /// 三次枚举的结果 → [`McpProbe`]（**两分支共用**，2026-09-15 R3 抽取）。
 ///
 /// 为什么必须是共享的：`tools` 失败即整单失败、`resources` / `templates` 遇 `-32601`
@@ -652,6 +786,35 @@ fn run_probe(
 mod tests {
     use super::*;
     use crate::mcp::McpScope;
+
+    /// 客体档归位：按 id 取四条响应；日志行/通知行跳过；缺响应如实成 Err（不静默当空）。
+    #[test]
+    fn collect_probe_results_maps_by_id_and_reports_missing() {
+        let lines = vec![
+            r#"{"level":"info","msg":"starting"}"#.to_string(), // 日志行：跳过
+            r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}"#.to_string(),
+            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"alpha"}]}}"#.to_string(),
+            r#"{"jsonrpc":"2.0","id":3,"result":{"resources":[]}}"#.to_string(),
+        ];
+        let (init, tools, resources, templates) = collect_probe_results(&lines);
+        assert_eq!(init.unwrap()["protocolVersion"], "2025-11-25");
+        assert_eq!(tools.unwrap()["tools"][0]["name"], "alpha");
+        assert!(resources.is_ok());
+        let err = templates.unwrap_err();
+        assert!(err.contains("resources/templates/list"), "{err}");
+    }
+
+    /// tools 的失败必须**原样**带出去（是否整单失败由 `assemble_probe` 定，不在这里吞掉）。
+    #[test]
+    fn collect_probe_results_surfaces_tool_errors_verbatim() {
+        let lines = vec![
+            r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}"#.to_string(),
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"nope"}}"#.to_string(),
+        ];
+        let (_init, tools, _r, _t) = collect_probe_results(&lines);
+        let err = tools.unwrap_err();
+        assert!(err.contains("-32601") && err.contains("nope"), "{err}");
+    }
 
     /// 握手请求必须携带**真实**协议版本与身份；缺 `params` 会被服务端直接拒。
     #[test]

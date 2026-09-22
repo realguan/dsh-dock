@@ -270,15 +270,11 @@ pub async fn probe_mcp_server(
     row_id: Option<String>,
 ) -> Result<crate::mcp_probe::McpProbe, String> {
     let world = crate::mgmt::current_world(&app)?;
-    let home = match world {
-        crate::mgmt::World::Local => crate::resolve::user_dsh_home(),
-        crate::mgmt::World::Wsl { .. } => {
-            return Err(
-                "MCP 能力探测暂不支持 WSL 客体档：探测需在客体内部 spawn 服务器命令，\
-                 宿主侧执行语义不等价（有意不回落本地）。请在本地档使用。"
-                    .to_string(),
-            )
-        }
+    // 客体档（2026-09-21 P2 下沉）：**不回落本地**，而是把对话整体放进客体执行
+    // （跨 wsl.exe 带不了长连接 stdio；协议件仍是宿主同一套纯函数）。
+    let home = match &world {
+        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Wsl { .. } => None,
     };
     // 探测要复现 **dsh 子进程的解析条件**（2026-09-18）：PATH 用同源的
     // `dsh_child_path`——否则会出现"探测通过、dsh 里却 ENOENT"的假通过。
@@ -292,7 +288,15 @@ pub async fn probe_mcp_server(
     let path_env = crate::resolve::dsh_child_path(&node_bin, &data_dir);
     let scope = scope.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        let servers = crate::mcp::list_mcp_servers(&home, &profile)?;
+        let servers = match &world {
+            crate::mgmt::World::Local => crate::mcp::list_mcp_servers(
+                home.as_deref().expect("本地档必有 home"),
+                &profile,
+            )?,
+            crate::mgmt::World::Wsl { distro } => {
+                crate::mcp::list_mcp_servers_in_guest(distro, &profile)?
+            }
+        };
         // 同名条目可能同时存在于两层 ⇒ 按 (name, scope) 定位用户点的那一行；
         // **同层**还有重复时只有行 id 能区分（2026-09-18 三修）——探错一条会把
         // 另一条的结论挂到这一行上，比不探更坏。行 id 为空 ⇒ 回退按 (name, scope)。
@@ -324,15 +328,77 @@ pub async fn probe_mcp_server(
         // 按 transport 分派（ADR-0022 §3.3）：两条分支**各自有独立的合规通道**
         // ——stdio 走子进程，streamable-http 走条目级豁免的进程内 HTTP。
         let budget = std::time::Duration::from_secs(30);
-        match server.transport {
-            crate::mcp::McpTransport::Stdio => {
+        match (&world, server.transport) {
+            (crate::mgmt::World::Local, crate::mcp::McpTransport::Stdio) => {
                 crate::mcp_probe::probe_stdio(&server, budget, Some(path_env.as_str()))
             }
-            crate::mcp::McpTransport::StreamableHttp => {
+            (crate::mgmt::World::Local, crate::mcp::McpTransport::StreamableHttp) => {
                 crate::mcp_probe::probe_http(&server, budget)
+            }
+            (crate::mgmt::World::Wsl { distro }, crate::mcp::McpTransport::Stdio) => {
+                crate::mcp_probe::probe_stdio_in_guest(distro, &server, budget)
+            }
+            // http 分支的语义边界（**如实拒绝，不假装支持**）：进程内 HTTP 豁免锚定在
+            // **宿主**世界，而客体档的 url（localhost:port）指的是**客体**里的地址 ——
+            // 从宿主发这个请求要么打不到、要么打到宿主上另一个同名端口，两种都是错结论。
+            // 这不是平台收窄：stdio 分支已下沉，http 需要的是"客体侧 HTTP 客户端"，
+            // 而壳的唯一网络面纪律（AGENTS §7）不允许为此新增客户端。
+            (crate::mgmt::World::Wsl { distro }, crate::mcp::McpTransport::StreamableHttp) => {
+                Err(format!(
+                    "streamable-http 型 MCP 服务器暂不能在 WSL 客体档探测：它的 url 指向\
+                     「{distro}」客体内部的地址，从宿主发请求会打到别处或打不通（给出的是错结论，\
+                     比报错更坏）。stdio 型已支持；要验证该服务器的能力，请在客体终端里用 dsh 直接调用。"
+                ))
             }
         }
     })
     .await
     .map_err(|e| format!("MCP 能力探测任务异常终止：{e}"))?
+}
+
+/// WSL 客体档 MCP 探测接线不许回退（2026-09-21，P2）。
+#[cfg(test)]
+mod mcp_probe_world_wiring_tests {
+    fn production_code() -> &'static str {
+        include_str!("console.rs")
+            .split("mod mcp_probe_world_wiring_tests")
+            .next()
+            .expect("split 至少返回一段")
+    }
+
+    #[test]
+    fn probe_dispatches_by_world_and_never_falls_back_to_host() {
+        let src = production_code();
+        assert!(
+            !src.contains("MCP 能力探测暂不支持 WSL 客体档"),
+            "不得退回「整体拒绝客体档」"
+        );
+        assert!(
+            src.contains("crate::mcp_probe::probe_stdio_in_guest(distro, &server, budget)"),
+            "客体档 stdio 必须走客体内探测"
+        );
+        assert!(
+            src.contains("crate::mcp::list_mcp_servers_in_guest(distro, &profile)"),
+            "客体档的服务器清单必须读**客体**配置（读宿主 = 给错结果）"
+        );
+        assert!(
+            src.contains("home.as_deref().expect(\"本地档必有 home\")"),
+            "本地档仍须用宿主 home（不得为了下沉丢掉本地路径）"
+        );
+    }
+
+    /// http 分支在客体档**如实拒绝**（url 指客体内部地址，从宿主发是错结论）——
+    /// 这不是平台收窄，是语义边界；且必须写明理由，不得静默当成 stdio 探。
+    #[test]
+    fn guest_http_branch_refuses_with_a_reason() {
+        let src = production_code();
+        assert!(
+            src.contains("暂不能在 WSL 客体档探测"),
+            "http 分支必须有显式拒绝文案"
+        );
+        assert!(
+            src.contains("客体内部的地址"),
+            "拒绝必须说明原因（url 指客体内部），否则用户无从判断"
+        );
+    }
 }

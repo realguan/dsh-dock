@@ -145,6 +145,41 @@ class McpStdioHarnessTests(unittest.TestCase):
         ids = [json.loads(l)["id"] for l in lines]
         self.assertEqual(ids, [1], f"守顺序的服务器只会回 initialize：{lines}")
 
+    def test_await_timeout_is_reported_not_fatal(self) -> None:
+        """可选项不回话 ⇒ `timedOutIds` 如实回传、整轮仍 `ok`（降级判定归宿主共享判据）。
+
+        语义边界：脚本**不判断**"少一条响应算不算失败"——那是 `assemble_probe` 的口径
+        （tools 失败即整单失败、resources/templates 降级为空+说明）。脚本只如实报告事实。
+        """
+        reqs = self._requests()
+        reqs.append(
+            json.dumps({"jsonrpc": "2.0", "id": 4, "method": "resources/templates/list", "params": {}})
+        )
+        steps = [
+            {"write": reqs[0]},
+            {"awaitId": 1},
+            {"write": reqs[1]},
+            {"write": reqs[2]},
+            {"awaitId": 2},
+            {"write": reqs[3]},
+            {"awaitId": 3},
+            {"write": reqs[4]},
+            {"awaitId": 4},
+        ]
+        result = self._run(
+            {
+                "command": _node(),
+                "args": [str(_FAKE), "--ignore-templates"],
+                "steps": steps,
+                "timeoutMs": 20000,
+                "stepTimeoutMs": 1200,
+            }
+        )
+        self.assertTrue(result["ok"], f"可选项不回话不得判整轮失败：{result}")
+        self.assertEqual(result["timedOutIds"], [4], result)
+        ids = [json.loads(base64.b64decode(b).decode("utf-8"))["id"] for b in result["stdoutB64"]]
+        self.assertEqual(ids, [1, 2, 3], "已回的响应照常带回")
+
     def test_missing_command_fails_loudly_without_hanging(self) -> None:
         result = self._run(
             {

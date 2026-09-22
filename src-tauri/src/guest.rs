@@ -519,7 +519,6 @@ pub(crate) fn parse_read_files(raw: &str) -> Vec<(String, Option<String>)> {
 }
 
 /// 标准 base64 解码（不引第三方依赖，AGENTS §4.2）。非法字符/长度返回 None。
-#[cfg(any(windows, test))]
 pub(crate) fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut acc: u32 = 0;
     let mut bits = 0u32;
@@ -1046,10 +1045,8 @@ pub(crate) fn scan_sessions_raw_in_guest(_distro: &str) -> Result<Vec<(String, u
 /// 投递方式照抄 [`run_repair_in_guest`] 的既有套路（`cat > /tmp/*.mjs` 经 stdin 投脚本 +
 /// 参数走 argv），不另立通道。
 ///
-/// 尚无调用者：调用方 = `commands/console.rs` 的 MCP 探测客体档分支（P2 收尾，下一步即做；
-/// 还差一层"把收回的行按 id 归位"的共用判据，见方案档）。
+/// 调用方 = `mcp_probe::probe_stdio_in_guest`（P2 已接线，2026-09-21）。
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) fn run_stdio_harness(distro: &str, request_json: &str) -> Result<String, String> {
     let script_content = include_str!("../../scripts/mcp-stdio-harness.mjs");
     // 请求经 argv 传入（base64 免疫引号/换行；长度远小于 32K 命令行上限）。
@@ -1100,7 +1097,6 @@ pub(crate) fn run_stdio_harness(distro: &str, request_json: &str) -> Result<Stri
 
 /// 非 Windows 孪生。
 #[cfg(not(windows))]
-#[allow(dead_code)] // 同上：接线后移除
 pub(crate) fn run_stdio_harness(_distro: &str, _request_json: &str) -> Result<String, String> {
     Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
 }

@@ -8,7 +8,9 @@
 // 协议请求由宿主生成、响应由宿主解析。
 //
 // 用法：node mcp-stdio-harness.mjs <base64(JSON 请求)>
-// 请求：{ command, args[], cwd?, envPath?, stdin?, steps?, timeoutMs }
+// 请求：{ command, args[], cwd?, envPath?, stdin?, steps?, timeoutMs, stepTimeoutMs? }
+//   `timeoutMs` = **硬杀**上限（进程级）；`stepTimeoutMs` = 单步等待预算（超时记为 timedOutIds，
+//   不致命 —— resources / templates 是可选项，降级判定归宿主共享判据）。
 //
 // **两种模式**：
 //   ① `stdin`：一次性把整段文本喂进去（适合无握手的普通进程）。
@@ -104,6 +106,7 @@ child.on("close", (code) => {
       code,
       elapsedMs: Date.now() - started,
       stdoutB64: stdout,
+      timedOutIds,
       stderrTail,
     }) + "\n",
   )
@@ -114,14 +117,24 @@ child.on("close", (code) => {
 const pending = new Map() // id -> resolve，供 awaitId 等待
 const seenIds = new Set()
 
+// 等待某个 id 的响应。**超时不是致命错误**：MCP 里 resources / templates 是可选项，
+// 服务器可以合法地"什么都不回"。此处只记录 `timedOutIds` 并继续对话，由**宿主**按共享判据
+// （mcp_probe::assemble_probe）决定是整单失败还是降级为"空 + 说明"—— 语义不在脚本里。
+const timedOutIds = []
 function awaitId(id, deadline) {
   if (seenIds.has(id)) return Promise.resolve()
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     pending.set(id, resolve)
     const left = deadline - Date.now()
-    if (left <= 0) return reject(new Error(`等待 id=${id} 超时`))
+    if (left <= 0) {
+      timedOutIds.push(id)
+      return resolve()
+    }
     setTimeout(() => {
-      if (pending.delete(id)) reject(new Error(`等待 id=${id} 超时`))
+      if (pending.delete(id)) {
+        timedOutIds.push(id)
+        resolve()
+      }
     }, left)
   })
 }
@@ -140,8 +153,9 @@ async function runSteps(steps, deadline) {
   child.stdin.end()
 }
 
+const stepDeadline = started + (req.stepTimeoutMs ?? Math.max(1000, timeoutMs - 2000))
 if (Array.isArray(req.steps)) {
-  runSteps(req.steps, started + timeoutMs).catch((e) =>
+  runSteps(req.steps, stepDeadline).catch((e) =>
     fail(`对话失败：${e.message}`, { elapsedMs: Date.now() - started, stderrTail }),
   )
 } else {
