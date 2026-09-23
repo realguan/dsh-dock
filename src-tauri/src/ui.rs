@@ -1165,9 +1165,11 @@ mod windows_native_decorations_tests {
 ///    已由本机 WKWebView 探针**证伪**（`CSS.supports` 为 false、CSSOM 读回为空；且拖拽带是
 ///    `pointer-events:none`，命中测试型机制永远看不到它），**不得回流**。
 ///
-/// ② **权限**：`start_dragging` 不在 `core:window:default`（tauri 2.11.5 = 28 条只读 getter +
-///    `internal_toggle_maximize`）里，必须显式授权，否则 ACL 拒绝且被 `.catch` 吞掉 ——
-///    用户侧同样只剩「拖不动」。
+/// ② **权限**：脚本调用的 window 命令**都不在** `core:window:default`（tauri 2.11.5 = 28 条
+///    只读 getter + `internal_toggle_maximize`）里 —— `start_dragging` 与 `toggle_maximize`
+///    都必须显式授权，否则 ACL 拒绝且被 `.catch` 吞掉，用户侧只剩「拖不动 / 双击没反应」。
+///    本模块用**命令 → 权限反查**（从脚本里抽 `win.<method>(`）堵住这类静默失效，
+///    2026-09-23 一天内它已连中两次（先 `start_dragging`、后 `toggle_maximize`）。
 ///
 /// 另钉住「TS 纯模型 ↔ 注入脚本」的常量同步：两处靠人肉同步（无打包器），是最易漂的一环。
 #[cfg(test)]
@@ -1199,6 +1201,74 @@ mod immersive_drag_acl_tests {
             .iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect()
+    }
+
+    /// 注入脚本里所有 `win.<method>(` 调用（去重），用于**反推**它依赖哪些 window 权限。
+    ///
+    /// 只认方法名后紧跟 `(` 的形态：属性探测（如 `win && win.getCurrentWindow ? …`）不算调用。
+    fn window_api_calls(code: &str) -> Vec<String> {
+        let mut calls: Vec<String> = Vec::new();
+        let mut rest = code;
+        while let Some(idx) = rest.find("win.") {
+            let after = &rest[idx + 4..];
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
+            let tail = &after[name.len()..];
+            if !name.is_empty() && tail.starts_with('(') && !calls.contains(&name) {
+                calls.push(name);
+            }
+            rest = if tail.is_empty() { "" } else { &tail[1..] };
+        }
+        calls.sort();
+        calls
+    }
+
+    /// **命令 → 权限反查**闸门（2026-09-23 第三轮补）：静默失效的根因是「脚本调命令、
+    /// capabilities 没授、`.catch` 吞掉」。前两轮各修一处（`start_dragging`、
+    /// `toggle_maximize`）——本闸门从脚本**反推**它调了哪些 window 命令，逐条要求在
+    /// 映射表与 capabilities 里都有落点，杜绝第三次。
+    #[test]
+    fn every_window_command_the_script_calls_is_granted() {
+        let calls = window_api_calls(&injected_code());
+        assert!(
+            !calls.is_empty(),
+            "反查失败：没在脚本里找到任何 `win.<method>(` 调用"
+        );
+        // (脚本里的调用, 对应权限)：`None` = 纯客户端 API、不产生 IPC/ACL 面。
+        let required: &[(&str, Option<&str>)] = &[
+            ("startDragging", Some("core:window:allow-start-dragging")),
+            ("toggleMaximize", Some("core:window:allow-toggle-maximize")),
+            ("getCurrentWindow", None),
+        ];
+        let perms = capability_permissions();
+        for call in &calls {
+            let entry = required
+                .iter()
+                .find(|(name, _)| name == call)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "注入脚本调用了未登记的 window 命令 `win.{call}(`：必须先在映射表里登记它\
+                         对应的权限、再在 capabilities 显式授权 —— 否则 ACL 拒绝且被 `.catch` \
+                         吞掉，用户侧只剩「没反应」（issue #16 的同一类静默失效）"
+                    )
+                });
+            if let Some(perm) = entry.1 {
+                assert!(
+                    perms.iter().any(|p| p == perm),
+                    "脚本调用 `win.{call}(` 需要 `{perm}`，但 capabilities/default.json 未授予 \
+                     —— 该命令不在 core:window:default 里（tauri 2.11.5），漏授即静默失效"
+                );
+            }
+        }
+        // 反向：映射表里不该留脚本已不再调用的死条目（否则权限面留白没人回收）。
+        for (name, _) in required {
+            assert!(
+                calls.iter().any(|c| c == name),
+                "映射表里的 `win.{name}(` 已不在脚本中调用：请同步回收该映射（必要时连同权限）"
+            );
+        }
     }
 
     #[test]
