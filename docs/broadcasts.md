@@ -32,6 +32,49 @@
 
 ## 三、记录
 
+### 2026-09-23 缺陷修复 · issue #16 —— Windows 撤回沉浸式标题栏（窗口不可移动 / 缩放 / 关闭）—— guan（AI 协作）
+
+- **触发**：Windows 用户 issue #16「Windows平台 web界面的 窗口没法移动 最大化 最小化
+  关闭按钮均无效果」。该特性随 v1.3.2（2026-09-22）发布，次日即被真机证伪。
+- **根因（三条独立断点，全部可在本机复核）**：
+  1. **窗口拖不动**：dsh 的 40px 拖拽带是**伪元素**
+     （`packages/client/ui-layout/src/client/AppFrame.module.css:40-46` 的
+     `.frame::before{ -webkit-app-region: drag }`），承载不了 `data-tauri-drag-region`；
+     注入脚本的 Windows 分支又完全没做 app-region 翻译。ADR-0029 §6 早已写明此处
+     「**另立评审**」，进场时未走。
+  2. **三控件点了没反应**：自绘控件调 `plugin:window|minimize / toggle_maximize / close`，
+     三者均**不在** `core:window:default`（tauri 2.11.5，本仓构建产物
+     `src-tauri/gen/schemas/acl-manifests.json` 可直接核对），而 capabilities 只授了
+     `core:default` ⇒ ACL 拒绝 + 调用点 `.catch(function () {})` 吞错。
+  3. **缩放 / 贴靠退化**（issue 未提，同源）：`decorations(false)` 在 tao 里摘掉
+     `WS_CAPTION | WS_THICKFRAME`（`tao-0.35.3/src/platform_impl/windows/window_state.rs:307`），
+     而官方 Electron 的 `titleBarStyle:'hidden'` 是**保留原生 frame** 的 ⇒「等价映射」不成立；
+     该提交自己写的验收判据「缩放/贴靠退化即回退」当场命中。
+  **闸门为何没拦**：原闸门只断言注入脚本里**出现** `minimize()` / `toggleMaximize()` /
+  `close()` 这些**字符串**，不断言 ACL 有对应授权 —— 结构性通过、行为性失效（平台审计
+  点名的「验证空洞」一类）；而「待 Windows 真机验收」自陈未完成即随 v1.3.2 发版。
+- **处置**（维护者 2026-09-23 裁定，[ADR-0030](../adr/0030-windows-keeps-native-decorations.md)）：
+  **Windows 与 Linux 同口径维持原生装饰**。`ui.rs` 删 `decorations(false)` cfg 块并在原位留下
+  撤回理由（避免后人「照官方方案」再加一次）；注入脚本收窄回 macOS 单平台；纯模型删
+  `WindowsTitlebarPlan` / `windowsTitlebarPlanFor`；新增「防复辟」闸门
+  `windows_native_decorations_tests` 三例（正例 + 反例 + macOS 不误伤）。代码笔 `724fa01`。
+- **影响 / 需要他人做什么**：
+  1. Windows 用户升到**下一 patch 版**即恢复移动 / 缩放 / 贴靠 / 三控件 ——
+     注意 **v1.3.2 用户手上仍是缺陷版**，需发 patch 覆盖（发版流程未启动，待维护者定）。
+  2. **macOS 侧遗留一条独立待办**（本次刻意未夹带）：ADR-0029 的 app-region →
+     `data-tauri-drag-region` 翻译最终要 invoke `plugin:window|start_dragging`，该命令同样
+     未授权 ⇒ 按 ACL 判据，该翻译**自 v1.3.0 起在真机上从未生效**（现在能拖的只是系统原生
+     标题栏那一条带，dsh 自绘的 topStrip / titleRow 拖拽区是死的）。修法一行（补
+     `core:window:allow-start-dragging`），**须 macOS 实机验证拖拽后再合**。
+  3. 平台审计 §3.1/§3.2 与平台对齐计划 B-4/C-4 状态已回写（Windows 沉浸式档**关闭、不排期**；
+     重开条件 = 恢复 Windows 真机验证 + 解决拖拽带伪元素与缩放边框两个结构问题）。
+  4. README 经核从未宣传过该特性 ⇒ 无需改写；v1.3.2 的发行日志是已发行正文的来源，不动。
+- **凭据**：`cargo fmt --check` ✓ · `cargo clippy --all-targets -- -D warnings` ✓ ·
+  `cargo test` 576 passed · 前端 `typecheck` ✓ · `oxlint` 0 warning · `vitest` 678 passed
+  （-2 = 移除的 Windows 计划两例）· **闸门负例实测**：临时注入
+  `builder = builder.decorations(false)` 与脚本 Windows 分支后，正例/反例**双双 FAILED**
+  （报错精确到 `ui.rs:196` 与 needle 字符串），还原后三例恢复绿。
+
 ### 2026-09-22 发版修正 · 改用 v1.3.2（原 v1.4.0 已撤回）—— guan（AI 协作）
 
 - **原委**：本轮内容我先按 semver minor 发成 **v1.4.0**（内容：Windows 沉浸式标题栏 +

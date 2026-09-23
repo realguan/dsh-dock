@@ -21,7 +21,7 @@
 | B-1 | **A2** Windows 登记表孤儿清扫第二层 | 修法 = `DuplicateHandle` + `STARTUPINFOEX`/`HANDLE_LIST` 让子进程真正继承锁句柄。本机编不了 Windows 目标、更跑不了；改完**无法证明**，只会把"已知失效"变成"未知是否失效"。**前置** = 恢复 Windows 真机验证（`docs/roadmap.md` §4.16 / `docs/executor.md` 现为搁置） |
 | B-2 | **A4 尾** Windows 显式 DACL（`icacls` / `SetNamedSecurityInfoW`） | 同上（且已用披露止损） |
 | B-3 | **A6 尾** 快照档 Windows 实机验证 | 脚本改了，但"落成 `dsh-node.exe` 后能起来"只能在 Windows 上证明 |
-| B-4 | **§3.1** Windows 毛玻璃（`Effect::Mica`，同一 `EffectsBuilder` API）+ 自绘 chrome | 技术可行性已核（crate 源码），但观感与自绘控件行为必须真机调；且属**产品取舍**，需先裁定做不做 |
+| B-4 | ~~**§3.1** Windows 毛玻璃（`Effect::Mica`，同一 `EffectsBuilder` API）+ 自绘 chrome~~ ⇒ **2026-09-23 已裁定不做并撤回已发实现**（ADR-0030）：曾按官方方案进场（v1.3.2），真机暴露「窗口拖不动 / 缩放贴靠退化 / 三控件无 ACL 授权」，整体回退为原生装饰。重开前置 = 恢复 Windows 真机验证（同 B-1）**且**解决拖拽带伪元素与缩放边框两个结构问题 | — |
 | B-5 | **§3.4** 「托盘常驻 / 最小化运行」名副其实（`ExitRequested` + `prevent_exit`） | 改的是**关窗语义**：macOS 无托盘，"隐藏而非退出"与平台惯例冲突 ⇒ 需维护者先定各平台期望行为 |
 
 ## 道 C｜需裁定或属新功能（本轮只登记，不动手）
@@ -31,7 +31,7 @@
 | C-1 | ~~**A3** WSL 客体档 5 项下沉~~ ⇒ **已升为最高优先级（2026-09-21 维护者裁定）**：这四项是核心能力，而 WSL 客体模式是红线 3 的适配目标，「需补原语」是欠债自陈不是限制。施工方案见 [`wsl-parity-plan-2026-09-21.md`](wsl-parity-plan-2026-09-21.md)（P0 客体 patch 内核 → P1 能力目录只读 → P2 MCP 探测） |
 | C-2 | **A8** macOS Intel 执行级验证 | 三条路各有代价：`macos-15-intel` 原生 leg（runner 可用性未确认）· arm64 runner 装 Rosetta 跑 x86_64 测试· 维持只编译。**且 macOS 侧无 boot 冒烟作业**（GUI 会话依赖） |
 | C-3 | **§3.6** Linux 无托盘宿主时 About/更新入口不可达（`host.ts` 恒 `clientUpdate: true`） | 需裁定：加窗口内入口，还是改能力矩阵措辞 |
-| C-4 | **§3.2** Windows 平台标记（`data-windows-titlebar`） | 与 B-4 同批；单独做有布局风险 |
+| C-4 | ~~**§3.2** Windows 平台标记（`data-windows-titlebar`）~~ ⇒ **2026-09-23 关闭**：随 B-4 一并撤回（ADR-0030），标记与 40px 常量已从纯模型与注入脚本移除 | — |
 | C-5 | **§3.10** 自启 / 系统通知 / 深链接 / 文件选择器 / 窗口状态 | 三平台一致缺失（非不对称）⇒ 属产品功能排期，不属红线 3 |
 | C-6 | **§3.3** ARM64 覆盖 | 红线 3 现文只写 x64；README 已显式"仿真运行"。要扩需改红线文本 |
 
