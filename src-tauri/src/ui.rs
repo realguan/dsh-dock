@@ -1138,19 +1138,41 @@ mod windows_native_decorations_tests {
     }
 }
 
-/// 沉浸式拖拽区的 **ACL 配对**闸门（2026-09-23，issue #16 复盘的直接产物）。
+/// 沉浸式拖拽的接线闸门（2026-09-23 第二次改版后重建，沿用 issue #16 与 WKWebView 实测的教训）。
 ///
-/// 事故教训（issue #16）：注入脚本调 Tauri window 命令、capabilities 却没授对应权限 ——
-/// ACL 拒绝被 `.catch` 吞掉，用户侧只剩「点了 / 拖了没反应」，而当时的闸门只断言脚本里
-/// **出现**方法名字符串（结构性通过、行为性失效）。本闸门把「机制 → 权限」这条链钉死。
+/// 两道链必须同时成立，缺一即「窗口拖不动 / 页面被吃掉」：
 ///
-/// 机制事实（tauri 2.11.5 `src/window/scripts/drag.js`，2026-09-23 复核）：带
-/// `data-tauri-drag-region` 的元素上，单击 invoke `plugin:window|start_dragging`、双击
-/// invoke `plugin:window|internal_toggle_maximize`。后者由 `core:window:default` 自带
-/// （该默认集 = 28 条只读 getter + `internal_toggle_maximize`），**前者不在其中**
-/// ⇒ 必须显式授权，否则拖拽区是死的（v1.3.0~v1.3.2 的实况，2026-09-23 修）。
+/// ① **机制（2026-09-23 改版）**：注入脚本按**几何语义**自驱拖拽 —— 命中点落在 dsh 自己的
+///    拖拽带矩形内（`data-shell-leading-band`，取不到则顶部 52px 兜底）∧ 在 `#root` 内
+///    ∧ 不在 dsh 的交互元素排除表上 ⇒ `startDragging()`；双击（按下不算、抬起未移动才算）
+///    ⇒ `toggleMaximize()`。旧机制「扫 `-webkit-app-region` → 写 `data-tauri-drag-region`」
+///    已由本机 WKWebView 探针**证伪**（`CSS.supports` 为 false、CSSOM 读回为空；且拖拽带是
+///    `pointer-events:none`，命中测试型机制永远看不到它），**不得回流**。
+///
+/// ② **权限**：`start_dragging` 不在 `core:window:default`（tauri 2.11.5 = 28 条只读 getter +
+///    `internal_toggle_maximize`）里，必须显式授权，否则 ACL 拒绝且被 `.catch` 吞掉 ——
+///    用户侧同样只剩「拖不动」。
+///
+/// 另钉住「TS 纯模型 ↔ 注入脚本」的常量同步：两处靠人肉同步（无打包器），是最易漂的一环。
 #[cfg(test)]
 mod immersive_drag_acl_tests {
+    const INJECTED: &str = include_str!("../../frontend/src/injected/immersive-chrome.js");
+    const PURE_MODEL: &str = include_str!("../../frontend/src/lib/immersiveChrome.ts");
+
+    /// 取 `marker` 之后、`stop` 之前的片段里所有双引号字面量并拼接（这两处的字面量内只有
+    /// 单引号，故按 `"` 切分取奇数段即可）。
+    fn joined_literals(src: &str, marker: &str, stop: &str) -> String {
+        let start = src
+            .find(marker)
+            .unwrap_or_else(|| panic!("源码里找不到常量锚点 {marker}"))
+            + marker.len();
+        let rest = &src[start..];
+        let end = rest
+            .find(stop)
+            .unwrap_or_else(|| panic!("常量 {marker} 之后找不到结束锚点 {stop}"));
+        rest[..end].split('"').skip(1).step_by(2).collect()
+    }
+
     fn capability_permissions() -> Vec<String> {
         let json: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json"))
@@ -1179,18 +1201,72 @@ mod immersive_drag_acl_tests {
         );
     }
 
-    /// 反向：权限是给功能用的 —— 注入脚本必须仍在做 app-region → 拖拽属性的翻译；
-    /// 若哪天翻译被删，这条授权就成了无用安全面，应同步回收。
+    /// 注入脚本的**生效代码**（剥掉整行注释：`//`、`/*`、`*`、`*/` 开头）——闸门断言的是
+    /// 代码形态，注释里为说明历史而引用被证伪的属性名不算违规。
+    fn injected_code() -> String {
+        INJECTED
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !(trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('*'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 机制闸门：几何语义的四个要件齐全，且两条**已证伪**的老机制不得回流。
     #[test]
-    fn injected_script_still_maps_the_drag_region() {
-        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
-        assert!(
-            injected.contains("data-tauri-drag-region"),
-            "注入脚本不再设置拖拽属性：start-dragging 授权成了无用面，应同步复盘"
+    fn injected_script_drives_drag_by_geometry() {
+        let code = injected_code();
+        for needle in [
+            "data-shell-leading-band", // dsh 发布的拖拽带钩子
+            "elementFromPoint",        // 命中测试：决定这一下是拖动还是点击
+            "startDragging()",         // 窗口拖拽
+            "toggleMaximize()",        // 双击最大化
+            "#root",                   // 拖拽面锚点（body 下全是 no-drag 浮层）
+        ] {
+            assert!(
+                code.contains(needle),
+                "注入脚本缺几何语义要件 {needle}：窗口会拖不动或按钮点不动"
+            );
+        }
+        for dead in ["-webkit-app-region", "data-tauri-drag-region"] {
+            assert!(
+                !code.contains(dead),
+                "注入脚本的生效代码里出现了已被证伪的老机制 {dead}：WKWebView 不认\
+                 `-webkit-app-region`（CSS.supports=false、CSSOM 读回为空），且拖拽带是\
+                 pointer-events:none，命中测试型机制看不到它 —— 该路径 2026-09-23 起已废弃，\
+                 不得回流"
+            );
+        }
+    }
+
+    /// 同步闸门：TS 纯模型与注入脚本的常量必须逐字一致（无打包器，两处同步靠人肉）。
+    #[test]
+    fn injected_script_constants_match_the_pure_model() {
+        let js_exclusion = joined_literals(INJECTED, "var EXCLUSION_SELECTOR =", ";\n");
+        let ts_exclusion =
+            joined_literals(PURE_MODEL, "export const DRAG_EXCLUSION_SELECTOR =", "\n\n");
+        assert_eq!(
+            js_exclusion, ts_exclusion,
+            "交互元素排除表两处不一致：与 dsh `web/src/base.css:72-78` 的 no-drag 列表必须\
+             逐字同步（改一处漏一处 ⇒ 按钮被拖拽吃掉或可拖区莫名挖洞）"
         );
         assert!(
-            injected.contains("return 'deep';"),
-            "app-region: drag 必须映射为 deep（子树可拖）；改此处须连带复核 ACL 与 fidelity 说明"
+            js_exclusion.contains("button") && js_exclusion.contains("[role='tab']"),
+            "排除表内容可疑：至少应覆盖 button 与 [role='tab']"
+        );
+        assert!(
+            INJECTED.contains("'[data-shell-leading-band]'")
+                && PURE_MODEL.contains(r#""[data-shell-leading-band]""#),
+            "拖拽带钩子两处不一致（须同为 [data-shell-leading-band]）"
+        );
+        assert!(
+            INJECTED.contains("FALLBACK_BAND_HEIGHT = 52")
+                && PURE_MODEL.contains("DRAG_BAND_FALLBACK_HEIGHT = 52"),
+            "兜底带高两处不一致（须与 dsh .leadingBand 的 52px 同值）"
         );
     }
 }

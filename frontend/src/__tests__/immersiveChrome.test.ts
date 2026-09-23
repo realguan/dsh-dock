@@ -5,18 +5,22 @@
 //      （Windows 档 2026-09-22 进场、2026-09-23 裁定整体撤回，ADR-0030/issue #16：
 //      `decorations(false)` 带走缩放与贴靠、自绘控件无 ACL 授权、拖拽条是伪元素；
 //      Windows 自此与 Linux 同口径维持原生装饰）；
-//   2. **拖拽语义 fidelity**——`drag`→`deep`、`no-drag`→`false` 必须逐条映射：
-//      dsh 对可拖区域里的非可点击子元素（div）显式 no-drag，漏映射 = 按钮区
-//      被拖拽"漏"进去；
+//   2. **拖拽几何语义（2026-09-23 改版）**——`dragDecisionFor` 必须只在
+//      「带内 ∧ 在 #root 内 ∧ 不在交互元素上 ∧ 非全屏」时才接管拖拽：
+//      多一个条件放松 = 按钮点不动或正文选不中，少一个条件 = 窗口拖不动；
 //   3. **origin 判定**——精确（IPC 已回）说了算；未知时同步 127.0.0.1 乐观命中；
 //      壳页 hostname（localhost / tauri.localhost）绝不误判；
 //   4. **降级方向**——任何"不确定"都落在"不动作"或"撤销"上，绝不在壳页生效。
 import { describe, expect, it } from "vitest"
 import {
+  DRAG_BAND_FALLBACK_HEIGHT,
+  DRAG_EXCLUSION_SELECTOR,
+  DRAG_SURFACE_ROOT_SELECTOR,
   DSH_PLATFORM_MARKER,
-  dragRegionAttrFor,
+  dragDecisionFor,
   immersivePlatformAttrFor,
   isWorkbenchHostnameSync,
+  LEADING_BAND_SELECTOR,
   syncWorkbenchProbe,
 } from "@/lib/immersiveChrome"
 
@@ -33,20 +37,89 @@ describe("immersivePlatformAttrFor", () => {
   })
 })
 
-describe("dragRegionAttrFor", () => {
-  it("drag → deep（Tauri 子树拖拽；可点击子元素由 drag.js 自动阻断）", () => {
-    expect(dragRegionAttrFor("drag")).toBe("deep")
-    expect(dragRegionAttrFor(" drag ")).toBe("deep")
+describe("dragDecisionFor（几何语义：注入层自驱窗口拖拽）", () => {
+  const plainBandPress = {
+    inBand: true,
+    insideRoot: true,
+    onInteractive: false,
+    fullscreen: false,
+  }
+
+  it("带内空白 + #root 内 + 非全屏 ⇒ drag", () => {
+    expect(dragDecisionFor(plainBandPress)).toBe("drag")
   })
 
-  it("no-drag → false（显式排除，防 deep 把按钮区拖进去）", () => {
-    expect(dragRegionAttrFor("no-drag")).toBe("false")
+  it("落在 dsh 的交互元素排除表上 ⇒ skip（按钮/链接/tab 必须照常可点）", () => {
+    expect(dragDecisionFor({ ...plainBandPress, onInteractive: true })).toBe("skip")
   })
 
-  it("无 app-region / 异常值 → null（不碰该元素）", () => {
-    expect(dragRegionAttrFor("")).toBeNull()
-    expect(dragRegionAttrFor("auto")).toBeNull()
-    expect(dragRegionAttrFor("none")).toBeNull()
+  it("带外 ⇒ skip（正文区域不得被拖拽吃掉：文本选择/划选必须保留）", () => {
+    expect(dragDecisionFor({ ...plainBandPress, inBand: false })).toBe("skip")
+  })
+
+  it("不在 #root 内 ⇒ skip（dsh 的浮层/门户与壳自绘胶囊都挂在 body 下）", () => {
+    expect(dragDecisionFor({ ...plainBandPress, insideRoot: false })).toBe("skip")
+  })
+
+  it("全屏 ⇒ skip（全屏无标题栏语义）", () => {
+    expect(dragDecisionFor({ ...plainBandPress, fullscreen: true })).toBe("skip")
+  })
+
+  it("四个条件的任意组合都不得越界：只有全真组合才 drag", () => {
+    const flags = [false, true] as const
+    let drags = 0
+    for (const inBand of flags)
+      for (const insideRoot of flags)
+        for (const onInteractive of flags)
+          for (const fullscreen of flags) {
+            const verdict = dragDecisionFor({ inBand, insideRoot, onInteractive, fullscreen })
+            const expected = inBand && insideRoot && !onInteractive && !fullscreen ? "drag" : "skip"
+            expect(verdict).toBe(expected)
+            if (verdict === "drag") drags++
+          }
+    expect(drags).toBe(1)
+  })
+})
+
+describe("与 dsh 的契约常量（改 dsh 升级时须复核，见 ADR-0029 §5 表）", () => {
+  it("拖拽带钩子用 dsh 自己发布的稳定标记（不碰带哈希的类名）", () => {
+    expect(LEADING_BAND_SELECTOR).toBe("[data-shell-leading-band]")
+  })
+
+  it("兜底带高与 dsh .leadingBand 同值（52px）", () => {
+    expect(DRAG_BAND_FALLBACK_HEIGHT).toBe(52)
+  })
+
+  it("交互元素排除表覆盖 dsh base.css:72-78 的 no-drag 关键项", () => {
+    for (const needle of [
+      "button",
+      "a,",
+      "input",
+      "select",
+      "textarea",
+      "summary",
+      "[contenteditable='true']",
+      "[tabindex]",
+      "[role='dialog']",
+      "[role='menu']",
+      "[role='button']",
+      "[role='tab']",
+      "[role='menuitem']",
+      "[role='option']",
+      "[role='checkbox']",
+      "[role='switch']",
+      "[role='slider']",
+      "[role='combobox']",
+      "[role='textbox']",
+    ]) {
+      expect(DRAG_EXCLUSION_SELECTOR).toContain(needle)
+    }
+    // 反例：不得混入 dsh 没声明的交互角色（否则会把可拖区挖出莫名其妙的洞）
+    expect(DRAG_EXCLUSION_SELECTOR).not.toContain("[role='progressbar']")
+  })
+
+  it("拖拽面锚在 #root（dsh 的 body > :not(#root) 全是 no-drag 浮层）", () => {
+    expect(DRAG_SURFACE_ROOT_SELECTOR).toBe("#root")
   })
 })
 

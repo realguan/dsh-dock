@@ -1,10 +1,16 @@
-// 沉浸式标题栏（immersive chrome）纯模型（2026-09-21，ADR-0029）。
+// 沉浸式标题栏（immersive chrome）纯模型（2026-09-21，ADR-0029；拖拽机制 2026-09-23 改版）。
 //
 // 背景：官方 dsh 桌面客户端（Electron）的沉浸式标题栏，真相源在 **dsh 自己的 web
 // 前端**——`packages/client` 里一整批按 `html[data-platform='darwin']` 生效的桌面
-// CSS（透明底、侧栏 tint、topStrip 与红绿灯共行、`-webkit-app-region: drag/no-drag`）。
-// 壳（Tauri）里这些规则休眠，只差两件事：① 标记没人打；② `-webkit-app-region` 是
-// Electron 行为，Tauri 只认 `data-tauri-drag-region` 属性。
+// CSS（透明底、侧栏 tint、topStrip 与红绿灯共行），以及 AppFrame 在 darwin 下挂载的
+// 窗口拖拽带（`data-shell-leading-band`，52px / 带 tabs 时 76px、`pointer-events:none`）。
+// 壳（Tauri）里这些规则休眠，只差两件事：① 标记没人打；② **拖拽没人驱动**。
+//
+// **2026-09-23 改版（本机 WKWebView 探针实测）**：原方案「扫 `-webkit-app-region` 计算样式
+// → 翻译成 `data-tauri-drag-region`」在 macOS 上不成立 —— WKWebView 不认该属性
+// （`CSS.supports` 为 false、CSSOM 读回为空），且拖拽带是 `pointer-events:none`
+// （Electron 的 app-region 是几何语义，Tauri 的是命中测试语义）。现改为在注入层复刻
+// 几何语义：见 `dragDecisionFor`。
 //
 // **范围（2026-09-23 维护者裁定，ADR-0030）**：仅 macOS。Windows 档 2026-09-22 曾按
 // 官方方案进场（打标记 + 壳自绘三控件），2026-09-23 因 issue #16 真机事故整体撤回 ——
@@ -12,13 +18,15 @@
 // 授权（点了没反应），拖拽条又是伪元素挂不上属性（窗口拖不动）⇒ Windows 与 Linux 同口径
 // 维持原生装饰，标记计划与 40px 常量一并从本模块移除。
 //
-// 本模块是这两件事的**可测折算内核**（纯函数、无 IO）：
+// 本模块是可测折算内核（纯函数、无 IO）：
 //   1. `immersivePlatformAttrFor(os)` —— 壳平台 → dsh 的 `data-platform` 标记值；
-//   2. `dragRegionAttrFor(appRegion)` —— dsh 的 app-region 计算样式 → Tauri 拖拽属性值；
+//   2. `dragDecisionFor({inBand, insideRoot, onInteractive, fullscreen})` —— 按下时是否
+//      由壳接管为窗口拖拽（几何语义）；
 //   3. `syncWorkbenchProbe(origin, hostname, workbenchUrl)` —— 「同步宽松命中 +
 //      异步精确确认」的 origin 判定（同步命中先画，精确不符再撤）。
 // 供 `__tests__/immersiveChrome.test.ts` 覆盖；注入脚本
-// `injected/immersive-chrome.js` 内联同一套逻辑（无打包器，改逻辑两处同步）。
+// `injected/immersive-chrome.js` 内联同一套逻辑与常量（无打包器，改逻辑两处同步；
+// 常量一致性由 `ui.rs` 的 `immersive_drag_acl_tests` 机器闸门钉住）。
 
 /** dsh 官方 Electron preload 打的标记值（`preload-platform.ts:8`；2026-09-21 锚定）。 */
 export const DSH_PLATFORM_MARKER = "darwin" as const
@@ -45,22 +53,55 @@ export function immersivePlatformAttrFor(os: string | undefined): string | null 
   return os === "macos" ? DSH_PLATFORM_MARKER : null
 }
 
-/** Tauri 2.11.5 `drag.js` 的属性取值（语义：deep=子树可拖，可点击子元素自动阻断）。 */
-export type DragRegionAttr = "deep" | "false"
+/**
+ * dsh 自己发布的窗口拖拽带钩子（`AppFrame.tsx` 的 `{darwin && <div data-shell-leading-band />}`）。
+ * 名字即用途：给壳用的稳定标记 —— 我们据此取拖拽带几何，不必碰带哈希的类名。
+ */
+export const LEADING_BAND_SELECTOR = "[data-shell-leading-band]"
+
+/** 钩子缺失（更老的 dsh）时的兜底带高，与 dsh `.leadingBand` 同值（`AppFrame.module.css` 52px）。 */
+export const DRAG_BAND_FALLBACK_HEIGHT = 52
 
 /**
- * dsh 的 `-webkit-app-region` 计算样式 → Tauri `data-tauri-drag-region` 属性值。
- *
- *  fidelity 要点：dsh 对可拖区域里的**非可点击**子元素（如 `.headerLeading`
- * 这类 div）显式 `no-drag`。Tauri 的 `deep` 会让整个子树可拖，若不把 no-drag
- * 映射成 `false`，这些 div 会把拖拽「漏」进按钮区——逐条映射才与官方同构。
- * 无 app-region 的元素返回 null（不碰）。
+ * dsh 的交互元素排除表 —— `packages/client/web/src/base.css:72-78` 里
+ * `html[data-platform='darwin'] :is(...) { -webkit-app-region: no-drag }` 的原样镜像。
+ * 注入脚本里同名常量必须逐字一致（`ui.rs` 的 `immersive_drag_acl_tests` 有机器闸门钉住）。
  */
-export function dragRegionAttrFor(appRegion: string): DragRegionAttr | null {
-  const value = appRegion.trim()
-  if (value === "drag") return "deep"
-  if (value === "no-drag") return "false"
-  return null
+export const DRAG_EXCLUSION_SELECTOR =
+  "button,a,input,select,textarea,summary,[contenteditable='true'],[tabindex]," +
+  "[role='dialog'],[role='alertdialog'],[role='menu'],[role='listbox'],[role='tooltip']," +
+  "[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='menuitemcheckbox']," +
+  "[role='menuitemradio'],[role='option'],[role='checkbox'],[role='radio'],[role='switch']," +
+  "[role='slider'],[role='combobox'],[role='textbox']"
+
+/** dsh 把浮层/门户挂在 `body > :not(#root)`（base.css:60）：拖拽面只在 `#root` 内。 */
+export const DRAG_SURFACE_ROOT_SELECTOR = "#root"
+
+/** 一次按下的拖拽裁定：drag = 交给 `startDragging()`；skip = 让页面照常处理。 */
+export type DragDecision = "drag" | "skip"
+
+/**
+ * 几何语义的拖拽裁定（2026-09-23 改版内核）。
+ *
+ * 为什么不是「读 `-webkit-app-region` 计算样式」：WKWebView 不认该属性（`CSS.supports`
+ * 为 false、CSSOM 读回为空），且 dsh 的拖拽带是 `pointer-events:none`，Tauri 的
+ * `data-tauri-drag-region` 走命中测试 —— 两头都到不了。故改为在注入层复刻 Electron 的
+ * 几何合成：**带内 ∧ 在 #root 内 ∧ 不落在交互元素上 ∧ 非全屏** 才算拖拽。
+ *
+ * @param inBand 命中点是否落在拖拽带矩形内
+ * @param insideRoot 命中元素是否在 `#root` 内（浮层/门户/壳自绘胶囊都在 body 下，属 no-drag）
+ * @param onInteractive 命中元素是否落在 dsh 的交互元素排除表上
+ * @param fullscreen 是否处于全屏（全屏下无标题栏语义，拖拽无意义）
+ */
+export function dragDecisionFor(input: {
+  inBand: boolean
+  insideRoot: boolean
+  onInteractive: boolean
+  fullscreen: boolean
+}): DragDecision {
+  return input.inBand && input.insideRoot && !input.onInteractive && !input.fullscreen
+    ? "drag"
+    : "skip"
 }
 
 /**
@@ -70,7 +111,7 @@ export function dragRegionAttrFor(appRegion: string): DragRegionAttr | null {
  * - 未知 → 同步 hostname 判据兜底：127.0.0.1 乐观 confirm（抢先画，避免首帧闪
  *   不透明侧栏），其余 defer（等 IPC）。
  *
- * 返回 "reject" 时调用方必须**撤标记 + 断观察器**——同步乐观命中被精确判定翻盘
+ * 返回 "reject" 时调用方必须**撤标记 + 断拖拽监听**——同步乐观命中被精确判定翻盘
  * 的唯一路径（例如壳未来改用 localhost 形态的就绪 URL）。
  */
 export function syncWorkbenchProbe(

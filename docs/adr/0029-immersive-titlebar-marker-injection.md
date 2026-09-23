@@ -3,7 +3,9 @@
 - **日期**：2026-09-21
 - **状态**：已接受（**范围 2026-09-23 收窄为 macOS 单平台**：Windows 一侧由
   [ADR-0030](0030-windows-keeps-native-decorations.md) 撤回，见该档 §1/§4；本档 §1 表中
-  「Windows 桌面档」登记条与 §5/§6 的 Windows 表述按该档失效）
+  「Windows 桌面档」登记条与 §5/§6 的 Windows 表述按该档失效。
+  **拖拽机制于 2026-09-23 改版**：§3 方案 A 的第 2 步（app-region 计算样式映射）经实测作废，
+  改为几何语义自驱拖拽 —— 见 §7）
 - **提出人**：维护者（截图对比触发）+ AI 实施
 - **相关方**：`src-tauri/src/ui.rs`（主窗口）、`frontend/src/injected/`、`frontend/src/lib/immersiveChrome.ts`
 - **关联**：ADR-0014（交接幕布，注入脚本先例）；dsh 上游 `apps/desktop`（Electron 官方客户端实证）；
@@ -148,7 +150,7 @@ Tauri 的 `data-tauri-drag-region`。Windows/Linux 一期保持原生装饰（`d
   | 依赖 | dsh 源码位置（2026-09-21 读） | 失效症状 |
   |---|---|---|
   | `data-platform="darwin"` 标记名与整套桌面 CSS | `apps/desktop/src/preload-platform.ts:8`；`packages/client/**`（§1 表） | 侧栏不透明 / 无 topStrip / 无拖拽（降级为原生标题栏，不坏功能） |
-  | `-webkit-app-region: drag/no-drag` 规则集 | `ConversationRoot.module.css:35-46`、`SidebarRoot.module.css:189-194`、`SidebarRight.module.css:90-94`、`AppFrame.module.css:34-40` | 顶栏/侧栏条带不可拖 |
+  | `-webkit-app-region: drag/no-drag` 规则集 | `ConversationRoot.module.css:35-46`、`SidebarRoot.module.css:189-194`、`SidebarRight.module.css:90-94`、`AppFrame.module.css:34-40` | ~~顶栏/侧栏条带不可拖~~ ⇒ **2026-09-23 起该依赖整体失效**：WKWebView 不认此属性，机制改为按 `data-shell-leading-band` + `base.css` 排除表的几何语义，新表见 §7.3 |
   | 工作台 URL 恒 `http://127.0.0.1:<port>` | `shell.rs` 实测（`parse_detected_url` 系列） | 同步判定落空 → 标记晚一个 IPC 往返到达（仍可用，首帧可能闪一下不透明侧栏） |
   | Windows 桌面档（`data-windows-titlebar` + 40px 条） | `preload-windows.ts`、`AppFrame.module.css:20-40`、`SidebarRoot.module.css:45-101` | 一期不使用，仅登记备用 |
 
@@ -184,3 +186,75 @@ Tauri 的 `data-tauri-drag-region`。Windows/Linux 一期保持原生装饰（`d
   `decorations(false)` 还会连带摘掉缩放边框与贴靠（tao 层硬行为），等价映射不成立；重开条件
   见该档 §6。
 - 若 tauri issue #4316（未聚焦不可拖）出现上游修复，评估去掉降级文案。
+
+## 7. 2026-09-23 机制改版：app-region 翻译作废，改为「几何语义自驱拖拽」（补记）
+
+> **状态**：已实施 + **macOS 真机验证通过**（维护者手动拖动 dsh 顶栏带下半部分，2026-09-23；
+> 见 §7.4）。§3 方案 A 的第 2 步（app-region 计算样式映射）就此作废，保留在案以免重蹈。
+
+### 7.1 触发与推翻的证据
+
+v1.3.3 发布前维护者真机反馈「macOS 顶栏拖不动」。复核后发现 §3 方案 A 的第 2 步
+**自 v1.3.0 起从未生效过**，且不是接线问题 —— 两端前提都不成立：
+
+1. **WKWebView 不认 `-webkit-app-region`**（本机 Xcode + WKWebView 探针实测，2026-09-23）：
+
+   | 探针 | 结果 |
+   |:--|:--|
+   | `CSS.supports('-webkit-app-region','drag')` | `false` |
+   | `CSS.supports('app-region','drag')` | `false` |
+   | `getComputedStyle(el).getPropertyValue('-webkit-app-region')` | `""` |
+   | `el.style.setProperty('-webkit-app-region','drag')` 后读回 | `""`（CSSOM 都不保留） |
+
+   ⇒ 「扫计算样式、免疫类名哈希」这条设计在 WebKit 上恒扫不到任何元素：`dragRegionAttrFor`
+   永远拿到空串，**一个 `data-tauri-drag-region` 都没打上过**。
+2. **拖拽带本身是 `pointer-events:none`**：dsh 现行实现的 macOS 拖拽面是 `AppFrame.tsx`
+   在 darwin 下挂载的 `data-shell-leading-band`（52px；带会话 tabs 时 76px；
+   `AppFrame.module.css:192-211`）。Electron 的 app-region 是**几何**语义，而 Tauri 的
+   `data-tauri-drag-region` 由 `drag.js` 按 `composedPath` 做**命中测试** ——
+   一个永不成为事件目标的元素，属性挂上去也不会触发。§1 表里 `ConversationRoot` /
+   `SidebarRoot` 的 per-component 拖拽规则，同日上游已被「单一 drag owner（leadingBand）」取代。
+
+> 附注：同批次还发现 `plugin:window|start_dragging` 不在 `core:window:default` 里、
+> capabilities 也没授（2026-09-23 已补 `core:window:allow-start-dragging`）。它是**末端**
+> 必要条件，但前两环已断，所以补了它窗口仍然拖不动 —— 该授权在改版后**仍必需**，不是遗留物。
+
+### 7.2 现机制（目标不变：等价于 Electron 的组合语义）
+
+注入层复刻 Electron 的几何合成，纯逻辑在 `immersiveChrome.ts::dragDecisionFor`
+（注入脚本内联同源逻辑 + 同值常量，`ui.rs` 的 `immersive_drag_acl_tests` 有同步闸门）：
+
+| 条件 | 取值来源 |
+|:--|:--|
+| 命中点在拖拽带矩形内 | dsh 自己发布的钩子 `data-shell-leading-band` 的 `getBoundingClientRect()`；钩子缺失（更老的 dsh）退回顶部 52px |
+| 命中点在 `#root` 内 | dsh 的浮层 / 门户与壳自绘胶囊都在 `body` 下（`web/src/base.css:60` 的 `body > :not(#root)` 规则） |
+| 不在交互元素上 | `web/src/base.css:72-78` 的 no-drag 选择器**原样镜像**（`button,a,input,…,role=*`） |
+| 非全屏 | `html[data-fullscreen]` |
+
+四条同时成立 ⇒ `startDragging()`；双击（**按下不算、抬起且未移动才算**）⇒ `toggleMaximize()`
+（对齐 Tauri `drag.js` 的 macOS 分支与系统标题栏习惯）。
+
+**连带简化**：删除 app-region 扫描与 MutationObserver（不再逐元素读样式），改为三个捕获期
+鼠标监听；`ui.rs` 的闸门重建为「几何四要件齐全 + 两条已证伪的老机制不得回流（含注释剥离，
+避免注释里的历史引用误报）+ TS/JS 常量逐字一致」。
+
+### 7.3 新登记的上游依赖（dsh 升级复核点，替代 §5 表中已失效的两条）
+
+| 依赖 | dsh 源码位置（2026-09-23 读） | 失效症状 |
+|:--|:--|:--|
+| 拖拽带钩子 `data-shell-leading-band` | `ui-layout/src/client/AppFrame.tsx:296`；高度规则 `AppFrame.module.css:192-211`（52 / 76px） | 退回顶部 52px 兜底带（拖拽可用，但带高可能与实际布局错位） |
+| 交互元素排除表 | `web/src/base.css:72-78` 的 `-webkit-app-region: no-drag` 选择器列表 | 按钮被拖拽吃掉（多排除）或可拖区被挖洞（少排除） |
+| `isDarwinDesktop()` 读 `documentElement.dataset.platform` | `ui-primitives/src/types/darwin-desktop.js`（渲染时读取，晚到 DOMContentLoaded 亦可） | 标记打不上 ⇒ 拖拽带不挂载、桌面 CSS 全部休眠（= 退回原生标题栏观感） |
+
+### 7.4 验证记录
+
+- ✅ **维护者真机手动验证（2026-09-23）**：拖动 dsh 顶栏带下缘（**离开最顶部系统原生条带**）
+  可移动窗口 —— 证明走的是本 ADR 的新机制，而非 `TitleBarStyle::Overlay` 原生保留的那条窄带。
+- ✅ 机器闸门：`immersive_drag_acl_tests` 三例（几何要件 / 老机制不得回流 / 常量同步）+
+  负例实测（摘掉 ACL 授权即红）；前端 `dragDecisionFor` 20 例含四条件全组合穷举。
+- ⚠️ **未验证**：顶栏空白处**双击最大化**（沿用系统标题栏习惯的那条路径）；
+  tauri issue #4316（窗口未聚焦时不可拖）在本机制下的表现。
+- ⚠️ 自动化尝试失败记录：合成鼠标事件（CGEvent，已确认 `AXIsProcessTrusted = true`）未能
+  驱动 AppKit 的拖拽循环（窗口坐标零变化），故自动化验证路径在本机不可用，改以人工验证为准；
+  后续若要回归自动化，需另找注入点（如应用内 devtools 直接调 `startDragging()` 只证 IPC 通，
+  证不了「跟手」）。

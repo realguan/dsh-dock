@@ -1,26 +1,39 @@
-// 沉浸式标题栏（ADR-0029，2026-09-21）——主窗口「唤醒 dsh 自带桌面 CSS + 翻译拖拽语义」层。
+// 沉浸式标题栏（ADR-0029，2026-09-21）——主窗口「唤醒 dsh 自带桌面 CSS + 驱动窗口拖拽」层。
 //
-// 做什么：官方 dsh 桌面客户端的沉浸式标题栏，真相源在 dsh 自己的 web 前端——
-// `packages/client` 里整批按 `html[data-platform='darwin']` 生效的桌面 CSS（页面透明、
-// 侧栏 tint、topStrip 与红绿灯共行、`-webkit-app-region: drag/no-drag`，源锚见
-// ADR-0029 §1 表）。壳里它们休眠，只差两件事，本脚本就是这两件事：
+// 做什么：官方 dsh 桌面客户端（Electron）的沉浸式标题栏，真相源在 dsh 自己的 web 前端——
+// `packages/client` 里整批按 `html[data-platform='darwin']` 生效的桌面 CSS（页面透明、侧栏
+// tint、topStrip 与红绿灯共行），以及 AppFrame 在 darwin 下挂载的**窗口拖拽带**
+// （`AppFrame.tsx` 的 `{darwin && <div data-shell-leading-band />}`；CSS 为
+// `position:absolute; top:0; left/right:0; height:52px; pointer-events:none`，带会话 tabs
+// 时加高到 76px）。壳里它们休眠，本脚本补两件事：
 //   ① 补打 dsh 官方 Electron preload 同款标记 `data-platform="darwin"`
-//      （`apps/desktop/src/preload-platform.ts:8`）→ dsh 的桌面布局全量生效；
-//   ② 把 dsh CSS 的 `-webkit-app-region` 计算样式**翻译**成 Tauri 的
-//      `data-tauri-drag-region` 属性（`-webkit-app-region` 是 Electron 行为，
-//      Tauri 只认属性；语义对照见 tauri 2.11.5 `window/scripts/drag.js`）。
+//      （`apps/desktop/src/preload-platform.ts:8`）→ dsh 的桌面布局与拖拽带全量生效；
+//   ② **自己驱动窗口拖拽**（机制于 2026-09-23 改版，见下）。
 //
-// 为什么不硬编码选择器：dsh 前端 CSS Modules 类名带构建哈希，每次升级都可能变；
-// 按**计算样式**扫描与哈希无关（ADR-0029 §3 方案 A）。
+// 为什么不再翻译 `-webkit-app-region`（2026-09-23 本机 WKWebView 探针实测推翻原方案）：
+//   · WKWebView（Tauri 在 macOS 的引擎）**根本不认这个属性**：
+//     `CSS.supports('-webkit-app-region','drag') === false`，computed style 与 CSSOM
+//     `style.setProperty` 读回**皆为 `""`** ⇒ 原「扫计算样式」方案在 macOS 上恒扫不到元素，
+//     一个拖拽属性都打不上（v1.3.0~v1.3.3 的实况，与 ACL 无关）；
+//   · 且拖拽带本身是 `pointer-events:none`：Electron 的 app-region 是**几何**语义，而 Tauri 的
+//     `data-tauri-drag-region` 是**命中测试**语义（`drag.js` 走 `composedPath`）——属性挂在
+//     一个永不成为事件目标的元素上也不会触发。
+// 现方案 = 在注入层**复刻 Electron 的几何语义**：命中点落在拖拽带矩形内、且不在 dsh 自己
+// 声明的交互元素排除表里（`web/src/base.css:72-78` 的 no-drag 选择器）⇒ 调 Tauri 的
+// `startDragging()`；双击 ⇒ `toggleMaximize()`（对齐 Tauri `drag.js` 的 macOS 行为与系统
+// 标题栏习惯：按下不算，抬起且未移动才算）。
+//
+// 为什么不硬编码 dsh 类名：拖拽带由 dsh 自己发布稳定钩子 `data-shell-leading-band`（名字即
+// 「给壳用的」），类名哈希与我们无关；钩子缺失（更老的 dsh）时退回「顶部 52px」几何带。
 //
 // 边界（与既有注入脚本同口径）：
-// - 只对**工作台 origin** 生效：同步 hostname=127.0.0.1 乐观命中（dsh 就绪 URL 恒该
-//   形态，`shell.rs` 实测），异步 `get_workbench_url` 精确确认，不符即撤；
+// - 只对**工作台 origin** 生效：同步 hostname=127.0.0.1 乐观命中（dsh 就绪 URL 恒该形态，
+//   `shell.rs` 实测），异步 `get_workbench_url` 精确确认，不符即撤；
 // - 仅 macOS（`__DSH_PLATFORM__.os === 'macos'`）：Windows 档 2026-09-22 曾进场、
 //   **2026-09-23 维护者裁定撤回**（ADR-0030，issue #16 真机事故），与 Linux 同口径
 //   保持原生装饰；
-// - 全程零色值/零样式表注入——只打标记与属性，paletteTokens 闸门天然放行；
-// - 失败即静默降级：扫描不到 app-region = 回到原生标题栏，不坏工作台任何功能。
+// - 全程零色值/零样式表注入——只打标记与读几何，paletteTokens 闸门天然放行；
+// - 失败即静默降级：拿不到拖拽带用兜底几何带；Tauri API 不可用则完全不动作。
 //
 // 纯逻辑与 `frontend/src/lib/immersiveChrome.ts` 同源（该文件有 vitest 覆盖）；
 // 本脚本无打包器，改动时两处同步。
@@ -28,27 +41,47 @@
   if (window.__dshDockImmersiveInjected) return;
   window.__dshDockImmersiveInjected = true;
 
-  // ---- 平台分支（2026-09-21 建立，2026-09-23 收窄回 macOS）----
-  // macOS：打 darwin 标记 + 翻译 app-region 拖拽（ADR-0029 原范围）。
-  // Windows：**2026-09-23 维护者裁定撤回**（ADR-0030，issue #16 真机事故）。原分支打官方同款
-  //   标记并自绘最小化/最大化/关闭，但：① 三条 window 命令（minimize / toggle_maximize / close）
-  //   不在 `core:window:default` 里，capabilities 又只授了 `core:default` ⇒ ACL 拒绝，且调用点
-  //   `.catch(function () {})` 把它吞掉 = 用户侧「点了没反应」；② dsh 的 40px 拖拽条是伪元素
-  //   （`AppFrame.module.css:40-46` 的 `.frame::before`），承载不了 `data-tauri-drag-region`
-  //   ⇒ 窗口完全拖不动。二者叠加使窗口变砖，故 Windows 维持原生装饰。
+  // ---- 平台门（2026-09-23 收窄回 macOS）----
+  // macOS：打 darwin 标记 + 自驱拖拽（ADR-0029 / 2026-09-23 改版）。
+  // Windows：2026-09-23 维护者裁定撤回（ADR-0030，issue #16）——原分支的三条 window 命令不在
+  //   `core:window:default` 里（ACL 拒绝且被 `.catch` 吞掉）、dsh 的 Windows 拖拽条是伪元素、
+  //   且 `decorations(false)` 会摘掉缩放边框与贴靠 ⇒ 维持原生装饰。
   // Linux 与其它：不打任何桌面标记（官方客户端无 Linux 版，无可对标形态）。
   var platform = window.__DSH_PLATFORM__;
   if (!platform || platform.os !== 'macos') return;
 
   var MARKER = 'darwin'; // = immersiveChrome.ts 的 DSH_PLATFORM_MARKER
-  var DRAG_ATTR = 'data-tauri-drag-region';
+  /** dsh 自己发布的拖拽带钩子（AppFrame.tsx 的 data-shell-leading-band）。 */
+  var BAND_SELECTOR = '[data-shell-leading-band]'; // = immersiveChrome.ts 的 LEADING_BAND_SELECTOR
+  /** 钩子缺失时的兜底带高（与 dsh 的 .leadingBand 同值：`AppFrame.module.css` 52px）。 */
+  var FALLBACK_BAND_HEIGHT = 52; // = immersiveChrome.ts 的 DRAG_BAND_FALLBACK_HEIGHT
+  /** dsh 的交互元素排除表（`web/src/base.css:72-78` 的 `-webkit-app-region: no-drag` 列表）。 */
+  var EXCLUSION_SELECTOR =
+    "button,a,input,select,textarea,summary,[contenteditable='true'],[tabindex]," +
+    "[role='dialog'],[role='alertdialog'],[role='menu'],[role='listbox'],[role='tooltip']," +
+    "[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='menuitemcheckbox']," +
+    "[role='menuitemradio'],[role='option'],[role='checkbox'],[role='radio'],[role='switch']," +
+    "[role='slider'],[role='combobox'],[role='textbox']"; // = immersiveChrome.ts 的 DRAG_EXCLUSION_SELECTOR
+  /** dsh 把浮层/门户挂在 `body > :not(#root)`（base.css:60），拖拽面只在 #root 里。 */
+  var ROOT_SELECTOR = '#root'; // = immersiveChrome.ts 的 DRAG_SURFACE_ROOT_SELECTOR
+
   var activated = false;
-  var observer = null;
+  var lastPress = null; // 双击判定：{ x, y, moved }
 
   function invokeTauri(cmd) {
     var tauri = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
     if (!tauri) return Promise.resolve(null);
     return tauri(cmd).catch(function () { return null; });
+  }
+
+  function currentWindow() {
+    var win = window.__TAURI__ && window.__TAURI__.window;
+    if (!win || !win.getCurrentWindow) return null;
+    try {
+      return win.getCurrentWindow();
+    } catch {
+      return null;
+    }
   }
 
   // ---- 纯逻辑镜像（lib/immersiveChrome.ts，改逻辑两处同步）----
@@ -68,81 +101,104 @@
     return isWorkbenchHostnameSync(locationHostname) ? 'confirm' : 'defer';
   }
 
-  function dragRegionAttrFor(appRegion) {
-    var value = String(appRegion).trim();
-    if (value === 'drag') return 'deep';
-    if (value === 'no-drag') return 'false';
-    return null;
+  /** 是否该由我们把这次按下变成窗口拖拽（纯逻辑镜像）。 */
+  function shouldStartWindowDrag(inBand, insideRoot, onInteractive, fullscreen) {
+    return inBand && insideRoot && !onInteractive && !fullscreen;
   }
 
-  // ---- app-region → data-tauri-drag-region 翻译 ----
-  //
-  // fidelity 要点：dsh 对可拖区域里的**非可点击**子元素（如 headerLeading 这类
-  // div）显式 no-drag；Tauri 的 deep 会让整个子树可拖，不把 no-drag 映射成
-  // false，这些 div 就会把拖拽"漏"进按钮区。
-  function applyAttr(el) {
-    if (!(el instanceof HTMLElement)) return;
-    var region;
-    try {
-      region = getComputedStyle(el).getPropertyValue('-webkit-app-region');
-    } catch {
-      return; // 极端环境取不到计算样式：不碰
+  // ---- 拖拽带几何 ----
+
+  /** 拖拽带矩形：优先读 dsh 自己的钩子元素，取不到则用顶部兜底带。 */
+  function bandRect() {
+    var band = document.querySelector(BAND_SELECTOR);
+    if (band) {
+      var rect = band.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return rect;
     }
-    var attr = dragRegionAttrFor(region);
-    if (attr === null) {
-      // 类名翻转导致 app-region 消失：撤掉我们此前设的属性（自愈，不等整页重扫）。
-      if (el.hasAttribute(DRAG_ATTR)) el.removeAttribute(DRAG_ATTR);
+    if (typeof window.innerWidth !== 'number') return null;
+    return {
+      left: 0,
+      right: window.innerWidth,
+      top: 0,
+      bottom: FALLBACK_BAND_HEIGHT,
+      width: window.innerWidth,
+      height: FALLBACK_BAND_HEIGHT,
+    };
+  }
+
+  function withinBand(rect, x, y) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  // ---- 自驱拖拽（几何语义，等价于 Electron 的 app-region 合成）----
+
+  function onMouseDown(event) {
+    if (!activated || event.button !== 0) return;
+    if (event.detail > 2) return; // 三连击及以上交给页面
+    var rect = bandRect();
+    if (!rect || !withinBand(rect, event.clientX, event.clientY)) return;
+
+    var hit = document.elementFromPoint(event.clientX, event.clientY);
+    var insideRoot = !!(hit && hit.closest && hit.closest(ROOT_SELECTOR));
+    var onInteractive = !!(hit && hit.closest && hit.closest(EXCLUSION_SELECTOR));
+    var fullscreen = document.documentElement.hasAttribute('data-fullscreen');
+    if (!shouldStartWindowDrag(true, insideRoot, onInteractive, fullscreen)) return;
+
+    var win = currentWindow();
+    if (!win) return;
+
+    // 双击 = 最大化（与 Tauri drag.js 的 macOS 分支同款：**按下不算**，抬起且未移动才算）。
+    if (event.detail === 2) {
+      lastPress = { x: event.clientX, y: event.clientY, moved: false };
       return;
     }
-    // 只在值变化时写——避免触发我们自己的 observer 回环（且 attributeFilter
-    // 不含 DRAG_ATTR，双保险）。
-    if (el.getAttribute(DRAG_ATTR) !== attr) el.setAttribute(DRAG_ATTR, attr);
+    lastPress = null;
+    // 阻止拖拽期间的文本选择/焦点争夺（Tauri drag.js 同样的 preventDefault）。
+    event.preventDefault();
+    win.startDragging().catch(function () {});
   }
 
-  function scanTree(node) {
-    if (node instanceof HTMLElement) applyAttr(node);
-    if (!node.querySelectorAll) return; // Text 等无子树
-    var descendants = node.querySelectorAll('*');
-    for (var i = 0; i < descendants.length; i++) applyAttr(descendants[i]);
+  function onMouseMove(event) {
+    if (!lastPress) return;
+    if (Math.abs(event.clientX - lastPress.x) > 4 || Math.abs(event.clientY - lastPress.y) > 4) {
+      lastPress.moved = true;
+    }
   }
 
-  function scanAll() {
-    var all = document.querySelectorAll('*');
-    for (var i = 0; i < all.length; i++) applyAttr(all[i]);
+  function onMouseUp(event) {
+    var press = lastPress;
+    lastPress = null;
+    if (!press || press.moved || event.button !== 0) return;
+    var win = currentWindow();
+    if (!win) return;
+    win.toggleMaximize().catch(function () {});
+  }
+
+  function installDrag() {
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('mousemove', onMouseMove, true);
+    document.addEventListener('mouseup', onMouseUp, true);
+  }
+
+  function uninstallDrag() {
+    document.removeEventListener('mousedown', onMouseDown, true);
+    document.removeEventListener('mousemove', onMouseMove, true);
+    document.removeEventListener('mouseup', onMouseUp, true);
+    lastPress = null;
   }
 
   function activate() {
     if (activated) return;
     activated = true;
     document.documentElement.dataset.platform = MARKER;
-    scanAll();
-    // dsh 工作台是 SPA：titleRow/topStrip 等会被路由切换整体替换，流式输出也会
-    // 插新节点——observer 跟随。attributes 只监 class/style（拖拽相关样式的来源）。
-    observer = new MutationObserver(function (records) {
-      for (var i = 0; i < records.length; i++) {
-        var r = records[i];
-        if (r.type === 'attributes') {
-          if (r.target instanceof HTMLElement) applyAttr(r.target);
-          continue;
-        }
-        for (var j = 0; j < r.addedNodes.length; j++) scanTree(r.addedNodes[j]);
-      }
-    });
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style'],
-    });
+    installDrag();
   }
 
   function deactivate() {
     if (!activated) return;
     activated = false;
-    if (observer) { observer.disconnect(); observer = null; }
+    uninstallDrag();
     delete document.documentElement.dataset.platform;
-    var marked = document.querySelectorAll('[' + DRAG_ATTR + ']');
-    for (var i = 0; i < marked.length; i++) marked[i].removeAttribute(DRAG_ATTR);
   }
 
   // ---- 主流程：同步乐观命中 → 异步精确确认（翻盘即撤）----
