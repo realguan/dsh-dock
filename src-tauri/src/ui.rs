@@ -60,13 +60,15 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     // 与 switcher.js 的分工：幕布管"进/出工作台的过渡"，胶囊管"常驻互跳入口"。
     let handoff_curtain_script = include_str!("../../frontend/src/injected/handoff-curtain.js");
 
-    // 沉浸式标题栏（2026-09-21，ADR-0029）：官方客户端的沉浸式 chrome 真相源在 dsh
-    // 自己的 web 前端（`packages/client` 里按 `html[data-platform='darwin']` 生效的
-    // 一整批桌面 CSS：透明底、侧栏 tint、topStrip 与红绿灯共行、
-    // `-webkit-app-region: drag/no-drag`；源锚见 ADR-0029 §1 表）。壳里它们休眠，
-    // 本脚本补打 dsh 官方 Electron preload 同款标记并把 app-region 计算样式翻译成
-    // Tauri 的 `data-tauri-drag-region`。仅 macOS 生效（与下方窗口配置的 cfg 同门），
-    // 只认工作台 origin，扫描落空即静默降级回原生标题栏。
+    // 沉浸式标题栏（2026-09-21，ADR-0029；拖拽机制 2026-09-23 改版，见该档 §7）：官方客户端的
+    // 沉浸式 chrome 真相源在 dsh 自己的 web 前端（`packages/client` 里按
+    // `html[data-platform='darwin']` 生效的一整批桌面 CSS：透明底、侧栏 tint、顶栏与红绿灯
+    // 共行；源锚见 ADR-0029 §1 表与 §7.3）。壳里它们休眠，本脚本补两件事：① 补打 dsh 官方
+    // Electron preload 同款标记；② **按几何语义自驱窗口拖拽**（读 dsh 自己发布的
+    // `data-shell-leading-band` 钩子 + 它的交互元素排除表 ⇒ `startDragging()`）。
+    // 注意：不要再回到「翻译 `-webkit-app-region`」那条路 —— WKWebView 不认该属性，
+    // 2026-09-23 已实测证伪（ADR-0029 §7.1）。仅 macOS 生效（与下方窗口配置的 cfg 同门），
+    // 只认工作台 origin，拿不到拖拽带即静默降级（用顶部 52px 兜底几何带）。
     let immersive_script = include_str!("../../frontend/src/injected/immersive-chrome.js");
 
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
@@ -868,24 +870,38 @@ mod window_background_tests {
 ///   ① 双重注入 guard（同文档重入防护，与既有脚本同款）；
 ///   ② macOS 平台门（v1 仅 macOS；Win/Linux 保持原生装饰，与窗口配置的 cfg 同门）；
 ///   ③ 标记值 `darwin`（必须与 dsh 官方 preload 打的同款，见 ADR-0029 §1）；
-///   ④ app-region → `data-tauri-drag-region` 翻译键名。
+///   ④ 拖拽机制要件（2026-09-23 改版后：几何语义 —— 读 dsh 的拖拽带钩子 + 命中测试；
+///      旧「app-region → `data-tauri-drag-region`」键名已作废，见 ADR-0029 §7）。
 #[cfg(test)]
 mod immersive_chrome_tests {
     #[test]
     fn immersive_script_carries_its_contract() {
         let src = include_str!("../../frontend/src/injected/immersive-chrome.js");
+        // 只有**生效代码**才算数：注释里为说明历史而引用旧键名会干扰纯 contains 断言
+        // （本闸门 2026-09-23 就栽过一次 —— 键名只剩在注释里，断言照样绿）。
+        let code = src
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !(trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('*'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         for needle in [
             "window.__dshDockImmersiveInjected", // ① 重入 guard
             "platform.os !== 'macos'",           // ② v1 平台门
             "dataset.platform",                  // ③ 补打 dsh 官方标记的落点
             "'darwin'",                          // ③ 标记值（= DSH_PLATFORM_MARKER）
-            "data-tauri-drag-region",            // ④ Tauri 拖拽属性
-            "-webkit-app-region",                // ④ dsh 侧计算样式键
+            "data-shell-leading-band",           // ④ 拖拽带钩子（dsh 发布）
+            "elementFromPoint",                  // ④ 命中测试：决定拖动还是点击
         ] {
             assert!(
-                src.contains(needle),
-                "immersive-chrome.js 缺少契约要素 `{needle}`——ADR-0029 §5 的降级链\
-                 会因此静默失效（工作台回退原生标题栏）。若确有重构，请同步本闸门与 ADR。"
+                code.contains(needle),
+                "immersive-chrome.js 的生效代码缺少契约要素 `{needle}`——ADR-0029 的机制\
+                 会因此静默失效（工作台回退原生标题栏 / 窗口拖不动）。若确有重构，\
+                 请同步本闸门与 ADR。"
             );
         }
     }
