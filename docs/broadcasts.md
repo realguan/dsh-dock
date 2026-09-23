@@ -32,6 +32,47 @@
 
 ## 三、记录
 
+### 2026-09-23 发版 · v1.3.3（Windows 窗口回退 + macOS 拖拽区权限修复）—— guan（AI 协作）
+
+- **内容**：两笔修复 —— `724fa01`（Windows 撤回沉浸式标题栏，issue #16）+ `c972c17`
+  （macOS 补 `core:window:allow-start-dragging`）；本笔 `release:` 落版本号与发版日志。
+- **版本一致性**（CI 的 tag 闸门同款口径，四处齐为 1.3.3）：`src-tauri/Cargo.toml` ·
+  `src-tauri/tauri.conf.json` · `frontend/package.json` · `src-tauri/Cargo.lock`。
+- **发版日志**：`docs/RELEASE_NOTES.md` 顶部 `## [v1.3.3] - 2026-09-23`；
+  `scripts/extract-release-notes.py v1.3.3` 提取通过（1176 字符）。
+- **凭据**：`cargo test` 578 passed + `fmt --check` / `clippy -D warnings` 干净；
+  前端 `typecheck` ✓ · `oxlint` 0 warning · `vitest` 678 passed。
+- **待办 / 未做（明确边界）**：
+  1. **未打 tag、未推送** —— 按本轮裁定留给维护者执行（CI 三平台构建与产物验收随之启动）。
+  2. **macOS 拖拽区实机验证未做** —— 发版说明已如实披露该边界；验收不通过则按 ADR-0030 §5
+     回退该授权并另出说明。
+  3. v1.3.2 用户需升级到本版才恢复 Windows 窗口的移动 / 缩放 / 关闭能力。
+
+### 2026-09-23 缺陷修复 · macOS 拖拽区补 ACL 授权（ADR-0029 的翻译此前一直是死的）—— guan（AI 协作）
+
+- **发现**（复核 issue #16 时顺带，与 Windows 档无关的独立缺陷）：ADR-0029 的
+  app-region → `data-tauri-drag-region` 翻译，最终由 Tauri 自己的 `drag.js` 在单击时
+  invoke `plugin:window|start_dragging`；而该命令**不在** `core:window:default`
+  （tauri 2.11.5，该默认集 = 28 条只读 getter + `internal_toggle_maximize`），
+  capabilities 又只授了 `core:default` ⇒ **自 v1.3.0 起该翻译在真机上从未生效**：
+  能拖的只有系统原生标题栏那一条带，dsh 自绘的 topStrip / titleRow 拖拽区是死的
+  （双击最大化走 `internal_toggle_maximize`，在默认集内，故只有单击拖拽失能 ——
+  这也是它没被日常使用暴露出来的原因）。
+- **处置**：`capabilities/default.json` 补 `core:window:allow-start-dragging`；新增配对闸门
+  `immersive_drag_acl_tests`，把「机制 → 权限」这条链钉死（正 = 权限在册 + `core:default`
+  在册；反 = 脚本仍须设置拖拽属性且 `drag → deep`）——直接针对 issue #16 的教训：
+  脚本调命令 + capabilities 没授 + `.catch` 吞掉 = 用户侧「没反应」。代码笔 `c972c17`。
+- **影响 / 需要他人做什么**：
+  1. macOS 用户的行为变化 = 顶栏 / 侧栏条带的单击拖拽开始生效；
+     **但「拖得动」本机无法证明** —— 需 macOS 实机验证（顶栏/侧栏条带拖动 + 双击最大化），
+     **验证前不得对外宣称已修**（ADR-0030 §5 行动项）。
+  2. 权限面变化：多一条 `core:window:allow-start-dragging`（remote 授权仍限
+     `http://127.0.0.1:*`）；无新增自研 IPC、无新增网络面。
+- **凭据**：`cargo fmt --check` ✓ · `clippy --all-targets -D warnings` ✓ ·
+  `cargo test` 578 passed（+2 新闸门）· **负例实测**：临时摘掉该授权 →
+  `drag_region_permissions_are_granted` FAILED（报错点名权限与 tauri 默认集），
+  还原后恢复绿。
+
 ### 2026-09-23 缺陷修复 · issue #16 —— Windows 撤回沉浸式标题栏（窗口不可移动 / 缩放 / 关闭）—— guan（AI 协作）
 
 - **触发**：Windows 用户 issue #16「Windows平台 web界面的 窗口没法移动 最大化 最小化
