@@ -2,7 +2,9 @@
 //
 // 钉住四件容易在重构中悄悄坏掉的事：
 //   1. **平台门**——只有 macOS 补 `data-platform` 标记；Win/Linux 一律 null
-//      （一期不做半成品沉浸式，原生装饰不动）；
+//      （Windows 档 2026-09-22 进场、2026-09-23 裁定整体撤回，ADR-0030/issue #16：
+//      `decorations(false)` 带走缩放与贴靠、自绘控件无 ACL 授权、拖拽条是伪元素；
+//      Windows 自此与 Linux 同口径维持原生装饰）；
 //   2. **拖拽语义 fidelity**——`drag`→`deep`、`no-drag`→`false` 必须逐条映射：
 //      dsh 对可拖区域里的非可点击子元素（div）显式 no-drag，漏映射 = 按钮区
 //      被拖拽"漏"进去；
@@ -16,8 +18,6 @@ import {
   immersivePlatformAttrFor,
   isWorkbenchHostnameSync,
   syncWorkbenchProbe,
-  WINDOWS_TITLEBAR_HEIGHT,
-  windowsTitlebarPlanFor,
 } from "@/lib/immersiveChrome"
 
 describe("immersivePlatformAttrFor", () => {
@@ -26,7 +26,7 @@ describe("immersivePlatformAttrFor", () => {
     expect(DSH_PLATFORM_MARKER).toBe("darwin")
   })
 
-  it("Windows/Linux → null（一期保持原生装饰，ADR-0029 §4）", () => {
+  it("Windows/Linux → null（维持原生装饰；Windows 档已按 2026-09-23 裁定撤回，ADR-0030）", () => {
     expect(immersivePlatformAttrFor("windows")).toBeNull()
     expect(immersivePlatformAttrFor("linux")).toBeNull()
     expect(immersivePlatformAttrFor(undefined)).toBeNull()
@@ -96,24 +96,5 @@ describe("syncWorkbenchProbe", () => {
     for (const origin of ["tauri://localhost", "http://tauri.localhost", "http://localhost:1420"]) {
       expect(syncWorkbenchProbe(origin, new URL(origin).hostname, null)).toBe("defer")
     }
-  })
-})
-
-describe("Windows 标题栏标记（对标官方 preload-windows.ts）", () => {
-  it("Windows ⇒ 打 data-windows-titlebar 并给 40px 高度变量（与官方常量一致）", () => {
-    const plan = windowsTitlebarPlanFor("windows")
-    expect(plan).not.toBeNull()
-    expect(plan!.attr).toBe("data-windows-titlebar")
-    expect(plan!.cssVar).toBe("--dsh-windows-titlebar-height")
-    expect(plan!.cssValue).toBe("40px")
-    expect(WINDOWS_TITLEBAR_HEIGHT).toBe(40)
-  })
-
-  it("反例守卫：仅 Windows 生效 —— macOS 走 darwin 标记、Linux 两者都不打", () => {
-    expect(windowsTitlebarPlanFor("macos")).toBeNull()
-    expect(windowsTitlebarPlanFor("linux")).toBeNull()
-    expect(windowsTitlebarPlanFor(undefined)).toBeNull()
-    expect(immersivePlatformAttrFor("windows")).toBeNull()
-    expect(immersivePlatformAttrFor("macos")).toBe("darwin")
   })
 })

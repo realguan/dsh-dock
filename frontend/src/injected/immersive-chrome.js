@@ -16,8 +16,9 @@
 // 边界（与既有注入脚本同口径）：
 // - 只对**工作台 origin** 生效：同步 hostname=127.0.0.1 乐观命中（dsh 就绪 URL 恒该
 //   形态，`shell.rs` 实测），异步 `get_workbench_url` 精确确认，不符即撤；
-// - v1 仅 macOS（`__DSH_PLATFORM__.os === 'macos'`）：Win/Linux 无红绿灯且 Tauri
-//   稳定版无 titleBarOverlay 等价物，保持原生装饰；
+// - 仅 macOS（`__DSH_PLATFORM__.os === 'macos'`）：Windows 档 2026-09-22 曾进场、
+//   **2026-09-23 维护者裁定撤回**（ADR-0030，issue #16 真机事故），与 Linux 同口径
+//   保持原生装饰；
 // - 全程零色值/零样式表注入——只打标记与属性，paletteTokens 闸门天然放行；
 // - 失败即静默降级：扫描不到 app-region = 回到原生标题栏，不坏工作台任何功能。
 //
@@ -27,19 +28,17 @@
   if (window.__dshDockImmersiveInjected) return;
   window.__dshDockImmersiveInjected = true;
 
-  // ---- 平台分支（2026-09-21 扩展）----
+  // ---- 平台分支（2026-09-21 建立，2026-09-23 收窄回 macOS）----
   // macOS：打 darwin 标记 + 翻译 app-region 拖拽（ADR-0029 原范围）。
-  // Windows：对标官方 preload-windows.ts —— 打 data-windows-titlebar + 40px 高度变量
-  //   （页面据此预留标题栏带并自绘拖拽条，与官方逐字一致），外加**自绘**最小化/最大化/关闭
-  //   （官方用 Electron 的原生 titleBarOverlay，Tauri 无等价 API ⇒ 唯一偏差，已登记）。
+  // Windows：**2026-09-23 维护者裁定撤回**（ADR-0030，issue #16 真机事故）。原分支打官方同款
+  //   标记并自绘最小化/最大化/关闭，但：① 三条 window 命令（minimize / toggle_maximize / close）
+  //   不在 `core:window:default` 里，capabilities 又只授了 `core:default` ⇒ ACL 拒绝，且调用点
+  //   `.catch(function () {})` 把它吞掉 = 用户侧「点了没反应」；② dsh 的 40px 拖拽条是伪元素
+  //   （`AppFrame.module.css:40-46` 的 `.frame::before`），承载不了 `data-tauri-drag-region`
+  //   ⇒ 窗口完全拖不动。二者叠加使窗口变砖，故 Windows 维持原生装饰。
   // Linux 与其它：不打任何桌面标记（官方客户端无 Linux 版，无可对标形态）。
   var platform = window.__DSH_PLATFORM__;
-  if (!platform) return;
-  if (platform.os === 'windows') {
-    installWindowsTitlebar();
-    return;
-  }
-  if (platform.os !== 'macos') return;
+  if (!platform || platform.os !== 'macos') return;
 
   var MARKER = 'darwin'; // = immersiveChrome.ts 的 DSH_PLATFORM_MARKER
   var DRAG_ATTR = 'data-tauri-drag-region';
@@ -162,68 +161,5 @@
   // DOMContentLoaded（dsh 官方 preload-platform.ts 同款防御）。
   if (document.documentElement) start();
   else window.addEventListener('DOMContentLoaded', function () { start(); }, { once: true });
-
-  // ---- Windows 标题栏（对标 apps/desktop/src/preload-windows.ts:12 + windows-layout.ts:4）----
-  var WINDOWS_TITLEBAR_HEIGHT = 40;
-
-  function installWindowsTitlebar() {
-    var mark = function () {
-      var root = document.documentElement;
-      if (!root) return false;
-      root.setAttribute('data-windows-titlebar', '');
-      root.style.setProperty('--dsh-windows-titlebar-height', WINDOWS_TITLEBAR_HEIGHT + 'px');
-      return true;
-    };
-    mark();
-    // 自绘控件（官方由 Electron 原生 overlay 绘制；Tauri 无等价 API）——
-    // 只在**主工作台页**挂载，且用 Shadow DOM 隔离样式（同胶囊的既有做法）。
-    var mount = function () {
-      if (document.getElementById('dsh-dock-window-controls')) return;
-      if (!document.body) return;
-      var host = document.createElement('div');
-      host.id = 'dsh-dock-window-controls';
-      host.style.cssText =
-        'position:fixed;top:0;right:0;height:' + WINDOWS_TITLEBAR_HEIGHT +
-        'px;display:flex;align-items:stretch;z-index:2147483000;';
-      var shadow = host.attachShadow({ mode: 'open' });
-      // **零裸色值**（paletteTokens 闸门 + AGENTS §4.3）：颜色一律从页面继承/派生 ——
-      // `:host` 继承宿主元素的 color，按钮 `color:inherit`，hover 用 `color-mix` 从
-      // 当前文字色派生。官方客户端让 Windows **原生**绘制这三个按钮（有系统红关闭态），
-      // 自绘版改用主题派生色，正是为了不绕过本仓的 token 纪律。
-      shadow.innerHTML =
-        '<style>' +
-        ':host{all:initial;color:inherit}' +
-        'div{display:flex;height:100%;font-family:system-ui,sans-serif}' +
-        'button{width:46px;height:100%;border:0;background:transparent;cursor:default;' +
-        'color:inherit;display:grid;place-items:center;font-size:10px}' +
-        'button:hover{background:color-mix(in srgb,currentColor 10%,transparent)}' +
-        'button.dsh-close:hover{background:color-mix(in srgb,currentColor 22%,transparent)}' +
-        '</style>' +
-        '<div>' +
-        '<button data-dsh-control="minimize" title="最小化">&#x2500;</button>' +
-        '<button data-dsh-control="maximize" title="最大化">&#x25A1;</button>' +
-        '<button data-dsh-control="close" class="dsh-close" title="关闭">&#x2715;</button>' +
-        '</div>';
-      document.body.appendChild(host);
-      shadow.addEventListener('click', function (event) {
-        var target = event.target;
-        var action = target && target.getAttribute && target.getAttribute('data-dsh-control');
-        if (!action) return;
-        var win = window.__TAURI__ && window.__TAURI__.window;
-        var current = win && win.getCurrentWindow ? win.getCurrentWindow() : null;
-        if (!current) return;
-        // 全部 .catch：关窗/最大化失败不得静默半途（AGENTS §4.3 的 Promise 纪律）。
-        if (action === 'minimize') current.minimize().catch(function () {});
-        else if (action === 'maximize') current.toggleMaximize().catch(function () {});
-        else if (action === 'close') current.close().catch(function () {});
-      });
-    };
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', mark);
-      document.addEventListener('DOMContentLoaded', mount);
-    } else {
-      mount();
-    }
-  }
 
 })();

@@ -1,10 +1,13 @@
 # ADR-0029：沉浸式标题栏——标记补打 + app-region 计算样式映射
 
 - **日期**：2026-09-21
-- **状态**：已接受
+- **状态**：已接受（**范围 2026-09-23 收窄为 macOS 单平台**：Windows 一侧由
+  [ADR-0030](0030-windows-keeps-native-decorations.md) 撤回，见该档 §1/§4；本档 §1 表中
+  「Windows 桌面档」登记条与 §5/§6 的 Windows 表述按该档失效）
 - **提出人**：维护者（截图对比触发）+ AI 实施
 - **相关方**：`src-tauri/src/ui.rs`（主窗口）、`frontend/src/injected/`、`frontend/src/lib/immersiveChrome.ts`
-- **关联**：ADR-0014（交接幕布，注入脚本先例）；dsh 上游 `apps/desktop`（Electron 官方客户端实证）
+- **关联**：ADR-0014（交接幕布，注入脚本先例）；dsh 上游 `apps/desktop`（Electron 官方客户端实证）；
+  [ADR-0030](0030-windows-keeps-native-decorations.md)（Windows 档撤回）；issue #16
 
 ---
 
@@ -161,12 +164,21 @@ Tauri 的 `data-tauri-drag-region`。Windows/Linux 一期保持原生装饰（`d
 - [x] §3.1 补立：`traffic_lights.rs` 红绿灯 AppKit 定位（原生探针实证坐标系/间距）
 - [ ] 实机验证：macOS 拖拽 / 红绿灯位置（官方 x16/y18 逐值比对）/ 侧栏 vibrancy /
       未聚焦态 / 深浅色
+      —— **2026-09-23 追加发现（静态判据，未实机复核）**：app-region →
+      `data-tauri-drag-region` 的翻译最终要 invoke `plugin:window|start_dragging`，而该命令
+      **不在** `core:window:default`（tauri 2.11.5）且 capabilities 只授了 `core:default`
+      ⇒ 按 ACL 判据，该翻译自 v1.3.0 起在真机上从未生效（现在能拖的只是系统原生标题栏那一条
+      带，dsh 自绘的 topStrip / titleRow 拖拽区是死的）。修法与验证要求见
+      [ADR-0030](0030-windows-keeps-native-decorations.md) §5 行动项。
 - [ ] dsh 升级时按 §5 表逐条复核（随广播知会）
 
 ## 6. 复审条件
 
 - dsh 大版本升级或 `packages/client` 重构：§1 表的规则集/标记名变化即重开；
 - Tauri 大版本升级：`TitleBarStyle`/`Effect`/拖拽区语义（`drag.js`）变化即重开；
-- Windows 档要进场时：补 `data-windows-titlebar` 标记 + 自绘拖拽条（伪元素
-  `::before` 无法属性映射）与原生 caption 颜色同步方案，另立评审；
+- ~~Windows 档要进场时：补 `data-windows-titlebar` 标记 + 自绘拖拽条（伪元素
+  `::before` 无法属性映射）与原生 caption 颜色同步方案，另立评审~~ ⇒ **2026-09-23 维护者
+  裁定不进场**（[ADR-0030](0030-windows-keeps-native-decorations.md)）：除伪元素挂不上属性外，
+  `decorations(false)` 还会连带摘掉缩放边框与贴靠（tao 层硬行为），等价映射不成立；重开条件
+  见该档 §6。
 - 若 tauri issue #4316（未聚焦不可拖）出现上游修复，评估去掉降级文案。

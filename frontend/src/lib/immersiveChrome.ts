@@ -1,11 +1,16 @@
 // 沉浸式标题栏（immersive chrome）纯模型（2026-09-21，ADR-0029）。
 //
 // 背景：官方 dsh 桌面客户端（Electron）的沉浸式标题栏，真相源在 **dsh 自己的 web
-// 前端**——`packages/client` 里一整批按 `html[data-platform='darwin']` /
-// `html[data-windows-titlebar]` 生效的桌面 CSS（透明底、侧栏 tint、topStrip 与
-// 红绿灯共行、`-webkit-app-region: drag/no-drag`）。壳（Tauri）里这些规则休眠，
-// 只差两件事：① 标记没人打；② `-webkit-app-region` 是 Electron 行为，Tauri 只认
-// `data-tauri-drag-region` 属性。
+// 前端**——`packages/client` 里一整批按 `html[data-platform='darwin']` 生效的桌面
+// CSS（透明底、侧栏 tint、topStrip 与红绿灯共行、`-webkit-app-region: drag/no-drag`）。
+// 壳（Tauri）里这些规则休眠，只差两件事：① 标记没人打；② `-webkit-app-region` 是
+// Electron 行为，Tauri 只认 `data-tauri-drag-region` 属性。
+//
+// **范围（2026-09-23 维护者裁定，ADR-0030）**：仅 macOS。Windows 档 2026-09-22 曾按
+// 官方方案进场（打标记 + 壳自绘三控件），2026-09-23 因 issue #16 真机事故整体撤回 ——
+// `decorations(false)` 摘掉 `WS_CAPTION | WS_THICKFRAME`（缩放/贴靠退化），自绘控件缺 ACL
+// 授权（点了没反应），拖拽条又是伪元素挂不上属性（窗口拖不动）⇒ Windows 与 Linux 同口径
+// 维持原生装饰，标记计划与 40px 常量一并从本模块移除。
 //
 // 本模块是这两件事的**可测折算内核**（纯函数、无 IO）：
 //   1. `immersivePlatformAttrFor(os)` —— 壳平台 → dsh 的 `data-platform` 标记值；
@@ -31,41 +36,13 @@ export function isWorkbenchHostnameSync(hostname: string): boolean {
 /**
  * 壳平台 → `data-platform` 标记值。
  *
- * v1 仅 macOS：Windows/Linux 无红绿灯且 Tauri 稳定版无 `titleBarOverlay` 等价物，
- * 保持原生装饰（ADR-0029 §3 方案 A / §4）。将来 Windows 进场时在此补
- * `windowsTitlebar` 分支（同时要补自绘拖拽条——dsh 的 Windows 拖拽条是伪元素
- * `::before`，无法属性映射）。
+ * 仅 macOS：Windows/Linux 保持原生装饰（ADR-0029 §4；Windows 档 2026-09-23 裁定撤回，
+ * ADR-0030）。重开 Windows 档的前置条件写在 ADR-0030 —— 不是"补个分支"就能做：
+ * dsh 的 Windows 拖拽条是伪元素 `::before`（挂不上 `data-tauri-drag-region`），
+ * 且 `decorations(false)` 会带走缩放边框与贴靠。
  */
 export function immersivePlatformAttrFor(os: string | undefined): string | null {
   return os === "macos" ? DSH_PLATFORM_MARKER : null
-}
-
-/** 官方 Windows 标题栏带高度（`apps/desktop/src/windows-layout.ts:4` 的 WINDOWS_TITLEBAR_HEIGHT；
- *  2026-09-21 源锚）。改值 = 与官方分叉，须有依据。 */
-export const WINDOWS_TITLEBAR_HEIGHT = 40
-
-/** Windows 标记（对标官方 `preload-windows.ts:12` 的两件事）。
- *
- * 官方在 Windows 上是 `titleBarStyle:'hidden'` + `titleBarOverlay`（**原生**绘制最小化/最大化/
- * 关闭，40px 带，颜色随主题）；Tauri 无 `titleBarOverlay` 等价 API（`TitleBarStyle` 文档原文
- * "on macOS"），故壳侧映射为：`decorations(false)` + **同一套标记**（页面据此预留 40px 带并
- * 自绘拖拽条，与官方逐字一致）+ **自绘控件**（唯一偏差，已登记）。 */
-export interface WindowsTitlebarPlan {
-  /** 要打在 `<html>` 上的属性名（`dataset.windowsTitlebar = ''`） */
-  attr: "data-windows-titlebar"
-  /** 要写入的 CSS 变量名与值 */
-  cssVar: "--dsh-windows-titlebar-height"
-  cssValue: string
-}
-
-/** 壳平台 → Windows 标题栏标记计划（纯函数；非 Windows ⇒ null）。 */
-export function windowsTitlebarPlanFor(os: string | undefined): WindowsTitlebarPlan | null {
-  if (os !== "windows") return null
-  return {
-    attr: "data-windows-titlebar",
-    cssVar: "--dsh-windows-titlebar-height",
-    cssValue: `${WINDOWS_TITLEBAR_HEIGHT}px`,
-  }
 }
 
 /** Tauri 2.11.5 `drag.js` 的属性取值（语义：deep=子树可拖，可点击子元素自动阻断）。 */

@@ -170,25 +170,26 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
             );
     }
 
-    // Windows 沉浸式标题栏（2026-09-21，**对标官方 dsh 桌面客户端**）：
+    // Windows 沉浸式标题栏：2026-09-22 进场（`73c6af1`），**2026-09-23 维护者裁定撤回**
+    // （ADR-0030）。此处保留撤回理由，避免后人「照官方方案」再加一次：
+    //   ① **等价映射不成立**：官方 Electron 的 `titleBarStyle:'hidden'` 保留原生 frame
+    //      （可缩放 + 可贴靠），而 Tauri 的 `decorations(false)` 在 tao 里会一并摘掉
+    //      `WS_CAPTION | WS_THICKFRAME`（`tao-0.35.3/src/platform_impl/windows/window_state.rs:307`）
+    //      ⇒ 鼠标缩放边框与 Aero Snap 同时消失（该提交自己写的验收判据「缩放/贴靠退化即回退」
+    //      当场命中）；
+    //   ② **拖拽条挂不上属性**：dsh 的 40px 标题栏带是伪元素
+    //      （`AppFrame.module.css:40-46` 的 `.frame::before { -webkit-app-region: drag }`），
+    //      伪元素无法承载 `data-tauri-drag-region`——这正是 ADR-0029 §6 要求「另立评审」的那一项，
+    //      进场时没走 ⇒ 窗口完全拖不动；
+    //   ③ **自绘三控件静默失效**：`minimize` / `toggle_maximize` / `close` 不在
+    //      `core:window:default` 里，而 capabilities 只授了 `core:default` ⇒ ACL 拒绝 + 调用点
+    //      `.catch(function () {})` 吞掉 = 用户侧「点了没反应」（issue #16：移动 / 最大 / 最小 /
+    //      关闭四症状）。
+    // 现状 = Windows 与 Linux 同口径：**维持原生装饰**。闸门
+    // `windows_native_decorations_tests` 钉住（含反例方向）；要重开沉浸式档 = 先立 ADR，
+    // 并逐条解决上述三点（真机验收不可省）。
     //
-    // 官方（Electron，`apps/desktop/src/main.ts:111-133`，**仅主窗口**）用
-    // `titleBarStyle:'hidden'` + `titleBarOverlay{height:40, color, symbolColor}`：隐藏原生标题栏，
-    // 由系统在 40px 带里绘制最小化/最大化/关闭；`preload-windows.ts:12` 再打
-    // `data-windows-titlebar` + `--dsh-windows-titlebar-height:40px`，页面据此预留该带并自绘拖拽条。
-    //
-    // Tauri **没有** `titleBarOverlay` 等价 API（`TitleBarStyle` 文档原文 "on macOS"），故等价映射为：
-    //   ① 这里 `decorations(false)`（= 隐藏原生标题栏，对应官方的 `titleBarStyle:'hidden'`）；
-    //   ② 注入脚本打**同一套标记**（页面行为与官方逐字一致，含 40px 带与拖拽条）；
-    //   ③ 控件由壳**自绘**（`frontend/src/injected/immersive-chrome.js` 的 Windows 分支）——
-    //      这是与官方唯一的偏差，已登记在 ADR-0029/广播里。
-    //
-    // **待 Windows 真机验收（道 B 阻塞项）**：① 观感是否与官方一致；② `decorations(false)` 后
-    //   缩放/贴靠（snap）/投影是否退化 —— 若退化则回退本 cfg 块（改动集中在此，回退成本 = 一行）。
-    #[cfg(target_os = "windows")]
-    {
-        builder = builder.decorations(false);
-    }
+    // 2026-09-23 裁定：`decorations(false)` 不得再按平台加回本文件。
 
     let window = builder.initialization_script(immersive_script).build()?;
 
@@ -1073,77 +1074,66 @@ mod main_window_lifecycle_tests {
     }
 }
 
-/// Windows 沉浸式标题栏接线闸门（2026-09-21，维护者裁定「参照官方 dsh 客户端方案」）。
+/// Windows 维持原生装饰的「防复辟」闸门（2026-09-23 维护者裁定，ADR-0030）。
+///
+/// 撤回的是一次真机事故（issue #16：**窗口不能移动 / 缩放 / 关闭**）：`decorations(false)`
+/// 在 Windows 上摘掉 `WS_CAPTION | WS_THICKFRAME`（缩放 + 贴靠随之消失），而替代它的自绘控件
+/// 缺 ACL 授权、拖拽条是伪元素挂不上属性 —— 三件事各自都足够让窗口变砖。本模块保证这半成品
+/// 不会再被悄悄加回来。
 #[cfg(test)]
-mod windows_immersive_wiring_tests {
+mod windows_native_decorations_tests {
     fn ui_source() -> &'static str {
         include_str!("ui.rs")
-            .split("mod windows_immersive_wiring_tests")
+            .split("mod windows_native_decorations_tests")
             .next()
             .expect("split 至少返回一段")
     }
 
-    /// 隐藏原生标题栏必须**只在 Windows** 生效：macOS 走 Overlay+vibrancy、其余平台保持原生装饰
-    /// （把关窗/菜单/托盘那套既有语义一起收窄会波及三平台）。
+    /// 正例：窗口链上的 `decorations(false)` 一处都不许有（只允许出现在解释性注释里）。
     #[test]
-    fn decorations_off_is_windows_only() {
-        let src = ui_source();
-        let at = src
-            .find("builder = builder.decorations(false);")
-            .expect("缺 Windows 的 decorations(false)：官方方案的等价映射点");
-        let before = &src[..at];
-        let cfg = before.rfind("#[cfg(target_os = \"windows\")]");
-        assert!(
-            cfg.is_some(),
-            "decorations(false) 必须包在 #[cfg(target_os = \"windows\")] 里"
-        );
-        // 反例方向：不得无条件关装饰（那会把 macOS/Linux 的窗口一起改坏）
-        assert!(
-            !src.contains("\n    builder = builder.decorations(false);"),
-            "不得无条件关装饰"
-        );
-    }
-
-    /// 注入脚本必须**自称**对标官方 preload-windows.ts，并打同一套标记与 40px 高度。
-    #[test]
-    fn injected_script_carries_the_official_windows_markers() {
-        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
-        assert!(
-            injected.contains("data-windows-titlebar"),
-            "缺官方标记 data-windows-titlebar（页面据此预留 40px 带）"
-        );
-        assert!(
-            injected.contains("--dsh-windows-titlebar-height"),
-            "缺官方 CSS 变量（高度必须与官方一致）"
-        );
-        assert!(
-            injected.contains("WINDOWS_TITLEBAR_HEIGHT = 40"),
-            "高度常量必须与官方 windows-layout.ts:4 一致（40）"
-        );
-        for api in ["minimize()", "toggleMaximize()", "close()"] {
-            assert!(injected.contains(api), "自绘控件缺 {api} 接线");
+    fn windows_window_stays_decorated() {
+        for (idx, line) in ui_source().lines().enumerate() {
+            if line.contains("decorations(false)") {
+                assert!(
+                    line.trim_start().starts_with("//"),
+                    "ui.rs:{} 出现了实际生效的 decorations(false)：Windows 必须维持原生装饰\
+                     （2026-09-23 裁定，ADR-0030）——它会摘掉 WS_CAPTION|WS_THICKFRAME，\
+                     鼠标缩放与 Aero Snap 一并消失，而拖拽条/自绘控件在 Windows 上都无可用接线",
+                    idx + 1
+                );
+            }
         }
     }
 
-    /// 零裸色值（paletteTokens 闸门的同一条纪律，这里再钉一次口径）：
-    /// 自绘控件不得绕过 token —— 官方用系统原生控件，我们自绘就必须从主题继承/派生。
+    /// 反例方向：注入脚本里的 Windows 沉浸式分支（标记 / 自绘控件 / Tauri window API 调用）
+    /// 必须已整体移除——断言的是**代码形态**（注释里引用官方标记名不在此列）。
     #[test]
-    fn drawn_controls_use_no_literal_colors() {
+    fn injected_script_has_no_windows_branch() {
         let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
-        // `.split(..).last()` = **函数定义之后的全部**（该词出现两处：平台分支的调用
-        // 与函数定义；`.nth(1)` 只拿到两者之间的空段 —— 本闸门第一版就栽在这里）。
-        let controls = injected
-            .split("installWindowsTitlebar")
-            .last()
-            .filter(|seg| seg.contains("WINDOWS_TITLEBAR_HEIGHT"))
-            .expect("缺 Windows 分支实现");
+        for needle in [
+            "installWindowsTitlebar",
+            "dsh-dock-window-controls",
+            "setAttribute('data-windows-titlebar'",
+        ] {
+            assert!(
+                !injected.contains(needle),
+                "注入脚本仍带 Windows 沉浸式分支（{needle}）：2026-09-23 裁定 Windows 维持原生装饰\
+                 （ADR-0030），该分支的控件调用没有 ACL 授权、拖拽条是伪元素，属半成品"
+            );
+        }
+    }
+
+    /// 撤回不得误伤 macOS 档：Overlay + 隐标题那套仍在原位。
+    #[test]
+    fn macos_immersive_path_is_intact() {
+        let src = ui_source();
         assert!(
-            !controls.contains("background:#"),
-            "自绘控件不得使用裸 hex 背景色（paletteTokens 闸门的同一条纪律）"
+            src.contains("title_bar_style(tauri::TitleBarStyle::Overlay)"),
+            "macOS 的 Overlay 标题栏（ADR-0029）不得随本次回退丢失"
         );
         assert!(
-            controls.contains("color-mix(in srgb,currentColor"),
-            "hover 必须从当前文字色派生（color-mix），而不是另立色值"
+            src.contains(".hidden_title(true)"),
+            "macOS 隐藏标题文字（ADR-0029 §3）不得随本次回退丢失"
         );
     }
 }
