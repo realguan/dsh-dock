@@ -1137,3 +1137,60 @@ mod windows_native_decorations_tests {
         );
     }
 }
+
+/// 沉浸式拖拽区的 **ACL 配对**闸门（2026-09-23，issue #16 复盘的直接产物）。
+///
+/// 事故教训（issue #16）：注入脚本调 Tauri window 命令、capabilities 却没授对应权限 ——
+/// ACL 拒绝被 `.catch` 吞掉，用户侧只剩「点了 / 拖了没反应」，而当时的闸门只断言脚本里
+/// **出现**方法名字符串（结构性通过、行为性失效）。本闸门把「机制 → 权限」这条链钉死。
+///
+/// 机制事实（tauri 2.11.5 `src/window/scripts/drag.js`，2026-09-23 复核）：带
+/// `data-tauri-drag-region` 的元素上，单击 invoke `plugin:window|start_dragging`、双击
+/// invoke `plugin:window|internal_toggle_maximize`。后者由 `core:window:default` 自带
+/// （该默认集 = 28 条只读 getter + `internal_toggle_maximize`），**前者不在其中**
+/// ⇒ 必须显式授权，否则拖拽区是死的（v1.3.0~v1.3.2 的实况，2026-09-23 修）。
+#[cfg(test)]
+mod immersive_drag_acl_tests {
+    fn capability_permissions() -> Vec<String> {
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("capabilities/default.json 非法 JSON");
+        json["permissions"]
+            .as_array()
+            .expect("capabilities/default.json 缺 permissions 数组")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn drag_region_permissions_are_granted() {
+        let perms = capability_permissions();
+        assert!(
+            perms.iter().any(|p| p == "core:default"),
+            "capabilities 丢了 core:default：双击拖拽区最大化（internal_toggle_maximize）会失效"
+        );
+        assert!(
+            perms
+                .iter()
+                .any(|p| p == "core:window:allow-start-dragging"),
+            "缺 core:window:allow-start-dragging：`data-tauri-drag-region` 的单击拖拽会被 ACL \
+             拒绝、窗口拖不动（tauri 2.11.5 的 core:window:default 不含它 —— v1.3.0~v1.3.2 实况）"
+        );
+    }
+
+    /// 反向：权限是给功能用的 —— 注入脚本必须仍在做 app-region → 拖拽属性的翻译；
+    /// 若哪天翻译被删，这条授权就成了无用安全面，应同步回收。
+    #[test]
+    fn injected_script_still_maps_the_drag_region() {
+        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
+        assert!(
+            injected.contains("data-tauri-drag-region"),
+            "注入脚本不再设置拖拽属性：start-dragging 授权成了无用面，应同步复盘"
+        );
+        assert!(
+            injected.contains("return 'deep';"),
+            "app-region: drag 必须映射为 deep（子树可拖）；改此处须连带复核 ACL 与 fidelity 说明"
+        );
+    }
+}

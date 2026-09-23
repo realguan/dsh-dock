@@ -93,11 +93,12 @@ Overlay + 隐藏标题路径不得被误伤。
   要重开必须先有 Windows 真机验收能力（见 §6）。
 - **ADR-0029 在 Windows 一侧的设想作废**（`data-windows-titlebar` 标记、官方 40px 带），
   相关登记条目保留但标注失效。
-- **macOS 侧遗留缺口（本次未动，独立待办）**：ADR-0029 的 app-region → `data-tauri-drag-region`
+- **macOS 侧缺口（已修，验证待补）**：ADR-0029 的 app-region → `data-tauri-drag-region`
   翻译依赖 `plugin:window|start_dragging`，该命令同样不在 `core:window:default` 且 capabilities
   未授 ⇒ 按 ACL 判据，**该翻译自 v1.3.0 起在真机上从未生效**（当前能拖的只是系统原生标题栏
-  那一条带；dsh 自绘的 topStrip / titleRow 拖拽区是死的）。修法一行（补
-  `core:window:allow-start-dragging`），但**须实机验证后再合**——本机无法证明。
+  那一条带；dsh 自绘的 topStrip / titleRow 拖拽区是死的）。2026-09-23 已补
+  `core:window:allow-start-dragging`（独立提交）并配 `immersive_drag_acl_tests` 配对闸门
+  （负例实测：摘掉授权即红）；**但"拖得动"只能由 macOS 真机证明**，验证前不得对外宣称已修。
 - 本次为代码 + 文档回退，**尚未发版**：v1.3.2 已在用户手上带着该缺陷，需 patch 版覆盖
   （发版须先按 `docs/prompts/release-notes.md` 落 `docs/RELEASE_NOTES.md`，禁裸打 tag）。
 
@@ -106,8 +107,10 @@ Overlay + 隐藏标题路径不得被误伤。
 - [x] 撤回 `decorations(false)` 与 Windows 注入分支 + 纯模型（2026-09-23）
 - [x] 「防复辟」闸门 `windows_native_decorations_tests`（正例 + 反例 + macOS 不误伤）（2026-09-23）
 - [x] ADR-0030 立档 + 索引；ADR-0029 §5/§6 与本档互指（2026-09-23）
-- [ ] 平台审计 §3.1 / 平台对齐计划 B-4·C-4 状态回写（2026-09-23）
-- [ ] **补 `core:window:allow-start-dragging` 修 macOS 拖拽区**（独立提交；需 macOS 实机验证拖拽）
+- [x] 平台审计 §3.1 / 平台对齐计划 B-4·C-4 状态回写（2026-09-23）
+- [x] **补 `core:window:allow-start-dragging` 修 macOS 拖拽区** + 配对闸门
+      `immersive_drag_acl_tests`（负例实测：摘掉授权即红）（2026-09-23）
+- [ ] **macOS 实机验证拖拽**（顶栏 / 侧栏条带拖动 + 双击最大化）——验证前不得对外宣称"已修"
 - [ ] 发 patch 版（v1.3.3）覆盖 v1.3.2 —— 发版日志 + 三平台验收清单按既有流程
 - [ ] 恢复 Windows 真机验收能力后，再评估是否重开 Windows 沉浸式档
 

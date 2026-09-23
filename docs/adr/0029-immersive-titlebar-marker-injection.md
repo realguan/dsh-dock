@@ -168,8 +168,10 @@ Tauri 的 `data-tauri-drag-region`。Windows/Linux 一期保持原生装饰（`d
       `data-tauri-drag-region` 的翻译最终要 invoke `plugin:window|start_dragging`，而该命令
       **不在** `core:window:default`（tauri 2.11.5）且 capabilities 只授了 `core:default`
       ⇒ 按 ACL 判据，该翻译自 v1.3.0 起在真机上从未生效（现在能拖的只是系统原生标题栏那一条
-      带，dsh 自绘的 topStrip / titleRow 拖拽区是死的）。修法与验证要求见
-      [ADR-0030](0030-windows-keeps-native-decorations.md) §5 行动项。
+      带，dsh 自绘的 topStrip / titleRow 拖拽区是死的）。
+      **2026-09-23 已补授权**（`core:window:allow-start-dragging` + 配对闸门
+      `immersive_drag_acl_tests`）；**实机验证仍未做** —— 拖得动与否只能由 macOS 真机证明，
+      验证前不得对外宣称已修。
 - [ ] dsh 升级时按 §5 表逐条复核（随广播知会）
 
 ## 6. 复审条件
