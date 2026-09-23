@@ -32,6 +32,28 @@
 
 ## 三、记录
 
+### 2026-09-23 补记 · 闸门加固两笔（内容契约闸门只看生效代码 + 命令→权限反查）—— guan（AI 协作）
+
+接上一条「macOS 拖拽机制改版」的**补记**（漏记不补改旧条目，故另发）：
+
+- `cb9416e fix(test)`：`immersive_chrome_tests` 的 ④ 仍断言脚本含 `data-tauri-drag-region` /
+  `-webkit-app-region` 两个键名 —— 改版后它们只剩在**注释**里，纯 `contains` 断言照样绿
+  （结构性通过、行为性失效，本仓反复栽的那类）。改为断言新机制要件
+  （`data-shell-leading-band` + `elementFromPoint`），并在断言前剥掉整行注释，只认生效代码。
+- `180b52e fix(macos)`：**同类静默失效第三次** —— 双击最大化走 `win.toggleMaximize()`
+  （`plugin:window|toggle_maximize`），而 `core:window:default` 里只有**另一个**命令
+  `internal_toggle_maximize`（tauri 2.11.5）⇒ 该路径同样会被 ACL 拒绝且被吞掉。
+  真机验证只覆盖了「拖动」，双击这条正好漏网。补 `core:window:allow-toggle-maximize`，
+  并新增**反查闸门** `every_window_command_the_script_calls_is_granted`：从脚本抽
+  `win.<method>(` 反推依赖，逐条要求在（调用 → 权限）映射表与 capabilities 里有落点；
+  反向也查映射表不留死条目。以后再加 window 命令而漏登记/漏授权，闸门当场红。
+- **凭据**：负例实测两条，均按要求变红后还原 —— ① 摘掉 `allow-toggle-maximize` ⇒ 点名该权限；
+  ② 脚本临时多调未登记的 `win.minimize()` ⇒ 点名「未登记的 window 命令」。
+  `cargo fmt --check` ✓ · `clippy -D warnings` ✓ · `cargo test` 580 passed（+1）。
+- **影响**：v1.3.3 用户可感变化 = 顶栏空白处双击最大化从此**有权限可用**（此前必然静默失败）；
+  拖动行为不变（真机已验证）。**仍待真机确认**：双击最大化本体的实际效果（权限已就位，
+  判定逻辑与拖动同源且已验证，预期可用）。
+
 ### 2026-09-23 缺陷修复 · macOS 拖拽机制改版（几何语义）+ 真机验证通过 —— guan（AI 协作）
 
 - **背景**：上一笔（`c972c17`）按「ACL 缺 `core:window:allow-start-dragging`」修 macOS 拖拽，
