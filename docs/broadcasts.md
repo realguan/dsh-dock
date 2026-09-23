@@ -32,6 +32,43 @@
 
 ## 三、记录
 
+### 2026-09-23 缺陷修复 · macOS 拖拽机制改版（几何语义）+ 真机验证通过 —— guan（AI 协作）
+
+- **背景**：上一笔（`c972c17`）按「ACL 缺 `core:window:allow-start-dragging`」修 macOS 拖拽，
+  维护者真机复测**仍然拖不动** ⇒ 原归因不完整，重查。
+- **真因（两层，本机实测）**：
+  1. **WKWebView 不认 `-webkit-app-region`**：用 Xcode 起 WKWebView 探针，
+     `CSS.supports('-webkit-app-region','drag') === false`；computed style 与 CSSOM
+     `setProperty` 读回**皆为 `""`** ⇒ ADR-0029 §3 方案 A 的「扫计算样式映射拖拽属性」
+     恒扫不到任何元素，**自 v1.3.0 起一个 `data-tauri-drag-region` 都没打上过**。
+  2. dsh 的 macOS 拖拽带（`AppFrame.tsx:296` 的 `data-shell-leading-band`，
+     52px / 带会话 tabs 76px）是 `pointer-events:none`：Electron 的 app-region 是**几何**语义，
+     而 Tauri 的拖拽属性走**命中测试**（`drag.js` 的 `composedPath`）—— 永不成为事件目标的
+     元素，属性挂上也不触发。故 `c972c17` 补的授权是**末端必要条件、不是原因**
+     （改版后仍必需，保留）。
+- **处置（ADR-0029 §7 补记）**：注入层复刻 Electron 的几何合成 —— `dragDecisionFor`：
+  带内（读 dsh 自己发布的钩子，缺失退顶部 52px）∧ 在 `#root` 内（dsh 的
+  `body > :not(#root)` 全是 no-drag 浮层）∧ 不在 dsh 的交互元素排除表上
+  （`web/src/base.css:72-78` 原样镜像）∧ 非全屏 ⇒ `startDragging()`；
+  双击（按下不算、抬起且未移动才算）⇒ `toggleMaximize()`。
+  连带删除 app-region 扫描与 MutationObserver（不再逐元素读样式，SPA 重渲染无需跟随）。
+- **验证**：
+  - ✅ **维护者真机手动验证**：拖 dsh 顶栏带**下缘**（离开最顶部系统原生条带）可移动窗口
+    —— 证明走的是新机制，而非 `TitleBarStyle::Overlay` 原生保留的那条窄带（2026-09-23）。
+  - ✅ 机器闸门：`immersive_drag_acl_tests` 三例（几何四要件 / 两条已证伪的老机制不得回流
+    （含注释剥离，避免注释里的历史引用误报）/ TS↔JS 常量逐字一致）；前端
+    `dragDecisionFor` 四条件全组合穷举（20 例）。
+  - ⚠️ **未验证**：顶栏空白处**双击最大化**；窗口未聚焦时的拖拽（tauri issue #4316）。
+  - ⚠️ 自动化尝试失败留档：合成鼠标事件（CGEvent；已确认 `AXIsProcessTrusted = true`）
+    未能驱动 AppKit 的拖拽循环（窗口零位移），故本机无法自动化验证「跟手」，以人工验证为准。
+- **影响 / 需要他人做什么**：
+  1. macOS 用户升级到 **v1.3.3** 后顶栏带可拖；**v1.3.2 及更早不受影响也无此修复**。
+  2. v1.3.3 的 `docs/RELEASE_NOTES.md` 已按真因改写（原文把原因写成「权限闸门」，
+     与事实不符；该版本尚未打 tag，属未发行正文，可直接修正）。
+  3. 上游依赖登记更新（dsh 升级复核点）：原先登记的 `-webkit-app-region` 规则集一条**作废**，
+     新增 `data-shell-leading-band` 钩子、`base.css` 排除表、`isDarwinDesktop()` 读取时机三条
+     （ADR-0029 §7.3）。
+
 ### 2026-09-23 发版 · v1.3.3（Windows 窗口回退 + macOS 拖拽区权限修复）—— guan（AI 协作）
 
 - **内容**：两笔修复 —— `724fa01`（Windows 撤回沉浸式标题栏，issue #16）+ `c972c17`
