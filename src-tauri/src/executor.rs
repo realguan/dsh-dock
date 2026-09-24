@@ -98,11 +98,12 @@ pub trait Executor: Send {
         None
     }
 
-    /// 本次启动实际使用的 dsh home（安全模式据此判断"改哪个 profile 目录"）。
+    /// 本次启动实际使用的 dsh home（patch 层写面据此判断"改哪个 profile 目录"）。
     ///
-    /// 为什么需要它（2026-09-16 独立复核 P1）：安全模式写的是 `profiles/<p>/cordis.patch.yml`，
-    /// 而**快照档**的 home 是 `<data_dir>/runtimes/fallback-home`（每次启动由 `sync_fallback_home`
-    /// 重同步覆写）。按"用户 home"写会**改错文件**（写用户的 `~/.dsh` 同名 profile）且不可能生效，
+    /// 为什么需要它（2026-09-16 独立复核 P1）：错误卡的「备份并放空」写的是
+    /// `profiles/<p>/cordis.patch.yml`，而**快照档**的 home 是
+    /// `<data_dir>/runtimes/fallback-home`（每次启动由 `sync_fallback_home` 重同步覆写）。
+    /// 按"用户 home"写会**改错文件**（写用户的 `~/.dsh` 同名 profile）且不可能生效，
     /// 故必须用本次实际 home 判定，不认的档位显式报错（不回落宿主）。
     /// 默认 `None`：WSL / SSH 档由调用方另行拦截。
     fn dsh_home(&self) -> Option<std::path::PathBuf> {
@@ -377,21 +378,6 @@ impl Executor for LocalExecutor {
         // spawn 成功即收口（等待就绪归 step3）：否则 step2 永挂「运行中」，
         // 而后发的 step3/4 done 会让时间线出现「后步完成、前步 loading」的倒挂。
         sink(2, "done", &format!("「{}」工作台已启动", launch.profile));
-        // 安全模式可见性（ADR-0026）：把"配置里现在有几个插件行是停用的"写进时间线
-        // ——否则用户只会觉得"插件怎么都没了"。**没有恢复按钮**（维护者 2026-09-16 裁定：
-        // 恢复 = 把坏配置搬回来、启动照样失败），想用哪个插件就在「实验能力」里打开哪个开关。
-        let safe_mode_state =
-            crate::safe_mode::state(&self.data_dir, &launch.profile, &launch.dsh_home);
-        if safe_mode_state.active {
-            sink(
-                2,
-                "done",
-                &format!(
-                    "安全模式：为保证启动，已停用全部三方插件（当前 {} 个）——需要的插件到「插件」页重新打开",
-                    safe_mode_state.disabled_rows.len()
-                ),
-            );
-        }
         Ok(())
     }
 

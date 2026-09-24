@@ -13,7 +13,7 @@
 
 ---
 
-## 一、IPC 命令登记（58 条）
+## 一、IPC 命令登记（57 条）
 
 > 新命令**先登记再实现**。清单一致性另有 cargo test 闸门：
 > `handler_matches_ipc_commands` / `capabilities_match_ipc_commands` /
@@ -29,15 +29,7 @@
 `switch_profile` `get_active_profile` `open_profiles_window` `focus_main_window` `open_about` `get_shell_capabilities`（2026-09-21 立，§3.6：无托盘宿主的 Linux 桌面上，「关于 / 更新」原本**没有任何入口** —— 原 `open_about` 于 2026-08-27 因「与常驻入口重复」删除，而该前提在此场景失效。前端**只在 `residentEntryAvailable === false` 时**渲染入口；两命令均只读进程内状态 / 开壳自有窗口，不碰文件与网络）。
 
 **插件**：`list_profile_plugins` `get_plugin_runtime` `install_plugin` `remove_plugin`
-`update_plugin` `get_plugin_rows` `get_safe_mode_state`（2026-09-16 立，ADR-0026 第三版口径：安全模式的
-只读状态——是否仍处于安全模式 + **此刻**仍停用着的行 id（记账里的集合 ∩ 当前配置的停用桩，
-故用户逐个打开开关后数字随之下降，全开即 `active=false`）。**只读壳自有记账**
-（`<app_data>/safe-mode/<profile>.json`）＋profile 自家 patch，**不读运行态**：运行态另由回环
-快照给，两源禁混。安全模式本身改的是 profile 的 `cordis.patch.yml`（走 `PatchFile` 既有写入
-纪律），故配置层即真相源；**命令不再提供任何恢复动作**——恢复已按维护者裁定移除）
-`dismiss_safe_mode_notice`（2026-09-16 立，维护者裁定：安全模式横幅只在"确实以安全模式进入过"时
-出现，且**必须可关闭**——用户看过一次就够；它只改壳自有记账里的 `dismissed_at`（**不碰 dsh 配置**），
-同一轮再启动不打扰，**下一次进入安全模式会重新提示**；不是本 home 的记账一律不动）
+`update_plugin` `get_plugin_rows`
 `set_plugin_disabled` `check_plugin_updates`
 `list_plugin_versions` `list_all_plugins` `list_experimental_capabilities`（2026-09-15 立、
 2026-09-16 由 `list_official_plugins` 改名并改形，ADR-0020 §7：返回**能力 → 变体 → 步骤**
@@ -85,11 +77,16 @@ seam 起子进程，http 分支为条目级网络豁免；**stdio 分支已下�
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+**当前条数 = 57**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-09-24 净减 2：安全模式整体删除（ADR-0031 取代 ADR-0026），`get_safe_mode_state` /
+`dismiss_safe_mode_notice` 两条命令与对应权限一并退役——上游 dsh 0.1.7-rc.1 实测推翻其
+立项前提（插件不兼容 / 悬空行都不砖启动，见行为台账复现点 24）；
 2026-09-17 净减 3：SSH 远程工作区整体移除，`list_ssh_hosts` / `probe_ssh_target` /
 `generate_ssh_profile` 三条命令与对应权限一并退役——**未随任何版本发布**（见 ADR-0023 状态）；
 2026-09-16 净增 3：`list_official_plugins` → `list_experimental_capabilities` 属改名，
 新增 `remove_official_patch_row`、`get_safe_mode_state` 与 `dismiss_safe_mode_notice`）。
+**重校说明**：2026-09-24 按 `COMMANDS` / `generate_handler!` / `capabilities` 三处实际
+条数重校（此前登记册头部与行内两个数字分别漂移 ±4，会话模块下线只改了头部）。
 
 ---
 

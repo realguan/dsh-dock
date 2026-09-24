@@ -40,8 +40,6 @@ pub const COMMANDS: &[&str] = &[
     "remove_plugin",
     "update_plugin",
     "get_plugin_rows",
-    "get_safe_mode_state",
-    "dismiss_safe_mode_notice",
     "set_plugin_disabled",
     "check_plugin_updates",
     "list_plugin_versions",
@@ -427,16 +425,6 @@ mod gate_tests {
             crate::boot_failure::QuarantineRow {
                 profile: String::new(),
                 row_id: String::new(),
-            }
-        );
-        // 安全模式状态（ADR-0026）：此前只有 fixture + 前端半边有闸门，Rust 侧缺席——
-        // 加字段漏改时 Rust 不会红（本次加 `restorable` 时才发现），故补上。
-        assert_shape!(
-            "SafeModeState",
-            crate::safe_mode::SafeModeState {
-                active: false,
-                disabled_rows: Vec::new(),
-                notice_dismissed: false,
             }
         );
         assert_shape!(

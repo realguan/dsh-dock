@@ -91,19 +91,16 @@ export const t = {
       // 文案取自 D1 §5 建议：zh「改用 WSL 模式打开」。
       boot_in_wsl: "改用 WSL 模式打开",
       // 2026-09-16：插件的挂载行把插件树搞挂时的**就地**出路（只移除那一行 + 重启）。
-      // 契约：`boot_failure.rs::with_quarantine`（下发到 `advancedActions`，**首屏不展示**）；
+      // 契约：`boot_failure.rs::with_quarantine`（行归壳所有时提上首屏，2026-09-24）；
       // 无此键会兜底成英文 id。
       quarantine_plugin_row: "只移除出错的那一行并重启",
-      // ADR-0026 安全模式（2026-09-16 第二版裁定）：首屏**只剩这一个**动作，
-      // 语义 = 在 profile 配置里把所有三方插件写成 disabled（覆写前备份），随后正常启动。
-      safe_mode: "停用全部三方插件并启动",
+      // 2026-09-24：安全模式删除后的唯一残体——配置写坏时的"备份并放空"兜底。
       safe_mode_reset: "备份并放空插件配置后启动",
     } as Record<string, string>,
     // 动作 → **它会造成什么**（首屏与按钮并排显示；2026-09-16 维护者裁定）。
     // 与 `ErrorCard.tsx` 的 ACTION_IPC 集合一一对应：新增动作必须同时补两侧文案。
     impacts: {
-      safe_mode: "在配置里停用全部三方插件（覆写前备份），进应用后按需在「插件」页重新打开",
-      safe_mode_reset: "插件配置已写坏（连行都读不出来）时用：先备份为 .bak-<时间戳>，再放空该文件",
+      safe_mode_reset: "插件配置已写坏时用：先备份为 .bak-<时间戳>，再放空该文件（行都读不出来时这是唯一出路）",
       quarantine_plugin_row: "从 cordis.patch.yml 删掉出错的那一行（覆写前自动备份）",
       retry: "重新走一遍同样的启动流程",
       upgrade: "先升级 DSH 再重试，升级只动 pnpm/npm 全局，不碰你的数据",
@@ -114,7 +111,7 @@ export const t = {
     // 「其它出路」区标题（2026-09-16）：首屏只有一个按钮，其余出路收进"展开详情"。
     advancedLabel: "其它出路（一般用不到）",
     safeModeResetTitle: "备份并放空插件配置后再启动？",
-    safeModeResetNote: "用于插件配置已写坏、连行都枚举不出来的情况。",
+    safeModeResetNote: "用于插件配置已写坏的情况：YAML 语法坏（行都枚举不出来），或核心插件配置写坏导致启动失败。",
     safeModeResetPointBackup: "你的 cordis.patch.yml 会先备份为 .bak-<时间戳>，可随时手动还原",
     safeModeResetPointScope: "该 profile 的全部插件挂载行会失效，工作台以「只有随包能力」的形态启动",
     safeModeResetConfirm: "备份并继续",
@@ -476,15 +473,6 @@ export const t = {
     // 无可观测运行态的行（补丁包：贡献行用的是各自的 name，包名不成条目）：观测不到
     // 就不许承诺生效时机，只报"配置已写入"。
     toggleDone: (pkg: string, on: boolean) => `${on ? "已启用" : "已禁用"} ${pkg}（配置已写入）`,
-    // 安全模式横幅（ADR-0026，2026-09-16 第四版交互，维护者按 PM 口径重写）：
-    // ① 只在"确实以安全模式进入过"时出现（记账驱动），且可关闭、关后同轮不再打扰；
-    // ② 文案只讲**发生了什么 + 去哪儿开回来**：不提备份（不做整份恢复，提它全是噪音），
-    //    也不把用户往「实验能力」引（那里只有策展能力，而安全模式停的是**全部**三方插件）。
-    safeModeTitle: "安全模式",
-    safeModeBody: (n: number) =>
-      `为让 DSH 能正常启动，全部三方插件已停用（当前 ${n} 个）。把你需要的插件到「插件」页重新打开即可。`,
-    safeModeDismiss: "不再提示",
-    safeModeDismissFailed: (msg: string) => `保存「不再提示」失败：${msg}`,
     pluginOpBusyRemove: "卸载中…",
     pluginOpBusyUpdate: "更新中…",
     // 更新检查（4.4④）：registry dist-tags 口径 + 版本选择

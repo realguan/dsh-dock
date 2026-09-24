@@ -25,7 +25,6 @@ import type {
   PnpmDiagnosticInfo,
   ProfileSummary,
   QuarantineRow,
-  SafeModeState,
   ShellSettings,
   StorageDiagnosticInfo,
   SystemDiagnosticsReport,
@@ -63,14 +62,6 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
     expectShape<QuarantineRow>("QuarantineRow", {
       profile: true,
       rowId: true,
-    })
-  })
-
-  it("SafeModeState（camelCase，ADR-0025）", () => {
-    expectShape<SafeModeState>("SafeModeState", {
-      active: true,
-      disabledRows: true,
-      noticeDismissed: true,
     })
   })
 

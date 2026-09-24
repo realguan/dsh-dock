@@ -76,9 +76,8 @@ export type TerminalAction =
   | "retry"
   | "upgrade"
   | "upgrade_only"
-  // 安全模式（ADR-0026）：在 profile 配置里把三方插件写成 disabled / 配置已写坏时备份并放空。
-  // （`safe_mode_exit` 已随"一键恢复"移除——恢复会把坏配置搬回来，启动照样失败。）
-  | "safe_mode"
+  // 2026-09-24：安全模式删除后的唯一残体——配置写坏时"备份并放空"（原 `safe_mode`
+  // 一键停用已退役；更早的 `safe_mode_exit` 一键恢复也已移除）。
   | "safe_mode_reset"
 
 // ---------- Profile 管理器（4.3；形状锚定 src-tauri/src/profiles.rs 的 serde 序列化） ----------
@@ -401,13 +400,14 @@ export interface BootErrorPayload {
   suggestion: string
   actions: string[]
   /// 次级出路（2026-09-16 维护者反馈后的分层）：**首屏只渲染 `actions`**（插件行失败时
-  /// 恰好一项 = 「停用全部插件并启动」），`advancedActions` 收进"展开详情 → 其它出路"。
-  /// 空表 = 无次级出路（非插件行失败恒空）。
+  /// 行归壳所有则恰好一项 = 「只移除出错的那一行并重启」，2026-09-24），
+  /// `advancedActions` 收进"展开详情 → 其它出路"。空表 = 无次级出路（非插件行失败恒空）。
   advancedActions: string[]
   log: string
-  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时"其它出路"里渲染
-  /// 「只移除出错的那一行并重启」（**首屏不展示**）。**只读诊断**：行不归壳
-  /// 所有、或拿不到会话目标 profile 时为 `null`（`null` 时前端不渲染该按钮）。
+  /// 可一键隔离的挂载行（2026-09-16）：`Some` 时该行进 `actions` **首屏**渲染
+  /// 「只移除出错的那一行并重启」（2026-09-24 起随安全模式删除提上首屏）。
+  /// **只读诊断**：行不归壳所有、或拿不到会话目标 profile 时为 `null`
+  /// （`null` 时前端不渲染该按钮）。
   quarantine: QuarantineRow | null
 }
 
@@ -547,20 +547,6 @@ export interface Capability {
   /// （2026-09-20 起壳不再消费本字段：官方已接管的能力在面板与插件列表里整体不呈现；
   /// 契约字段保留，见 ADR-0020 §2.8。）
   legacyCopy: boolean
-}
-
-/// 安全模式状态（ADR-0026，`get_safe_mode_state`）。安全模式改的是** profile 配置本身**，
-/// 故配置层即真相源；这里只报壳的**记账**（是否在安全模式、停了哪些行、能否一键恢复），
-/// 不报运行态——运行态由回环快照给，两源禁混。
-export interface SafeModeState {
-  /// 本轮是否以安全模式启动（= 壳的记账文件在，配置里已写入停用桩）。
-  active: boolean
-  /// **此刻**仍处于停用态、且是安全模式写入的那些行 id（用户逐个打开后会变少；
-  /// 全打开 → `active=false`，横幅自动消失）。
-  disabledRows: string[]
-  /// 本轮安全模式的横幅是否已被用户关掉（"不再提示"）——前端据此不渲染横幅。
-  /// **每次以安全模式进入都会重置为 false**（新事件值得再说一次）。
-  noticeDismissed: boolean
 }
 
 /// `apply_official_patch_row` 的结果：**写行前当场重判**该包是否声明 `dsh.bundle`。

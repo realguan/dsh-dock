@@ -167,13 +167,13 @@ pub(crate) struct ShellState {
     /// 为什么单独记：启动失败路径会先 `teardown_session`，此后会话槽为空；而
     /// `forced_profile` 只在"管理器切换 / 错误卡重试注入"时才有值——**冷启动路径上它是
     /// `None`**。于是"该修哪个 profile"在失败后无据可查：错误卡上「移除该行并重启」
-    /// 与「安全模式启动」双双失效（真机症状：点了像没反应、只剩一个必然失败的重试）。
+    /// 与「备份并放空」双双失效（真机症状：点了像没反应、只剩一个必然失败的重试）。
     /// 在 **spawn 成功时**记账，是最可靠的来源。
     pub(crate) last_boot_profile: Mutex<Option<String>>,
     /// 本次启动**实际使用**的 dsh home（与 `last_boot_profile` 同时记账）。
     ///
-    /// 安全模式要据此决定"改哪个 profile 目录"：快照档的 home 每次启动被重同步覆写，
-    /// 按用户 home 写等于改错文件（2026-09-16 独立复核 P1）。
+    /// 错误卡的「备份并放空」据此决定"改哪个 profile 目录"：快照档的 home 每次启动被
+    /// 重同步覆写，按用户 home 写等于改错文件（2026-09-16 独立复核 P1）。
     pub(crate) last_boot_home: Mutex<Option<std::path::PathBuf>>,
     /// 桌面客户端自更新状态机（updater.rs；Rust 侧唯一写者，前端只读）。
     pub(crate) client_update: Mutex<Option<crate::updater::ClientUpdate>>,
@@ -708,7 +708,7 @@ pub(crate) fn active_session_profile(app: &tauri::AppHandle) -> Option<String> {
 ///
 /// **为什么必须有退回**（2026-09-16 真机）：启动失败路径会先 `teardown_session`，
 /// 此后 [`active_session_profile`] 恒为 `None`——于是错误卡上两个需要 profile 的动作
-/// **同时失效**：「移除该行并重启」下不发隔离计划（按钮直接消失），「安全模式启动」
+/// **同时失效**：「移除该行并重启」下不发隔离计划（按钮直接消失），「备份并放空」
 /// 报"查不到启动目标"并 return（点了像没反应）。而"该修哪个 profile"的答案在失败后
 /// 依然明确：就是本轮启动目标。
 pub(crate) fn boot_target_profile(app: &tauri::AppHandle) -> Option<String> {
@@ -730,8 +730,8 @@ pub(crate) fn boot_target_profile(app: &tauri::AppHandle) -> Option<String> {
 
 /// 本次启动**实际使用**的 dsh home（`None` = 本进程还没起过会话 / 该档位未记账）。
 ///
-/// 安全模式据此决定改哪个 profile 目录；快照档（`<data_dir>/runtimes/fallback-home`）与用户
-/// home 不同，调用方必须**显式拒绝**而不是回落宿主（2026-09-16 独立复核 P1）。
+/// 「备份并放空」据此决定改哪个 profile 目录；快照档（`<data_dir>/runtimes/fallback-home`）
+/// 与用户 home 不同，调用方必须**显式拒绝**而不是回落宿主（2026-09-16 独立复核 P1）。
 pub(crate) fn boot_target_home(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let state = app.try_state::<Arc<ShellState>>()?;
     state.last_boot_home.lock().ok().and_then(|g| g.clone())
@@ -1117,9 +1117,10 @@ pub(crate) fn emit_boot_error(app: &tauri::AppHandle, detail: &str, log_tail: &s
 /// 发射**已构造好**的错误载荷。
 ///
 /// 为什么要这个入口（2026-09-16，独立复核抓到死指针）：`emit_boot_error` 是**替换**语义
-/// ——它换掉用户正看的那张卡。若失败原因变了、出路也变了，调用方必须能**显式指定**新卡
-/// 的动作集（`BootErrorPayload::with_actions`），否则旧提示会指向一个已经消失的按钮
-/// （典型：安全模式枚举失败后提示"去点放空"，而放空按钮随旧卡一起没了）。
+/// ——它换掉用户正看的那张卡。若失败原因变了、出路也变了，调用方必须能**显式构造**新卡
+/// 的动作集（`BootErrorPayload::classify(...).with_quarantine(...)`），否则旧提示会指向
+/// 一个已经消失的按钮（2026-09-16 典型：安全模式枚举失败后提示"去点放空"，而放空按钮
+/// 随旧卡一起没了；`with_actions` 显式覆盖入口已随安全模式删除一并退役）。
 pub(crate) fn emit_boot_error_payload(
     app: &tauri::AppHandle,
     payload: crate::boot_failure::BootErrorPayload,

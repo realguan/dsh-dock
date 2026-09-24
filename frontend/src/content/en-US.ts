@@ -89,17 +89,14 @@ export const enUS: AppCopy = {
       // (remove that row only, then restart). Contract: boot_failure.rs::with_quarantine
       // -> `advancedActions` (never on the first screen).
       quarantine_plugin_row: "Remove only that row & restart",
-      // ADR-0025 safe mode. 2026-09-16 (maintainer feedback): the first screen keeps
-      // exactly one action -- the one that gets you back into the app; the reset
-      // variant moved into "Other ways out".
-      safe_mode: "Turn off all third-party plugins & start",
+      // 2026-09-24: the only survivor of the safe-mode removal -- the "back up &
+      // empty" fallback for a broken plugin config.
       safe_mode_reset: "Back up & empty the plugin config, then start",
     } as Record<string, string>,
     // Action -> **what it does** (shown next to each button on the first screen).
     // Mirrors `ErrorCard.tsx`'s ACTION_IPC set: a new action must add copy on both sides.
     impacts: {
-      safe_mode: "Disables every third-party plugin in the profile config (backed up first); re-enable what you need from the Plugins page",
-      safe_mode_reset: "For an unparsable plugin config: backs it up as .bak-<timestamp>, then empties the file",
+      safe_mode_reset: "For a broken plugin config: backs it up as .bak-<timestamp>, then empties the file (the only way out when rows cannot even be listed)",
       quarantine_plugin_row: "Deletes that row from cordis.patch.yml (auto-backed up first)",
       retry: "Runs the exact same startup flow again",
       upgrade: "Upgrades DSH first, then retries; touches only the pnpm/npm global, not your data",
@@ -110,7 +107,7 @@ export const enUS: AppCopy = {
     // Heading of the collapsed "other ways out" block (2026-09-16).
     advancedLabel: "Other ways out (rarely needed)",
     safeModeResetTitle: "Back up & empty the plugin config, then start?",
-    safeModeResetNote: "Use this when the patch file is unparsable and rows cannot even be listed.",
+    safeModeResetNote: "Use this when the plugin config is broken: unparsable YAML (rows cannot even be listed), or a broken core-plugin config that fails startup.",
     safeModeResetPointBackup:
       "Your cordis.patch.yml is backed up as .bak-<timestamp> first, and can be restored by hand",
     safeModeResetPointScope:
@@ -475,17 +472,6 @@ export const enUS: AppCopy = {
     toggleDone: (pkg: string, on: boolean) =>
       `${on ? "Enabled" : "Disabled"} ${pkg} (config written)`,
     // Safe-mode banner (ADR-0026, fourth revision — rewritten from a PM standpoint):
-    // ① shown only after the user actually entered via safe mode (journal-driven), dismissible,
-    //    and stays dismissed for that entry; ② the copy states what happened and where to undo it
-    //    one plugin at a time — no mention of backups (we offer no bulk restore) and no pointer to
-    //    Experimental Capabilities (that lists curated capabilities only, while safe mode disables
-    //    ALL third-party plugins).
-    safeModeTitle: "Safe mode",
-    safeModeBody: (n: number) =>
-      `All third-party plugins were disabled so DSH could start (${n} currently off). ` +
-      `Turn the ones you need back on from the Plugins page.`,
-    safeModeDismiss: "Don't show again",
-    safeModeDismissFailed: (msg: string) => `Could not save "don't show again": ${msg}`,
     pluginOpBusyRemove: "Uninstalling…",
     pluginOpBusyUpdate: "Updating…",
     checkUpdatesBtn: "Check Updates",

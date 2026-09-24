@@ -67,12 +67,16 @@ pub(crate) enum BootFailure {
     /// **挂载行加载失败**（2026-09-16 真机事故）：dsh 的插件树在加载某条 `- insert:`
     /// 行时抛错，**整棵树拒绝加载** → 工作台永不就绪（真机：34s 后退出码 1）。
     ///
-    /// 与 `Unknown` **必须分开**：这类失败的出路是"把那行停掉"（ADR-0026：写进配置的
-    /// `disabled` 桩，覆写前备份、可一键恢复），而不是"重试"——
+    /// 与 `Unknown` **必须分开**：这类失败的出路是"把那行去掉"，而不是"重试"——
     /// 重试必然再失败。点名行 id 是本分类存在的全部理由：日志里上游已经把
     /// `failed to apply loader entry <行id> (<包>) : <根因>` 写清楚了，缺的只是
-    /// 把它端到用户面前。**首屏只给一个按钮**（`safe_mode`，2026-09-16 维护者反馈）：
-    /// 用户此刻要的是"先回到应用"，不是读懂三条恢复机制的差别。
+    /// 把它端到用户面前。
+    ///
+    /// **2026-09-24 收缩（安全模式删除）**：dsh 0.1.7-rc.1 实测，悬空行（包装了但
+    /// 不存在）已降级为 warning 后正常就绪——本分类现在基本只剩 required 核心条目
+    /// 被写坏的残余场景。首屏按钮 = 行归壳所有时的「只移除出错行并重启」
+    /// （`quarantine_plugin_row`）；总兜底 = 展开详情里的「备份并放空」
+    /// （`safe_mode_reset`）。
     PluginRowFailed {
         /// 出错的行 id（壳写的行恒带 `dsh-dock-` 前缀；bundle 自带行是包名派生 id）。
         row_id: String,
@@ -208,8 +212,9 @@ impl BootFailure {
                  或在「设置 → 系统 → 开发者选项」开启开发者模式后重试。"
                     .to_string()
             }
-            // 出路是"停掉那一行"（首屏一个按钮即可），不是"重试"：把行 id 端到用户面前，
-            // 并给出两条可走的路（按钮进应用；界面进不去时直接删那一行——文件有自动备份）。
+            // 出路是"去掉那一行"，不是"重试"：把行 id 端到用户面前。行归壳所有时
+            // 「展开详情 → 其它出路」里有「只移除出错的那一行并重启」；行不归壳时只剩
+            // 手工编辑一条路（文件有自动备份）。两类用户层砖面的总兜底是「备份并放空」。
             Self::PluginRowFailed {
                 row_id,
                 package,
@@ -227,11 +232,10 @@ impl BootFailure {
                 };
                 format!(
                     "挂载行「{row_id}」{pkg}在加载阶段就失败了，dsh 因此拒绝整棵插件树。{why}\
-                     这不是网络问题，重试不会好：点下面的「停用全部三方插件并启动」即可先回到应用\
-                     （会在配置里停用三方插件、**先备份**，进应用后可一键用备份恢复；\
-                     在控制中心 → 实验能力 里打开你要用的能力即可）；\
-                     若按钮走不通，可编辑该 profile 的 cordis.patch.yml，删掉 id 为「{row_id}」的那一行\
-                     （壳每次覆写前都会自动备份）。"
+                     这不是网络问题，重试不会好：展开「详情」的其它出路——行归本应用管理时可\
+                     「只移除出错的那一行并重启」；都不通时编辑该 profile 的 cordis.patch.yml，\
+                     删掉 id 为「{row_id}」的那一行（壳每次覆写前都会自动备份），\
+                     或以「备份并放空插件配置后启动」回到默认插件组合。"
                 )
             }
             Self::Unknown { .. } => "详情见日志；可重试，若持续请反馈。".to_string(),
@@ -250,20 +254,20 @@ impl BootFailure {
             // 但 `boot_in_wsl` 才是真正的出路——它与 D3 的「下次默认打开方式」呼应。
             Self::SymlinkPrivilegeRequired => vec!["boot_in_wsl", "retry"],
             // 插件行失败：**不给 `retry`**——同一行会再次失败，摆一个必然失败的按钮
-            // 等于教用户白点一次。首屏**只有** `safe_mode`：临时 overlay 停用用户层行再启动
-            // （零文件改动、可原子回退），实测能把这台机器从"进不去应用"救回应用内。
-            Self::PluginRowFailed { .. } => vec!["safe_mode"],
+            // 等于教用户白点一次。2026-09-24 起首屏**默认无按钮**（原 `safe_mode` 一键
+            // 停用已随安全模式删除）；行归壳所有时由 [`BootErrorPayload::with_quarantine`]
+            // 把「只移除出错的那一行并重启」提到首屏——那才是"点一次就回应用"的动作。
+            Self::PluginRowFailed { .. } => Vec::new(),
             Self::NetworkUnavailable | Self::Unknown { .. } => vec!["retry"],
         }
     }
 
     /// 次级出路（首屏**不展示**，收进错误卡的"展开详情"；**可达性不变**）。
     ///
-    /// 为什么不是删掉而是收起来：这两条各有**唯一适用面**，删掉就等于让用户卡死——
-    /// - `safe_mode_reset`（备份并放空 patch）：首屏那条对**任何**用户层坏行都有效，但
-    ///   它要先能枚举出行；YAML 语法坏时枚举不出来，只有放空这一条路；
-    /// - `quarantine_plugin_row`（只移除出错那一行）：比"全停"更外科，且不必进安全模式
-    ///   ——由 [`BootErrorPayload::with_quarantine`] 在行归壳所有时前置。
+    /// `safe_mode_reset`（备份并放空 patch）是两类**用户层自写坏**砖面的总兜底：
+    /// YAML 语法坏时行枚举不出来（只有放空能救）；required 核心条目（上游固定 7 个）
+    /// 配置写坏时放空同样回退 bundle 默认值。2026-09-24 随安全模式删除，它与
+    /// [`BootErrorPayload::with_quarantine`] 的「只移除出错那一行」是仅存的两条。
     pub(crate) fn advanced_actions(&self) -> Vec<&'static str> {
         match self {
             Self::PluginRowFailed { .. } => vec!["safe_mode_reset"],
@@ -350,23 +354,14 @@ impl BootErrorPayload {
         }
     }
 
-    /// 覆盖**首屏**动作集：`emit_boot_error` 是**替换**语义（换掉用户正看的那张卡），
-    /// 而"失败原因换了、出路也就换了"——旧卡上的按钮不会跟过来。不给新卡指定动作，
-    /// 提示就成了**死指针**（让用户去点一个已经不存在的按钮）。2026-09-16 独立复核抓到：
-    /// 安全模式枚举失败时沿用旧提示，而替换后的卡上并没有"放空"那条出路。
-    pub(crate) fn with_actions(mut self, actions: &[&'static str]) -> Self {
-        self.actions = actions.to_vec();
-        self.advanced_actions = Vec::new();
-        self
-    }
-
     /// 补上"就地修好"的出口：出错行是**壳自己写的**（`dsh-dock-` 前缀）时，下发
     /// 一键隔离（移除该行 + 重启）。`profile` 空（拿不到会话目标）时保持只读诊断——
     /// 宁可不给按钮，也不给一个会删错 profile 的按钮。
     ///
     /// 只对 [`BootFailure::PluginRowFailed`] 生效：其它失败没有"某一行"可删。
-    /// 它写的是 `advanced_actions`（**不是 `actions`**）：2026-09-16 维护者反馈后，
-    /// 首屏只剩"点一次就回应用"的那一个按钮，外科式的删行收进展开详情。
+    /// 2026-09-24（安全模式删除后）：隔离**提上首屏**（`actions`）——原首屏那个
+    /// `safe_mode` 按钮已删，而行归壳所有时"只移除出错行"正是新的"点一次就回应用"；
+    /// `safe_mode_reset`（备份并放空）留在展开详情，覆盖行不归壳与 YAML 写坏两类。
     pub(crate) fn with_quarantine(mut self, profile: Option<&str>) -> Self {
         let BootFailure::PluginRowFailed { row_id, .. } = &self.failure else {
             return self;
@@ -377,7 +372,8 @@ impl BootErrorPayload {
         if !crate::plugins::is_shell_row_id(row_id) {
             return self;
         }
-        self.advanced_actions = vec!["quarantine_plugin_row", "safe_mode_reset"];
+        self.actions = vec!["quarantine_plugin_row"];
+        self.advanced_actions = vec!["safe_mode_reset"];
         self.quarantine = Some(QuarantineRow {
             profile: profile.to_string(),
             row_id: row_id.clone(),
@@ -596,8 +592,14 @@ Error: spawn cua-driver ENOENT\n";
         assert_eq!(payload.title, "实验插件行导致启动失败");
         // 建议必须同时给出**行 id**与出路（点不到名就等于没说）。
         assert!(
-            payload.suggestion.contains("dsh-dock--") && payload.suggestion.contains("实验能力"),
+            payload.suggestion.contains("dsh-dock--") && payload.suggestion.contains("备份并放空"),
             "建议须点明行并给出去路：{}",
+            payload.suggestion
+        );
+        // 2026-09-24：不得再指向已删除的安全模式入口（「停用全部三方插件并启动」）。
+        assert!(
+            !payload.suggestion.contains("停用全部三方插件"),
+            "不得残留安全模式指涉：{}",
             payload.suggestion
         );
         // 这类失败重试必然再失败：不得给 `retry` 按钮（除非换成"隔离后重启"）。
@@ -608,33 +610,31 @@ Error: spawn cua-driver ENOENT\n";
         );
     }
 
-    /// 壳自己写的行 → 次级出路含一键隔离（只移除那一行 + 重启）；别人的行 → 无该出路。
+    /// 壳自己写的行 → 一键隔离（只移除那一行 + 重启）**提上首屏**；别人的行 → 无该出路。
     ///
-    /// **首屏不因隔离而变**（2026-09-16 维护者反馈后）：无论行归谁，`actions` 恒为
-    /// `["safe_mode"]` 一项——首屏是"先回到应用"，外科式删行收进展开详情。
+    /// 2026-09-24（安全模式删除）：原首屏的 `safe_mode` 一键停用已删——行归壳所有时
+    /// "只移除出错行"就是新的"点一次就回应用"；行不归壳时首屏无按钮（不摆必然失败的
+    /// 重试），出路全在展开详情。
     #[test]
     fn quarantine_action_only_for_shell_owned_rows() {
         let mine = BootErrorPayload::classify("plugin tree failed to load", REAL_FAILURE_TAIL)
             .with_quarantine(Some("web"));
-        // 首屏一个按钮；次级出路两条（点名移除 + 兜底放空）。
-        assert_eq!(mine.actions, vec!["safe_mode"]);
-        assert_eq!(
-            mine.advanced_actions,
-            vec!["quarantine_plugin_row", "safe_mode_reset"]
-        );
+        // 首屏恰好一个按钮（隔离）；次级出路一条（备份并放空兜底）。
+        assert_eq!(mine.actions, vec!["quarantine_plugin_row"]);
+        assert_eq!(mine.advanced_actions, vec!["safe_mode_reset"]);
         let plan = mine.quarantine.expect("壳自己的行必须能一键隔离");
         assert_eq!(plan.profile, "web");
         assert!(crate::plugins::is_shell_row_id(&plan.row_id));
 
         // vendor 自带的 bundle 行（无 `dsh-dock-` 前缀）：壳无权删，不得下发隔离计划；
-        // 但"放空 patch"这条兜底仍应在（它对任何用户层坏行都有效）。
+        // 首屏无按钮（不给必然失败的 retry），但"放空 patch"这条兜底仍应在。
         let foreign = BootErrorPayload::classify(
             "plugin tree failed to load",
             "Error: failed to apply loader entry agent-team-profile (@deepseek-ai/dsh-experimental-agent-team-profile): invalid plugin\n",
         )
         .with_quarantine(Some("web"));
         assert!(foreign.quarantine.is_none(), "vendor 行不得给删除按钮");
-        assert!(!foreign.actions.contains(&"quarantine_plugin_row"));
+        assert!(foreign.actions.is_empty(), "行不归壳时首屏无按钮");
         assert!(!foreign.advanced_actions.contains(&"quarantine_plugin_row"));
         assert_eq!(foreign.advanced_actions, vec!["safe_mode_reset"]);
 
@@ -643,56 +643,39 @@ Error: spawn cua-driver ENOENT\n";
             BootErrorPayload::classify("plugin tree failed to load", REAL_FAILURE_TAIL)
                 .with_quarantine(None);
         assert!(no_profile.quarantine.is_none());
-        assert_eq!(no_profile.actions, vec!["safe_mode"]);
+        assert!(no_profile.actions.is_empty());
 
         // 非插件行失败：即使给了 profile 也不得长出隔离动作。
-        let other =
-            BootErrorPayload::classify("network unreachable", "tail").with_quarantine(Some("web"));
+        let other = BootErrorPayload::classify("network unreavailable", "tail")
+            .with_quarantine(Some("web"));
         assert!(other.quarantine.is_none());
         assert_eq!(other.actions, vec!["retry"]);
         assert!(other.advanced_actions.is_empty());
     }
 
-    /// **2026-09-16 维护者反馈的回归锚**：插件行失败的首屏**恰好一个按钮**（"点一次
-    /// 就能回到应用"的那个），其余出路只在次级列表里、**没有丢**。
+    /// **2026-09-16 维护者反馈的回归锚**（2026-09-24 安全模式删除后改写）：插件行失败
+    /// 首屏**不摆必然失败的 retry**；行归壳所有时恰好一个按钮（"点一次就能回到应用"的
+    /// 那个），行不归壳时首屏为空、出路全部收在次级列表——**没有丢**。
     ///
     /// 反面（改前）：首屏三选一（移除该行 / 安全模式 / 备份并放空），用户要先读懂三条
     /// 机制的差别才能点——维护者原话："遇到是插件相关的报错，提供一个按钮即可"。
     #[test]
-    fn plugin_row_failure_first_screen_has_exactly_one_action() {
+    fn plugin_row_failure_first_screen_has_no_doomed_action() {
         let payload = BootErrorPayload::classify("plugin tree failed to load", REAL_FAILURE_TAIL);
-        assert_eq!(
-            payload.actions,
-            vec!["safe_mode"],
-            "首屏必须只剩一个动作（且是能一次回到应用的那个）"
+        assert!(
+            payload.actions.is_empty(),
+            "行归属未知时首屏无按钮：安全模式已删，不能留指向消失机制的按钮"
         );
         assert!(
             !payload.actions.contains(&"retry"),
             "不得给必然失败的 retry（重试同一行只会回到同一张卡）"
         );
-        // 另两条出路必须仍然可达（换个位置，不是删掉）——否则 YAML 写坏时无路可走。
+        // 兜底出路必须仍然可达（换个位置，不是删掉）——否则 YAML 写坏时无路可走。
         assert_eq!(payload.advanced_actions, vec!["safe_mode_reset"]);
+        // 行归壳时：首屏恰好一个（隔离），次级仍是放空兜底。
         let with_plan = payload.with_quarantine(Some("web"));
-        assert!(with_plan
-            .advanced_actions
-            .contains(&"quarantine_plugin_row"));
-    }
-
-    /// **替换卡必须带上自己的出路**（2026-09-16 独立复核）：`emit_boot_error` 换掉旧卡，
-    /// 旧卡的按钮随之消失——安全模式枚举失败时，新卡唯一的出路就是「备份并放空」。
-    #[test]
-    fn with_actions_rewrites_card_ways_out() {
-        let payload =
-            BootErrorPayload::classify("安全模式执行失败：行表查询失败（dsh 退出码 1）", "")
-                .with_actions(&["safe_mode_reset"]);
-        assert_eq!(payload.actions, vec!["safe_mode_reset"]);
-        assert!(
-            payload.advanced_actions.is_empty(),
-            "显式指定首屏动作时不得残留旧的次级出路（否则又会出现指向已消失机制的按钮）"
-        );
-        let v = serde_json::to_value(&payload).unwrap();
-        assert_eq!(v["actions"], serde_json::json!(["safe_mode_reset"]));
-        assert_eq!(v["advancedActions"], serde_json::json!([]));
+        assert_eq!(with_plan.actions, vec!["quarantine_plugin_row"]);
+        assert_eq!(with_plan.advanced_actions, vec!["safe_mode_reset"]);
     }
 
     /// 解析器不得被杂讯骗到：没有上游那句原文时**不猜**（宁可退回 unknown）。

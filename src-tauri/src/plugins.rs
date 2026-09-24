@@ -1584,24 +1584,6 @@ fn build_row_states(
     out
 }
 
-/// 当前处于**停用态**的顶层行 id（读 profile 自家 patch，缺失/损坏 → 空表）。
-///
-/// 用途（ADR-0026 第三次裁定后）：安全模式横幅要显示"**现在**还有几个插件行是停用的"
-/// ——用户逐个打开后数字要跟着降，不能停留在进入安全模式那一刻的快照。
-pub(crate) fn disabled_row_ids(patch_path: &Path) -> Vec<String> {
-    disabled_row_ids_from_text(&std::fs::read_to_string(patch_path).unwrap_or_default())
-}
-
-/// 文本版（**纯函数**，宿主/客体孪生共用；2026-09-21 P0-c）：客体档的 patch 原文由
-/// `guest::read_files` 取回，不能走路径读，但停用行的判据必须与宿主**同一份**。
-pub(crate) fn disabled_row_ids_from_text(text: &str) -> Vec<String> {
-    patch_entry_map_text(text)
-        .into_iter()
-        .filter(|(_, (disabled, _))| *disabled)
-        .map(|(id, _)| id)
-        .collect()
-}
-
 /// 读 profile 自家 patch：id -> (含 disabled:true, 条目数)。文件缺失/损坏 →
 /// 空表（与清单容忍半初始化同口径）。
 fn patch_entry_map(patch_path: &Path) -> std::collections::BTreeMap<String, (bool, usize)> {
@@ -1655,38 +1637,11 @@ pub fn plugin_rows_blocking(
     Ok(build_row_states(&rows, &deps, &patch))
 }
 
-/// 行表的**原始归属**：这条行由**哪一层**贡献（`None` = 用户 patch 行）。
-///
-/// 为什么需要它（ADR-0025 安全模式）：[`PluginRowState`] 是"合成后的可见行"，只给
-/// `pkg_name`（行自己的 `name`），**丢掉了贡献段**——而安全模式要按"是不是随包层"
-/// 决定停谁。判据仍是**同一个解析器**（`parse_dump_rows_with_section`），不另写一份。
-pub struct RowAttribution {
-    pub id: String,
-    /// 贡献段：bundle 包名；用户 patch 行则是**文件路径**（profile 层 / home 层）。
-    pub contributed_by: Option<String>,
-}
-
-/// 取行表原始归属（一次 `--dump-config`，与 [`plugin_rows_blocking`] 同一 spawn 路径）。
-pub fn row_attributions_blocking(
-    profile: &str,
-    data_dir: &Path,
-    world: &crate::mgmt::World,
-) -> Result<Vec<RowAttribution>, String> {
-    let (rows, _, _) = fetch_dump_rows(profile, data_dir, world)?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, _name, bundle)| RowAttribution {
-            id,
-            contributed_by: bundle,
-        })
-        .collect())
-}
-
 /// dump-config 行表的原始形态：`(行 id, 行 name, 贡献段)`。
 type DumpRows = Vec<(String, String, Option<String>)>;
 
 /// 一次 `--dump-config` 的原料：`(行表, profile 清单原文, 自家 patch 表)`。
-/// 起别名只为满足 `clippy::type_complexity`——**不改调用形态**（两个公开取数函数
+/// 起别名只为满足 `clippy::type_complexity`——**不改调用形态**（公开取数函数
 /// 仍解构同一个元组，单一 spawn 路径不变）。
 type DumpFacts = (
     DumpRows,
@@ -1696,8 +1651,8 @@ type DumpFacts = (
 
 /// 一次 `--dump-config` 的全部原料：行表（含段落归属）+ profile 清单原文 + 自家 patch 表。
 ///
-/// 抽出来是为了**单一 spawn 路径 + 单一解析器**：两个公开取数函数（可见行 / 原始归属）
-/// 都经此处，口径不会漂移。
+/// 抽出来是为了**单一 spawn 路径 + 单一解析器**（2026-09-24：原始归属取数随安全模式
+/// 删除而退役，现存调用方只有可见行一条）。
 fn fetch_dump_rows(
     profile: &str,
     data_dir: &Path,
@@ -1932,8 +1887,8 @@ impl PatchFile {
 
     /// 同 [`Self::write`]，但**返回刚创建的备份路径**（供调用方记账/排障）。
     ///
-    /// 安全模式（ADR-0026）要记住"进入前那份配置"，退出时按记录**原样覆盖回去**——
-    /// 因此备份路径必须由写入方回传，不能事后按文件名猜最新一份。
+    /// 备份路径必须由写入方回传，不能事后按文件名猜最新一份（一次覆写可能连写多个
+    /// 文件；`.bak-<unix秒>` 的秒级精度在并发下也不唯一）。
     pub(crate) fn write_with_backup(&self, path: &Path) -> Result<Option<PathBuf>, String> {
         let out = self.render_checked()?;
         let backup = crate::fs_backup::backup_before_overwrite_path(path)?;
@@ -1945,7 +1900,8 @@ impl PatchFile {
     ///
     /// 为什么必须有（2026-09-16 独立复核）：本内核是"原文保真 + 追加条目"的拼接器，
     /// 拼接边界出错时会产出非法 YAML；而这些写入**改的是用户的 profile 配置**——
-    /// 在安全模式这条救援路径上，写坏配置等于把"进不去应用"升级成"配置也坏了"。
+    /// 写坏配置等于把"进不去应用"升级成"配置也坏了"（YAML 语法坏时连
+    /// `--dump-config` 都失败，唯一 in-app 兜底「备份并放空」也要多绕一圈）。
     /// 自证失败即中止（fail-closed），备份与原文都还在。
     pub(crate) fn render_checked(&self) -> Result<String, String> {
         let out = self.render()?;
@@ -1997,8 +1953,8 @@ fn serialize_patch_item(v: &serde_yaml::Value) -> Result<String, String> {
 /// 原子替换：同目录临时文件 + rename（与 settings / credentials 同口径）。
 /// 原子替换：同目录临时文件 + rename（跨平台；`rename` 覆盖语义在目标已存在时成立）。
 ///
-/// `pub(crate)` 是给安全模式（ADR-0026）用的：它要在**不重新解析**的前提下把用户原配置
-/// 那几行原样写回/替换（配置已坏时也照写不误），从而不引入任何额外改写。
+/// `pub(crate)` 的理由：调用方（如「备份并放空」兜底）要在**不重新解析**的前提下把
+/// patch 整层替换掉（配置已坏时也照写不误），从而不引入任何额外改写。
 pub(crate) fn atomic_replace(path: &Path, content: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
@@ -2037,6 +1993,32 @@ pub fn set_plugin_disabled(
     let mut patch = PatchFile::read(&patch_path)?;
     apply_disabled_toggle(&mut patch, row_id, disabled);
     patch.write(&patch_path)
+}
+
+/// **兜底（用户层配置已写坏）**：把 `cordis.patch.yml` 备份后放空。
+///
+/// 2026-09-24 维护者裁定：安全模式（ADR-0026 的"停用全部三方行"一键按钮 + 横幅记账）
+/// 整体删除，只留本条——上游 dsh 0.1.7-rc.1 实测推翻其立项前提：插件**不兼容**
+/// （peer 不满足 = bundle 层 skip / 行层预检自动 `disabled`，仅 stderr 警告）与
+/// **悬空行**（包装了但不存在 = warning 后正常就绪）都**不砖**启动。仍会砖的只剩两类
+/// **用户层自写坏**：① YAML 语法坏（`--dump-config` 同样 exit 1，行枚举不出来）；
+/// ② required 核心条目（上游固定 7 个：agent-loop / webserver / modules / connection /
+/// headless-runner / acp / sdk-jsonrpc-server）配置写坏。两者都只能"备份 + 放空"
+/// 这一个 in-app 出路（放空 = 去掉用户全部行，回退 bundle 默认值）。
+///
+/// **调用方必须先经用户确认**（前端 ConfirmDialog）。
+pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
+    if !patch_path.is_file() {
+        return Err(format!(
+            "{} 不存在（该 profile 尚未初始化？）",
+            patch_path.display()
+        ));
+    }
+    crate::fs_backup::backup_before_overwrite(&patch_path)?;
+    atomic_replace(&patch_path, "[]\n")?;
+    Ok(patch_path)
 }
 
 /// **客体档孪生**（ADR-0016：让已下沉的插件中心在 WSL 世界可用——装上了却关不掉
@@ -2510,8 +2492,8 @@ fn remove_disabled_stub(patch: &mut PatchFile, row_id: &str) -> bool {
 /// 纯变换（宿主 / 客体共用）：禁用 → id 条目仅置 `disabled` 键（不存在则追加
 /// `{id, disabled}` 双键条目）；启用 → 移除 `disabled` 键，条目只剩 id 则整条移除。
 ///
-/// 返回**是否真的改动了内容**（幂等判据）：安全模式（ADR-0026）据此决定"要不要覆写、
-/// 要不要留备份"——已是目标态时零写入，不产生多余备份与 mtime 抖动。
+/// 返回**是否真的改动了内容**（幂等判据）：调用方据此决定"要不要覆写、要不要留备份"
+/// ——已是目标态时零写入，不产生多余备份与 mtime 抖动。
 pub(crate) fn apply_disabled_toggle(patch: &mut PatchFile, row_id: &str, disabled: bool) -> bool {
     let id_key = serde_yaml::Value::String("id".into());
     let disabled_key = serde_yaml::Value::String("disabled".into());
@@ -2654,6 +2636,28 @@ mod patch_tests {
         let text = std::fs::read_to_string(&patch).unwrap();
         assert!(text.contains("row-a") && text.contains("config:"), "{text}");
         assert!(!text.contains("disabled:"), "{text}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 兜底（2026-09-24 随安全模式删除迁入）：备份 + 放空——配置写坏到行都枚举不出来时
+    /// 的唯一 in-app 出路。备份必须恰好一份（`.bak-<unix秒>`），内容换成 `[]\n`。
+    #[test]
+    fn quarantine_patch_backs_up_then_empties() {
+        let home = tmp();
+        let patch = home.join("profiles/p/cordis.patch.yml");
+        std::fs::write(&patch, format!("{HEADER}- insert:\n  - id: bad\n")).unwrap();
+        quarantine_patch(&home, "p").unwrap();
+        assert_eq!(std::fs::read_to_string(&patch).unwrap(), "[]\n");
+        let backups: Vec<_> = std::fs::read_dir(patch.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "必须留下恰好一份备份");
+        // 不存在的 profile：如实报错，不造文件
+        assert!(quarantine_patch(&home, "nope").is_err());
+        // 非法 profile 名（路径遍历防线）同样拒绝
+        assert!(quarantine_patch(&home, "../evil").is_err());
         std::fs::remove_dir_all(&home).ok();
     }
 

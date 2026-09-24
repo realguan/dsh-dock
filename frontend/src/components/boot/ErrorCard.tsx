@@ -48,10 +48,9 @@ const ACTION_IPC: Readonly<Record<string, ActionIpc>> = {
   // 2026-09-16：插件行把插件树搞挂时的**就地**出路——移除该行 + 重启（而不是
   // 让用户自己去别处找）。契约：`boot_failure.rs::with_quarantine`。
   quarantine_plugin_row: "quarantineRow",
-  // 安全模式（ADR-0025，2026-09-16）：`safe_mode` 停用非随包层行后重启（零文件改动）；
-  // `safe_mode_reset` 是"行枚举不出来"时（patch 语法坏）的兜底——**必须先过确认框**
-  // （它会备份并放空用户的 cordis.patch.yml），故走本地 `needsConfirm` 分支。
-  safe_mode: "terminalAction",
+  // 2026-09-24（安全模式删除）：`safe_mode`（一键停用全部三方行）随 ADR-0026 一起退役；
+  // `safe_mode_reset` 是唯一残体——patch 语法坏 / 核心条目配置写坏时“备份并放空”，
+  // **必须先过确认框**（它会备份并放空用户的 cordis.patch.yml），故走本地确认分支。
   safe_mode_reset: "terminalAction",
 }
 
@@ -100,9 +99,9 @@ export function ErrorCard({
   // 旧缓存载荷（无该字段）才回退「重试」。
   const actions = payload.actions ?? ["retry"]
   // 次级出路（2026-09-16 维护者反馈后的分层）：**首屏只有 `actions`**——插件行失败时
-  // 恰好一个按钮「停用全部插件并启动」（点一次就能回到应用）；「只移除出错那一行」与
-  // 「备份并放空插件配置」收进"展开详情 → 其它出路"，**可达性不变**（YAML 写坏时
-  // 只有后者能救）。空表 = 无次级出路。
+  // 行归壳所有则恰好一个按钮「只移除出错那一行并重启」（点一次就能回到应用）；
+  // 「备份并放空插件配置」收进“展开详情 → 其它出路”，**可达性不变**（YAML 写坏时
+  // 只有这一条能救）。空表 = 无次级出路。
   const advanced = payload.advancedActions ?? []
   // 2026-09-08（ADR-0012）：优先按结构化分类取本地化文案；后端文案作为兼容分支
   // （旧缓存载荷 / 未来新增的未识别 kind）。
@@ -169,10 +168,10 @@ export function ErrorCard({
   /// 一个动作 = 按钮 + "它会造成什么"。首屏与"展开详情 → 其它出路"共用同一渲染，
   /// 两处不漂移（新增动作只需在 `ACTIONS`/字典登记一次）。
   const actionRow = (a: string) => {
-    const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only" || a === "safe_mode"
+    const isPrimary = a === "retry" || a === "upgrade" || a === "upgrade_only" || a === "quarantine_plugin_row"
     // 隔离 = 移除出问题的那一行：图标要能一眼区分于"重试"（它做的事不同，
     // 而且会改动 profile 文件）。
-    const ActionIcon = a === "quarantine_plugin_row" || a === "safe_mode" ? ShieldOff : RefreshCw
+    const ActionIcon = a === "quarantine_plugin_row" ? ShieldOff : RefreshCw
     const impact = actionImpact(a)
     return (
       <div key={a} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
@@ -250,7 +249,8 @@ export function ErrorCard({
         {reason && <p className="mt-1 truncate text-xs text-dim">{reason}</p>}
 
         {/* 首屏主角 = **一个**可点的动作 + **它会造成什么**（维护者 2026-09-16 裁定）。
-            插件行失败时首屏只有「停用全部插件并启动」一项；其余出路在"展开详情 → 其它出路"。
+            插件行失败时行归壳所有则首屏只有「只移除出错那一行并重启」一项；行不归壳时首屏为空
+            （不摆必然失败的重试），出路在“展开详情 → 其它出路”。
             动作集为空 = 后端明确说"没有可点的出路"，此时不留空行。 */}
         {(actions.length > 0 || onReselect) && (
           <div className="mt-3.5 flex flex-col gap-2">
@@ -316,9 +316,9 @@ export function ErrorCard({
           </div>
         )}
 
-        {/* 其它出路（2026-09-16 维护者反馈）：首屏只留一个按钮，外科式删行与
-            "放空 patch"收在这里——**可达性不变**（YAML 写坏时只有放空这一条能救），
-            但用户不必先读懂三条机制的差别才能点。 */}
+        {/* 其它出路（2026-09-16 维护者反馈）：首屏只留一个按钮，“放空 patch”兜底收在
+            这里——**可达性不变**（YAML 写坏时只有这一条能救），用户不必先读懂机制差别
+            才能点。 */}
         {advanced.length > 0 && (
           <div className="mt-3 rounded-xl border border-line bg-muted/30 p-3">
             <div className="font-mono text-label font-medium text-dim">{t.error.advancedLabel}</div>

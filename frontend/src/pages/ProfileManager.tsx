@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Plus,
   RefreshCw,
-  X,
   Search,
   Settings,
   SlidersHorizontal,
@@ -26,8 +25,6 @@ import {
 import { ProfileRow } from "@/components/profiles/ProfileRow"
 import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginHub } from "@/components/market/PluginHub"
-import { ShieldAlert } from "lucide-react"
-import type { SafeModeState } from "@/types/ipc"
 import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
@@ -105,7 +102,6 @@ export function ProfileManager() {
   const [overviewTick, setOverviewTick] = useState(0)
   // 安全模式状态（ADR-0026）：只报"是否仍处于安全模式 + 此刻停用了几行 + 横幅是否已关闭"。
   // 横幅**只在用户确实以安全模式进入过**时出现（记账是那份依据），且可一键关闭、关后同轮不再打扰。
-  const [safeMode, setSafeMode] = useState<SafeModeState | null>(null)
 
   // 语言初始化已于 2026-09-11（task-24）**收敛到 App.tsx**：该处对所有窗口统一
   // 执行一次 initFromSettings() 并订阅 app:settings-changed（跨窗同步）。
@@ -213,23 +209,6 @@ export function ProfileManager() {
       setSelectedName(preferred)
     }
   }, [list, activeProfile, defaultProfile, selectedName])
-
-  // 安全模式状态随"当前选中的 profile"与刷新 tick 重取（失败静默：横幅是加法，
-  // 取不到就当作未启用，不得因此打断控制中心）。
-  useEffect(() => {
-    if (!selectedName) {
-      setSafeMode(null)
-      return
-    }
-    let alive = true
-    api
-      .getSafeModeState(selectedName)
-      .then((s) => alive && setSafeMode(s))
-      .catch(() => alive && setSafeMode(null))
-    return () => {
-      alive = false
-    }
-  }, [selectedName, overviewTick])
 
   // 设为默认
   const handleSetDefault = (name: string) => {
@@ -387,49 +366,6 @@ export function ProfileManager() {
           />
         )}
       </header>
-
-      {/* 安全模式横幅（ADR-0026，2026-09-16 第三版交互）：
-          · **只在用户确实以安全模式进入过**时出现（`active` = 记账在 + 那些行此刻仍停用）；
-          · 文案只讲"发生了什么 + 去哪儿把它们开回来"——不提备份（我们不做整份恢复，提它全是噪音），
-            也不把用户往「实验能力」引（那里只有策展能力，而安全模式停的是**全部**三方插件）；
-          · 关闭 = 写进记账（`dismiss_safe_mode_notice`），关掉后同一轮不再出现；
-            **下次以安全模式进入会重新提示**（新事件）。 */}
-      {safeMode?.active && !safeMode.noticeDismissed && (
-        <div
-          role="status"
-          className="mx-6 mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-warn/40 bg-warn-soft/60 px-3.5 py-2.5"
-        >
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-warn">
-            <ShieldAlert className="size-3.5" />
-            {t.profiles.safeModeTitle}
-          </span>
-          <span className="flex-1 text-micro text-dim">
-            {t.profiles.safeModeBody(safeMode.disabledRows.length)}
-          </span>
-          <button
-            type="button"
-            aria-label={t.profiles.safeModeDismiss}
-            title={t.profiles.safeModeDismiss}
-            className="rounded-md p-1 text-warn transition-colors hover:bg-warn-soft hover:text-warn"
-            onClick={() => {
-              if (!selectedName) return
-              // 先乐观隐藏（横幅不是关键路径），失败再拉回（重取状态）并提示。
-              setSafeMode((prev) => (prev ? { ...prev, noticeDismissed: true } : prev))
-              api
-                .dismissSafeModeNotice(selectedName)
-                .catch((e) => {
-                  setOverviewTick((n) => n + 1)
-                  showToast(
-                    t.profiles.safeModeDismissFailed(String(e instanceof Error ? e.message : e)),
-                    "warn",
-                  )
-                })
-            }}
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      )}
 
       {/* 主视图区。
           2026-09-08 裁定：onNotice 必须传 useCallback 稳定的引用（此处即 showToast

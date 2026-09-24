@@ -245,7 +245,7 @@ describe("首屏只留一个按钮，其它出路收进详情（2026-09-16）", 
     }
     expect(zhCN.error.advancedLabel).not.toBe(enUS.error.advancedLabel)
     expect(CJK.test(String(enUS.error.advancedLabel)), "en 标题含中文").toBe(false)
-    for (const id of ["safe_mode", "safe_mode_reset", "quarantine_plugin_row"]) {
+    for (const id of ["safe_mode_reset", "quarantine_plugin_row"]) {
       const zhLabel = zhCN.error.actions[id]
       const enLabel = enUS.error.actions[id]
       expect(zhLabel, `${id} 缺 zh 文案（会显示英文 id）`).toBeTruthy()
@@ -253,10 +253,13 @@ describe("首屏只留一个按钮，其它出路收进详情（2026-09-16）", 
       expect(zhLabel).not.toBe(id)
       expect(enLabel).not.toBe(id)
     }
-    // 首屏按钮的文案必须说清"会发生什么"（不许用"安全模式"这种要用户先懂的名词当唯一线索）
-    expect(zhCN.error.actions["safe_mode"]).toContain("插件")
-    // ADR-0026：影响必须说清"改的是配置 + 先备份 + 可一键恢复"（用户据此判断要不要点）
-    expect(zhCN.error.impacts["safe_mode"]).toMatch(/配置/)
-    expect(zhCN.error.impacts["safe_mode"]).toMatch(/备份|恢复/)
+    // 2026-09-24：safe_mode（一键停用）已随安全模式删除——字典与分发表都不得残留。
+    expect(zhCN.error.actions["safe_mode"]).toBeUndefined()
+    expect(zhCN.error.impacts["safe_mode"]).toBeUndefined()
+    // 兜底按钮的文案必须说清"会发生什么"（改配置 + 先备份）
+    expect(zhCN.error.actions["safe_mode_reset"]).toContain("放空")
+    expect(zhCN.error.impacts["safe_mode_reset"]).toMatch(/备份/)
+    // 隔离按钮的文案必须说清"只动那一行"
+    expect(zhCN.error.impacts["quarantine_plugin_row"]).toMatch(/那一行|row/)
   })
 })

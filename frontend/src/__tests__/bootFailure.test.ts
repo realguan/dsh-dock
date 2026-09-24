@@ -99,7 +99,7 @@ describe("normalizeError：边界不得静默丢字段（ADR-0012 派生口径�
     title: "t",
     detail: "d",
     suggestion: "s",
-    actions: ["safe_mode"],
+    actions: ["quarantine_plugin_row"],
     advancedActions: ["quarantine_plugin_row", "safe_mode_reset"],
     log: "tail",
     quarantine: { profile: "web", rowId: "dsh-dock--x" },

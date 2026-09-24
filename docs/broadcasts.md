@@ -31,6 +31,18 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-24 修订 · 安全模式整体删除（只保留「备份并放空 patch」兜底）—— guan（AI 协作）
+
+- **触发**：维护者亲测「插件不兼容不会让 dsh 起不来」，裁定安全模式不再需要、彻底删除。壳侧同日三组复现实测（克隆体 `~/.dsh-dock-dev/profiles/111`，dsh 0.1.7-rc.1，跑后还原）坐实并推广：**悬空行 = warning 后正常就绪**（75s 观察窗内 web 起服务，上游仅 `1 entry did not activate … failed to import`）；**仍砖的只有用户层自写坏两类**——YAML 语法坏（`failed to parse overlay … YAMLException`，dump 也失败）与核心条目配置写坏（`2 required plugins did not activate / webserver (required) ValidationError`）。2026-09-16 事故的 exit 1 系旧版 dsh 行为（0.1.6→0.1.7 间上游已变更），ADR-0026 的立项前提消失。复现实录入台账复现点 24。
+- **变更**（分支 `refactor/remove-safe-mode-disable-all`，ADR-0031 取代 ADR-0026）：
+  1. 删：`safe_mode.rs` 整模块（846 行，含客体档孪生接线与全部测试）；`safe_mode` 一键停用按钮；`get_safe_mode_state` / `dismiss_safe_mode_notice` 两条 IPC（COMMANDS / handler / capabilities 三处同步）；控制中心横幅与记账文件（`<app_data>/safe-mode/*.json` 成孤儿文件，不主动删）；`RowAttribution` / `row_attributions_blocking` / `disabled_row_ids` 一族死代码；`with_actions` 死函数；`dsh_home_abs` / `parse_dsh_home_abs` 及其测试；
+  2. 留：`quarantine_patch`（备份 + 放空 `cordis.patch.yml`）迁入 `plugins.rs`，继续作错误卡动作 `safe_mode_reset`（两类仍砖场景的总兜底）；`quarantine_plugin_row` 不变且**提上首屏**（行归壳所有时的新「一次回应用」按钮）；
+  3. `PluginRowFailed` 首屏默认无按钮（不摆必然失败的 retry），出路 = 隔离（壳写行）+ 展开详情的放空兜底 + 文案指路；
+  4. 文档：AGENTS §6 登记回收、IPC 登记册两条命令与计数重校（57，头部/行内两处漂移一并纠正）、ADR-0026 状态改「已被 0031 取代」、索引加 0031 行、台账复现点 24、本档。
+- **影响**：仅周知。错误卡「其它出路」的措辞变化（「停用全部三方插件并启动」→「只移除出错的那一行并重启」/「备份并放空插件配置后启动」）；存量 `<app_data>/safe-mode/` 无人读无人写。无 IPC 消费方破坏（两命令同时前后端下架，闸门三处同步）。
+- **凭据**：Rust `cargo test` 525 passed / 0 failed；宿主 `cargo clippy --all-targets -- -D warnings` 绿；前端 typecheck + oxlint 0 告警 + vitest 673 passed（65 文件）；三组复现实测见台账复现点 24。Windows 交叉 clippy 本机环境缺失（MSVC/clang、mingw32-gcc 均无，`ring` 无法交叉编译）——windows 专属增量为注释 + 一对函数删除，待 CI 三平台闸门复核。
+- **合入**：2026-09-24 维护者裁定**快车道**。合入前先做 `git rebase --onto master ddad4cc`——该分支原基底是 capability 改动 amend 前的旧 hash（`ddad4cc`，现网为 `fb3aae4`），直接合会把那笔改动以重复副本再带一次；rebase 零冲突（仅 `broadcasts.md` / `ipc.ts` 两处被 git 自动合并，已人肉核对：广播两条都在、safe-mode 类型清空、Capability 文档注释保留）。随后 ff-only 合入 master 并直推 origin；Windows 交叉 clippy 缺口由 CI 三平台闸门兜底。
+
 ### 2026-09-24 修订 · 实验能力按「官方托管」裁剪：agent-team 目录对齐上游 0.1.7 单 bundle + 提供判据双信号加固 —— guan（AI 协作）
 
 - **触发**：维护者「如果 dsh 官方内置了或者作为可选安装，dsh-dock 就不需要在实验能力展示这个插件的操作入口，我们只做官方的补充」。核查发现该判据（ADR-0020 §2.8，2026-09-17 立 / 2026-09-20 修订）在 dsh 0.1.7-rc.1 上**失效**：上游把 Agent Teams 收拢为单个 optional bundle（`agent-team-profile` 自述 "…tools, and Web UI in one experimental bundle"），独立的 `agent-team-web-profile` 退役（npm 终版 0.1.6-alpha.2）——dock 目录仍引用它 ⇒ "每个包都被安装提供"的全量判据恒不成立 ⇒ 面板继续为官方已接管的能力摆出完整操作入口，且默认首档会尝试安装一个 404 的包版本。

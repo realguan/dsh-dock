@@ -346,8 +346,8 @@ pub(crate) fn delete_profile_script(profile: &str) -> String {
 /// 备份成功哨兵。
 #[cfg(any(windows, test))]
 /// 备份成功哨兵。**带名字**时形如 `DSH_DOCK_BACKUP_OK:<备份相对路径 base64>`（2026-09-21 补）：
-/// 安全模式要记下备份以便之后一键还原，而原脚本只回哨兵本身、宿主无从得知备份落在哪
-/// （与宿主侧 `backup_before_overwrite_path` 回路径的形态不一致）。源文件不存在时只回哨兵。
+/// 调用方（如 patch 覆写类写面）要能知道备份落在哪——与原脚本只回哨兵本身、宿主无从
+/// 得知的形态不一致（同宿主侧 `backup_before_overwrite_path` 回路径的契约）。源文件不存在时只回哨兵。
 pub(crate) const BACKUP_OK: &str = "DSH_DOCK_BACKUP_OK";
 
 /// 组装「客体文件覆写前留备份」脚本（与 fs_backup.rs 同口径）。
@@ -525,55 +525,6 @@ pub(crate) const CMD_PRESENT: &str = "@@DSH_DOCK_CMD_OK@@";
 #[cfg(any(windows, test))]
 pub(crate) const CMD_MISSING: &str = "@@DSH_DOCK_CMD_MISSING@@";
 
-/// 客体侧命令存在性检查：一次 `wsl.exe` 往返，返回**缺失**的命令名。
-///
-/// 为什么必须有：宿主档写行前有一道 PATH 前置硬门（`missing_prerequisites`），它查的是
-/// **宿主 PATH**；而客体档的插件服务器在**客体内部**启动 —— 照搬会**误拒**（客体有、宿主无）
-/// 或**误放**（反之，然后把一个起不来的 profile 写坏，而那正是这道门要防的）。
-/// 同一问题必须在**同一世界**里问。
-/// 客体 dsh home 的**绝对路径**（一次 `wsl.exe` 往返）。
-///
-/// 为什么需要（P0-c，2026-09-21）：`safe_mode::split_by_layer` 要拿"本 profile 的 patch 路径"
-/// 去比对 dsh 从**客体视角**报出来的 `contributed_by` 路径 —— 宿主拿自己的 home 拼出来的路径
-/// 与客体路径必然不等，会把可停行全判成"够不到"，于是安全模式在客体档只能报"没有可停用的行"。
-/// 判据必须在同一世界里成立，故直接把客体侧 `${DSH_HOME:-$HOME/.dsh}` 问回来。
-#[cfg(windows)]
-pub(crate) fn dsh_home_abs(distro: &str) -> Result<String, String> {
-    let script = format!(
-        "{}printf '%s\\n' \"${{DSH_HOME:-$HOME/.dsh}}\"",
-        guest_prep!()
-    );
-    let out = crate::executor::run_wsl_capture(
-        Some(distro),
-        &["-e", "bash", "-lic", &script],
-        std::time::Duration::from_secs(30),
-    )
-    .ok_or_else(|| {
-        format!("取 {distro} 内 dsh home 失败：wsl.exe 调用失败或无输出（客体不可达？）")
-    })?;
-    parse_dsh_home_abs(&out).ok_or_else(|| {
-        format!(
-            "取 {distro} 内 dsh home 失败：输出中无绝对路径（{}）",
-            out.trim()
-        )
-    })
-}
-
-/// 非 Windows 孪生。
-#[cfg(not(windows))]
-pub(crate) fn dsh_home_abs(_distro: &str) -> Result<String, String> {
-    Err("WSL 客体管理面仅在 Windows 宿主可用".to_string())
-}
-
-/// 从输出里挑出绝对路径行（**纯函数**，跨平台可测）：忽略 rc 噪音 / motd / 警告。
-#[cfg(any(windows, test))]
-pub(crate) fn parse_dsh_home_abs(raw: &str) -> Option<String> {
-    raw.lines()
-        .map(|l| l.trim().trim_end_matches('\r'))
-        .rfind(|l| l.starts_with('/') && l.len() > 1)
-        .map(|l| l.to_string())
-}
-
 /// 生成命令存在性探测脚本（**纯函数**：`cfg(any(windows, test))` ⇒ 本机 bash 可真跑验证）。
 #[cfg(any(windows, test))]
 pub(crate) fn missing_commands_script(commands: &[&str]) -> String {
@@ -590,6 +541,12 @@ pub(crate) fn missing_commands_script(commands: &[&str]) -> String {
     script
 }
 
+/// 客体侧命令存在性检查：一次 `wsl.exe` 往返，返回**缺失**的命令名。
+///
+/// 为什么必须有：宿主档写行前有一道 PATH 前置硬门（`missing_prerequisites`），它查的是
+/// **宿主 PATH**；而客体档的插件服务器在**客体内部**启动 —— 照搬会**误拒**（客体有、宿主无）
+/// 或**误放**（反之，然后把一个起不来的 profile 写坏，而那正是这道门要防的）。
+/// 同一问题必须在**同一世界**里问。
 #[cfg(windows)]
 pub(crate) fn missing_commands(distro: &str, commands: &[&str]) -> Result<Vec<String>, String> {
     if commands.is_empty() {
@@ -814,8 +771,8 @@ pub(crate) fn delete_profile_dir(_distro: &str, _profile: &str) -> Result<(), St
 /// 覆写前留备份（客体版，与 `fs_backup::backup_before_overwrite*` 契约一致）：
 /// **返回刚创建的备份相对路径**（源文件不存在 ⇒ `Ok(None)`，与宿主侧同形）。
 ///
-/// 为什么必须回路径（2026-09-21）：安全模式的"进入时备份 → 之后一键还原"要**记住备份**，
-/// 而原脚本只回 `BACKUP_OK` —— 宿主无从得知备份落在哪，客体档那条路就断在这里。
+/// 为什么必须回路径（2026-09-21）：调用方要能**记住备份落在哪**（覆写前的写入口纪律，
+/// 与宿主 `fs_backup` 同契约），而原脚本只回 `BACKUP_OK` —— 宿主无从得知路径。
 #[cfg(windows)]
 pub(crate) fn backup_file_named(distro: &str, rel_path: &str) -> Result<Option<String>, String> {
     let script = backup_file_script(rel_path);
@@ -839,10 +796,7 @@ pub(crate) fn backup_file_named(distro: &str, rel_path: &str) -> Result<Option<S
     ))
 }
 
-/// 非 Windows 孪生。
-///
-/// 尚无调用者：调用方 = safe_mode 的客体档接线（P0-c，方案档在册，**下一步即做**）。
-/// 保留孪生是为了让那条接线在所有平台都参与编译与 lint（同 `read_files` 的既有口径）。
+/// 非 Windows 孪生（与 `read_files` 的既有口径一致：让孪生在所有平台参与编译与 lint）。
 #[cfg(not(windows))]
 #[allow(dead_code)]
 pub(crate) fn backup_file_named(_distro: &str, _rel_path: &str) -> Result<Option<String>, String> {
@@ -1522,16 +1476,6 @@ mod missing_commands_tests {
             Some("{\"ok\":true,\"code\":0}")
         );
         assert!(parse_harness_result("只有噪音\n").is_none());
-    }
-
-    /// 客体 home 解析：只认绝对路径行，噪音与相对路径一律忽略。
-    #[test]
-    fn dsh_home_abs_picks_the_absolute_path_line() {
-        let raw = "motd 噪音\nwarning: something\n/home/u/.dsh\n";
-        assert_eq!(parse_dsh_home_abs(raw).as_deref(), Some("/home/u/.dsh"));
-        // 只有噪音 / 相对路径 ⇒ None（宁可报错，不拿错路径去比对层序）
-        assert!(parse_dsh_home_abs("hello\nrelative/path\n").is_none());
-        assert!(parse_dsh_home_abs("/").is_none(), "根目录不算有效 home");
     }
 
     /// 反例守卫：`OK` 帧里出现的名字**绝不**能落进缺失清单（前缀必须是精确匹配）。

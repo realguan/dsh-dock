@@ -133,55 +133,6 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     });
     Ok(())
 }
-/// 安全模式状态（ADR-0026）：是否仍处于安全模式 + 此刻仍停用着的行（与配置实时联动）。
-///
-/// 只读、零副作用（读壳自有记账 + 查那份备份在不在）；**不读运行态**——那是回环快照的职责。
-/// 前端用它渲染控制中心横幅（只说"停用了几个、去哪儿打开开关"；**没有恢复动作**）。
-#[tauri::command]
-pub async fn get_safe_mode_state(
-    app: tauri::AppHandle,
-    profile: String,
-) -> Result<crate::safe_mode::SafeModeState, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::profiles::validate_profile_name(&profile)?;
-    // 按世界取源（2026-09-21 P0-c 下沉）：本地档用本次启动实际那个 home；
-    // 客体档读**客体** patch（记账世界身份 = wsl:<distro>）—— 绝不拿宿主 home 冒充。
-    match crate::mgmt::current_world(&app)? {
-        crate::mgmt::World::Local => {
-            let home =
-                crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
-            Ok(crate::safe_mode::state(&data_dir, &profile, &home))
-        }
-        crate::mgmt::World::Wsl { distro } => {
-            crate::safe_mode::state_in_guest(&distro, &data_dir, &profile)
-        }
-    }
-}
-
-/// 关掉本轮的安全模式横幅（"不再提示"）：只写壳自有记账，**不碰 dsh 配置**。
-///
-/// 为什么要有它（2026-09-16 维护者裁定）：安全模式横幅只在"用户确实以安全模式进入过"时出现，
-/// 且必须**可关闭**——用户看过一次就够了；同一轮再启动不打扰，**下一次进入安全模式会重新提示**
-/// （新记账 = 新事件）。
-#[tauri::command]
-pub async fn dismiss_safe_mode_notice(
-    app: tauri::AppHandle,
-    profile: String,
-) -> Result<bool, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::profiles::validate_profile_name(&profile)?;
-    match crate::mgmt::current_world(&app)? {
-        crate::mgmt::World::Local => {
-            let home =
-                crate::boot::boot_target_home(&app).unwrap_or_else(crate::resolve::user_dsh_home);
-            crate::safe_mode::dismiss_notice(&data_dir, &profile, &home)
-        }
-        crate::mgmt::World::Wsl { distro } => {
-            crate::safe_mode::dismiss_notice_in_guest(&distro, &data_dir, &profile)
-        }
-    }
-}
-
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
 /// upgrade_only：仅升级 + 刷新状态（不打断进行中的会话）。
 /// `version`（2026-09-09 版本选择器）：upgrade / upgrade_only 的显式目标版本
@@ -256,169 +207,68 @@ pub fn terminal_action(
                 return;
             }
         }
-        // ---- 安全模式（ADR-0026：写配置；恢复动作已按维护者第三次裁定移除）----
-        // 两个动作都只动**用户自己的配置文件**（或读壳自有记账），随后一律走下面的
-        // "重新解析链 + 启动"，因此失败不会留下半截状态。
-        if matches!(action.as_str(), "safe_mode" | "safe_mode_reset") {
+        // ---- 兜底：备份并放空插件配置（2026-09-24 维护者裁定后，安全模式唯一残体）----
+        // 「一键停用全部三方行」与横幅记账已删：ADR-0026 的立项前提被上游推翻——
+        // dsh 0.1.7-rc.1 实测，插件**不兼容**（peer 不满足 = bundle 层 skip / 行层预检
+        // 自动 disabled）与**悬空行**（包装了但不存在 = warning 后正常就绪）都不砖启动。
+        // 仍会砖的只剩两类**用户层自写坏**：① YAML 语法坏（行枚举不出来）；
+        // ② required 核心条目（上游固定 7 个）配置写坏。"备份 + 放空"是唯一 in-app 出路。
+        // 只动**用户自己的配置文件**，随后一律走下面的"重新解析链 + 启动"，
+        // 失败不会留下半截状态。
+        if action.as_str() == "safe_mode_reset" {
             // 用**启动目标**而不是会话槽：失败路径已 teardown，会话槽恒空（2026-09-16
             // 真机：拿不到 profile → 点了"像没反应"，且隔离按钮同时消失）。
             let profile = crate::boot::boot_target_profile(&handle);
             let Some(profile) = profile else {
                 emit_boot_error(
                     &handle,
-                    "安全模式需要一个已选定的 profile（当前查不到启动目标）——请先在启动页重选 profile。",
+                    "备份并放空需要一个已选定的 profile（当前查不到启动目标）——请先在启动页重选 profile。",
                     "",
                 );
                 return;
             };
-            let world = match crate::mgmt::current_world(&handle) {
-                Ok(w) => w,
-                Err(e) => {
-                    emit_boot_error(&handle, &format!("安全模式无法确定运行世界：{e}"), "");
-                    return;
-                }
-            };
-            // 客体档（2026-09-21 P0-c 下沉）：`split_by_layer` 要拿"本 profile 的 patch 路径"
-            // 比对 dsh 从**客体视角**报出的层序路径 —— 宿主自己的 home 拼出来必然不等，
-            // 会把可停行全判成"够不到"。故先把客体侧 `${DSH_HOME:-$HOME/.dsh}` 问回来。
-            let guest_home: Option<String> = match &world {
-                crate::mgmt::World::Wsl { distro } => match crate::guest::dsh_home_abs(distro) {
-                    Ok(h) => Some(h),
-                    Err(e) => {
-                        emit_boot_error(
-                            &handle,
-                            &format!("安全模式无法定位客体 dsh home：{e}"),
-                            "",
-                        );
-                        return;
-                    }
-                },
-                crate::mgmt::World::Local => None,
-            };
             // **改哪个 home 必须用本次启动的实际值**（2026-09-16 独立复核 P1）：快照档的
             // home 是 `<data_dir>/runtimes/fallback-home`，每次启动被重同步覆写；按用户 home
             // 写会改错文件（动用户的 `~/.dsh` 同名 profile）且不可能生效。故显式拒绝该档，
-            // 口径同 WSL：宁可报错，不回落宿主。
+            // 口径同 WSL 客体档（patch 在客体文件系统里，宿主路径写不到）：宁可报错，
+            // 不回落宿主。
             let user_home = crate::resolve::user_dsh_home();
             let home = crate::boot::boot_target_home(&handle).unwrap_or_else(|| user_home.clone());
             if home != user_home {
                 emit_boot_error(
                     &handle,
                     &format!(
-                        "安全模式暂不支持当前档位：本次启动用的工作区是 {}（快照档的 home 每次启动\
-                         都会被重新同步覆盖，写进去不会生效）。为避免改错 profile，壳不回落用户 home。",
+                        "备份放空暂不支持当前档位：本次启动用的工作区是 {}（快照档的 home 每次启动\
+                         都会被重新同步覆盖，写进去不会生效；WSL 客体档的 patch 在客体文件\
+                         系统里，宿主路径写不到）。为避免改错 profile，壳不回落用户 home。",
                         home.display()
                     ),
                     "",
                 );
                 return;
             }
-            let outcome: Result<String, String> = match action.as_str() {
-                // 进入：把**所有可停的三方挂载行**在配置文件里写成 `disabled: true`
-                // （一次覆写、一次备份），然后正常启动——开关/徽标/下次启动同源。
-                "safe_mode" => crate::plugins::row_attributions_blocking(
-                    &profile, &data_dir, &world,
-                )
-                .and_then(|rows| {
-                    // 层序：profile 层的停用桩停不到 **home 层**（更晚层）的行——如实区分，
-                    // 否则会出现"报成功、再点一次改口早已停用"（2026-09-16 独立复核 P5）。
-                    // 层序比对必须用**同一世界**的 patch 路径：客体档用问回来的客体 home 拼，
-                    // 否则可停行会被全判成"够不到"（见上方 guest_home 的说明）。
-                    let patch_path = match &guest_home {
-                        Some(gh) => crate::safe_mode::profile_patch_path(
-                            std::path::Path::new(gh),
-                            &profile,
+            match crate::plugins::quarantine_patch(&home, &profile) {
+                Ok(path) => {
+                    crate::boot::emit_step(
+                        &handle,
+                        2,
+                        "running",
+                        &format!(
+                            "已备份并放空 {}——随后以默认插件组合启动；原配置留在 .bak-<时间戳> 备份里，\
+                             需要时手工取用",
+                            path.display()
                         ),
-                        None => crate::safe_mode::profile_patch_path(&home, &profile),
-                    };
-                    let (ids, unreachable) = crate::safe_mode::split_by_layer(&rows, &patch_path);
-                    let kept = rows.len() - ids.len() - unreachable.len();
-                    // **无可停行**：如实报错、不空转启动。文案只陈述已知事实（0 条行时不能说
-                    // "全部来自随包插件"）。
-                    if ids.is_empty() {
-                        let why = if rows.is_empty() {
-                            "这个 profile 当前一条挂载行都没有".to_string()
-                        } else if unreachable.is_empty() {
-                            format!(
-                                "这个 profile 的 {} 条挂载行全部来自随包插件，没有可停用的三方插件",
-                                rows.len()
-                            )
-                        } else {
-                            format!(
-                                "可停用的行一条都没有，只有 {} 行够不到（不在本 profile 的 patch 层，\
-                                 或在 home 层）：{}",
-                                unreachable.len(),
-                                unreachable.join("、")
-                            )
-                        };
-                        return Err(format!(
-                            "{why}——这类失败不是安全模式能解决的（本按钮未做任何改动，也没有启动）。"
-                        ));
-                    }
-                    // 够不到的行必须说清（不能报"已全部停用"）。
-                    let partial = if unreachable.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            "；另有 {} 行够不到（不在本 profile 的 patch 层，或在 home 层）：{}，未处理",
-                            unreachable.len(),
-                            unreachable.join("、")
-                        )
-                    };
-                    let entered = match &world {
-                        crate::mgmt::World::Local => {
-                            crate::safe_mode::enter(&home, &data_dir, &profile, &ids)
-                        }
-                        crate::mgmt::World::Wsl { distro } => {
-                            crate::safe_mode::enter_in_guest(distro, &data_dir, &profile, &ids)
-                        }
-                    };
-                    entered.map(|outcome| {
-                        if outcome.changed {
-                            format!(
-                                "已进入安全模式：在配置里停用 {} 行（保留随包 {} 行）{partial}；\
-                                 配置已备份为 {}——想用哪个插件，到「实验能力」里打开哪个开关即可",
-                                ids.len(),
-                                kept,
-                                outcome
-                                    .backup
-                                    .as_deref()
-                                    .map(|p| p.display().to_string())
-                                    .unwrap_or_default()
-                            )
-                        } else {
-                            // 幂等：本次没改配置。**之前**进入过时记账仍在（横幅同屏可见），
-                            // 故不能说"没有可恢复的备份"（2026-09-16 独立复核 P4）。
-                            format!(
-                                "这 {} 行早在停用态（本次未改动配置）{partial}；想用哪个插件，\
-                                 到「实验能力」里打开哪个开关即可",
-                                ids.len()
-                            )
-                        }
-                    })
-                }),
-                // 兜底：配置写坏、行都枚举不出来时，备份 + 放空（前端须二次确认）。
-                _ => crate::safe_mode::quarantine_patch(&home, &profile)
-                    .map(|path| format!("已备份并放空 {}", path.display())),
-            };
-            match outcome {
-                Ok(msg) => {
-                    crate::boot::emit_step(&handle, 2, "running", &msg);
-                    tracing::info!(action = %action, profile = %profile, "安全模式动作完成");
+                    );
+                    tracing::info!(action = %action, profile = %profile, "备份放空插件配置完成");
                 }
                 Err(e) => {
-                    // 失败必须**换一张卡**（emit_boot_error 是替换语义），并在这张新卡上给出
-                    // 唯一还能走的那一步：「备份并放空插件配置后启动」（2026-09-16 独立复核：
-                    // 不给新卡指定动作，提示就是死指针）。
-                    let payload = crate::boot_failure::BootErrorPayload::classify(
-                        &format!(
-                            "安全模式执行失败：{e}\n——若该 profile 的 cordis.patch.yml 语法已坏（连行都枚举不出来），\
-                             下一步：备份并放空插件配置后再启动（会先留下 .bak-<时间戳> 备份）。"
-                        ),
+                    // 这已是最后一条 in-app 出路：失败后不重发同一动作（死指针），
+                    // 只如实报错 + 指手工出路（编辑该 profile 的 cordis.patch.yml）。
+                    crate::boot::emit_boot_error(
+                        &handle,
+                        &format!("备份并放空执行失败：{e}——可手工编辑该 profile 的 cordis.patch.yml 修正"),
                         "",
-                    )
-                    .with_actions(&["safe_mode_reset"]);
-                    crate::boot::emit_boot_error_payload(&handle, payload);
+                    );
                     return;
                 }
             }
@@ -453,50 +303,5 @@ mod tests {
         assert!(!evaluate_needs_mode_selection(true, false, true));
         // 既有默认又已激活：不需要
         assert!(!evaluate_needs_mode_selection(true, false, false));
-    }
-}
-
-/// WSL 客体档安全模式接线不许回退（2026-09-21，P0-c）。
-///
-/// 语义演进留痕：A9 时期这里是"客体档**显式拒绝**读侧"（防读错世界）；本轮下沉后改为
-/// "客体档读**客体**世界"。退回任何一种旧形态（整体拒绝 / 拿宿主 home 冒充）都必须红。
-#[cfg(test)]
-mod safe_mode_world_wiring_tests {
-    fn production_code() -> &'static str {
-        include_str!("boot.rs")
-            .split("mod safe_mode_world_wiring_tests")
-            .next()
-            .expect("split 至少返回一段")
-    }
-
-    #[test]
-    fn safe_mode_dispatches_by_world_on_both_sides() {
-        let src = production_code();
-        assert!(
-            !src.contains("安全模式暂不支持 WSL 客体档"),
-            "不得退回「整体拒绝客体档」"
-        );
-        for call in [
-            "crate::safe_mode::state_in_guest(",
-            "crate::safe_mode::dismiss_notice_in_guest(",
-            "crate::safe_mode::enter_in_guest(",
-            "crate::guest::dsh_home_abs(",
-        ] {
-            assert!(src.contains(call), "缺客体档接线：{call}");
-        }
-    }
-
-    /// 客体档的层序比对必须用**客体** patch 路径：拿宿主 home 拼会让可停行全判成"够不到"。
-    #[test]
-    fn layer_split_uses_the_guest_patch_path_in_guest_world() {
-        let src = production_code();
-        assert!(
-            src.contains("let patch_path = match &guest_home"),
-            "层序比对必须先按世界取 patch 路径"
-        );
-        assert!(
-            src.contains("split_by_layer(&rows, &patch_path)"),
-            "split_by_layer 必须收到按世界算出的路径"
-        );
     }
 }
