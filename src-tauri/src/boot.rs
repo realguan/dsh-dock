@@ -517,18 +517,6 @@ pub(crate) fn session_is_current(state: &ShellState, epoch: u64) -> bool {
     state.session_epoch.load(Ordering::SeqCst) == epoch
 }
 
-/// dsh 引擎进程存活（2026-09-07）：壳持有的会话执行器 try_wait 判定——
-/// 会话槽在且进程未退出 = 存活；无会话（未启动/已 teardown）= 不存活。
-/// 「运行中」复合判据前半（会话维护）：dsh 未运行时任何会话文件都不可能
-/// 再被写入，mtime 新鲜不再构成活跃；WSL 客体形态下 wsl.exe 子进程即
-/// 会话存活代理，同一判定覆盖。
-pub(crate) fn engine_session_alive(state: &ShellState) -> bool {
-    let mut session = state.session.lock().unwrap();
-    // 2026-09-08 修复：is_none_or 会在无会话时误报存活（19ec36e 机械改写引入，
-    // 问题记录095 #5——死会话标「进行中」+ 运行态回环查询必败），恢复 None=false。
-    session.as_mut().is_some_and(|e| e.check_exited().is_none())
-}
-
 /// 取出并清理当前会话（幂等）：错误卡 / 模式切换共用。
 /// 同时推进代际——旧等待/监护线程据此静默退出（见 run_executor_session）。
 pub(crate) fn teardown_session(state: &Arc<ShellState>) -> Result<(), String> {

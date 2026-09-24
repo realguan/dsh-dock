@@ -3,7 +3,7 @@
 // 复现的缺陷（U1，死循环）：`ProfileManager` 曾以**内联箭头**传 onNotice
 // （`onNotice={(msg, kind) => showToast(msg, kind)}`）→ 每次渲染都是新引用 →
 // 子面板 `useCallback([onNotice])` 失效 → `useEffect` 重跑 → 加载失败又 onNotice
-// → `setToast` → 父重渲染 → 回到第一步。受影响：SessionManager / CredentialsPane /
+// → `setToast` → 父重渲染 → 回到第一步。受影响：CredentialsPane /
 // DshSettingsPane / DiagnosticsPane / LogViewerPane（McpManager 已单独修过同坑）。
 //
 // 该缺陷对 tsc / oxlint **完全不可见**（内联箭头与稳定引用类型一致），只能靠源码
@@ -33,14 +33,14 @@ describe("onNotice 引用稳定性", () => {
 
   it("闸门自身有效：能识别内联写法（正反例各一）", () => {
     expect(
-      offendingLines(`<SessionManager onNotice={(msg, kind) => showToast(msg, kind)} />`),
+      offendingLines(`<SystemConsole onNotice={(msg, kind) => showToast(msg, kind)} />`),
     ).toEqual([1])
     expect(
-      offendingLines("<SessionManager onNotice={showToast} />"),
+      offendingLines("<SystemConsole onNotice={showToast} />"),
     ).toEqual([])
     // 跨行写法同样命中
     expect(
-      offendingLines("<SessionManager\n  onNotice={(\n    msg,\n  ) => showToast(msg)}\n/>"),
+      offendingLines("<SystemConsole\n  onNotice={(\n    msg,\n  ) => showToast(msg)}\n/>"),
     ).toEqual([2])
   })
 })

@@ -5,7 +5,6 @@ import {
   X,
   Search,
   Settings,
-  ShieldCheck,
   SlidersHorizontal,
   Store,
 } from "lucide-react"
@@ -29,7 +28,6 @@ import { ProfileDetailPane } from "@/components/profiles/ProfileDetailPane"
 import { PluginHub } from "@/components/market/PluginHub"
 import { ShieldAlert } from "lucide-react"
 import type { SafeModeState } from "@/types/ipc"
-import { SessionManager } from "@/components/profiles/SessionManager"
 import { SystemConsole } from "@/components/system/SystemConsole"
 import { ProfileCreateDialog } from "@/components/profiles/ProfileCreateDialog"
 import { ProfileNameDialog, type NameOpMode } from "@/components/profiles/ProfileNameDialog"
@@ -98,10 +96,10 @@ export function ProfileManager() {
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [isRefreshingData, setIsRefreshingData] = useState(false)
 
-  // 视图切换（Profile 管理列表 vs 插件中心 vs 会话维护与自愈 vs 系统控制台）
-  const [view, setView] = useState<"list" | "plugins" | "sessions" | "console">(() => {
+  // 视图切换（Profile 管理列表 vs 插件中心 vs 系统控制台）
+  const [view, setView] = useState<"list" | "plugins" | "console">(() => {
     const p = new URLSearchParams(window.location.search).get("view")
-    if (p === "plugins" || p === "sessions" || p === "console" || p === "list") return p
+    if (p === "plugins" || p === "console" || p === "list") return p
     return "list"
   })
   const [overviewTick, setOverviewTick] = useState(0)
@@ -321,12 +319,11 @@ export function ProfileManager() {
         {/* 顶部右侧：视图分段切换 + 刷新 + 胶囊 */}
         <div className="flex items-center gap-2 shrink-0">
           {/* 2026-09-18 收口：视图切换统一走 Segmented 基座（原为四份手搓 tablist 按钮）。 */}
-          <Segmented<"list" | "plugins" | "sessions" | "console">
+          <Segmented<"list" | "plugins" | "console">
             ariaLabel={t.profiles.title}
             options={[
               { value: "list", label: t.profiles.viewProfiles, icon: SlidersHorizontal },
               { value: "plugins", label: t.profiles.viewPluginHub, icon: Store },
-              { value: "sessions", label: t.profiles.viewSessions, icon: ShieldCheck },
               { value: "console", label: t.profiles.viewConsole, icon: Settings },
             ]}
             value={view}
@@ -442,8 +439,6 @@ export function ProfileManager() {
           踩过同坑，见其 `:108` 注释）。传引用，不传包装。 */}
       {view === "console" ? (
         <SystemConsole onNotice={showToast} />
-      ) : view === "sessions" ? (
-        <SessionManager refreshKey={overviewTick} onNotice={showToast} />
       ) : view === "plugins" ? (
         // 2026-09-20（ADR-0028）：实验能力子页已迁入 Profile 详情页；本视图
         // 收敛为跨档的市场 / 已安装。

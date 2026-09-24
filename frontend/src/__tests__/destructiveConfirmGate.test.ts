@@ -17,7 +17,6 @@ const RAW_SOURCES = import.meta.glob("../**/*.{ts,tsx}", {
 const DESTRUCTIVE_ENTRIES = [
   "/components/profiles/ProfileDeleteDialog.tsx", // 删除 profile
   "/components/profiles/ProfileDetailPane.tsx", // 卸载插件
-  "/components/profiles/SessionManager.tsx", // 删除会话
   "/components/profiles/McpManager.tsx", // 移除 MCP 服务
   "/components/system/CredentialsPane.tsx", // 清除 Key / 覆写凭据
   "/components/system/DshSettingsPane.tsx", // 覆写引擎设置

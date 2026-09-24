@@ -3,7 +3,7 @@
 //! 职责：
 //! 1. 采集 Node.js、pnpm、DSH 核心版本、路径及来源元数据；
 //! 2. 统计 `$DSH_HOME` 及各子目录（profiles / sessions / cache 等）磁盘占用；
-//! 3. 安全读取应用日志文件（shell.log、dsh 运行日志、会话自愈日志）的尾部与分页。
+//! 3. 安全读取应用日志文件（shell.log、dsh 运行日志）的尾部与分页。
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -243,10 +243,6 @@ pub fn resolve_log_target(
         (LogWorld::Guest { .. }, "dsh") => host_file(
             app_data.join("dsh-wsl.log"),
             "DSH 服务运行时日志（WSL 客体）",
-        ),
-        (_, "session_repair") => host_file(
-            std::env::temp_dir().join("dsh-repair.log"),
-            "会话自愈修复日志",
         ),
         // profile 级日志：宿主档读宿主 home；客体档**必须去客体 home 读**
         // （读宿主 = 给错结果，正是本次修的那条）。

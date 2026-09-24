@@ -25,9 +25,7 @@ import type {
   PnpmDiagnosticInfo,
   ProfileSummary,
   QuarantineRow,
-  RepairOutcome,
   SafeModeState,
-  SessionItem,
   ShellSettings,
   StorageDiagnosticInfo,
   SystemDiagnosticsReport,
@@ -111,31 +109,6 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
     })
   })
 
-  it("SessionItem（camelCase，20 键）", () => {
-    expectShape<SessionItem>("SessionItem", {
-      id: true,
-      title: true,
-      projectName: true,
-      projectDirRaw: true,
-      decodedProjectPath: true,
-      filePath: true,
-      updatedAt: true,
-      sizeBytes: true,
-      isCompressed: true,
-      hasBackup: true,
-      status: true,
-      healthDetail: true,
-      active: true,
-      archived: true,
-      createdAt: true,
-      eventCount: true,
-      endState: true,
-      subagent: true,
-      agentPreset: true,
-      validator: true,
-    })
-  })
-
   it("插件域（snake_case：pkg_name / shell_disabled / skipped_existing）", () => {
     expectShape<PluginRowState>("PluginRowState", {
       id: true,
@@ -158,14 +131,6 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       copied: true,
       skipped_existing: true,
       detail: true,
-    })
-  })
-
-  it("RepairOutcome（camelCase：sessionId）", () => {
-    expectShape<RepairOutcome>("RepairOutcome", {
-      sessionId: true,
-      success: true,
-      message: true,
     })
   })
 

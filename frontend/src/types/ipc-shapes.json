@@ -88,33 +88,6 @@
     "profile",
     "rowId"
   ],
-  "RepairOutcome": [
-    "message",
-    "sessionId",
-    "success"
-  ],
-  "SessionItem": [
-    "active",
-    "agentPreset",
-    "archived",
-    "createdAt",
-    "decodedProjectPath",
-    "endState",
-    "eventCount",
-    "filePath",
-    "hasBackup",
-    "healthDetail",
-    "id",
-    "isCompressed",
-    "projectDirRaw",
-    "projectName",
-    "sizeBytes",
-    "status",
-    "subagent",
-    "title",
-    "updatedAt",
-    "validator"
-  ],
   "ShellSettings": [
     "autoRestart",
     "defaultMode",

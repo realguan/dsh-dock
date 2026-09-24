@@ -179,17 +179,6 @@ const EXEMPTIONS: &[NetworkEntry] = &[
         date: "2026-09-11",
     },
     NetworkEntry {
-        file: "src/sessions.rs",
-        // 2026-09-15（ADR-0021 路线 A）：sessions.rs 生产段**仅**这一处原语
-        // （`request_unarchive` 内的 `ureq::post`）。刻意条目级而非整文件——
-        // 该文件主体是纯文件扫描/自愈逻辑，整文件豁免会让会话域后续的触网
-        // 偷跑不被拦下（正是 plugins.rs 那次收窄的同一理由）。
-        item: Some("request_unarchive"),
-        kind: Kind::Exempt,
-        reason: "取消归档回环写（AGENTS §7 2026-09-15）：POST 127.0.0.1 /api/workspace/unarchiveSession，2s；不走文件改写",
-        date: "2026-09-15",
-    },
-    NetworkEntry {
         file: "src/mcp_probe.rs",
         // 2026-09-15（ADR-0022 stdio 分支）：本文件**不得**出现进程内网络客户端
         // ——探测走子进程（`lifecycle` seam），网络发生在被 spawn 的 MCP 服务器内。

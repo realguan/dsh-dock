@@ -51,9 +51,6 @@ pub const COMMANDS: &[&str] = &[
     "apply_official_patch_row",
     "remove_official_patch_row",
     "copy_plugin_config",
-    "list_sessions",
-    "repair_session",
-    "repair_all_sessions",
     "get_shell_settings",
     "set_shell_settings",
     "get_system_diagnostics",
@@ -68,8 +65,6 @@ pub const COMMANDS: &[&str] = &[
     "save_mcp_server",
     "delete_mcp_server",
     "probe_mcp_server",
-    "delete_session",
-    "unarchive_session",
     "fetch_market_registry",
     "open_profiles_window",
     "focus_main_window",
@@ -394,7 +389,6 @@ mod gate_tests {
         };
         use crate::plugins::{AggregatePlugin, AggregateSource, CopyConfigOutcome, PluginRowState};
         use crate::profiles::ProfileSummary;
-        use crate::sessions::{RepairOutcome, SessionItem, SessionStatus};
         use crate::settings::ShellSettings;
 
         assert_shape!(
@@ -495,31 +489,6 @@ mod gate_tests {
             .snapshot_json(0)
         );
         assert_shape!(
-            "SessionItem",
-            SessionItem {
-                id: String::new(),
-                title: String::new(),
-                project_name: String::new(),
-                project_dir_raw: String::new(),
-                decoded_project_path: String::new(),
-                file_path: String::new(),
-                updated_at: 0,
-                size_bytes: 0,
-                is_compressed: false,
-                has_backup: false,
-                status: SessionStatus::Healthy,
-                health_detail: None,
-                active: false,
-                archived: false,
-                created_at: 0,
-                event_count: 0,
-                end_state: None,
-                subagent: false,
-                agent_preset: None,
-                validator: None,
-            }
-        );
-        assert_shape!(
             "PluginRowState",
             PluginRowState {
                 id: String::new(),
@@ -551,14 +520,6 @@ mod gate_tests {
                 copied: 0,
                 skipped_existing: false,
                 detail: String::new(),
-            }
-        );
-        assert_shape!(
-            "RepairOutcome",
-            RepairOutcome {
-                session_id: String::new(),
-                success: false,
-                message: String::new(),
             }
         );
         assert_shape!(

@@ -12,6 +12,5 @@ pub mod link;
 pub mod market;
 pub mod plugin;
 pub mod profile;
-pub mod session;
 pub mod update;
 pub mod window;

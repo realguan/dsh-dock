@@ -31,8 +31,6 @@ import type {
   ProfileDetail,
   ProfileSummary,
   HandoffSnapshot,
-  RepairOutcome,
-  SessionItem,
   ShellSettings,
   SystemDiagnosticsReport,
   TerminalAction,
@@ -151,17 +149,6 @@ export const api = {
     invoke<boolean>("dismiss_safe_mode_notice", { profile }),
   copyPluginConfig: (source: string, target: string, pkg: string) =>
     invoke<CopyConfigOutcome>("copy_plugin_config", { source, target, package: pkg }),
-  // 会话管理与自愈（4.6）
-  listSessions: () => invoke<SessionItem[]>("list_sessions"),
-  repairSession: (sessionPath: string) =>
-    invoke<RepairOutcome>("repair_session", { sessionPath }),
-  repairAllSessions: () => invoke<RepairOutcome>("repair_all_sessions"),
-  deleteSession: (sessionPath: string) =>
-    invoke<void>("delete_session", { sessionPath }),
-  /** 取消归档（ADR-0021 路线 A）：经 Host RPC，返回变更后的完整归档集合。
-   *  无活跃 Host 时 reject（需 DSH 在线，壳不直接改磁盘状态）。 */
-  unarchiveSession: (sessionId: string) =>
-    invoke<string[]>("unarchive_session", { sessionId }),
 
   // 系统设置与诊断（4.11 / 4.12 / 4.13）
   getShellSettings: () => invoke<ShellSettings>("get_shell_settings"),

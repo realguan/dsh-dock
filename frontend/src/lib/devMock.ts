@@ -60,74 +60,6 @@ export function setupDevMock() {
     },
   ]
 
-  const mockSessions = [
-    {
-      id: "sess-20260910-01",
-      title: "重构前端状态机架构与事件总线设计",
-      projectName: "dsh-dock-frontend",
-      projectDirRaw: "/Users/guan/git/dsh-dock",
-      decodedProjectPath: "/Users/guan/git/dsh-dock",
-      filePath: "/Users/guan/.dsh/sessions/sess-20260910-01.jsonl.zst",
-      updatedAt: Date.now() - 1000 * 60 * 25,
-      sizeBytes: 148200,
-      isCompressed: true,
-      hasBackup: true,
-      status: "healthy" as const,
-      eventCount: 42,
-      endState: "stop",
-      agentPreset: "standard",
-    },
-    {
-      id: "sess-20260910-02",
-      title: "DeepSeek-V3 核心代码单元测试套件生成",
-      projectName: "deepseek-coder-engine",
-      projectDirRaw: "/Users/guan/git/deepseek-coder",
-      decodedProjectPath: "/Users/guan/git/deepseek-coder",
-      filePath: "/Users/guan/.dsh/sessions/sess-20260910-02.jsonl.zst",
-      updatedAt: Date.now() - 1000 * 60 * 120,
-      sizeBytes: 324100,
-      isCompressed: true,
-      hasBackup: true,
-      status: "healthy" as const,
-      eventCount: 88,
-      endState: "stop",
-      agentPreset: "standard",
-    },
-    {
-      id: "sess-20260909-03",
-      title: "大数据清洗流水线性能剖析与修复",
-      projectName: "data-pipeline",
-      projectDirRaw: "/Users/guan/git/data-pipeline",
-      decodedProjectPath: "/Users/guan/git/data-pipeline",
-      filePath: "/Users/guan/.dsh/sessions/sess-20260909-03.jsonl.zst",
-      updatedAt: Date.now() - 1000 * 60 * 60 * 18,
-      sizeBytes: 512000,
-      isCompressed: true,
-      hasBackup: true,
-      status: "needs_repair" as const,
-      healthDetail: "检测到尾部 JSON 坏块 (行 128 截断)，支持一键原子修复",
-      eventCount: 65,
-      endState: "interrupted",
-      agentPreset: "code",
-    },
-    {
-      id: "sess-20260908-04",
-      title: "多语言国际化 i18n 资源文件全量抽取",
-      projectName: "dsh-dock",
-      projectDirRaw: "/Users/guan/git/dsh-dock",
-      decodedProjectPath: "/Users/guan/git/dsh-dock",
-      filePath: "/Users/guan/.dsh/sessions/sess-20260908-04.jsonl.zst",
-      updatedAt: Date.now() - 1000 * 60 * 60 * 48,
-      sizeBytes: 98400,
-      isCompressed: true,
-      hasBackup: true,
-      status: "healthy" as const,
-      eventCount: 31,
-      endState: "stop",
-      agentPreset: "standard",
-    },
-  ]
-
   mockIPC(async (cmd, args: any) => {
     switch (cmd) {
       // 交接导轨/幕布设计走查（ADR-0014）：`?_handoff=1` 时给一份**在途**意图，
@@ -300,8 +232,6 @@ export function setupDevMock() {
         ]
       case "fetch_market_registry":
         return JSON.stringify(sampleMarket)
-      case "list_sessions":
-        return mockSessions
       case "get_client_update":
         return { phase: "idle" }
       case "get_update_status":
@@ -375,7 +305,7 @@ export function setupDevMock() {
             profilesBytes: 734003200,
             sessionsBytes: 402653184,
             profilesCount: mockProfiles.length,
-            sessionsCount: mockSessions.length,
+            sessionsCount: 0,
           },
           platform: { os: "macOS 15.4 (Sequoia)", arch: "aarch64" },
         }
@@ -398,7 +328,6 @@ export function setupDevMock() {
             "2026-09-10T04:51:04.035Z INFO  [shell] 工作台 URL 已捕获 {port: 51837}",
             "2026-09-10T04:51:04.102Z INFO  [ui] 主窗口导航完成 {label: main}",
             "2026-09-10T04:51:19.775Z INFO  [plugins] 插件清单快照刷新 {profile: default, count: 4}",
-            "2026-09-10T04:52:41.208Z INFO  [sessions] 会话健康巡检 {scanned: 4, needsRepair: 1}",
             "2026-09-10T04:53:07.663Z INFO  [settings] settings.json 原子写完成",
           ],
         }

@@ -39,12 +39,6 @@ describe("i18n 多语言字典结构与一致性 (4.13)", () => {
     expect(enKeys).toEqual(zhKeys)
   })
 
-  it("sessions 模块各二级 key 完整对齐", () => {
-    const zhKeys = Object.keys(zhCN.sessions).sort()
-    const enKeys = Object.keys(enUS.sessions).sort()
-    expect(enKeys).toEqual(zhKeys)
-  })
-
   it("console 模块各二级 key 完整对齐", () => {
     const zhKeys = Object.keys(zhCN.console).sort()
     const enKeys = Object.keys(enUS.console).sort()
@@ -59,9 +53,6 @@ describe("i18n 多语言字典结构与一致性 (4.13)", () => {
 
     expect(zhCN.console.totalUsage("100 MB")).toBe("总存储占用：100 MB")
     expect(enUS.console.totalUsage("100 MB")).toBe("Total Storage: 100 MB")
-
-    expect(zhCN.sessions.totalCount(5)).toBe("共发现 5 个会话")
-    expect(enUS.sessions.totalCount(5)).toBe("Found 5 sessions")
 
     expect(zhCN.profiles.mcpSaveSuccess("github")).toContain("github")
     expect(enUS.profiles.mcpSaveSuccess("github")).toContain("github")

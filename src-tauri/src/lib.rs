@@ -41,7 +41,6 @@ mod network_gate;
 mod plugins;
 mod profiles;
 mod resolve;
-mod sessions;
 mod settings;
 mod shell;
 mod traffic_lights;
@@ -441,9 +440,6 @@ pub fn run() {
             commands::plugin::apply_official_patch_row,
             commands::plugin::remove_official_patch_row,
             commands::plugin::copy_plugin_config,
-            commands::session::list_sessions,
-            commands::session::repair_session,
-            commands::session::repair_all_sessions,
             commands::console::get_shell_settings,
             commands::console::set_shell_settings,
             commands::console::get_system_diagnostics,
@@ -458,8 +454,6 @@ pub fn run() {
             commands::console::save_mcp_server,
             commands::console::delete_mcp_server,
             commands::console::probe_mcp_server,
-            commands::session::delete_session,
-            commands::session::unarchive_session,
             commands::market::fetch_market_registry,
             commands::window::open_profiles_window,
             commands::window::focus_main_window,

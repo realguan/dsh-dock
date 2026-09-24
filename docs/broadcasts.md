@@ -32,6 +32,15 @@
 
 ## 三、记录
 
+### 2026-09-24 重构 · 下线会话维护与自愈模块（完整删除前端与后端实现） —— guan（AI 协作）
+
+- **变更**：
+  1. 后端：删除 `src-tauri/src/sessions.rs`、`src-tauri/src/commands/session.rs`、`scripts/repair-session.mjs`；下线 5 个 IPC 命令（`list_sessions` / `repair_session` / `repair_all_sessions` / `delete_session` / `unarchive_session`）；清理 `lib.rs`、`commands/mod.rs`、`ipc.rs`、`capabilities/default.json`、`guest.rs`（移除客体会话脚本与测试）、`lifecycle.rs`、`network_gate.rs`（移除 `request_unarchive` 回环网络豁免）、`boot.rs`（移除仅用于会话维护的 `engine_session_alive`）；
+  2. 契约：更新 `docs/contracts/ipc-and-network-register.md` 移除会话命令与回环网络豁免；
+  3. 前端：删除 `SessionManager.tsx`、`sessionStatus.ts` 及其单元测试；`ProfileManager.tsx` 移除「会话维护」Tab 选项与渲染分支；清理 `tauri.ts`、`ipc.ts`、`ipc-shapes.json`、`devMock.ts`、`zh-CN.ts` 与 `en-US.ts`（移除 `sessions` 字典与 `viewSessions`）；同步更新 `ipcShapes.test.ts`、`i18nStore.test.ts`、`destructiveConfirmGate.test.ts`、`onNoticeStability.test.ts`。
+- **影响**：仅周知。会话维护与自愈模块全栈代码与注册已完整下线；各机器闸门（handler / capabilities / tauri.ts / ipc_struct_shapes / clippy / typecheck / oxlint）全数通过。
+- **凭据**：`cargo test` 541 绿；`cargo clippy --all-targets -- -D warnings` 零警告；前端 vitest 679 绿；`tsc -b` 与 `oxlint` 零错误。
+
 ### 2026-09-23 补记 · macOS 顶栏双击最大化真机确认 + v1.3.3 发行正文的时序口径 —— guan（AI 协作）
 
 - **结论**：维护者手动启动构建后实测 —— 顶栏**双击可最大化窗口**（2026-09-23）。这补齐了

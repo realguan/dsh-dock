@@ -13,7 +13,7 @@
 
 ---
 
-## 一、IPC 命令登记（63 条）
+## 一、IPC 命令登记（58 条）
 
 > 新命令**先登记再实现**。清单一致性另有 cargo test 闸门：
 > `handler_matches_ipc_commands` / `capabilities_match_ipc_commands` /
@@ -52,9 +52,7 @@ ADR-0020 §7.2-3：**反向原语**——按 `id` 删除壳写过的挂载行并
 组合树；幂等；**已下沉客体档**（2026-09-21，P0/P2：同一内核 + 客体原语））`copy_plugin_config`（patch 行原样复制，
 写入例外 #4，ADR-0009 五修 2026-08-30）。
 
-**会话 / 控制台 / 凭据 / 设置 / MCP**（2026-08-31 批）：`list_sessions` `repair_session`
-`repair_all_sessions` `delete_session` `unarchive_session`（2026-09-15，ADR-0021
-路线 A：经 Host RPC 取消归档，不写 `storages/workspace.json`）`get_shell_settings` `set_shell_settings`
+**控制台 / 凭据 / 设置 / MCP**（2026-08-31 批）：`get_shell_settings` `set_shell_settings`
 `get_system_diagnostics` `get_app_logs` `get_credentials_raw` `save_credentials_raw`
 `get_credentials_summary` `set_credential_key` `get_dsh_settings_raw`
 `save_dsh_settings_raw` `list_mcp_servers` `save_mcp_server` `delete_mcp_server`
@@ -104,14 +102,13 @@ seam 起子进程，http 分支为条目级网络豁免；**stdio 分支已下�
 
 ### 回环（127.0.0.1，无外部网络）
 
-**两条回环用途必须附 `/api` 会话 Cookie**：dsh 0.1.6+ 在 Host 栅栏之外还有
+**回环调用必须附 `/api` 会话 Cookie**：dsh 0.1.6+ 在 Host 栅栏之外还有
 `browserAuth`（缺失恒 401）；Cookie 由 boot 期 launch token 兑换后留在
 `ShellState.workbench_cookie`（**仅内存、不打日志**；2026-09-15 实测更正，台账复现点 11）。
 
 | 用途 | 落点 | 边界 |
 |:---|:---|:---|
 | 插件运行态回环**只读**查询 | `plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list` | 2s 超时、仅活跃会话、一次性快照不订阅——2026-08-29 |
-| 取消归档回环**写** | `sessions.rs::request_unarchive`，`POST http://127.0.0.1:<port>/api/workspace/unarchiveSession` | 2s、幂等、**不经文件改写**——2026-09-15，ADR-0021 路线 A；与上一条不同，本条**会改变 dsh 受管状态**，故单列 |
 | 工作台 Token 环回兑换 | `boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET | 5s、redirects=0；2026-09-04 落地、2026-09-11 补登记——原漏登 |
 
 ### 子进程内触网（`Kind::Registered`，本文件无 in-process 原语）

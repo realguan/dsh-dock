@@ -1885,7 +1885,6 @@ mod tests {
             ("src/plugins.rs", include_str!("plugins.rs")),
             ("src/profiles.rs", include_str!("profiles.rs")),
             ("src/resolve.rs", include_str!("resolve.rs")),
-            ("src/sessions.rs", include_str!("sessions.rs")),
             ("src/shell.rs", include_str!("shell.rs")),
             ("src/updater.rs", include_str!("updater.rs")),
             ("src/updates.rs", include_str!("updates.rs")),

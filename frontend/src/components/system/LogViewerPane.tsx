@@ -20,7 +20,7 @@ import { Segmented } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
 import type { LogQueryResult } from "@/types/ipc"
 
-type LogSourceKey = "shell" | "dsh" | "session_repair"
+type LogSourceKey = "shell" | "dsh"
 
 export function LogViewerPane({
   onNotice,
@@ -96,7 +96,6 @@ export function LogViewerPane({
           options={[
             { value: "shell", label: t.console.sourceShell },
             { value: "dsh", label: t.console.sourceDsh },
-            { value: "session_repair", label: t.console.sourceRepair },
           ]}
           value={source}
           onChange={setSource}
