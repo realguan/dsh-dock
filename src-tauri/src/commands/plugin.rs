@@ -350,12 +350,14 @@ pub async fn list_experimental_capabilities(
             })
             .collect();
 
-        // 「这个安装自带哪些策展包」（2026-09-17）：dsh 0.1.6-alpha.2 起把官方实验层作为
-        // optional bundle 随包下发。判据是**安装目录实测**而非写死的旗标——同一台机器上
-        // dev 档引擎（0.1.6-alpha.1）不带、正式档（0.1.6-alpha.2）带，旗标必然在其中一边说谎。
+        // 「这个安装官方提供哪些策展包」（2026-09-17 立，2026-09-22 加固）：dsh 0.1.6-alpha.2
+        // 起把官方实验层作为 optional bundle 随包下发。判据是**安装侧事实**而非写死的旗标——
+        // 同一台机器上 dev 档引擎（0.1.6-alpha.1）不带、正式档（0.1.6-alpha.2+）带，旗标
+        // 必然在其中一边说谎。两信号并集：安装清单（dsh 的 package.json dependencies，
+        // 上游 installAnchor 同口径）声明 ∨ 运行时 node_modules 在册。
         let catalog_pkgs: Vec<String> =
             catalog_packages().into_iter().map(str::to_string).collect();
-        let shipped = crate::official_catalog::installation_shipped(
+        let shipped = crate::official_catalog::installation_provided(
             &crate::engines::dsh_runtime_dir(&data_dir),
             &catalog_pkgs,
         );

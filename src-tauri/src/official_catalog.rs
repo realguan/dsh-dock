@@ -33,6 +33,12 @@
 //!   **无 `before`/`after` 排序键**——顺序即数组位置；
 //! - 裸包名按 `latest` dist-tag 解析，而 Agent Teams 三包的 `latest` **落后**于
 //!   `alpha`（实测：裸装得 `0.1.5-alpha.2`，运行时为 `0.1.6-alpha.1`）。
+//!
+//! 2026-09-22 复核（dsh 0.1.7-rc.1 本机正式档引擎实测）：`latest` 落后问题**仍在**
+//! （Agent Teams 族 `latest` = `0.1.5-alpha.2`，`alpha` tag = `0.1.7-alpha.2`，
+//! 运行时 `0.1.7-rc.1`）；Agent Teams 收拢为单 optional bundle，`agent-team-web-profile`
+//! 退役（npm 终版 `0.1.6-alpha.2`），上游 `OPTIONAL_BUNDLES` = `agent-team-profile` ＋
+//! 新增的 `voice-input-bundle`（都不在 dock 策展集里——官方已接管，dock 只做补充）。
 
 use serde::{Deserialize, Serialize};
 
@@ -86,8 +92,9 @@ pub fn row_id_for(package: &str) -> String {
 /// 把包名与期望版本钉成一个显式 spec（ADR-0020 §2.4）。
 ///
 /// **为什么必须钉**：`dsh plugin add <裸包名>` 走 `pnpm add`，按 `latest` dist-tag 解析；
-/// 而 `@deepseek-ai/dsh-experimental-agent-team*` 三包的 `latest` 停在 `0.1.5-alpha.2`，
-/// 与 `0.1.6-alpha.1` 运行时错配（本机实测复现，同台账行 7 的 dsh-base 事故）。
+/// 而 `@deepseek-ai/dsh-experimental-agent-team*` 族包的 `latest` 停在 `0.1.5-alpha.2`
+/// （2026-09-22 复核仍成立：profile 的 `latest` = `0.1.5-alpha.2`，而 `alpha` tag 已到
+/// `0.1.7-alpha.2`），与 `0.1.7-rc.1` 运行时错配（本机实测复现，同台账行 7 的 dsh-base 事故）。
 pub fn pinned_spec(package: &str, version: &str) -> String {
     format!("{package}@{version}")
 }
@@ -234,12 +241,19 @@ pub struct Capability {
 // 默认关、在 **dsh 自己的插件页**里开关、**永不卸载**。该笔记同时**明确否决**了"由某个
 // 面板按名字从 registry 安装官方 bundle"这条替代路径——那正是本模块原来在做的事。
 //
-// 判据是**这次安装实测出来的事实**，不是写在目录里的旗标：某个能力的**每个包**都能在
-// `<engines>/dsh-runtime/node_modules/<包>` 找到 ⇒ 这个安装自带它（见 `PackageFacts::shipped`）。
+// 判据是**这次安装实测出来的事实**，不是写在目录里的旗标：某个能力的**每个包**都被
+// 这个安装**官方提供**（安装清单声明 ∨ 运行时在册，见 `installation_provided`）
+// ⇒ 它归 dsh 管，dock 不代管（见 `PackageFacts::shipped`）。
 // 为什么不写旗标：同一台机器上 dev 档引擎 0.1.6-alpha.1 **不带**、正式档 0.1.6-alpha.2 **带**
 // ——写死的旗标必然在其中一边说谎。实测判据还会**自动跟上** dsh 后续把更多实验能力内置的节奏：
 // 升级复核点 = 安装包 `@deepseek-ai/dsh` 的 `dependencies` 里出现新的
 // `@deepseek-ai/dsh-experimental-*`（＝ `OPTIONAL_BUNDLES` 增项），届时无需改代码。
+//
+// 2026-09-22 复核（dsh 0.1.7-rc.1）：上游 `OPTIONAL_BUNDLES` = `agent-team-profile` ＋
+// 新增的 `voice-input-bundle`；`agent-team-web-profile` 退役、Agent Teams 收拢成单包
+// （目录已随之改为单变体）。加固动机即此次复核暴露的缺口：能力只被官方接管**一部分**时，
+// "每个包都在册"这条全量判据会失效（退役包永远不在册）——故判据从"在册"单信号扩为
+// "清单声明 ∨ 在册"，并靠 `agent-team-web-profile` 这个退役包把全量判据重新对齐。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// 策展集（**dsh-dock 策展，非"官方首批"**——上游无该概念，为全量发布 16 包，
@@ -248,6 +262,12 @@ pub struct Capability {
 /// ⚠ 包顺序勿随意重排；每项 `summary_zh` / `unlocks_zh` / `prerequisites_zh` 是
 /// **用户可见承诺**，随 dsh 升级须与上游 README 逐条复核（ADR-0020 §7.3）。
 pub const CAPABILITIES: &[Capability] = &[
+    // 2026-09-22 升级复核（dsh 0.1.7-rc.1 本机正式档引擎实测）：Agent Teams 在上游
+    // 收拢为**单个** optional bundle —— `agent-team-profile` 自述 "Agent Teams
+    // collaboration, tools, and Web UI in one experimental bundle"，独立的
+    // `agent-team-web-profile` 已退役（npm 终版 0.1.6-alpha.2，0.1.7 起无此包）。
+    // 故本能力从「Web 档 / 自建档」两变体收成一个变体；旧引擎（≤0.1.6-alpha.1，
+    // 安装不自带）上它只等价于宿主层——这是上游事实，不是壳的裁剪。
     Capability {
         id: "agent-team",
         label_zh: "多智能体协同",
@@ -255,41 +275,25 @@ pub const CAPABILITIES: &[Capability] = &[
         summary_zh: "让模型自己拉人：创建具名 teammate、互相发消息、共享任务板",
         summary_en: "Let the model recruit on its own: named teammates, direct messages, a shared task board",
         unlocks_zh: "模型多出九个 team 工具（创建 / 收发消息 / 协调 teammate、读写共享任务板），\
-                     消息与任务挺得过崩溃与重载。Web 档还会在主界面出现 Team 面板与任务板。\
+                     消息与任务挺得过崩溃与重载。主界面还会出现 Team 面板与任务板。\
                      注意：它会接管旧的委派控件 —— subagent、subagent_fork 等四个旧行会被停用，\
                      两者不能并存；移除本能力后旧控件恢复。",
         unlocks_en: "The model gains nine team tools (creating teammates, sending and receiving \
                      messages, coordinating them, reading and writing the shared task board); \
-                     messages and tasks survive crashes and reloads. The Web tier also adds a Team \
-                     panel and the task board to the main UI. Note: it takes over the older \
-                     delegation controls — the four legacy rows (subagent, subagent_fork, etc.) \
-                     are disabled and the two cannot coexist; removing this capability restores \
-                     the old controls.",
-        variants: &[
-            Variant {
-                id: "web",
-                label_zh: "Web 档",
-                label_en: "Web tier",
-                note_zh: "含宿主层与 Web 层，浏览器侧能看到 Team 面板。",
-                note_en: "Includes the host layer and the Web layer; the Team panel shows up in the browser.",
-                prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
-                prerequisites_en: &["Persistent session storage is required for team state to persist"],
-                packages: &[
-                    "@deepseek-ai/dsh-experimental-agent-team-profile",
-                    "@deepseek-ai/dsh-experimental-agent-team-web-profile",
-                ],
-            },
-            Variant {
-                id: "headless",
-                label_zh: "自建档（无 Web 界面）",
-                label_en: "Profile-only (no Web UI)",
-                note_zh: "只装宿主层：工具与任务板可用，界面不新增面板。",
-                note_en: "Host layer only: tools and the task board work, no new panels in the UI.",
-                prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
-                prerequisites_en: &["Persistent session storage is required for team state to persist"],
-                packages: &["@deepseek-ai/dsh-experimental-agent-team-profile"],
-            },
-        ],
+                     messages and tasks survive crashes and reloads. The main UI also gains a Team \
+                     panel and the task board. Note: it takes over the older delegation controls \
+                     — the four legacy rows (subagent, subagent_fork, etc.) are disabled and the \
+                     two cannot coexist; removing this capability restores the old controls.",
+        variants: &[Variant {
+            id: "profile",
+            label_zh: "官方 bundle",
+            label_en: "Official bundle",
+            note_zh: "宿主层、工具与 Web 界面打成一个官方 bundle，装上即生效。",
+            note_en: "Host layer, tools and Web UI ship as one official bundle; effective once installed.",
+            prerequisites_zh: &["需持久会话存储，团队状态才落得下来"],
+            prerequisites_en: &["Persistent session storage is required for team state to persist"],
+            packages: &["@deepseek-ai/dsh-experimental-agent-team-profile"],
+        }],
     },
     Capability {
         id: "browser-use",
@@ -450,11 +454,11 @@ pub struct InstallStep {
 
 /// 把变体展开为**有序、串行**的安装步骤（ADR-0020 §2.10）。
 ///
-/// 顺序不是装饰：`agent-team-web-profile` 的类型声明要求
-/// `dsh-base` → `dsh-web-app` → `dsh-agent-team-profile` → 本包 **must remain in that order**，
-/// 且其 `cordis.patch.yml` 首行注明 "Apply **after** … the host-side
-/// `dsh-agent-team-profile` so the browser mounts only when the Team service is present"。
-/// 装反了浏览器侧会在 Team 服务就位前挂载而失败。
+/// 顺序不是装饰：上游对层序有硬要求的包组（历史上 Agent Teams Web 档要求
+/// `dsh-base` → `dsh-web-app` → `agent-team-profile` → web 层依次就位），装反了
+/// 浏览器侧会在 Team 服务就位前挂载而失败。2026-09-22 复核：0.1.7 起 Agent Teams
+/// 只剩 `agent-team-profile` 一个包，该约束随上游收拢消失——但"顺序即语义"对
+/// browser-use / computer-use 的两包组（基座 → provider）依然成立，勿随意重排。
 ///
 /// 同时：`dsh plugin add` **一次只接受一个包**，故必须逐步下发；调用方须**串行**执行。
 pub fn install_plan(variant: &Variant) -> Vec<InstallStep> {
@@ -546,6 +550,10 @@ pub struct VariantView {
     /// 报成「后端冲突」。浏览器/桌面两族才是真互斥（各有独占 provider 包）。
     /// 有了它：冲突判定只数"没被包含"的档；被包含的档在 UI 上显式为「已包含」且不提供
     /// 独立开关（关掉它会把超集档的基础层一起拆掉）。
+    ///
+    /// 2026-09-22 注：上游 0.1.7 收拢 Agent Teams 后**真目录里已无子集档**，本字段
+    /// 对真实目录恒为 `None`；判定逻辑的回归护栏迁到合成目录
+    /// （`subset_variant_is_subsumed_not_conflicting`）——万一上游再拆包即续命。
     pub subsumed_by: Option<String>,
     /// **纯行级停用是否等价于"关掉"**（`false` → 关闭必须走移除）。
     ///
@@ -625,28 +633,64 @@ pub struct PackageFacts {
     /// 已装包的官方 `description`（包名 → 简介）。同样由调用方读好后填入，
     /// 让本函数保持纯（不碰文件系统）。缺包/包没写 description = 不在表里。
     pub descriptions: std::collections::BTreeMap<String, String>,
-    /// **这个 dsh 安装自带**的包名（调用方探测 `<engines>/dsh-runtime/node_modules/` 后填入）。
+    /// **这个 dsh 安装官方提供**的包名（调用方经 `installation_provided` 探测后填入：
+    /// 安装清单声明 ∨ `<engines>/dsh-runtime/node_modules/` 在册）。
     ///
     /// 非空且覆盖某能力的**全部**包 ⇒ 该能力归 dsh 管，dock 不代管（见上方模块注释）。
     /// 探测失败/目录不存在 = 空表 = 一切照旧由 dock 策展（保守方向：宁可多管，也不谎称自带）。
     pub shipped: Vec<String>,
 }
 
-/// **这个安装自带**策展清单里的哪些包（纯函数，只做"目录里有没有"的判断）。
+/// **这个安装官方提供**策展清单里的哪些包（纯函数 + 只读探测；原 `installation_shipped`，
+/// 2026-09-22 加固后改名——"提供"不止"在册"一种形态）。
 ///
-/// 判据 = `<dsh-runtime>/node_modules/<包>/package.json` 存在。dsh 自带的 optional bundle
-/// 是安装包的运行时依赖（`apps/cli` 的 `dependencies`），因而必然落在这一层 node_modules 里；
-/// 而**用户自己装进 profile** 的包在 `<profile>/node_modules`，不会被算成"自带"。
+/// 两个信号取**并集**（任一命中即"官方提供"）：
+/// ① **安装清单声明**：`<runtime_dir>/node_modules/@deepseek-ai/dsh/package.json` 的
+///    `dependencies` 里有它——与上游自己的判据同源（plugin-manager 的
+///    `removable = installed && !installation.dependencies[name]`；`OPTIONAL_BUNDLES`
+///    的每个条目都是安装的运行时依赖）。这是"dsh 官方内置 / 作为可选安装"的权威形态，
+///    **不依赖磁盘布局**（装机半途、符号链接农场、目录被清理都能误判"不在册"）；
+/// ② **运行时在册**：`<runtime_dir>/node_modules/<包>/package.json` 存在——覆盖
+///    "清单读不到但包确已落盘"的形态（如被提升到顶层的传递依赖）。
 ///
-/// 保守方向：目录不存在 / 读不到 → 返回空表 ⇒ 一切照旧由 dock 策展（**宁可多管，
-/// 也不谎称"dsh 已内置"**——那会让用户彻底没有打开它的入口）。
-pub fn installation_shipped(runtime_dir: &std::path::Path, packages: &[String]) -> Vec<String> {
+/// 用户自己装进 profile 的包在 `<profile>/node_modules`，两个信号都读不到，
+/// 不会被算成"官方提供"。
+///
+/// 保守方向不变：两者都探测不到（引擎未装 / 清单读不出）⇒ 空表 ⇒ 一切照旧由
+/// dock 策展（**宁可多管，也不谎称"dsh 已内置"**——那会让用户彻底没有打开它的入口）。
+pub fn installation_provided(runtime_dir: &std::path::Path, packages: &[String]) -> Vec<String> {
+    let declared = installation_declared(runtime_dir);
     let root = runtime_dir.join("node_modules");
     packages
         .iter()
-        .filter(|pkg| root.join(pkg.as_str()).join("package.json").is_file())
+        .filter(|pkg| {
+            declared.contains(pkg.as_str())
+                || root.join(pkg.as_str()).join("package.json").is_file()
+        })
         .cloned()
         .collect()
+}
+
+/// 安装清单（dsh 自己的 `package.json`）声明的**运行时依赖名集合**。
+///
+/// 读不到 / 解析失败 = 空集：探测失败只让它退回"在册"单信号，**不改变结论方向**
+/// （空集从不让任何包被判成"官方提供"）。
+fn installation_declared(runtime_dir: &std::path::Path) -> std::collections::HashSet<String> {
+    let manifest = runtime_dir
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh")
+        .join("package.json");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        return Default::default();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Default::default();
+    };
+    json.get("dependencies")
+        .and_then(|deps| deps.as_object())
+        .map(|deps| deps.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// 判断某能力的某变体现在处于什么状态，以及开/关/移除各需要哪些行级目标。
@@ -654,7 +698,26 @@ pub fn installation_shipped(runtime_dir: &std::path::Path, packages: &[String]) 
 /// `rows` 来自 `plugins::plugin_rows_blocking`（一次 `--dump-config`），是"行是否存在 /
 /// 是否被停用"的**唯一**来源；`runtime_version` 用于钉版本（`None` → 诚实降级为裸包名）。
 /// `lang` 决定**用户可见文案**（含运行时提示）出品哪一种语言。
+///
+/// 目录恒为策展集 [`CAPABILITIES`]（生产唯一入口）。要喂别的目录（测试的合成能力），
+/// 走 {@resolve_capabilities_with}。
 pub fn resolve_capabilities(
+    facts: &PackageFacts,
+    rows: &[PluginRowState],
+    runtime_version: Option<&str>,
+    lang: CopyLang,
+) -> Vec<CapabilityView> {
+    resolve_capabilities_with(CAPABILITIES, facts, rows, runtime_version, lang)
+}
+
+/// 同 {@resolve_capabilities}，但**目录由调用方给定**。
+///
+/// 为什么留这个注入口：生产永远传 [`CAPABILITIES`]；测试需要**合成目录**才能守住
+/// 真实目录已不再呈现的形态——上游 0.1.7 把 Agent Teams 收拢成单包后，"子集档"
+/// （自建档 ⊂ Web 档）在真目录里消失了，但互斥/包含的判定逻辑仍要回归护栏
+/// （见 `subset_variant_is_subsumed_not_conflicting`）。
+pub fn resolve_capabilities_with(
+    catalog: &[Capability],
     facts: &PackageFacts,
     rows: &[PluginRowState],
     runtime_version: Option<&str>,
@@ -676,7 +739,7 @@ pub fn resolve_capabilities(
     let shipped: std::collections::HashSet<&str> =
         facts.shipped.iter().map(String::as_str).collect();
 
-    CAPABILITIES
+    catalog
         .iter()
         .map(|capability| {
             let all_packages: Vec<&str> = capability
@@ -857,8 +920,8 @@ pub fn resolve_capabilities(
                 (CapabilityState::Off, None)
             };
 
-            // **这个安装自带它** ⇔ 该能力的每个包都能在安装的 `node_modules` 里找到。
-            // 全部包都在才算（少一个就是要装，不能让"自带"把缺的那步吞掉）。
+            // **这个安装官方提供它** ⇔ 该能力的每个包都在 `shipped` 里（清单声明 ∨ 在册）。
+            // 全部包都提供才算（少一个就是要装，不能让"自带"把缺的那步吞掉）。
             let shipped_by_dsh =
                 !all_packages.is_empty() && all_packages.iter().all(|p| shipped.contains(*p));
 
@@ -1117,17 +1180,23 @@ mod tests {
     }
 
     /// 有序组合：步骤序号从 1 连续递增，顺序与 `packages` 声明一致
-    /// （Agent Teams 的 Web 档装反即失败，顺序是语义不是装饰）。
+    /// （两包组装反即失败，顺序是语义不是装饰）。
     #[test]
     fn install_plan_preserves_declared_order_and_ordinals() {
-        let plan = install_plan(static_variant("agent-team", "web"));
+        // 多包组取 browser-use 的 playwright 档：基座在前、provider 在后。
+        let plan = install_plan(static_variant("browser-use", "playwright"));
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].ordinal, 1);
         assert_eq!(plan[1].ordinal, 2);
-        assert!(plan[0].package.contains("agent-team-profile"));
-        assert!(plan[1].package.contains("agent-team-web-profile"));
+        assert!(plan[0].package.contains("dsh-browser-use"));
+        assert!(plan[1].package.contains("playwright"));
         // 每一步都带自己的稳定 id（缺 id 的行永不可再 patch）。
         assert_ne!(plan[0].row_id, plan[1].row_id);
+        // 2026-09-22：Agent Teams 已收拢为单包（上游 0.1.7 事实），其计划只有一步。
+        let team = install_plan(static_variant("agent-team", "profile"));
+        assert_eq!(team.len(), 1);
+        assert_eq!(team[0].ordinal, 1);
+        assert!(team[0].package.contains("agent-team-profile"));
     }
 
     /// 策展集自身的一致性：能力 id 唯一、变体 id 唯一、包名非空且变体内不重复；
@@ -1149,8 +1218,9 @@ mod tests {
             }
         }
         // 多后端的两个能力：两两变体之间必须各有独占包（否则"同一时刻只一个生效"
-        // 这条互斥语义无法表达成替换动作）。**只适用于真互斥族**——Agent Teams 的两档
-        // 是子集关系（自建档 ⊂ Web 档），刻意不互斥，见 `subset_variant_is_subsumed_not_conflicting`。
+        // 这条互斥语义无法表达成替换动作）。**只适用于真互斥族**——Agent Teams 曾是
+        // 子集关系（自建档 ⊂ Web 档），但上游 0.1.7 起收拢为单 bundle，该形态连同
+        // 它的回归护栏一并迁到合成目录（`subset_variant_is_subsumed_not_conflicting`）。
         for cap_id in ["browser-use", "computer-use"] {
             let cap = CAPABILITIES.iter().find(|c| c.id == cap_id).unwrap();
             assert!(cap.variants.len() >= 2, "{cap_id} 应有多后端");
@@ -1170,16 +1240,17 @@ mod tests {
         }
     }
 
-    /// **dsh 自带的能力，dock 不代管**（2026-09-17 立）。
+    /// **dsh 官方提供的能力，dock 不代管**（2026-09-17 立；2026-09-22 随上游收拢复核）。
     ///
-    /// 真机事实：dsh 0.1.6-alpha.2 起把 Agent Teams 两个 bundle 作为 optional bundle 随安装包
-    /// 下发（`<dsh-runtime>/node_modules/@deepseek-ai/` 实测在册），由 dsh 自己的插件页开关，
-    /// 且 dsh 视其为 `not-removable`。于是：全部包都由安装自带 ⇒ dock 不代管（无开关、无安装、
-    /// 无移除）；**残留副本**（profile 自己还持有）则只给"清理"这一条出路。
+    /// 真机事实：dsh 0.1.6-alpha.2 起把官方实验层作为 optional bundle 随安装包下发，
+    /// 由 dsh 自己的插件页开关，且 dsh 视其为 `not-removable`。0.1.7-rc.1 起 Agent Teams
+    /// 收拢为**单个** `agent-team-profile`（宿主层 + 工具 + Web UI 一体），独立的
+    /// `agent-team-web-profile` 退役。于是：全部包都由安装提供 ⇒ dock 不代管（无开关、
+    /// 无安装、无移除）；**残留副本**（profile 自己还持有）则只给"清理"这一条出路。
     ///
-    /// 判据刻意取**安装实测**而不是写死旗标——同一台机器上 dev 档引擎（0.1.6-alpha.1）不带、
-    /// 正式档（0.1.6-alpha.2）带，旗标必然在其中一边说谎；实测判据还会自动跟上 dsh 后续
-    /// 把更多实验能力内置的节奏。
+    /// 判据刻意取**安装侧事实**（清单声明 ∨ 在册）而不是写死旗标——同一台机器上 dev 档
+    /// 引擎（0.1.6-alpha.1）不带、正式档（0.1.6-alpha.2+）带，旗标必然在其中一边说谎；
+    /// 实测判据还会自动跟上 dsh 后续把更多实验能力内置的节奏。
     #[test]
     fn dsh_shipped_capability_is_not_managed_by_dock() {
         let agent_team = CAPABILITIES.iter().find(|c| c.id == "agent-team").unwrap();
@@ -1189,14 +1260,15 @@ mod tests {
             .flat_map(|v| v.packages.iter().map(|p| (*p).to_string()))
             .collect();
 
-        // ① 安装自带（正式档 0.1.6-alpha.2 的形态）→ shipped，且**没有**任何"安装"该做的事。
+        // ① 安装提供（正式档 0.1.7-rc.1 的形态：清单声明 agent-team-profile）→ shipped，
+        //    且**没有**任何"安装"该做的事。
         let mut facts = PackageFacts {
             shipped: packages.clone(),
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.7-rc.1"), CopyLang::Zh);
         let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
-        assert!(view.shipped_by_dsh, "安装自带该能力的全部包 → 归 dsh 管");
+        assert!(view.shipped_by_dsh, "安装提供该能力的全部包 → 归 dsh 管");
         assert!(!view.legacy_copy, "profile 没有这些包 → 没有遗留副本可清");
 
         // ② 老引擎（0.1.6-alpha.1 的形态：不带）→ 仍由 dock 策展，否则用户没有任何入口打开它。
@@ -1205,22 +1277,20 @@ mod tests {
         let view = caps.iter().find(|c| c.id == "agent-team").unwrap();
         assert!(
             !view.shipped_by_dsh,
-            "安装不带它时**不得**谎称自带（那会把唯一入口也关掉）"
+            "安装不提供它时**不得**谎称自带（那会把唯一入口也关掉）"
         );
 
-        // ③ 只自带到一半（少一个包）不算自带：缺的那步仍要装。
-        let partial: Vec<String> = packages.iter().take(1).cloned().collect();
+        // ③ 只提供到一半（少一个包）不算自带：缺的那步仍要装。Agent Teams 收拢成单包后
+        //    没有"半截"形态了，用 browser-use 造"provider 在册、基座不在"的半截形态。
+        let partial = vec!["@deepseek-ai/dsh-experimental-browser-use-playwright-mcp".to_string()];
         let facts = PackageFacts {
             shipped: partial,
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.7-rc.1"), CopyLang::Zh);
         assert!(
-            !caps
-                .iter()
-                .find(|c| c.id == "agent-team")
-                .unwrap()
-                .shipped_by_dsh
+            !find(&caps, "browser-use").shipped_by_dsh,
+            "少一个包就不算官方提供——缺的基座那步仍要装"
         );
 
         // ④ 遗留副本：profile 里还留着包 → 给一条"清理"出路（且必须**真能清掉**东西）。
@@ -1229,7 +1299,7 @@ mod tests {
             shipped: packages.clone(),
             ..PackageFacts::default()
         };
-        let caps = resolve_capabilities(&facts, &[], Some("0.1.6-alpha.2"), CopyLang::Zh);
+        let caps = resolve_capabilities(&facts, &[], Some("0.1.7-rc.1"), CopyLang::Zh);
         assert!(
             caps.iter()
                 .find(|c| c.id == "agent-team")
@@ -1238,41 +1308,59 @@ mod tests {
         );
     }
 
-    /// 安装探测：只看**安装目录**里有没有这些包（profile 里装的不算"自带"）。
+    /// 安装探测（2026-09-22 加固后）：**两个信号**都认——安装清单（dsh 的 package.json
+    /// `dependencies`）声明 ∨ 运行时 node_modules 在册；profile 里装的不算"官方提供"。
     #[test]
-    fn installation_probe_reads_only_the_installation() {
+    fn installation_provided_reads_declaration_and_disk() {
         let root = std::env::temp_dir().join(format!("dsh-dock-shipped-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let nm = root.join("node_modules");
-        for pkg in [
-            "@deepseek-ai/dsh-experimental-agent-team-profile",
-            "@deepseek-ai/dsh-base",
-        ] {
-            let dir = nm.join(pkg);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("package.json"), "{}").unwrap();
-        }
-        // 只建目录、不写 package.json 的包**不算**在册（半个包不叫自带）。
+        // ① 在册（磁盘有 package.json）但清单**没**声明（传递依赖被提升的形态）。
+        let dir = nm.join("@deepseek-ai/dsh-experimental-browser-use-playwright-mcp");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("package.json"), "{}").unwrap();
+        // ② 清单声明但**没落盘**（装机半途的形态）——声明是权威信号，不依赖磁盘布局。
+        let dsh_dir = nm.join("@deepseek-ai/dsh");
+        std::fs::create_dir_all(&dsh_dir).unwrap();
+        std::fs::write(
+            dsh_dir.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.1.7-rc.1","dependencies":{
+                "@deepseek-ai/dsh-experimental-agent-team-profile":"0.1.7-rc.1",
+                "@deepseek-ai/dsh-base":"0.1.7-rc.1"
+            }}"#,
+        )
+        .unwrap();
+        // 只建目录、不写 package.json 且清单没声明的包**不算**提供（半个包不叫官方提供）。
         std::fs::create_dir_all(nm.join("@deepseek-ai/dsh-experimental-auto-review")).unwrap();
 
         let ask = |names: &[&str]| {
             let owned: Vec<String> = names.iter().map(|s| (*s).to_string()).collect();
-            installation_shipped(&root, &owned)
+            installation_provided(&root, &owned)
         };
+        // 在册 signal：playwright-mcp（磁盘有、清单没有）。
         assert_eq!(
-            ask(&[
-                "@deepseek-ai/dsh-experimental-agent-team-profile",
-                "@deepseek-ai/dsh-base",
-            ]),
-            vec![
-                "@deepseek-ai/dsh-experimental-agent-team-profile".to_string(),
-                "@deepseek-ai/dsh-base".to_string()
-            ]
+            ask(&["@deepseek-ai/dsh-experimental-browser-use-playwright-mcp"]),
+            vec!["@deepseek-ai/dsh-experimental-browser-use-playwright-mcp".to_string()]
         );
-        assert!(ask(&["@deepseek-ai/dsh-experimental-auto-review"]).is_empty());
+        // 声明 signal：agent-team-profile（清单有、磁盘没有）。
+        assert_eq!(
+            ask(&["@deepseek-ai/dsh-experimental-agent-team-profile"]),
+            vec!["@deepseek-ai/dsh-experimental-agent-team-profile".to_string()]
+        );
+        // 非实验包同样按声明判（dsh-base 是安装的运行时依赖）。
+        assert_eq!(
+            ask(&["@deepseek-ai/dsh-base"]),
+            vec!["@deepseek-ai/dsh-base".to_string()]
+        );
+        // 两信号都没有 → 不提供（半个包、以及清单里没有的包）。
+        assert!(
+            ask(&["@deepseek-ai/dsh-experimental-auto-review"]).is_empty(),
+            "既没落盘也没声明 ⇒ 不得算官方提供"
+        );
+        assert!(ask(&["@deepseek-ai/dsh-experimental-computer-use"]).is_empty());
         // 安装目录不存在（引擎还没装）→ 空表，一切照旧由 dock 策展。
         assert!(
-            installation_shipped(&root.join("nope"), &["@deepseek-ai/dsh-base".to_string()])
+            installation_provided(&root.join("nope"), &["@deepseek-ai/dsh-base".to_string()])
                 .is_empty()
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -1611,27 +1699,63 @@ mod tests {
         }
 
         // 含 profile 层的能力：即使**已装**也不得声称可纯行级关闭（层 patch 带副作用）。
-        let layer_pkgs = [
-            "@deepseek-ai/dsh-experimental-agent-team-profile",
-            "@deepseek-ai/dsh-experimental-agent-team-web-profile",
-        ];
-        let layer = facts(&layer_pkgs, &layer_pkgs);
-        let caps = resolve_capabilities(&layer, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
-        let web = variant(find(&caps, "agent-team"), "web");
-        assert_eq!(web.state, VariantState::On, "层装上即由 CLI 激活");
-        assert!(!web.toggle_off_supported, "层类能力不得声称可纯行级关闭");
+        // 2026-09-22：Agent Teams 收拢为单包（`agent-team-profile` 声明 `dsh.bundle`）。
+        let layer = facts(
+            &["@deepseek-ai/dsh-experimental-agent-team-profile"],
+            &["@deepseek-ai/dsh-experimental-agent-team-profile"],
+        );
+        let caps = resolve_capabilities(&layer, &[], Some("0.1.7-rc.1"), CopyLang::Zh);
+        let team = variant(find(&caps, "agent-team"), "profile");
+        assert_eq!(team.state, VariantState::On, "层装上即由 CLI 激活");
+        assert!(!team.toggle_off_supported, "层类能力不得声称可纯行级关闭");
     }
 
-    /// Agent Teams 的**子集档**不得报冲突（2026-09-16 真机暴露）：
-    /// 自建档 = `[agent-team-profile]` 是 Web 档 `[同一包, agent-team-web-profile]` 的
-    /// 真子集；装 Web 档时子集档的包必然也齐——那是**完全正常的配置**，不是"两个后端并列"。
+    /// Agent Teams 的**子集档**不得报冲突（2026-09-16 真机暴露；2026-09-22 迁到合成目录）：
+    /// 自建档 = `[host]` 是 Web 档 `[host, web]` 的真子集；装 Web 档时子集档的包必然也齐
+    /// ——那是**完全正常的配置**，不是"两个后端并列"。
+    ///
+    /// 为什么用合成目录：上游 0.1.7 起 Agent Teams 收拢成单 bundle（`web-profile` 退役），
+    /// 真目录里不再有子集档形态——但互斥/包含判定逻辑本身仍要回归护栏，故经
+    /// `resolve_capabilities_with` 注入一对历史形态的变体。
     #[test]
     fn subset_variant_is_subsumed_not_conflicting() {
         const HOST: &str = "@deepseek-ai/dsh-experimental-agent-team-profile";
         const WEB: &str = "@deepseek-ai/dsh-experimental-agent-team-web-profile";
+        let catalog = [Capability {
+            id: "agent-team",
+            label_zh: "多智能体协同",
+            label_en: "Multi-agent collaboration",
+            summary_zh: "s",
+            summary_en: "s",
+            unlocks_zh: "u",
+            unlocks_en: "u",
+            variants: &[
+                Variant {
+                    id: "headless",
+                    label_zh: "自建档",
+                    label_en: "Profile-only",
+                    note_zh: "n",
+                    note_en: "n",
+                    prerequisites_zh: &[],
+                    prerequisites_en: &[],
+                    packages: &[HOST],
+                },
+                Variant {
+                    id: "web",
+                    label_zh: "Web 档",
+                    label_en: "Web tier",
+                    note_zh: "n",
+                    note_en: "n",
+                    prerequisites_zh: &[],
+                    prerequisites_en: &[],
+                    packages: &[HOST, WEB],
+                },
+            ],
+        }];
         // 两个包都是 profile 层（声明 dsh.bundle）→ 装上即由 CLI 激活，无壳行。
         let f = facts(&[HOST, WEB], &[HOST, WEB]);
-        let caps = resolve_capabilities(&f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
+        let caps =
+            resolve_capabilities_with(&catalog, &f, &[], Some("0.1.6-alpha.1"), CopyLang::Zh);
         let cap = find(&caps, "agent-team");
 
         assert_eq!(cap.state, CapabilityState::On, "子集关系不是冲突");
@@ -1749,8 +1873,8 @@ mod tests {
         );
     }
 
-    /// 钉版本落到**每一步**上（含 Agent Teams 的 web 档两步），且路径为**有序**：
-    /// 宿主层在前、Web 层在后（装反即激活失败）。
+    /// 钉版本落到**每一步**上（含 browser-use 两包组的两步），且路径为**有序**：
+    /// 基座在前、provider 在后（装反即激活失败）。
     #[test]
     fn every_step_carries_the_pin_in_order() {
         let caps = resolve_capabilities(
@@ -1759,14 +1883,14 @@ mod tests {
             Some("0.1.6-alpha.1"),
             CopyLang::Zh,
         );
-        let v = variant(find(&caps, "agent-team"), "web");
+        let v = variant(find(&caps, "browser-use"), "playwright");
         assert_eq!(v.steps.len(), 2);
         for s in &v.steps {
             assert!(s.spec.ends_with("@0.1.6-alpha.1"), "{}", s.spec);
             assert!(s.version_notice.is_none());
         }
-        assert!(v.steps[0].package.contains("agent-team-profile"));
-        assert!(v.steps[1].package.contains("agent-team-web-profile"));
+        assert!(v.steps[0].package.contains("dsh-browser-use"));
+        assert!(v.steps[1].package.contains("playwright-mcp"));
     }
 
     /// **配置载荷与前置命令的表不得悬空**（2026-09-16 真机事故的对偶约束）：

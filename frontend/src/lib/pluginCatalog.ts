@@ -142,8 +142,8 @@ export function capabilityOfPackage(
 /**
  * **dock 策展的能力** = 目录排除 dsh 安装自带的那些（2026-09-20 维护者裁定）。
  *
- * `shippedByDsh` 判据（Rust `installation_shipped`：该能力**每个**包都能在安装的
- * runtime node_modules 里找到）正是 `OPTIONAL_BUNDLES` 那一类——随安装下发、默认关、
+ * `shippedByDsh` 判据（Rust `installation_provided`：安装清单声明 ∨ 运行时在册，
+ * 上游 `installation.dependencies` 同口径）正是 `OPTIONAL_BUNDLES` 那一类——随安装下发、默认关、
  * 在 **dsh 自己的插件页**开关、永不可卸。它已被官方插件管理托管，dock 再摆一份面板
  * 就是双入口（ADR-0020 §2.8），故：**能力面板不展示、插件列表不打「实验性」标**；
  * 用户在 dsh 插件页启用后，它的层随 `dsh.profile.bundles` 进列表，按 dsh 提供的内置层

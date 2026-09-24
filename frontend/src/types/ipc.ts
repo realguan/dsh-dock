@@ -538,11 +538,14 @@ export interface Capability {
   state: CapabilityState
   /// 当前生效（或已就位但停用）的变体 id；`null` = 未启用 / 冲突。
   activeVariant: string | null
-  /// **dsh 安装包自带这项能力**（2026-09-17 起：官方实验层作为 optional bundle 随产品下发）。
+  /// **dsh 安装包官方提供这项能力**（2026-09-17 起：官方实验层作为 optional bundle
+  /// 随产品下发；2026-09-22 起判据 = 安装清单声明 ∨ 运行时在册，与上游 installAnchor 同口径）。
   /// 为真时界面**不渲染开关/安装/移除**——dsh 自己管，且视其为"永不卸载"。
   shippedByDsh: boolean
   /// 该能力的包**仍被本 Profile 自己持有**（dsh-dock 早期按 profile 装过的一份）。
   /// 与 `shippedByDsh` 同时为真 = 历史遗留副本（会遮蔽 dsh 自带的那一份）：只给"清理"。
+  /// （2026-09-20 起壳不再消费本字段：官方已接管的能力在面板与插件列表里整体不呈现；
+  /// 契约字段保留，见 ADR-0020 §2.8。）
   legacyCopy: boolean
 }
 

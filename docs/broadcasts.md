@@ -31,6 +31,18 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-24 修订 · 实验能力按「官方托管」裁剪：agent-team 目录对齐上游 0.1.7 单 bundle + 提供判据双信号加固 —— guan（AI 协作）
+
+- **触发**：维护者「如果 dsh 官方内置了或者作为可选安装，dsh-dock 就不需要在实验能力展示这个插件的操作入口，我们只做官方的补充」。核查发现该判据（ADR-0020 §2.8，2026-09-17 立 / 2026-09-20 修订）在 dsh 0.1.7-rc.1 上**失效**：上游把 Agent Teams 收拢为单个 optional bundle（`agent-team-profile` 自述 "…tools, and Web UI in one experimental bundle"），独立的 `agent-team-web-profile` 退役（npm 终版 0.1.6-alpha.2）——dock 目录仍引用它 ⇒ "每个包都被安装提供"的全量判据恒不成立 ⇒ 面板继续为官方已接管的能力摆出完整操作入口，且默认首档会尝试安装一个 404 的包版本。
+- **变更**：
+  1. 目录（`src-tauri/src/official_catalog.rs`）：agent-team 从「Web 档 / 自建档」两变体收成**单变体**（`@deepseek-ai/dsh-experimental-agent-team-profile`）；browser-use / computer-use / auto-review 上游仍"要装才有"，继续由 dock 策展（＝"只做官方的补充"那部分）；
+  2. 判据加固：`installation_shipped` → `installation_provided`，从"运行时在册"单信号扩为 **安装清单声明 ∨ 在册**（读 dsh 自己的 package.json `dependencies`，上游 plugin-manager `installation.dependencies` 同口径）；保守方向不变（探测不到 ⇒ dock 策展）；
+  3. 测试续命：`resolve_capabilities_with` 开目录注入口，"子集档"（上游收拢后真目录已无此形态）的回归护栏迁到合成目录；
+  4. 文档：ADR-0020 §2.8 增补 2026-09-22 修订条；复现台账行 22 随 dsh 0.1.7-rc.1 复核更新（含 WSL 客体探测缺口登记，另案）。
+- **影响**：用户可见——0.1.7 引擎上「实验能力」面板不再出现多智能体协同（开关移归 dsh 自己的插件页）；插件列表里 dsh 提供的 Agent Teams 层继续按「内置 + 层 N」展示。WSL 客体模式下该判据仍读宿主引擎目录（保守方向：不会谎称自带后关掉唯一入口——除非宿主引擎比客体新，已登记待另案）。
+- **凭据**：`cargo test` 541 passed（`official_catalog` 29 项，含重写的提供判据单测与新合成目录子集档回归）；`cargo clippy --all-targets -- -D warnings` + `cargo fmt --check` 绿；前端 typecheck / oxlint / vitest（679 项）全绿；上游事实锚定：本机正式档引擎 `dsh 0.1.7-rc.1` 的 `dsh-app-boot/lib/index.js:542` `OPTIONAL_BUNDLES` 实测。
+- **合入**：2026-09-24 维护者裁定走**快车道直推 `origin/master`**（改动面小、不碰宪法级文件）；随本 commit 一同上去的还有本地未推的 `91967e5`（会话模块下线，同一工作树沉淀）。CI 若红由合入方认领修复。
+
 
 ### 2026-09-24 重构 · 下线会话维护与自愈模块（完整删除前端与后端实现） —— guan（AI 协作）
 

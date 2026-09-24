@@ -493,6 +493,10 @@ describe("⑪ dsh 自带的能力不进面板：官方插件页托管，dock 不
   // 随安装包下发（`packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` ＋
   // `.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md`）：
   // 随包下载、默认关、在 **dsh 自己的插件页**开关、**永不卸载**。
+  // 2026-09-22 复核（dsh 0.1.7-rc.1）：Agent Teams 收拢为**单个** `agent-team-profile`
+  // （宿主层 + 工具 + Web UI 一体），`agent-team-web-profile` 退役（npm 终版 0.1.6-alpha.2）。
+  // 判据随之从"运行时在册"单信号加固为"安装清单声明 ∨ 在册"（Rust `installation_provided`）
+  // ——否则目录引用退役包会让"每个包都自带"的全量判据失效、面板重新摆出操作入口。
   //
   // 判据变更史：2026-09-17 立的原判据是"面板展示但只说明+清理遗留副本"（ShippedPane）；
   // 2026-09-20 维护者裁定 **直接在面板里不展示**——它已被官方插件管理托管，dock 摆一份

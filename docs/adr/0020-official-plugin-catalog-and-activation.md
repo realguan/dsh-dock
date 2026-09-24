@@ -384,6 +384,27 @@ dsh 官方把绝大多数高级能力以实验性包形式发布在 `packages/ex
    > `dsh.profile.bundles`，在插件列表与模板层同列展示（内置 + 层 N + 版本随 dsh）。
    > 契约字段 `shippedByDsh` / `legacyCopy` 后端仍下发（判据不变），本壳不再消费。
 
+   > **修订（2026-09-22，维护者「如果 dsh 官方内置了或者作为可选安装，dock 就不展示
+   > 操作入口，只做官方的补充」——ADR-0020 §7.3 升级复核点首次触发）**。上游事实
+   > （dsh 0.1.7-rc.1 本机正式档引擎实测）：① Agent Teams 收拢为**单个** optional
+   > bundle —— `@deepseek-ai/dsh-experimental-agent-team-profile` 自述 "Agent Teams
+   > collaboration, tools, and Web UI in one experimental bundle"，独立的
+   > `agent-team-web-profile` **退役**（npm 终版 `0.1.6-alpha.2`，0.1.7 起无此包）；
+   > 上游 `OPTIONAL_BUNDLES` = `agent-team-profile` ＋ 新增的 `voice-input-bundle`。
+   > ② 目录引用退役包 ⇒ "每个包都在册"的全量判据在 0.1.7 上恒不成立 ⇒ agent-team
+   > 重新被判为 dock 策展、面板重新摆出操作入口（且默认首档会去装一个不存在的包版本）
+   > ——正是本次修订要关掉的形态。落地三件事：
+   > · **目录对齐上游**：agent-team 从「Web 档 / 自建档」两变体收成**单变体**
+   >   （`agent-team-profile`）；旧引擎（≤0.1.6-alpha.1，安装不自带）上它只等价于
+   >   宿主层，是上游事实而非壳的裁剪；
+   > · **判据加固**：`installation_shipped` → `installation_provided`，从"运行时在册"
+   >   单信号扩为 **安装清单声明 ∨ 在册**（读 dsh 自己的 package.json `dependencies`，
+   >   上游 plugin-manager `installation.dependencies` 同口径）——半途装机、符号链接
+   >   农场等磁盘布局抖动不再把"官方提供"误判成"没有"；
+   > · **回归护栏续命**：`resolve_capabilities_with` 开注入口，"子集档"（自建档 ⊂ Web 档）
+   >   在上游收拢后真目录里已无此形态，其判定逻辑的回归测试迁到**合成目录**。
+   > 判据的保守方向不变：探测不到 ⇒ 一切照旧由 dock 策展（宁可多管，不谎称自带）。
+
 6. **前置条件与价值主张进目录元数据**（`summary` / `prerequisites`，人类语言）。
    > **2026-09-17 补**：**不得含任何 markdown 标记**——面板没有 markdown 渲染器，
    > 反引号与 `**` 都会原样显示（D6 只挡住了反引号，`unlocks_zh` 里的 `**权限最高**`
