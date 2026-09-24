@@ -31,6 +31,17 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-24 修订 · 插件操作体验四连（升级自动重启 / 市场排序 / 安装 loading / 重启提示收口为唯一面）—— guan（AI 协作）
+
+- **触发**：维护者四点裁定——① 关于页升级 dsh 后自动重启当前 profile（装完不重启 = 新引擎一直不接管）；② 「添加插件」弹窗补排序、与插件中心同默认下载量；③ 弹窗市场安装点击后 loading 到**真正装完**；④ 所有插件安装/卸载给统一「重启后生效」提示 + 重启按钮。追问**不得重复造轮子/一种逻辑两种交互**后，重启提示整体收口到实验能力既有横幅模式。
+- **变更**（纯前端，无 Rust / IPC / 契约变动；动到：`frontend/src`）：
+  1. **升级自动重启**：`lib/dshUpgradeRestart.ts` 纯判据（只认 `done && installed`）；`DshVersionCard` 的 `dsh:upgrade` done 分支 → `getActiveProfile` → `switch_profile`（Rust 自判 Restart）；无活跃会话如实告知下次启动生效；事件名与载荷收敛进 `types/events.ts`（`EV.dshUpgrade` / `DshUpgradeEvent`）。
+  2. **排序**：`PluginAddDialog` 市场 tab 补排序 Select（与 `MarketplaceView` 同结构、同 `t.market.sort*` 键、同 `sortMarketPlugins` 纯函数），两处默认同改 `stars → downloads`；排序在截前 24 条**之前**应用。
+  3. **安装 loading**：撤 `installingMarketPkg` 局部态 + 300ms 假完成 + 双弹 toast；busy 从队列派生（`pkg + profile` 匹配 queued/installing，关弹窗再开状态还在）；`queueStore` 增 `lastFinishedProfile`，`ProfileDetailPane` 按「终结在本档」reload + loadCaps；入队通知键 `pluginAddMarketInstallDone` 两字典退役。
+  4. **重启提示收口**：`stores/restartNeededStore.ts`（按 profile 名键控的 window 级待重启集合）为唯一状态源；`ui/restart-hint.tsx` 为唯一渲染面（自 caps 横幅 1:1 提取）；`lib/restartProfile.ts` 为唯一动作链（ProfileManager 注册既有确认链，无处理器回退直联 `switch_profile`）。`ExperimentalCapabilities` 撤本地 `dirty` 与面板内横幅改 mark store；详情页 tab 上方与插件中心（逐档）两处渲染同一条；标记入口：队列 done 中枢（覆盖六个入队口）+ runOp/installVersion/onDone 直连路径 + toggle 仅在 settle 结论「重启后生效」时；清除：交接 ready 按 target、删除、重命名（旧名挪新名）。`onRestart` props 链（caps/详情页/管理器）与 `capRestart*` 文案键两字典回收，新增中立 `restart.neededHint/nowBtn`；`queueRemoveDone`/`distributeDone`/`importDone` 补「重启后生效」措辞。
+- **影响**：仅周知。视觉变化两处——caps 横幅从面板内移到详情页 tab 上方（与插件变更共用）；插件中心待重启提示逐档并列。插件启/停（web 档 live 生效）不会误出横幅（toggle 只在实际需重启时 mark）。About 窗口在升级完成前被关 = 不自动重启（前端方案的已知边界；Rust 侧兜底会令 `upgrade_only`/`upgrade` 语义合并，未做）。
+- **凭据**：前端 `tsc -b` 0 错、`oxlint` 0 告警、vitest **702 passed**（68 文件，含新增 `dshUpgradeRestart`/`restartProfile`/`pluginOpsRestartGate` 三文件与 `queueStore` 五例扩充）；`experimentalCapabilitiesGate` 的「换档清 dirty」判据按本次收口改写为「不得搬回组件内 state / 不得再内联横幅」。纯前端改动，Rust 侧未动，CI 三平台不受影响；真机验证三景（升级→自动重启、安装 loading→完成、卸载 toast→横幅重启）按 `docs/executor.md` 清单待跑。
+
 ### 2026-09-24 修订 · 安全模式整体删除（只保留「备份并放空 patch」兜底）—— guan（AI 协作）
 
 - **触发**：维护者亲测「插件不兼容不会让 dsh 起不来」，裁定安全模式不再需要、彻底删除。壳侧同日三组复现实测（克隆体 `~/.dsh-dock-dev/profiles/111`，dsh 0.1.7-rc.1，跑后还原）坐实并推广：**悬空行 = warning 后正常就绪**（75s 观察窗内 web 起服务，上游仅 `1 entry did not activate … failed to import`）；**仍砖的只有用户层自写坏两类**——YAML 语法坏（`failed to parse overlay … YAMLException`，dump 也失败）与核心条目配置写坏（`2 required plugins did not activate / webserver (required) ValidationError`）。2026-09-16 事故的 exit 1 系旧版 dsh 行为（0.1.6→0.1.7 间上游已变更），ADR-0026 的立项前提消失。复现实录入台账复现点 24。

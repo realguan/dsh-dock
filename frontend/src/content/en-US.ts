@@ -300,6 +300,12 @@ export const enUS: AppCopy = {
     versionListEntry: "All versions",
     noteUpgraded: "Upgraded to",
     noteAlreadyLatest: "Already latest",
+    // Auto-restart after upgrade (2026-09-24): only when a new version was
+    // actually installed AND a session is running; with no session there is
+    // nothing to restart, so state plainly that it applies next start.
+    upgradeRestarting: (profile: string) => `Restarting "${profile}" to apply the new engine…`,
+    upgradeRestartNoActive: "No Profile is running; the new engine takes effect next time you start one",
+    upgradeRestartFailed: (msg: string) => `Auto-restart failed: ${msg} (restart manually from Control Center)`,
     onPreview: "Preview build · stable line",
     versionListTitle: "DSH Versions",
     versionListHint: "Preview builds may be unstable — you can roll back anytime.",
@@ -410,7 +416,6 @@ export const enUS: AppCopy = {
     pluginAddCustomHint: "Supports public npm package names, version ranges, or prerelease tags",
     pluginAddEmptyMarket: "No matching community plugins found",
     pluginAddLoadMarketFailed: "Failed to load marketplace plugins. Please check network and retry",
-    pluginAddMarketInstallDone: (name: string) => `Plugin "${name}" enqueued for installation`,
     pluginAddCategoryLabel: "Filter by category",
     pluginAddMarketLoading: "Loading the community plugin registry…",
     pluginAddMoreHidden: (n: number) =>
@@ -568,7 +573,7 @@ export const enUS: AppCopy = {
     importStart: (n: number) => `Install ${n} items`,
     importRunning: (i: number, total: number) => `Installing ${i}/${total}`,
     importDone: (ok: number, fail: number) =>
-      `Import complete: ${ok} succeeded${fail ? ` · ${fail} failed` : ""}`,
+      `Import complete: ${ok} succeeded${fail ? ` · ${fail} failed` : ""}${ok ? " · restart the profile to take effect" : ""}`,
     searchPlaceholder: "Search profiles...",
     searchPluginsPlaceholder: "Search installed plugins...",
     searchAllPluginsPlaceholder: "Search plugins across all profiles...",
@@ -735,7 +740,8 @@ export const enUS: AppCopy = {
     quickDistribute: "Distribute to...",
     distributeTitle: (pkg: string) => `Distribute "${pkg}" to other profiles`,
     distributeNote: "Select target profile to install same version and optionally migrate configuration",
-    distributeDone: (pkg: string, target: string) => `Successfully installed "${pkg}" into "${target}"`,
+    distributeDone: (pkg: string, target: string) =>
+      `Successfully installed "${pkg}" into "${target}" · restart the profile to take effect`,
     distributeConfigFailed: (pkg: string, target: string, reason: string) =>
       `"${pkg}" was installed into "${target}", but configuration migration failed: ${reason}`,
     distributeConfigSkipped: (pkg: string, target: string) =>
@@ -1017,6 +1023,9 @@ export const enUS: AppCopy = {
     sortDownloads: "Most Downloads",
     sortNewest: "Recently Added",
     sortName: "Alphabetical",
+    // Accessible name for the sort dropdown (screen readers; added 2026-09-24
+    // when the sort control entered the Add Plugin dialog).
+    sortLabel: "Sort by",
     filterInstalled: "Installed Only",
     filterAll: "All Plugins",
     installBtn: "Install",
@@ -1071,8 +1080,6 @@ export const enUS: AppCopy = {
     // "Disabled" is a state the user chose (turned off without uninstalling) — not a problem.
     capSummaryDisabled: (n: number) => `${n} disabled`,
     capSummaryOff: (n: number) => `${n} not enabled`,
-    capRestartHint: "Configuration changed. Restart this Profile to apply it.",
-    capRestartNow: "Restart Now",
     capStateOn: "Enabled",
     capStateOff: "Not Enabled",
     capStateDisabled: "Disabled",
@@ -1178,7 +1185,8 @@ export const enUS: AppCopy = {
     // 2026-09-15 (R2): uninstall shares the same queue — exclusive-family handover
     // must be visible and retryable in the panel; copy is kept separate from install.
     queueRemoveQueued: (pkg: string, prof: string) => `Added to download queue: uninstall "${pkg}" <- ${prof}`,
-    queueRemoveDone: (pkg: string, prof: string) => `Uninstalled "${pkg}" from profile "${prof}"`,
+    queueRemoveDone: (pkg: string, prof: string) =>
+      `Uninstalled "${pkg}" from profile "${prof}" · restart the profile to take effect`,
     queueTitle: "Downloads",
     queueEmpty: "No download tasks",
     queueClearDone: "Clear finished",
@@ -1191,6 +1199,15 @@ export const enUS: AppCopy = {
     queueRetry: "Retry",
     queueFailedNotice: (pkg: string, detail: string) => `Failed to install "${pkg}": ${detail}`,
     queueRemoveFailedNotice: (pkg: string, detail: string) => `Failed to uninstall "${pkg}": ${detail}`,
+  },
+  // Shared "restart to take effect" hint (2026-09-24), extracted from the
+  // experimental-capability banner as the single restart prompt in the app:
+  // state in stores/restartNeededStore, component ui/restart-hint.tsx,
+  // action chain lib/restartProfile.ts. Plugin install/remove/update/toggle
+  // and capability switches all share it.
+  restart: {
+    neededHint: "Configuration changed. Restart this Profile to apply it.",
+    nowBtn: "Restart Now",
   },
   // Shared copy for the destructive-action confirm dialog (2026-09-08, U9)
   confirm: {

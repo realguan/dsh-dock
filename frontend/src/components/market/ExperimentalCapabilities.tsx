@@ -78,9 +78,7 @@ import {
   BadgeCheck,
   Check,
   ChevronRight,
-  Info,
   LoaderCircle,
-  RotateCw,
   TriangleAlert,
   Wrench,
 } from "lucide-react"
@@ -106,6 +104,7 @@ import {
   type CapabilityOp,
 } from "@/lib/experimentalCapabilities"
 import { useI18n } from "@/stores/i18nStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
 import { capabilityIcon } from "@/components/ui/capability-icon"
 import { commonPackagePrefix, packageTail } from "@/lib/pluginDisplay"
 import type {
@@ -146,8 +145,6 @@ interface Props {
   /** 目录刷新（重试 / 动作后重取都用它；不含插件行表）。 */
   onRefreshCaps: () => void
   onNotice?: (message: string, tone?: "ok" | "warn") => void
-  /** 重启该 Profile（复用 ProfileManager 的既有确认链）；缺省则只给文字提示。 */
-  onRestart?: (profile: string) => void
   /** 写操作完成后回调：父级据此刷新同页「插件列表」的行表/清单。 */
   onChanged?: () => void
 }
@@ -176,7 +173,6 @@ export function ExperimentalCapabilities({
   capsError,
   onRefreshCaps,
   onNotice,
-  onRestart,
   onChanged,
 }: Props) {
   const { t } = useI18n()
@@ -187,8 +183,6 @@ export function ExperimentalCapabilities({
   const [failures, setFailures] = useState<
     Record<string, { variantId: string; error: string; failureKind: FailureKind | null }>
   >({})
-  /** 每次成功动作后置位：提示"重启后生效"。 */
-  const [dirty, setDirty] = useState(false)
   /** 手风琴：当前展开的能力（`null` = 全部收起，一屏看全所有能力）。
    *  2026-09-21 单栏化后，原先的 `selectedId` / `drilled` 那套"选谁看详情 / 窄窗下钻"
    *  状态一并退役——展开态本身就是"我在看谁"。 */
@@ -207,12 +201,12 @@ export function ExperimentalCapabilities({
   const profileRef = useRef(profile)
   profileRef.current = profile
 
-  // 换档即清"失败""dirty"：两者都绑定在具体档位上，留着会串味（失败详情挂在别的档上、
-  // 「立即重启」打在没改过的档上）。
+  // 换档即清"失败"：失败详情按档记，留着会串味（失败详情挂在别的档上）。
+  // 「待重启」**不清**——它已按 profile 名键控在 stores/restartNeededStore（2026-09-24），
+  // 切走再切回那个档仍然待重启，横幅由详情页按当前选中档渲染，天然不串档。
   useEffect(() => {
     setFailures({})
     setExpandedId(null)
-    setDirty(false)
   }, [profile])
 
   /** 行的**开关目标**：当前生效（或已就位但停用）的档 → 首个**可用**档 → 首个档。
@@ -257,7 +251,9 @@ export function ExperimentalCapabilities({
         // "配置已变更"，而"立即重启"按钮会重启一个没被改过的 Profile。
         if (profileRef.current !== profile) return
         if (result.ok) {
-          setDirty(true)
+          // 成功 = 本档配置变了 → 记「待重启」（2026-09-24 与插件安装/卸载共用
+          // 同一个 store 与同一条横幅；此前的本地 dirty + 面板内横幅已撤）。
+          useRestartNeededStore.getState().mark(profile)
           onNotice?.(t.market.capDoneFor(cap.label), "ok")
         } else {
           // 失败**不回滚**：已完成的步处于一致态，就地保留原因供续跑。
@@ -272,7 +268,7 @@ export function ExperimentalCapabilities({
           }))
           // 只有**真的改过什么**才提示重启：0/N 步就失败时文件一个字节都没动，
           // 此时报"配置已变更"是谎报，会把用户骗去重启一个没变的 Profile。
-          if (result.completedOps > 0) setDirty(true)
+          if (result.completedOps > 0) useRestartNeededStore.getState().mark(profile)
           onNotice?.(t.market.capPartialFor(cap.label, result.completedOps, result.totalOps), "warn")
         }
       } finally {
@@ -381,24 +377,6 @@ export function ExperimentalCapabilities({
           <Tip text={t.market.capOfficialNote} label={t.tip.ariaFor(t.market.capOfficialBadge)} />
         </span>
       </header>
-
-      {dirty && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-1.5 text-label text-warn">
-          <Info className="size-3.5 shrink-0" />
-          <span>{t.market.capRestartHint}</span>
-          {onRestart && (
-            <Button
-              size="xs"
-              variant="outline"
-              className="ml-auto gap-1"
-              onClick={() => onRestart(profile)}
-            >
-              <RotateCw className="size-3" />
-              {t.market.capRestartNow}
-            </Button>
-          )}
-        </div>
-      )}
 
       {capsLoading && !caps && (
         <p className="px-1 py-6 text-center text-label text-dim">

@@ -303,6 +303,11 @@ export const t = {
     versionListEntry: "查看全部版本",
     noteUpgraded: "已升级到",
     noteAlreadyLatest: "已是最新",
+    // 升级后自动重启（2026-09-24 维护者裁定）：只发生在「确实装了新版本」且
+    // 「当前有活跃会话」时；没有会话就无可重启，如实告知下次启动生效。
+    upgradeRestarting: (profile: string) => `正在重启「${profile}」以应用新引擎…`,
+    upgradeRestartNoActive: "当前没有运行中的 Profile，新引擎将在下次启动时生效",
+    upgradeRestartFailed: (msg: string) => `自动重启 Profile 失败：${msg}（请在控制中心手动重启）`,
     onPreview: "预览运行中 · 稳定口径",
     versionListTitle: "DSH 版本列表",
     versionListHint: "预览版可能不稳定，安装后可随时回退。",
@@ -415,7 +420,6 @@ export const t = {
     pluginAddCustomHint: "支持公开发布的 npm 包名、版本范围或预发布 tag",
     pluginAddEmptyMarket: "没有找到匹配的社区插件",
     pluginAddLoadMarketFailed: "插件市场加载失败，请检查网络后重试",
-    pluginAddMarketInstallDone: (name: string) => `插件「${name}」已加入安装队列`,
     pluginAddCategoryLabel: "按分类筛选",
     pluginAddMarketLoading: "正在拉取社区插件矩阵…",
     pluginAddMoreHidden: (n: number) => `另有 ${n} 个未列出——用搜索或分类缩小范围`,
@@ -580,7 +584,7 @@ export const t = {
     importStart: (n: number) => `安装 ${n} 项`,
     importRunning: (i: number, total: number) => `正在安装 ${i}/${total}`,
     importDone: (ok: number, fail: number) =>
-      `从其他 profile 安装完成：${ok} 成功${fail ? ` · ${fail} 失败` : ""}`,
+      `从其他 profile 安装完成：${ok} 成功${fail ? ` · ${fail} 失败` : ""}${ok ? " · 重启该 Profile 后生效" : ""}`,
     // 扩展文案（Master-Detail 工作台与交互升级）
     searchPlaceholder: "搜索 Profile...",
     searchPluginsPlaceholder: "搜索已装插件...",
@@ -740,7 +744,8 @@ export const t = {
     quickDistribute: "分发到...",
     distributeTitle: (pkg: string) => `将「${pkg}」分发安装到其他 Profile`,
     distributeNote: "选择目标 Profile，将以相同版本执行安装并可连带迁移配置",
-    distributeDone: (pkg: string, target: string) => `已成功将「${pkg}」安装至「${target}」`,
+    distributeDone: (pkg: string, target: string) =>
+      `已成功将「${pkg}」安装至「${target}」· 重启该 Profile 后生效`,
     distributeConfigFailed: (pkg: string, target: string, reason: string) =>
       `「${pkg}」已安装至「${target}」，但配置迁移失败：${reason}`,
     distributeConfigSkipped: (pkg: string, target: string) =>
@@ -1025,6 +1030,8 @@ export const t = {
     sortDownloads: "最高下载",
     sortNewest: "最新上架",
     sortName: "名称排序",
+    // 排序下拉的可访问名称（读屏用；2026-09-24 排序控件进入「添加插件」弹窗时补）
+    sortLabel: "排序方式",
     filterInstalled: "仅看已装",
     filterAll: "全部插件",
     installBtn: "安装",
@@ -1075,8 +1082,6 @@ export const t = {
     // 「已停用」是**用户自己关的**（关而不卸），不是需要处理的问题——单列一档说明。
     capSummaryDisabled: (n: number) => `${n} 项已停用`,
     capSummaryOff: (n: number) => `${n} 项未启用`,
-    capRestartHint: "配置已变更：重启该 Profile 后才会生效",
-    capRestartNow: "立即重启",
     capStateOn: "已启用",
     capStateOff: "未启用",
     capStateDisabled: "已停用",
@@ -1179,7 +1184,8 @@ export const t = {
     // 2026-09-15（R2）：卸载也走同一队列——同族 provider 让位等场景要能在面板
     // 看见、失败能重试；文案单独给，不借安装文案。
     queueRemoveQueued: (pkg: string, prof: string) => `已加入下载队列：卸载「${pkg}」← ${prof}`,
-    queueRemoveDone: (pkg: string, prof: string) => `已从 Profile「${prof}」卸载「${pkg}」`,
+    queueRemoveDone: (pkg: string, prof: string) =>
+      `已从 Profile「${prof}」卸载「${pkg}」· 重启该 Profile 后生效`,
     queueTitle: "下载管理",
     queueEmpty: "暂无下载任务",
     queueClearDone: "清除已完成",
@@ -1192,6 +1198,13 @@ export const t = {
     queueRetry: "重试",
     queueFailedNotice: (pkg: string, detail: string) => `「${pkg}」安装失败：${detail}`,
     queueRemoveFailedNotice: (pkg: string, detail: string) => `「${pkg}」卸载失败：${detail}`,
+  },
+  // 「重启后生效」统一提示面（2026-09-24）：从实验能力面板的横幅提取为全仓唯一
+  // 重启提示——状态见 stores/restartNeededStore，组件见 ui/restart-hint.tsx，
+  // 动作链见 lib/restartProfile.ts。插件安装/卸载/更新/启停与能力开关共用。
+  restart: {
+    neededHint: "配置已变更：重启该 Profile 后才会生效",
+    nowBtn: "立即重启",
   },
   // 破坏性操作确认对话框的通用文案（2026-09-08，U9）
   confirm: {

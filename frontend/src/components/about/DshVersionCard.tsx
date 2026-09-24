@@ -2,7 +2,7 @@
 // 2026-09-09 口径对齐（假角标修复）：「有新版/升级」只按可升级口径（稳定/rc）；
 // 预览版（alpha 等）经版本列表显式选择安装——选择权交给用户，稳定默认保护。
 // alpha 与回退经 ConfirmDialog 知情确认（needsConfirm 纯函数判定）。
-import { useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { ArrowUpCircle, LoaderCircle, RefreshCw } from "lucide-react"
 import { listen } from "@tauri-apps/api/event"
 import { api } from "@/lib/tauri"
@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils"
 import { useBootStore } from "@/stores/bootStore"
 import { useI18n } from "@/stores/i18nStore"
 import type { ComponentUpdate, DshVersionEntry } from "@/types/ipc"
+import type { DshUpgradeEvent } from "@/types/events"
+import { EV } from "@/types/events"
+import { shouldRestartAfterUpgrade } from "@/lib/dshUpgradeRestart"
 import { needsConfirm } from "@/lib/dshVersions"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -32,24 +35,52 @@ export function DshVersionCard() {
   const [listOpen, setListOpen] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<DshVersionEntry | null>(null)
 
+  /** 提示条落位 + 到点自消（沿用既有的"同文才消"护栏：期间来了新提示就不动它）。 */
+  const flashNote = useCallback((text: string) => {
+    setNote(text)
+    window.setTimeout(() => setNote((n) => (n === text ? null : n)), NOTE_DISMISS_MS)
+  }, [])
+
+  /** 升级后自动重启当前 profile（2026-09-24）：没有活跃会话就如实说明下次启动
+   *  生效；重启失败也如实说——不假装重启了。switch_profile 由 Rust 按
+   *  「目标 == 活跃会话」自判 Restart 语义，停旧重起同一个档。 */
+  const restartActiveProfileAfterUpgrade = useCallback(() => {
+    api
+      .getActiveProfile()
+      .then((active) => {
+        if (!active) {
+          flashNote(t.about.upgradeRestartNoActive)
+          return
+        }
+        flashNote(t.about.upgradeRestarting(active))
+        return api.switchProfile(active).catch((e) => {
+          flashNote(t.about.upgradeRestartFailed(String(e)))
+        })
+      })
+      .catch((e) => flashNote(t.about.upgradeRestartFailed(String(e))))
+  }, [flashNote, t])
+
   useEffect(() => {
-    const un = listen<{
-      phase: string
-      detail: string
-      installed?: boolean
-    }>("dsh:upgrade", ({ payload }) => {
+    const un = listen<DshUpgradeEvent>(EV.dshUpgrade, ({ payload }) => {
       if (payload.phase === "running") {
         setUpgrading(true)
       } else {
         setUpgrading(false)
         setUpgradeTarget(null)
         if (payload.phase === "done") {
-          const text =
+          flashNote(
             payload.installed === false
               ? `${t.about.noteAlreadyLatest}（${payload.detail}）`
-              : `${t.about.noteUpgraded} ${payload.detail}`
-          setNote(text)
-          window.setTimeout(() => setNote((n) => (n === text ? null : n)), NOTE_DISMISS_MS)
+              : `${t.about.noteUpgraded} ${payload.detail}`,
+          )
+          // 升级落定且**确实装了新版本** → 自动重启当前 profile（2026-09-24
+          // 维护者裁定）：装完不重启，新引擎一直不接管，升级像个没完成的动作。
+          // 两道闸门见 shouldRestartAfterUpgrade（只认 Install）与下面
+          // getActiveProfile（没有活跃会话就无可重启，不空跑 switch_profile）。
+          // 边界：若此刻主窗口正从启动屏跑它的 `upgrade` 自带重启，且恰好还有
+          // 活跃会话，两条重启会撞车——实测该路径的旧会话已 teardown，
+          // getActiveProfile 基本返回 None 而自然跳过；不为此改 Rust 事件契约。
+          if (shouldRestartAfterUpgrade(payload)) restartActiveProfileAfterUpgrade()
         }
         if (payload.phase === "failed") setUpgradeFail(payload.detail || null)
       }
@@ -57,7 +88,7 @@ export function DshVersionCard() {
     return () => {
       void un.then((f) => f())
     }
-  }, [t])
+  }, [t, flashNote, restartActiveProfileAfterUpgrade])
 
   const lock = (kind: Exclude<typeof busy, "none">) => {
     setBusy(kind)

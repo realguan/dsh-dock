@@ -34,6 +34,10 @@
 //     搬到父级 `ProfileDetailPane.tsx`（本文件下方改指 `paneSrc`）；组件内留下的
 //     是**动作侧**闸门（落账复核 / 进度归属 / 迟到的 onChanged 作废），缺它们三症状
 //     （清单串档 / 失败串档 / 假重启提示）照样成立。
+//   · 2026-09-24（重启提示收口）：「待重启」从组件内 dirty **提升为**
+//     `stores/restartNeededStore`（按档键控，插件安装/卸载/启停共用）——"换档清
+//     dirty"判据随之退役（切档不再清：切走再切回那个档仍待重启，串档由"只给选中
+//     档渲染"保证），改为钉"面板不得搬回组件内 state / 不得再内联横幅"。
 
 import { describe, expect, it } from "vitest"
 
@@ -449,11 +453,25 @@ describe("⑩ 动作互斥：一次只能跑一个动作（2026-09-17 独立复�
     )
   })
 
-  it("换档清状态时连 dirty 一起清（否则「立即重启」打在没改过的档上）", () => {
-    // dirty 是**按档**的事实（哪个档的配置被改过）。第二批起负载搬到父级，但"清 dirty"
-    // 仍在本组件（它是组件内 state），判据改为：换档 effect 里必须连 dirty 一起清。
-    expect(src).toMatch(
-      /useEffect\(\(\) => \{[\s\S]{0,240}setDirty\(false\)\s*\n\s*\}, \[profile\]\)/,
+  it("「待重启」收口进统一 store（2026-09-24：不搬回组件内 state）", () => {
+    // 原判据（换档 effect 连 dirty 一起清）守护的是"重启提示打在没改过的档上"。
+    // dirty 已提升为 stores/restartNeededStore（**按 profile 名键控**，与插件安装/
+    // 卸载/更新/启停共用）：组件不再自持该状态。串档由三件事共同保证——
+    //   ① mark 用**发起档**（profileRef 复核后仍在眼前的 profile 变量）；
+    //   ② 渲染只在详情页对**选中档**出（ui/restart-hint.tsx 自门控）；
+    //   ③ 切档不清 store：切走再切回，那个档**仍然**待重启（旧实现把这事实丢了）。
+    // 若有人把 dirty 搬回组件内 state、或在面板里再画一条横幅，就是
+    // "一种逻辑两种交互"复发——本断言钉住不回头。
+    expect(src, "面板不得再自持 dirty state").not.toContain("setDirty")
+    expect(src, "面板内不得再内联重启横幅（唯一渲染面在详情页）").not.toContain(
+      "capRestartHint",
+    )
+    expect(src, "成功动作必须记入统一待重启 store").toContain(
+      "useRestartNeededStore.getState().mark(profile)",
+    )
+    // 部分失败同理：只有 completedOps > 0（真改过）才记——0/N 步失败时报重启是谎报
+    expect(src, "部分失败只记真的改过的").toMatch(
+      /result\.completedOps > 0\)\s*useRestartNeededStore/,
     )
   })
 

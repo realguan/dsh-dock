@@ -22,6 +22,7 @@ const ipc = vi.hoisted(() => ({
 vi.mock("@/lib/tauri", () => ({ api: ipc }))
 
 import { useQueueStore } from "@/stores/queueStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
 
 const ok = (detail = ""): Outcome => ({ ok: true, detail })
 const softFail = (detail: string): Outcome => ({ ok: false, detail })
@@ -43,7 +44,13 @@ beforeEach(() => {
   ipc.removePlugin.mockReset()
   ipc.getShellSettings.mockReset()
   ipc.getShellSettings.mockResolvedValue({})
-  useQueueStore.setState({ items: [], running: false, lastFinishedAt: 0 })
+  useQueueStore.setState({
+    items: [],
+    running: false,
+    lastFinishedAt: 0,
+    lastFinishedProfile: null,
+  })
+  useRestartNeededStore.setState({ pending: [] })
 })
 
 describe("enqueueAndWait（可 await 句柄）", () => {
@@ -154,5 +161,64 @@ describe("重试边界（有意不自动续跑编排）", () => {
     await tick()
 
     expect(useQueueStore.getState().items[0].status).toBe("done")
+  })
+})
+
+describe("待重启标记与按档终结信号（2026-09-24）", () => {
+  // 为什么钉在编排层：六个入队口（市场安装/手动安装/分发/弹窗市场安装/能力装卸）
+  // 都把 mark 交给 queueStore 的 pump 这一处——漏一个入口就少一条重启提示，
+  // 而入口分散在四个组件里，只有在这里能一次证齐。
+  it("install 成功 → mark 目标档，lastFinishedProfile 落值", async () => {
+    ipc.installPlugin.mockResolvedValue(ok())
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "dsh-pet", spec: "dsh-pet@1.2.3", profile: "web", kind: "install" })
+
+    expect(useRestartNeededStore.getState().pending).toEqual(["web"])
+    expect(useQueueStore.getState().lastFinishedProfile).toBe("web")
+  })
+
+  it("remove 成功 → 同样 mark（卸载也要重启才生效）", async () => {
+    ipc.removePlugin.mockResolvedValue(ok())
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "dsh-pet", spec: "", profile: "test", kind: "remove" })
+
+    expect(useRestartNeededStore.getState().pending).toEqual(["test"])
+  })
+
+  it("失败 → 不 mark（文件没变，不许把人骗去重启一个没变的档）", async () => {
+    ipc.installPlugin.mockResolvedValue(softFail("两个源都没连上"))
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "dsh-pet", spec: "dsh-pet@1.2.3", profile: "web", kind: "install" })
+
+    expect(useRestartNeededStore.getState().pending).toEqual([])
+    // 终结信号与成败无关：失败也要让页面收掉 loading / 刷新
+    expect(useQueueStore.getState().lastFinishedProfile).toBe("web")
+  })
+
+  it("同档多次终结 → pending 只占一格（mark 幂等）", async () => {
+    ipc.installPlugin.mockResolvedValue(ok())
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "a", spec: "a@1", profile: "web", kind: "install" })
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "b", spec: "b@1", profile: "web", kind: "install" })
+
+    expect(useRestartNeededStore.getState().pending).toEqual(["web"])
+  })
+
+  it("跨档终结互不挤占：A 装了 B 也装了，两个档都在集合里", async () => {
+    ipc.installPlugin.mockResolvedValue(ok())
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "a", spec: "a@1", profile: "web", kind: "install" })
+    await useQueueStore
+      .getState()
+      .enqueueAndWait({ pkg: "b", spec: "b@1", profile: "test", kind: "install" })
+
+    expect(useRestartNeededStore.getState().pending).toEqual(["web", "test"])
   })
 })

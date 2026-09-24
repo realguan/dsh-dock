@@ -18,6 +18,8 @@ import {
 import { api } from "@/lib/tauri"
 import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
+import { useQueueStore } from "@/stores/queueStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
 import { runtimeChipFor, runtimeSummary } from "@/lib/profiles"
 import type { RuntimeChip } from "@/lib/profiles"
 import { pluginToggleTargets, splitSettledToggles, toggleIntent } from "@/lib/pluginToggle"
@@ -46,6 +48,7 @@ import { PluginListRow } from "@/components/profiles/pluginRows/PluginListRow"
 import { SystemBaseSection } from "@/components/profiles/pluginRows/SystemBaseSection"
 import { McpManager } from "@/components/profiles/McpManager"
 import { ExperimentalCapabilities } from "@/components/market/ExperimentalCapabilities"
+import { RestartNeededHint } from "@/components/ui/restart-hint"
 import {
   Dialog,
   DialogContent,
@@ -68,7 +71,6 @@ export function ProfileDetailPane({
   isSwitching = false,
   busy,
   onLaunch,
-  onRestart,
   onNotice,
 }: {
   name: string | null
@@ -81,10 +83,6 @@ export function ProfileDetailPane({
   isSwitching?: boolean
   busy: boolean
   onLaunch: () => void
-  onRestart: () => void
-  onCopy: () => void
-  onRename: () => void
-  onDelete: () => void
   onNotice: (text: string, kind?: "ok" | "warn") => void
 }) {
   const { t, activeLocale } = useI18n()
@@ -273,6 +271,21 @@ export function ProfileDetailPane({
     loadCaps(name)
   }, [name, materialized, loadCaps])
 
+  // 队列终结回填（2026-09-24）：插件的安装/分发/卸载经下载队列串行执行，终结发生在
+  // **队列**里——「添加插件」弹窗当时可能已经关了，旧的「入队后 300ms 就刷新」是
+  // 假装装好。现在按"终结在本档"刷新详情/行表/能力目录：不管弹窗开没开、装的是
+  // 哪个入口，列表都会在真装上那一刻翻到「已安装」。
+  // 按档判据（lastFinishedProfile）：队列是跨档的，装完 A 档不该让正在看 B 档的
+  // 页面白重取四链。「待重启」标记已由 queueStore 中枢统一记，这里只负责刷新。
+  const queueFinishedAt = useQueueStore((s) => s.lastFinishedAt)
+  const queueFinishedProfile = useQueueStore((s) => s.lastFinishedProfile)
+  useEffect(() => {
+    if (!name || !materialized || queueFinishedAt === 0) return
+    if (queueFinishedProfile !== name) return
+    reload()
+    loadCaps(name)
+  }, [queueFinishedAt, queueFinishedProfile, name, materialized, reload, loadCaps])
+
   // 会话由「未运行」转为「运行中」时补取一次运行态（复核 P1 的另一半）：面板不重挂，
   // 旧实现只按 name 变化取数 ⇒ 启动后所有行都没有运行态徽标，页头却写着"会话运行中"。
   const prevRunning = useRef(isRunning)
@@ -292,6 +305,9 @@ export function ProfileDetailPane({
       .then((out) => {
         if (out.ok) {
           onNotice(out.detail, "ok")
+          // 直连 IPC 的包操作（不经队列）：成功即记「待重启」（2026-09-24）——
+          // 与队列路径同一个 store，横幅只此一个来源。
+          useRestartNeededStore.getState().mark(name)
           reload()
         } else {
           onNotice(out.detail, "warn")
@@ -341,6 +357,7 @@ export function ProfileDetailPane({
             for (const [p, wantEnabled] of Object.entries(remaining)) {
               onNotice(t.profiles.toggleRestart(p, wantEnabled), "ok")
             }
+            useRestartNeededStore.getState().mark(profile)
             return
           }
           if (attempt + 1 >= TOGGLE_SETTLE_ATTEMPTS) {
@@ -354,6 +371,8 @@ export function ProfileDetailPane({
                 "ok",
               )
             }
+            // 同上：只有"查到没生效"才配得上待重启横幅（观测不到时不承诺时机）
+            if (observed) useRestartNeededStore.getState().mark(profile)
             return
           }
           settleToggle(profile, attempt + 1)
@@ -451,6 +470,8 @@ export function ProfileDetailPane({
       .then((out) => {
         if (out.ok) {
           onNotice(out.detail, "ok")
+          // 选版本安装 = 包操作：成功即待重启（2026-09-24，与队列/卸载同一 store）
+          useRestartNeededStore.getState().mark(name)
           setUpdateMap((m) => {
             if (!m) return m
             const next = { ...m }
@@ -687,6 +708,16 @@ export function ProfileDetailPane({
           ]}
         />
       </header>
+
+      {/* 「重启后生效」统一提示（2026-09-24）：本档有插件/能力变更待重启时出现，
+          插件列表 / 实验能力 / MCP / Patch 四个 tab 共用这一条——caps 面板内的
+          自带横幅已撤，全仓只有一个重启提示面（ui/restart-hint.tsx，动作链见
+          lib/restartProfile.ts）。未物化的档不可能有待重启变更，不出。 */}
+      {materialized && (
+        <div className="px-5 pt-3">
+          <RestartNeededHint profile={name} />
+        </div>
+      )}
 
       {/* 主体工作区 */}
       <div className="flex-1 overflow-y-auto p-5">
@@ -982,7 +1013,6 @@ export function ProfileDetailPane({
               capsError={capsError}
               onRefreshCaps={() => loadCaps(name)}
               onNotice={onNotice}
-              onRestart={onRestart}
               onChanged={reload}
             />
           )}
@@ -1047,6 +1077,9 @@ export function ProfileDetailPane({
         onDone={() => {
           reload()
           if (name) loadCaps(name)
+          // 「从其他导入 / 自定义安装」两条直连 IPC 路径的完成信号：都是往本档
+          // 装包 → 记待重启（2026-09-24）。市场选购走队列，标记由 queueStore 中枢记。
+          if (name) useRestartNeededStore.getState().mark(name)
         }}
         onNotice={onNotice}
       />

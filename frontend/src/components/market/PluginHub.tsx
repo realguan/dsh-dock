@@ -5,10 +5,12 @@
 import { useState } from "react"
 import { Layers, Store } from "lucide-react"
 import { useI18n } from "@/stores/i18nStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
 import { MarketplaceView } from "@/components/market/MarketplaceView"
 import { PluginOverview } from "@/components/profiles/PluginOverview"
 import { QueuePanel } from "@/components/market/QueuePanel"
 import { InstallFlight } from "@/components/market/InstallFlight"
+import { RestartNeededHint } from "@/components/ui/restart-hint"
 import { Segmented } from "@/components/ui/segmented"
 
 interface PluginHubProps {
@@ -22,6 +24,11 @@ export function PluginHub({
 }: PluginHubProps) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState<"market" | "installed">("market")
+  // 「重启后生效」提示（2026-09-24）：本视图是**跨档**的——市场安装/分发的目标档
+  // 常不等于左栏选中档，故按 store 的 pending 集合**逐档**渲染同一条横幅
+  // （ui/restart-hint.tsx，与详情页/实验能力共用）：市场里装完哪个档，哪个档的
+  // 重启入口就出现在这里，不需要用户猜到哪个详情页去找。
+  const pendingProfiles = useRestartNeededStore((s) => s.pending)
 
   return (
     <>
@@ -43,6 +50,11 @@ export function PluginHub({
           {/* 下载管理（095 #4：队列项状态一览） */}
           <QueuePanel />
         </div>
+
+        {/* 待重启提示（2026-09-24，逐档；无 pending 时整块不渲染） */}
+        {pendingProfiles.map((p) => (
+          <RestartNeededHint key={p} profile={p} />
+        ))}
 
         {/* 子视图渲染（2026-09-18 收口：key 重挂 + page-rise 补上切换动效，
             与控制台 tab 面板同款） */}

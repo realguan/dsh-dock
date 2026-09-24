@@ -63,10 +63,11 @@ export function MarketplaceView({
   const [loading, setLoading] = useState(peekMarketRegistry() === null)
   const [error, setError] = useState<string | null>(null)
 
-  // 搜索、分类与排序
+  // 搜索、分类与排序。默认下载量（2026-09-24 维护者裁定：下载量比星标更接近
+  // 「大家都在用什么」，两处一致——「添加插件」弹窗同批对齐到同一默认值）。
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
-  const [sortOption, setSortOption] = useState<MarketSortOption>("stars")
+  const [sortOption, setSortOption] = useState<MarketSortOption>("downloads")
   const [expandAllCategories, setExpandAllCategories] = useState(false)
 
   // 分页状态
@@ -242,7 +243,7 @@ export function MarketplaceView({
               value={sortOption}
               onValueChange={(val) => setSortOption(val as MarketSortOption)}
             >
-              <SelectTrigger className="bg-wash font-medium">
+              <SelectTrigger aria-label={t.market.sortLabel} className="bg-wash font-medium">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-line bg-panel text-xs text-ink">

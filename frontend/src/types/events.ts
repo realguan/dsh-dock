@@ -23,6 +23,9 @@ export const EV = {
   bootUpdate: "boot:update",
   appUpdate: "app:update",
   settingsChanged: "app:settings-changed",
+  /** dsh 升级链路（boot.rs::emit_upgrade）：running → done/failed；`installed`
+   *  区分「真装了新版本」与「已是最新」的 Skip——自动重启判据只用前者。 */
+  dshUpgrade: "dsh:upgrade",
 } as const
 
 export type BootStepState = "pending" | "running" | "done" | "error"
@@ -63,6 +66,14 @@ export interface BootErrorEvent {
 
 export type AppUpdateEvent = ClientUpdate
 export type VersionsSnapshot = UpdateStatus
+/// `dsh:upgrade` 载荷（boot.rs::emit_upgrade）：`phase` = running/done/failed；
+/// `detail` = 已装版本（done）或失败原因（failed）；`installed` 仅 done 有意义
+/// （true = 装了新版本，false = 已是最新的 Skip）。
+export interface DshUpgradeEvent {
+  phase: string
+  detail: string
+  installed?: boolean
+}
 /// `app:settings-changed` 载荷：壳设置全量（locale / switcherShortcut / …）。
 /// 与 `ShellSettings` 同形——emit 侧直接序列化该结构（commands/console.rs）。
 export type SettingsChangedEvent = ShellSettings

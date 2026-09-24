@@ -12,6 +12,8 @@ import { useI18n } from "@/stores/i18nStore"
 import { useBootStore } from "@/stores/bootStore"
 import { useProfilesStore } from "@/stores/profilesStore"
 import { useQueueStore } from "@/stores/queueStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
+import { setRestartProfileHandler } from "@/lib/restartProfile"
 import { deriveHandoff } from "@/lib/handoff"
 import { Emblem } from "@/components/layout/Emblem"
 import { PageShell } from "@/components/layout/PageShell"
@@ -169,7 +171,12 @@ export function ProfileManager() {
   const handoffGeneration = bootIntent?.generation ?? -1
   useEffect(() => {
     if (handoffPhase === "ready" || handoffPhase === "failed") refreshAll()
-  }, [handoffPhase, refreshAll])
+    // 就绪 = 该档带着新配置重新起来了 → 摘掉它的「待重启」标记（2026-09-24）。
+    // 失败不清（重启没成功，变更仍待生效）；无 intent 不清（无事发生）。
+    if (handoffPhase === "ready" && handoff) {
+      useRestartNeededStore.getState().clear(handoff.target)
+    }
+  }, [handoffPhase, handoff, refreshAll])
 
   // 交接生命周期（ADR-0014）三种收场：
   //   就绪 → 停留一拍让用户看清「已就绪」，再收起、行状态回落常规徽标；
@@ -233,10 +240,12 @@ export function ProfileManager() {
     startHandoff(name).catch((e) => showToast(String(e), "warn"))
   }
 
-  // 重启
-  const handleRestart = (name: string) => {
+  // 重启（同 profile 停止重起）。稳定引用：它要注册进 lib/restartProfile 的
+  // 模块级单例（「重启后生效」提示条的唯一动作链，2026-09-24），每次渲染换引用
+  // 会让注册/注销在 effect 里反复空转。
+  const handleRestart = useCallback((name: string) => {
     setSwitchTarget(name)
-  }
+  }, [])
 
   /// 交接发起（ADR-0014）：清掉上一轮步骤 → 调壳 → **把 Rust 返回的交接意图
   /// 播种进 bootStore**。意图带着 startedAt/generation 回来，于是控制中心与
@@ -257,6 +266,14 @@ export function ProfileManager() {
     },
     [showToast, t],
   )
+
+  // 「重启后生效」提示条的动作链（2026-09-24）：全仓重启按钮的统一出口
+  // （lib/restartProfile.ts）。走 handleRestart = 与左栏行的「重启」完全同一条
+  // 链（确认框 → 交接导轨）。卸载时注销，避免关窗/热更新后留下旧闭包处理器。
+  useEffect(() => {
+    setRestartProfileHandler(handleRestart)
+    return () => setRestartProfileHandler(null)
+  }, [handleRestart])
 
   // 过滤后的 Profile 列表
   const filteredList = useMemo(() => {
@@ -468,20 +485,6 @@ export function ProfileManager() {
               }
               busy={rowBusy === currentSelectedProfile?.name}
               onLaunch={() => currentSelectedProfile && handleLaunch(currentSelectedProfile.name)}
-              onRestart={() =>
-                currentSelectedProfile && handleRestart(currentSelectedProfile.name)
-              }
-              onCopy={() =>
-                currentSelectedProfile &&
-                setNameOp({ mode: "copy", source: currentSelectedProfile.name })
-              }
-              onRename={() =>
-                currentSelectedProfile &&
-                setNameOp({ mode: "rename", source: currentSelectedProfile.name })
-              }
-              onDelete={() =>
-                currentSelectedProfile && setDeleteTarget(currentSelectedProfile.name)
-              }
               onNotice={showToast}
             />
           </section>
@@ -523,6 +526,13 @@ export function ProfileManager() {
             showToast(warnings.join(" "), "warn")
           } else if (nameOp?.mode === "rename") {
             showToast(t.profiles.renameDone(newName), "ok")
+            // 重命名 = 同一个盘上目录换了名字：待重启的是**那份配置**，不是旧名字。
+            // 把标记从旧名挪到新名（2026-09-24）——只清不挪会丢事实，只留不清会
+            // 在插件中心挂一条重启一个已不存在档名的死横幅。
+            if (useRestartNeededStore.getState().pending.includes(nameOp.source)) {
+              useRestartNeededStore.getState().clear(nameOp.source)
+              useRestartNeededStore.getState().mark(newName)
+            }
           } else {
             showToast(t.profiles.copyDone(newName), "ok")
           }
@@ -540,6 +550,11 @@ export function ProfileManager() {
           )
           if (selectedName === deleteTarget) {
             setSelectedName(null)
+          }
+          // 档没了 → 它的「待重启」标记一并摘掉（2026-09-24）：否则插件中心会
+          // 挂着一条重启一个不存在档的死横幅。
+          if (deleteTarget) {
+            useRestartNeededStore.getState().clear(deleteTarget)
           }
         }}
       />

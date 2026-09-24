@@ -10,6 +10,7 @@
 import { create } from "zustand"
 import { api } from "@/lib/tauri"
 import { useI18nStore } from "@/stores/i18nStore"
+import { useRestartNeededStore } from "@/stores/restartNeededStore"
 import {
   activeCount,
   applyOutcome,
@@ -46,6 +47,9 @@ interface QueueState {
   running: boolean
   /** 最近一次终态（done/failed）时间戳——订阅方据此回填本地安装状态 */
   lastFinishedAt: number
+  /** 最近一次终态所属的 profile（2026-09-24）：按档刷新用——队列是跨档的，
+   *  「刚装完 A 档」不该触发正在看 B 档的详情页重取。null = 本窗还没终结过。 */
+  lastFinishedProfile: string | null
   setNotifier: (n: NoticeFn | null) => void
   enqueue: (input: QueueEnqueueInput) => void
   /** 入队并等到该项终结（2026-09-15 R2）。**一次调用对应一次终结**：面板上的
@@ -86,8 +90,15 @@ export const useQueueStore = create<QueueState>((set, get) => {
     set((s) => ({
       running: false,
       lastFinishedAt: terminal ? Date.now() : s.lastFinishedAt,
+      lastFinishedProfile: terminal ? finished.profile : s.lastFinishedProfile,
       items: s.items.map((i) => (i.id === finished.id ? finished : i)),
     }))
+    // 安装/分发/卸载成功 = 该档的插件集变了 → 记入「待重启」集合（2026-09-24）。
+    // 这一处是六个入队口（市场安装、手动安装、分发、弹窗市场安装、能力装/卸）
+    // 的共同出口，标记不落在各调用方——否则漏一个入口就少一条重启提示。
+    if (finished.status === "done") {
+      useRestartNeededStore.getState().mark(finished.profile)
+    }
     const { t } = useI18nStore.getState()
     if (finished.status === "done") {
       notify(
@@ -139,6 +150,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
     items: [],
     running: false,
     lastFinishedAt: 0,
+    lastFinishedProfile: null,
 
     setNotifier: (n) => {
       notifier = n

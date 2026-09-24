@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
+  ArrowDownAZ,
   Check,
   Download,
   Import,
@@ -16,7 +17,7 @@ import { useI18n } from "@/stores/i18nStore"
 import { useQueueStore } from "@/stores/queueStore"
 import { useInstallFlightStore } from "@/stores/installFlightStore"
 import type { AggregatePlugin, PluginRowState } from "@/types/ipc"
-import type { MarketPlugin, MarketRegistry } from "@/types/market"
+import type { MarketPlugin, MarketRegistry, MarketSortOption } from "@/types/market"
 import {
   groupPickerCandidates,
   pickerCandidates,
@@ -30,6 +31,7 @@ import {
   getPluginDescription,
   getPluginDisplayName,
   marketCategoryOptions,
+  sortMarketPlugins,
 } from "@/lib/market"
 import { PROFILE_CHIP_CLASS } from "@/lib/format"
 import { loadMarketRegistry, peekMarketRegistry } from "@/lib/marketRegistry"
@@ -94,9 +96,23 @@ export function PluginAddDialog({
   const [marketError, setMarketError] = useState<string | null>(null)
   const [marketSearch, setMarketSearch] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
-  const [installingMarketPkg, setInstallingMarketPkg] = useState<string | null>(null)
+  // 排序：与「插件中心」的市场页**同款同源**（2026-09-24 维护者裁定）——同一个
+  // registry、同一个纯函数 `sortMarketPlugins`、同一批文案键；默认按下载量，
+  // 两处一致（市场页默认值同批对齐，此前是 stars）。
+  const [sortOption, setSortOption] = useState<MarketSortOption>("downloads")
 
   const enqueue = useQueueStore((s) => s.enqueue)
+  // 安装中判定**从队列派生**（2026-09-24）：不再自持局部态 + 定时器假装完成。
+  // 队列是会话级单一真相源——「排队中 / 安装中」都算 loading，done/failed 才解除；
+  // 关掉弹窗再打开状态还在，也不会出现"按钮恢复了但装了一半"的自相矛盾。
+  const queueItems = useQueueStore((s) => s.items)
+  const isMarketBusy = (p: MarketPlugin) =>
+    queueItems.some(
+      (i) =>
+        i.pkg === p.name &&
+        i.profile === target &&
+        (i.status === "queued" || i.status === "installing"),
+    )
 
   // 市场数据走 lib/marketRegistry.ts（**与插件中心的市场视图共用同一份缓存**）：
   // 2026-09-21 收口前两处各持一份模块级变量，从插件中心切到本弹窗必然重新拉取——
@@ -151,8 +167,10 @@ export function PluginAddDialog({
         )
       })
     }
-    return list
-  }, [registry, selectedCategory, marketSearch, activeLocale])
+    // 排序与市场页同一个纯函数（禁双源）；在截前 MARKET_VISIBLE_LIMIT **之前**排，
+    // 否则"按下载量排"排的只是筛出来那批的角落。
+    return sortMarketPlugins(list, sortOption)
+  }, [registry, selectedCategory, marketSearch, activeLocale, sortOption])
 
   const visibleMarketPlugins = filteredMarketPlugins.slice(0, MARKET_VISIBLE_LIMIT)
   const hiddenMarketCount = filteredMarketPlugins.length - visibleMarketPlugins.length
@@ -165,26 +183,17 @@ export function PluginAddDialog({
       onNotice?.(invalid, "warn")
       return
     }
-    setInstallingMarketPkg(p.name)
-    try {
-      useInstallFlightStore
-        .getState()
-        .launch({ x: e.clientX, y: e.clientY }, p.name)
-      enqueue({
-        pkg: p.name,
-        spec,
-        profile: target,
-        kind: "install",
-      })
-      onNotice?.(t.profiles.pluginAddMarketInstallDone(p.name), "ok")
-      setTimeout(() => {
-        setInstallingMarketPkg(null)
-        onDone()
-      }, 300)
-    } catch (err) {
-      setInstallingMarketPkg(null)
-      onNotice?.(String(err), "warn")
-    }
+    // 入队即返回：进度由「下载管理」与卡片自身的 loading 态呈现（2026-09-24）
+    // ——不再 300ms 后假装完成。入队/成功/失败三条 toast 由队列统一发。
+    useInstallFlightStore
+      .getState()
+      .launch({ x: e.clientX, y: e.clientY }, p.name)
+    enqueue({
+      pkg: p.name,
+      spec,
+      profile: target,
+      kind: "install",
+    })
   }
 
   // ================= 2. 从其他 Profile 导入状态 =================
@@ -409,6 +418,47 @@ export function PluginAddDialog({
                     </SelectContent>
                   </Select>
                 )}
+
+                {/* 排序：与「插件中心」市场页同款（同结构、同文案键、同默认
+                    下载量）。弹窗列表一次只铺 24 条，没有排序时"想装个热门的"
+                    得靠搜索碰运气。 */}
+                <Select
+                  value={sortOption}
+                  onValueChange={(val) => setSortOption(val as MarketSortOption)}
+                >
+                  <SelectTrigger
+                    aria-label={t.market.sortLabel}
+                    className="border-line bg-panel w-[150px] shrink-0 rounded-lg text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="downloads">
+                      <div className="flex items-center gap-2">
+                        <Download className="size-3.5" />
+                        <span>{t.market.sortDownloads}</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="stars">
+                      <div className="flex items-center gap-2">
+                        <Star className="size-3.5" />
+                        <span>{t.market.sortStars}</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="newest">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="size-3.5" />
+                        <span>{t.market.sortNewest}</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="name">
+                      <div className="flex items-center gap-2">
+                        <ArrowDownAZ className="size-3.5" />
+                        <span>{t.market.sortName}</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {marketLoading ? (
@@ -436,7 +486,7 @@ export function PluginAddDialog({
                       (plugin.npm ? installedPlugins.includes(plugin.npm) : false)
                     const displayName = getPluginDisplayName(plugin.name)
                     const desc = getPluginDescription(plugin.description, activeLocale)
-                    const isBusy = installingMarketPkg === plugin.name
+                    const isBusy = isMarketBusy(plugin)
 
                     // 与插件中心的市场卡同款视觉语言（rounded-2xl / p-4 / 来源图标）：
                     // 同一份数据在两处呈现风格不一致，就是"这个窗口不协调"的来源。
