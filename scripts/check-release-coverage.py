@@ -136,16 +136,68 @@ def touches_only_release_notes(sha: str, repo: str) -> bool:
     return bool(files) and set(files) <= {NOTES_ONLY_PATH}
 
 
-def previous_tag(rev: str, repo: str) -> str | None:
-    """`rev` 之前最近的一个 tag；没有则 None（首次发版）。"""
+def all_tags(repo: str) -> list[str]:
+    out = subprocess.check_output(["git", "-C", repo, "tag", "--list"], text=True)
+    return [t for t in out.split() if t]
+
+
+def is_shallow(repo: str) -> bool:
+    """浅克隆⇒ tag 历史不可信（`git describe` 找不到上个 tag，`<tag>^` 也不存在）。
+
+    这是区分「真·首次发版」与「CI 没取历史」的**唯一可靠信号**：
+    浅克隆里 `git tag` 可能返回空，与真·无 tag 的仓库看起来一模一样——
+    2026-09-30 v1.3.4 的 CI 就是这么被蒙过去的（报绿、什么都没查）。
+    """
     try:
-        return subprocess.check_output(
+        out = subprocess.check_output(
+            ["git", "-C", repo, "rev-parse", "--is-shallow-repository"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return out.strip() == "true"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False  # 老 git 无此开关：不下结论，交由后续判据
+
+
+def previous_tag(rev: str, repo: str) -> tuple[str | None, str | None]:
+    """`rev` 之前最近的一个 tag。
+
+    返回 `(tag, None)` = 找到；`(None, None)` = 确实没有更早的 tag（首次发版）；
+    `(None, reason)` = **推不出来**（仓库里明明有 tag，却找不到 rev 之前的）。
+
+    最后一档是关键，也是 2026-09-30 v1.3.4 真实踩到的坑：CI 的
+    `actions/checkout` 默认浅克隆且不带 tag，于是 `git describe` 找不到 v1.3.3，
+    而旧实现把「找不到」一律当成「首次发版」**放行** ⇒ 闸门在 CI 里**静默跳过**、
+    报绿却什么都没查。这正是本闸门自己要消灭的那类假绿，不能自己犯。
+
+    故此处**区分**「没有 tag」与「有 tag 但找不到」：后者必须报错，
+    由调用方 fail-closed（提示补 fetch-depth: 0 / fetch-tags: true）。
+    """
+    try:
+        found = subprocess.check_output(
             ["git", "-C", repo, "describe", "--tags", "--abbrev=0", f"{rev}^"],
             text=True,
             stderr=subprocess.DEVNULL,
-        ).strip() or None
+        ).strip()
+        if found:
+            return found, None
     except subprocess.CalledProcessError:
-        return None
+        pass
+    # 浅克隆 ⇒ 历史不可信，必须报错（与「真·没有 tag」区分开）
+    if is_shallow(repo):
+        return None, (
+            f"当前是**浅克隆**，tag 历史不可信，无法确定 {rev} 之前的 tag。"
+            f"CI 的 actions/checkout 默认 `fetch-depth: 1` 且不带 tag —— "
+            f"请给该 step 加 `fetch-depth: 0` 与 `fetch-tags: true`。"
+        )
+    # 完整克隆里一个 tag 都没有 ⇒ 真·首次发版
+    if not all_tags(repo):
+        return None, None
+    return None, (
+        f"仓库里有 tag，但找不到 {rev} 之前的任何一个。最常见原因是**浅克隆未取 tag**"
+        f"（CI 的 actions/checkout 默认 fetch-depth: 1 且不带 tag）——"
+        f"请给该 step 加 `fetch-depth: 0` 与 `fetch-tags: true`。"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -178,12 +230,23 @@ def main() -> int:
         )
         return 1
 
-    prev = args.prev or previous_tag(args.tag, repo)
-    if prev is None and not args.prev:
-        print(
-            f"::notice::未找到 {args.tag} 之前的 tag（首次发版？）——覆盖清单闸门跳过。",
-        )
-        return 0
+    if args.prev:
+        prev: str | None = args.prev
+    else:
+        prev, reason = previous_tag(args.tag, repo)
+        if reason is not None:
+            print(
+                f"::error::无法确定 {args.tag} 的上个 tag，覆盖清单闸门**拒绝跳过**（fail-closed）。\n"
+                f"原因：{reason}\n"
+                f"（本条曾是真实事故：v1.3.4 在 CI 里就是这样静默跳过、报绿却什么都没查。）",
+                file=sys.stderr,
+            )
+            return 1
+        if prev is None:
+            print(
+                f"::notice::仓库中没有任何 tag（首次发版）——覆盖清单闸门跳过。",
+            )
+            return 0
 
     commits = commit_range(args.tag, prev, repo)
     if commits is None:

@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 _SCRIPT_PATH = Path(__file__).parents[1] / "check-release-coverage.py"
@@ -17,6 +20,8 @@ _SPEC.loader.exec_module(_MODULE)
 
 parse_coverage = _MODULE.parse_coverage
 resolve_version = _MODULE.resolve_version
+previous_tag = _MODULE.previous_tag
+all_tags = _MODULE.all_tags
 compare_coverage = _MODULE.compare_coverage
 split_sections = _MODULE.split_sections
 
@@ -103,6 +108,71 @@ class ResolveVersionTest(unittest.TestCase):
 
     def test_prerelease_tag_is_accepted(self) -> None:
         self.assertEqual(resolve_version("v1.4.0-rc.1", None), "1.4.0-rc.1")
+
+
+class PreviousTagFailClosedTest(unittest.TestCase):
+    """**不要让 v1.3.4 那次「CI 静默跳过」重演。**
+
+    事故形态：CI 的 actions/checkout 默认浅克隆且不带 tag ⇒ `git describe` 找不到
+    上个 tag ⇒ 旧实现把「找不到」当成「首次发版」放行 ⇒ 闸门报绿但什么都没查。
+    这正是本闸门要消灭的那类假绿，所以必须在「有 tag 却取不到」时**报错而非跳过**。
+
+    这里用真实 git 仓库复现「浅克隆」：clone 出 depth=1 且不带 tag 的副本。
+    """
+
+    def _git(self, *args: str, cwd: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    def test_lightweight_clone_without_tags_must_not_be_treated_as_first_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = os.path.join(tmp, "origin")
+            light = os.path.join(tmp, "light")
+            os.makedirs(origin)
+            self._git("init", "-q", cwd=origin)
+            self._git("config", "user.email", "t@t", cwd=origin)
+            self._git("config", "user.name", "t", cwd=origin)
+            Path(origin, "f.txt").write_text("a")
+            self._git("add", ".", cwd=origin)
+            self._git("commit", "-qm", "c1", cwd=origin)
+            self._git("tag", "v1.0.0", cwd=origin)
+            Path(origin, "f.txt").write_text("b")
+            self._git("commit", "-qam", "c2", cwd=origin)
+            self._git("tag", "v1.1.0", cwd=origin)
+
+            # 模拟 CI：浅克隆且不带 tag
+            self._git("clone", "-q", "--depth", "1", "--no-tags", f"file://{origin}", light, cwd=tmp)
+
+            self.assertEqual(all_tags(light), [], "前提：浅克隆确实没取到 tag")
+            tag, reason = previous_tag("v1.1.0", light)
+            self.assertIsNone(tag)
+            self.assertIsNotNone(
+                reason,
+                "仓库有 tag 却取不到时必须给出原因（fail-closed），"
+                "不得当作『首次发版』放行——v1.3.4 就是这样在 CI 里静默跳过的",
+            )
+            self.assertIn("fetch-depth", reason or "")
+
+    def test_full_clone_finds_previous_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = os.path.join(tmp, "origin")
+            full = os.path.join(tmp, "full")
+            os.makedirs(origin)
+            self._git("init", "-q", cwd=origin)
+            self._git("config", "user.email", "t@t", cwd=origin)
+            self._git("config", "user.name", "t", cwd=origin)
+            Path(origin, "f.txt").write_text("a")
+            self._git("add", ".", cwd=origin)
+            self._git("commit", "-qm", "c1", cwd=origin)
+            self._git("tag", "v1.0.0", cwd=origin)
+            Path(origin, "f.txt").write_text("b")
+            self._git("commit", "-qam", "c2", cwd=origin)
+            self._git("tag", "v1.1.0", cwd=origin)
+
+            self._git("clone", "-q", f"file://{origin}", full, cwd=tmp)
+            self._git("fetch", "-q", "--tags", cwd=full)
+            tag, reason = previous_tag("v1.1.0", full)
+            self.assertEqual(tag, "v1.0.0")
+            self.assertIsNone(reason)
 
 
 class NotesOnlyPathTest(unittest.TestCase):

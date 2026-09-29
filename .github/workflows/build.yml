@@ -86,6 +86,12 @@ jobs:
     steps:
       # 固定到完整 commit SHA，供应链更新由 Dependabot 提交可审查 PR。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 覆盖清单闸门要算「上个 tag..本 tag」的区间，默认的浅克隆（depth=1、不带 tag）
+          # 会让它找不到上个 tag。2026-09-30 v1.3.4 首次运行时正是这样**静默跳过**的
+          # （详见 check-release-coverage.py 的 fail-closed 说明）。
+          fetch-depth: 0
+          fetch-tags: true
 
       # 版本号一致性防呆闸门（2026-08-31）：
       # 当由 tag（如 v0.8.7）触发构建时，强制校验 git tag 剥除 'v' 前缀后必须与
