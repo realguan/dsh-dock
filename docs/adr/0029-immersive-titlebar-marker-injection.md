@@ -1,15 +1,27 @@
 # ADR-0029：沉浸式标题栏——标记补打 + app-region 计算样式映射
 
 - **日期**：2026-09-21
-- **状态**：已接受（**范围 2026-09-23 收窄为 macOS 单平台**：Windows 一侧由
+- **状态**：**已退役（2026-09-29）——代码已物理删除，本档保留为决策史。**
+  退役依据：维护者裁定 dsh-dock 定位为 **web 档套壳**，且时序打标记经实测无可靠时刻
+  ⇒ [ADR-0032](0032-host-contract-and-safe-degradation.md) §14/§15/§16。
+  删除面含本档全部三层（标记注入、窗口 overlay/红绿灯、几何语义自驱拖拽）；
+  防复辟闸门见 `ui.rs::no_desktop_claim_tests`。**不得按本档「照方抓药」重建**——
+  重建前先读 ADR-0032 §14 的实测结论。
+- **原状态**：已接受（**范围 2026-09-23 收窄为 macOS 单平台**：Windows 一侧由
   [ADR-0030](0030-windows-keeps-native-decorations.md) 撤回，见该档 §1/§4；本档 §1 表中
   「Windows 桌面档」登记条与 §5/§6 的 Windows 表述按该档失效。
   **拖拽机制于 2026-09-23 改版**：§3 方案 A 的第 2 步（app-region 计算样式映射）经实测作废，
-  改为几何语义自驱拖拽 —— 见 §7）
+  改为几何语义自驱拖拽 —— 见 §7。
+  ⚠️ **标记层已于 2026-09-29 移交 [ADR-0032](0032-host-contract-and-safe-degradation.md)**：
+  上游开始把 `data-platform` 当**运行时身份**消费，本档「补打官方标记以唤醒桌面 CSS」的做法
+  实为宣称一个本档不具备的身份 ⇒ §2 约束 2 的「失败必须静默降级」在标记这一层被推翻，
+  改为显式降级 + 自动回退。**§8 为回写**（含 §7.3 两条失效依赖与一条假绿闸门自查）。
+  窗口层与注入层骨架继续有效）
 - **提出人**：维护者（截图对比触发）+ AI 实施
 - **相关方**：`src-tauri/src/ui.rs`（主窗口）、`frontend/src/injected/`、`frontend/src/lib/immersiveChrome.ts`
 - **关联**：ADR-0014（交接幕布，注入脚本先例）；dsh 上游 `apps/desktop`（Electron 官方客户端实证）；
-  [ADR-0030](0030-windows-keeps-native-decorations.md)（Windows 档撤回）；issue #16
+  [ADR-0030](0030-windows-keeps-native-decorations.md)（Windows 档撤回）；
+  [ADR-0032](0032-host-contract-and-safe-degradation.md)（上游契约层，2026-09-29）；issue #16
 
 ---
 
@@ -263,3 +275,50 @@ v1.3.3 发布前维护者真机反馈「macOS 顶栏拖不动」。复核后发�
   驱动 AppKit 的拖拽循环（窗口坐标零变化），故自动化验证路径在本机不可用，改以人工验证为准；
   后续若要回归自动化，需另找注入点（如应用内 devtools 直接调 `startDragging()` 只证 IPC 通，
   证不了「跟手」）。
+
+## 8. 2026-09-29 补记：上游契约层的两处失效，本档让位给 ADR-0032
+
+> **状态**：本档 §2 约束 2 的「**失败必须静默降级**」在**标记这一层**已被推翻。
+> 维护者 2026-09-29 裁定改为**显式降级 + 自动回退**，上游契约层整体移交
+> [ADR-0032](0032-host-contract-and-safe-degradation.md)。本档的**窗口层**（`ui.rs` 的
+> `TitleBarStyle::Overlay` / `hidden_title` / `Effect::Sidebar` / 红绿灯 AppKit 定位 / §7 几何
+> 自驱拖拽）与**注入层骨架**（origin 门、同步乐观命中 → 异步精确确认）继续有效，不改。
+
+### 8.1 触发
+
+dsh 升级后主窗口工作台启动即 `Failed to load plugins`（浏览器打开正常）。
+根因不在本档的拖拽机制，而在本档依赖的**标记本身已升格为运行时身份判据**——
+`dsh-client-shortcuts` 读 `documentElement.dataset.platform` 决定 `runtime`，
+并要求 `window.dshDesktop.keyboard` 在场。详见 ADR-0032 §1 与复现台账复现点 25。
+
+### 8.2 §7.3 依赖表的失效与替换
+
+| 原条目（§7.3） | 现状（2026-09-29，dsh 0.2.0-rc.1） | 处置 |
+|:--|:--|:--|
+| 拖拽带钩子 `data-shell-leading-band` | **全树 0 命中**。仅存 `data-shell-leading`，且语义已变为 AppFrame overlay 层里 `leadingMounted &&` 的 **leadingSeat**（`dsh-client-ui-layout/lib/client.js:350`；同处新增 `data-shell-overlay`），**不是**那条 52px / `pointer-events:none` 的拖拽带 | 钩子条目**作废**。壳 `BAND_SELECTOR`（[`immersive-chrome.js:55`](../../frontend/src/injected/immersive-chrome.js#L55)）恒查不到 ⇒ 已静默退回 `FALLBACK_BAND_HEIGHT = 52` 的几何兜底带（拖拽仍可用）。**§7 的几何语义自驱机制因此成为唯一路径**（原「钩子优先、几何兜底」等于恒走兜底），若将来要用新钩子，须按**新语义**重新登记 |
+| `isDarwinDesktop()` 读 `dataset.platform` | 仍存在（`dsh-client-ui-primitives/lib/index.js:7947-7949`），但其注释原文为 *"true only inside the macOS Electron shell"*——即该标记的**自述语义是身份断言**，不是样式开关 | 本档「补打官方标记以唤醒桌面 CSS」的做法，实为**宣称了一个本档并不具备的身份**。该声明已移交 ADR-0032（补全 `dshDesktop` 另一半） |
+| 交互元素排除表（`base.css` 的 no-drag 列表） | 未复核（本轮未触） | 保留在册，随 ADR-0032 P0 一并复核 |
+
+**§7.3 漏登记的一类消费者**（实测更正）：标记的 JS 消费者共 **4 处**，§7.3 当时只记了
+`isDarwinDesktop` 一处 —— `ui-layout/lib/client.js:240`（→ `:241` `collapsedWidth` 56→0、
+`:314` `leadingMounted`）、`ui-sidebar/lib/client.js:261`、`ui-primitives/lib/index.js:7947`、
+`dsh-client-shortcuts/lib/client.js:721`。**4 处中 3 处以「表现」消费、1 处以「身份」消费**，
+而文档只描述了身份含义。
+
+### 8.3 本档自查：一条**假绿闸门**（同一失效模式第二次）
+
+[`ui.rs:897`](../../src-tauri/src/ui.rs#L897)（以及 [`ui.rs:1310`](../../src-tauri/src/ui.rs#L1310)、
+[`ui.rs:1348-1350`](../../src-tauri/src/ui.rs#L1348-L1350) 的常量同步闸门）断言注入脚本含有
+`"data-shell-leading-band"` —— 而该键名**在 dsh 里已经不存在**。结果是：**闸门长期绿着，
+它守的机制早已失效**。这与本档 §5 行动项里 2026-09-23 记录的那次（「键名只剩在注释里，
+断言照样绿」，该闸门自己的注释即为记录）是**同一失效模式**，因此：
+
+> **闸门判据必须是「机制还在不在」，不能是「字符串还在不在」。**
+
+该项已单列为 ADR-0032 行动项 **P0-d**（换成能红的判据：新钩子名 + 几何兜底判据）。
+
+### 8.4 复审
+
+本档 §6 的复审条件保留，并追加：**ADR-0032 落地后，本档的标记发射（`immersive-chrome.js:193`
+的 `dataset.platform = MARKER`）改为受契约表门控**——标记不再是本档能单独决定的事。
+

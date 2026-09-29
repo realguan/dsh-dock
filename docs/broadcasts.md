@@ -31,6 +31,127 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-29 修订 · **沉浸式栈物理删除 + ADR-0029 退役**（ADR-0032 §16）—— guan（AI 协作）
+
+- **触发**：维护者裁定「删」。即 §15.5 提出的问题——ADR-0029 那三层（标记注入 / 窗口 overlay+红绿灯 / 几何语义自驱拖拽）是否物理删除。裁定前状态：一套**永不执行的死代码**（`HOST_MODE !== 'desktop'` 时脚本早退），有闸门护着但会误导后来人。
+- **变更（删除为主，代码净减）**：
+  1. **删**：`immersive-chrome.js` 整脚本 + `immersiveChrome.ts` 纯模型 + 其 vitest；`ui.rs` 的 macOS `Overlay`/`hidden_title`/`Effect::Sidebar` + `builder` 的 `mut` 与其 `cfg_attr(allow(unused_mut))` 兜底；`traffic_lights.rs` 整模块（AppKit `setFrameOrigin` FFI）+ 三处 `align` 接线；`hostcontract.rs` 整模块；`LaunchSpec.host_mode` 与计算、`Executor::host_mode()`、`boot.rs` 的 `ShellState.host_mode`/落账/fragment 下发/窗口形态切换；IPC `get_host_contract`（三处同步 + 登记册）、`HostContractStatus.tsx`/`HostContractRow.tsx` 与其测试、`hostContract` 字典组（zh/en）、`types/ipc.ts` 类型、`tauri.ts` api 方法、两处页面接线、`About.tsx` 里随之无用的 `usePlatform`。
+  2. **ACL 收回三条**：`core:window:allow-start-dragging`、`core:window:allow-toggle-maximize`（只为自驱拖拽授的；已确认无其他使用者——switcher 胶囊拖的是元素不是窗口）、`allow-get-host-contract`。**permissions 61 → 58**。
+  3. **换来一条反向闸门**：`ui.rs::no_desktop_claim_tests::ui_never_claims_desktop_host` 一并钉死五条腿（`title_bar_style(Overlay)` / `hidden_title(true)` / `Effect::Sidebar` / `traffic_lights::` / `include_str!(immersive-chrome.js)`），并保留 ADR-0030 的 `windows_window_stays_decorated`。**负例已验证**：注入一段合法的 `w.title_bar_style(tauri::TitleBarStyle::Overlay)` 死代码即红，报错并指路「先改 ADR-0032 §15/ADR-0029 并重跑 §14 时序实验」。
+  4. `window_background_tests` 里那条「注释承诺 ≠ 代码事实」的半句断言随对象消失，收窄为 `main_window_keeps_its_title`（只保「窗口标题不得被顺手删」——它仍供窗口切换器/任务栏/关于弹窗使用）。
+- **影响**：**行为无变化**（删的是永不执行的代码），但**视觉配置翻转**：macOS 主窗口从"建窗即 overlay、导航时翻回原生"变为**自始至终原生装饰**（此前启动屏期间曾是 overlay）。风险面因此消失——不再有"窗口形态中途切换"这一步。**代码净减**。
+- **凭据**：Rust `517 passed / 0 failed`（-23 为随功能删除的用例）、clippy `-D warnings` **0**、fmt 净；前端 `682 passed`（67 文件，-33 为随功能删除的用例）、tsc 0、oxlint 0（183 文件）；反向闸门负例验证 1 项；`scripts/tests/*.py` 全过（**注**：本轮未逐一重跑，见下）。
+- **文档**：ADR-0032 §16（删除面清单 + 反向闸门 + 最终形态 + 复审条件）；**ADR-0029 头部标注「已退役」**且索引行加重建警告（不得照方抓药）；台账复核记录；IPC 登记册条目撤除。
+- **合入**：**待定，尚未提交**。
+
+### 2026-09-29 裁定 · **dsh-dock 定位收束为「web 档套壳」+ 撤除降级提示**（ADR-0032 §15）—— guan（AI 协作）
+
+- **触发**：维护者「我感觉跑偏了，我只想做个 web 档的套壳」+「dsh 提不了 issue，方案 A 不太好」。这是对 ADR-0032 首裁（成为契约完整的桌面宿主）的**范围收束**。
+- **作废**：ADR-0032 §3 方案 A 与 **P1/P2/P3/P4 全部不做**；§13 的 P1 前置实验降为决策史；四项待裁定（遥测 / region 旁路 / P4 是否做 / P2 是否同批）**随之全部失效**。
+- **方案 D（时序打标记）实测量定不可行**（ADR-0032 §14）：同一反代逐字节转发，唯一变量 = 打标记时刻。结果——`document-start` / `DOMContentLoaded` / `+1 rAF` **稳定红屏**；**`+2 rAF` 不稳定（4 次里 2 次红屏）**；`+8 rAF` 干净但表现层没拿到（3/3）；`window load` 干净且拿到（3/3）。**V5/V6 非单调 ⇒ 无可预测模型**，两条独立理由否决：① 最优时刻仍有 ~50% 红屏概率；② 无法解释为何能工作，而失效方向是「工作台起不来」。⇒ **方案 A（放弃沉浸式观感）是唯一答案，不是退让**。
+  - **探针自身的一处更正**（值得记）：首版观测点用 `--dsh-frame-top-clearance` 计算值——那是 **CSS 变量、实时生效**，任何时刻打标记都会变 48px，**根本区分不了「JS 布局是否读到 darwin」**；改用**渲染期烘焙**的 `[data-shell-leading]`（`leadingMounted = darwin && sidebarCollapsed`）才作数。**观测点必须选"只在那一刻成立"的量**。
+- **保留**：P0-a 版本闸 + 原子性闸门（正是「诚实 web 套壳」的执行机制）、复现点 25（事实资产，与形态无关）、`hostcontract` 模块。
+- **撤除（本轮唯一行为回退）**：降级提示整块——注入层 `renderDegradedNotice` / `shouldShowHostNotice` / 打扰去重键；两处展示面的 warn 色调、原因文案与可行动作。理由：定位定为 web 套壳后，系统原生顶栏是**设计本身**，没有"回退"可言，再天天提示就是**骚扰且是错的**。
+  - 顺带**收回**当时为提示开的存储边界：沉浸式脚本现在**只读不写**（连 `sessionStorage` 也不碰），由闸门正向钉住；另加**两道反向闸门**（把提示加回来即红 / 触达存储即红），两道均做过负例验证。
+  - 控制中心与关于页改为**中性事实陈述**（「当前形态：系统原生 / 沉浸式」+ dsh 版本 + 一句说明），字典同步改写并加「不得含告警措辞」的断言。
+- **影响**：**行为变化** = macOS 工作台内不再出现任何外观提示（此前每次降级弹一次）；控制中心/关于页的外观行从告警变为中性。**代码净减**（注入脚本 460 → 267 行）。
+- **凭据**：Rust `540 passed / 0 failed`、clippy `-D warnings` 0、fmt 净；前端 `715 passed`（69 文件，较上轮 -4 = 降级提示的行为用例随功能撤除）、tsc 0、oxlint 0；`scripts/tests/*.py` 全过。时序实验 6 变体 × 多轮共 13 次导航，全部记录在上表。
+- **待维护者确认**：ADR-0029 的三层（标记注入 + 窗口 overlay/红绿灯 AppKit 定位 + 拖拽自驱）是否**物理删除**——当前是一套永不执行的死代码（有闸门护着但会误导后来人）。ADR-0032 §15.5 **建议删**，但属产品级取舍（将来上游若放开标记则需重写），故未擅动。
+- **合入**：**待定，尚未提交**。
+
+### 2026-09-29 调研 · **P1 前置实验**（宿主契约第 1 代可行性，ADR-0032 §13）—— guan（AI 协作）
+
+- **触发**：计划批准的第二步——P1（成为契约完整的桌面宿主）动代码前的可行性闸门。
+- **做法**：harness 反代注入第 1 代最小集（`dshDesktop{protocolVersion:1,keyboard,shortcuts}` + `dshOnboarding` + `data-platform="darwin"`），dsh 0.2.0-rc.1 实测。
+- **已证实三项**：① **启动干净**（0 pending，无 `Failed to load plugins`）；② **桥被 dsh 消费**（`keyboard.subscribe`×1、`shortcuts.subscribe`×1、`shortcuts.get`**×21**）；③ **投递路径可用**（由 subscribe 捕获的 listener 可调用、无异常）⇒ **P1 可行性前提成立**。
+- **两项结论来自源码、无需实测**：
+  - `dsh-client-shortcuts:912` 的 native 分支把 `composing`/`defaultPrevented` **硬编码为 false**，而 `:661` 的 `dispatch` 开头正是靠这两个字段过滤 ⇒ **壳必须自守 composition**，否则 IME 组合期快捷键会误触发。
+  - `:675` `priority = runtime === "desktop" && (windows||macos)` ⇒ **desktop 档旁路 region 门控**：P1 之后"可配置快捷键不再按焦点区域过滤"，这是相对今天 web 档的**真实行为变化**（不是等价迁移）。
+- **未决（阻塞 P1 决策）**：① 判据"投递是否真的触发命令"未测到——需工作区加载后侧栏可切换才好观测，而 harness 里 dsh 的工作区引导难以自动化；rig 在**流式响应 / 一次性 launch token / SPA 导航**三处反复受挫，继续投入产出比低 ⇒ 建议**降级为 P1 的验收项**（在壳的真实环境里跑，那时工作区本来就有）。② **遥测**：`dsh-client-product-analytics:20` `if (!("dshDesktop" in globalThis)) return;` ⇒ 桥存在即激活远端策略流，**须维护者裁定**（壳侧暂无已知开关）。
+- **产出**：ADR-0032 §13（含 **rig 经验 6 条**，P0-b conformance 套件产品化时必须一次性解决，否则每次升级复核都要重踩：launch token 一次性 / 反代必须直通 SSE / 必须转发 POST body / `Runtime.evaluate` 要 `awaitPromise` 且表达式自 `JSON.stringify` / 探针须断言"脚本确实执行过"防 vacuous 全绿 / 观测点要选"会变的量"）+ 台账复核记录。
+- **影响**：**仅周知，无代码变化**。P1 的四个待裁定项（遥测 / region 旁路可接受性 / P4 是否明确不做 / P2 是否与 P1 同批）仍未决。
+- **凭据**：实验结论如上；仓库状态 Rust `540 passed / 0 failed`、clippy 0、fmt 净；前端 `719 passed`（69 文件）、tsc 0、oxlint 0；`scripts/tests/*.py` 全过。
+- **合入**：**待定，尚未提交**。
+
+### 2026-09-29 修订 · **P0-c②：常驻可查面**（ADR-0032，补上「打开控制中心」按钮指向的洞）—— guan（AI 协作）
+
+- **触发**：P0-c① 的降级提示里「打开控制中心」是唯一真动作按钮，但它指向的控制中心**当时没有任何宿主契约信息**——按钮承诺了目的地没有的东西。这比"少个展示面"更严重，故优先补。
+- **变更**（Rust 2 + 前端 5 文件；1 个新只读 IPC）：
+  1. `hostcontract::view_for()` 纯函数 → `HostContractView{mode,dshVersion,requiredGeneration,suppliedGeneration,reason}`（camelCase，fixture 闸门覆盖）。
+  2. 新 IPC `get_host_contract`：三处同步 + `ipc-and-network-register.md` 登记 + `tauri.ts` api 方法。dsh 版本走既有 `engines::probe_engine`，不另起一套探测。
+  3. 两处展示**同源同一份 IPC**（禁双源）：控制中心**偏好页顶部**（偏好页是控制中心默认落地 tab ⇒ 点完按钮不用再点一次）+ 关于页运行环境区（`DimRow` 同族）。均 macOS-only（Win/Linux 恒原生，ADR-0030）。
+  4. 文案按**失败方向分三种**（版本未知 / 版本不兼容 / 代次不足），并断言"未知不得被写成不兼容"——否则把用户引向错误动作。`reason` 是机器判据，可整句粘贴进 issue。
+  5. 字典 zh/en 双侧 + `hostContract` 组（`generationValue` 为插值函数）。
+- **影响**：**仅新增展示面，无行为变化**。macOS 控制中心/关于页多一行状态；Win/Linux 不渲染。
+- **凭据**：Rust `540 passed / 0 failed`（+10）、clippy 0、fmt 净；前端 `719 passed`（+13，新增 `hostContractStatus.test.ts` 9 例）、tsc 0、oxlint 0、`scripts/tests/*.py` 全过。闸门负例 2 项（撤 reason 渲染 = 静默降级 ⇒ 红；撤字典键 ⇒ 红）。**两处返工**：`StateBlock` 无 `warn` tone 改用 `DimNote`；测试里 `not.toContain("invoke(")` 的断言字符串本身触发 Rust 全局闸门（它只剔 `//` 行），而该检查本就覆盖全部前端文件 ⇒ 删掉复述。
+- **未做**：真机渲染未验（无显示环境）；`get_host_contract` 每次调用重新探测 dsh 版本（数百 ms 级子进程开销），当前两个调用点可接受，做成实时刷新需加缓存。
+- **合入**：**待定，尚未提交**。P0-a + P0-c① + P0-c② 三批可一起发布；若单独发，发布说明须写「此版本起 macOS 顶栏回退原生装饰（dsh ≥ 0.1.7-rc.2）」。
+
+### 2026-09-29 修订 · **P0-c①：窗口层原子性 + 降级提示呈现**（ADR-0032，修 P0-a 半坏形态）—— guan（AI 协作）
+
+- **触发**：P0-a 只翻了页面层，窗口层仍 `TitleBarStyle::Overlay` —— 复盘发现这正好落在 ADR-0029 立档时判定的「标记与 overlay 是原子决策」上：只翻一半 ⇒ 红绿灯悬浮在**不通明**的 web 页面上，`--dsh-frame-top-clearance` 也不生效。若不修，P0-a 单独上线会把 bug 从「启动红屏」换成「观感半坏」。
+- **变更**（Rust 2 文件 + 前端 2 文件 + 闸门）：
+  1. **窗口层同源自翻**：`traffic_lights.rs` 增 `set_desktop_host_active(window, active)`——safe 档做 `set_effects(None)` + `set_title_bar_style(Visible)` + `set_decorations(true)`；并让红绿灯重放 `align` **同源自停**（原生装饰后系统自管按钮位才是正确位，再 `setFrameOrigin` 反而把按钮拖进标题栏）。内部带 `DESKTOP_HOST_ACTIVE` AtomicBool + 幂等（同值零窗口操作）。
+  2. **接线**：`boot.rs` 导航块内以**同一个 `host_mode`** 调用（与 fragment 下发相邻）。
+  3. **降级提示**：`immersive-chrome.js` 增 `renderDegradedNotice()`——Shadow DOM 浮层、`switcher.js` 同族同 token 镜像。展开态 → 12s 自动收为状态点 → 点状态点重开；「详情」本地面板；「知道了」记同键不再弹；「打开控制中心」调 `open_profiles_window`（**真动作**）。**刻意不给「重试」按钮**：判据是版本 × 契约表，立刻重试只会以同样方式再判一次，摆了就是假按钮。
+  4. **判据形状**：`shouldShowHostNotice` = `hostModeFromHash(hash) === 'safe'`，**不是** `!== 'desktop'`——UNKNOWN（fragment 缺失/不认识）不弹提示，那与「裁决说 safe」是两回事，弹了还会给用户错的解释。
+  5. **新边界**：注入层**首次**往 dsh 文档写 Web Storage。只写 `sessionStorage`（不落盘、随标签页消亡）、键 `dsh-dock-host-notice-dismissed`、值仅「已读过哪版裁决」；**禁 localStorage**（dsh 自己的持久状态区，`dsh.keybindings.v1` 就在其中）；读写均 try/catch（隐私模式/配额满 ⇒ 静默退化为「每次刷新再提示一次」）。
+  6. **5 条新/加固闸门**（判定用**剔注释后的生效代码**——P0-d 那类假绿的解药）。
+- **影响**：**行为变化** = macOS 上 dsh ≥ 0.1.7-rc.2 时**窗口回退原生装饰**（不再半坏），且工作台内出现一条可消失的降级提示（只 macOS + 只一次）。dsh ≤ 0.1.7-rc.1 与 Win/Linux 完全不受影响。
+- **凭据**：降级提示**五种行为实测通过**（真实工作台文档：初次展开 / 12s 自动收状态点 / 点状态点重开 / 详情开合 / 记键后刷新不重复打扰；浮层 top=42px 让开胶囊带、z=999998）；`cargo test --lib` **536 passed / 0 failed**；`clippy --all-targets -- -D warnings` 0 告警（含「注释里提 localStorage 被自己闸门抓到」一次返工——判据改用剔注释后代码）；`fmt` 干净；前端 `tsc` 0 错、`oxlint` 0 告警、vitest **710 passed**（68 文件，immersionChrome 26→28 例、paletteTokens 增降级提示镜像锁定）。**5 条闸门全部做过负例验证**（窗口同源改常量即红 / 键名漂移即红 / 判据形状改 `!== null` 即红 / 改 localStorage 即红 / 标记写点挪到门前即红）。
+- **未做 / 需知**：① **真机未验**：窗口 overlay↔native 的观感与红绿灯归位只能人工验（本机无显示环境），按 ADR-0029 先例不得对外宣称已修；② 控制中心「外观」状态行 + 关于条目未做（当前可查面 = 工作台内状态点 + 控制中心入口）；③ **L2 金丝雀 / L3 看门狗 / `hostContract` 持久化登记刻意延后**——当前裁决完全由 `mode_for(版本)` 确定性算出，没有「试过才知道」的中间态，确定性重算严格优于缓存（没有缓存就没有「壳升级后代次变了但缓存没失效」那类 bug）。
+- **合入**：**待定，尚未提交**。建议 P0-a+P0-c① 同批发布；若必须单独发，发布说明须写「此版本起 macOS 顶栏回退原生装饰（dsh ≥ 0.1.7-rc.2）」。
+
+### 2026-09-29 修订 · **P0-a 落地**：宿主契约版本闸（ADR-0032 第一项，工作台不再红屏）—— guan（AI 协作）
+
+- **触发**：ADR-0032 行动项 P0-a（契约表 + 版本闸 + `host_mode` 单一来源 + 原子性闸门）。维护者裁「继续」后当日闭环。
+- **变更**（Rust 7 文件 + 前端 3 文件；**无新 IPC、无新网络面**）：
+  1. **新增 `src-tauri/src/hostcontract.rs`**：契约表（版本下界 → 打标记所需最低壳契约代次；两行 =
+     `0.0.0→0` 与 `0.1.7-rc.2→1`）、`HostContractMode{Desktop,Safe}`、`mode_for()`（**fail-closed
+     三岔**：版本未探测到/乱码 ⇒ Safe）、`HOST_CONTRACT_GENERATION_SUPPLIED = 0`（P1 补桥后 +1
+     即自动放开新版本）、fragment 通道（`HOST_MODE_FRAGMENT_KEY = "dshHostMode"`，`apply_mode_fragment`
+     幂等、**不动 query 与 origin**）。
+  2. **裁决贯穿链**：`resolve::LaunchSpec.host_mode`（`engine_launch_spec` 按探测版本定；bundle 档恒 Safe）
+     → `Executor::host_mode()`（LocalExecutor 取 launch，WSL 默认 None）→ `boot.rs` 导航时写进
+     URL fragment（**fragment 不发给服务端、不改 origin、document-start 可同步读到**——这是裁决唯一
+     能赶在插件构造前到达页面的通道，Tauri IPC 是异步的来不及）→ 注入脚本读出。
+  3. **`immersive-chrome.js` 增 `HOST_MODE` 门**：非 `desktop` 即 `return`（不打标记、不装拖拽）。
+     判据只来自 fragment，**脚本不自行推断版本**。
+  4. **`immersiveChrome.ts` 增 `hostModeFromHash` / `shouldClaimDesktopHost`**（纯函数）+ 26 例 vitest。
+  5. **新机器闸门** `ui.rs::immersive_script_gates_on_the_host_contract_verdict`（三判据：裁决键名与
+     Rust 常量一致 / fail-closed 早退在场 / **标记写入点必须在裁决之后**——顺序即语义）；
+     抽 `effective_code` helper 供新旧闸门共用剔注释（原内联一份，避免两处漂移）。
+- **影响**：**行为变化 = dsh ≥ 0.1.7-rc.2 时不再有沉浸式标题栏**（工作台从红屏变为原生装饰 + 功能完好），
+  dsh ≤ 0.1.7-rc.1 保持沉浸式不变。⚠️ **P0-a 单独上线是"止血"中间态、不是发布态**：判 safe 时
+  只有 tracing 日志、界面无任何提示（违红线 3「禁静默降级」），必须与 P0-c（提示面 + 持久化登记）
+  同批或更早上。
+- **凭据**：**三段实测闭环**（壳自己的注入脚本原文驱动反代，dsh 0.2.0-rc.1，唯一变量 = fragment）：
+  `safe` ⇒ `data-platform=null` 且工作台干净；`desktop` ⇒ 仍复现 23 条 pending 红屏（反例成立，
+  证明门不是摆设）；fragment 缺失 ⇒ fail-closed。`cargo test --lib` **535 passed / 0 failed**；
+  `cargo clippy --all-targets -- -D warnings` 绿（含 `absurd_extreme_comparisons` 一次返工：
+  `req <= 0` 改写为 `generation_satisfied` helper 以保持"升代次自动放开"的意图且过 lint）；
+  `cargo fmt --check` 绿；前端 `tsc -b` 0 错、`oxlint` 0 告警、vitest **708 passed**（68 文件，
+  immersionChrome 20 → 26 例）；`scripts/tests/*.py` 六项全过。**探针踩坑（已记入 ADR §10）**：
+  `__DSH_PLATFORM__.os` 真实值是 `std::env::consts::OS` = `macos` 而非 `darwin`——首次探针填错，
+  三场景全绿但全 vacuous（"没打标记"是脚本没跑、不是门拦住了）。**判据全过的同时可能一个都没验到**，
+  故探针必须自带反 vacuous 断言（此处用 `window.__dshDockImmersiveInjected`）。
+- **合入**：**待定，尚未提交**。P0-b/c 未做（conformance 套件产品化 / 金丝雀 + 回滚 + 降级呈现）。
+  建议 P0-a 与 P0-c **同批发布**；若必须单独发，需在发布说明里显式写「此版本起 macOS 顶栏回退原生装饰」。
+
+### 2026-09-29 修订 · 宿主契约成为完整原子声明 + 三层自动降级（ADR-0032，支撑 dsh 0.2.x 工作台回绿）—— guan（AI 协作）
+
+- **触发**：维护者报「升级 dsh 0.1.7-rc.2 后 dsh-dock 启动报 `Failed to load plugins`」，追加关键事实「浏览器打开没问题，就是 dsh-dock 打开有问题」。当日引擎已升至 **0.2.0-rc.1**，故障依旧。维护者随后裁定：**不撤标记回退原生装饰**（那会丢掉沉浸式标题栏），承认 dsh-dock 是桌面宿主、把声明补完整；并要求**自动降级**（「如果上游改动出现异常，能自动降级」）——这是方案 A 能安全落地的前提。降级交互设计经维护者复核认可（「降级的交互设计好，不然用户遇到后不知道怎么做」）。
+- **变更**（本期**仅文档**，未动产品代码；动到 `docs/`）：
+  1. **新增 ADR-0032**：`data-platform` 与 `dshDesktop`/`dshOnboarding` 是**同一份声明的两半**——官方 preload（`app.asar → lib/preload-app.cjs`）`:826` 无条件 `markDocumentPlatform()`、`:823` 无条件 `exposeInMainWorld("dshDesktop", …)`,**恒同时在场**；上游对标记的自述语义见 `ui-primitives/lib/index.js:7947-7949` 注释原文 *"true only inside the macOS Electron shell"*。壳只抄了前半句。方案 A 采纳，配套三层降级（版本闸 → 首启金丝雀 → 运行时看门狗），**标记是最后一步**；§3.1 设 keyboard 子决策（WKWebView 无 Electron 原生菜单截键，该桥是补偿一个并不存在的问题；`installNativeKeyboard` 把 `composing` 硬编码为 `false` ⇒ 壳必须自守 composition）。
+  2. **新增降级交互设计定稿**：降级是**状态不是故障**——不长成错误弹窗、不进 `BootFailure` 六分类；三个曝光面（工作台内注入层与 `switcher.js` 同族 → 控制中心/关于常驻可查 → 主窗口失焦时系统通知归「知情即可」档）；含全部文案、动作矩阵、**记忆三元组（引擎身份 × dsh 版本 × 壳契约代次——缺最后一维则 `rejected` 成永久判决）**、`hostContract` 持久化登记与 `content/zh-CN.ts` 键名。
+  3. **复现台账复现点 25 + 复核记录**：A/B 实测（同反代逐字节转发，唯一变量 = `data-platform` 一个属性 ⇒ 逐字复现 `Failed to load plugins`，23 条 pending）；标记的 JS 消费者**实测 4 处**（3 处表现 + 1 处身份），与 ADR-0029 §7.3 当时登记的 1 处相差甚远；`data-shell-leading-band` **全树 0 命中**（改名 `data-shell-leading`，且语义从「52px 拖拽带」变为 overlay 层 leadingSeat）⇒ 壳 `BAND_SELECTOR` 恒查不到、**静默退回 52px 兜底几何带**。
+  4. **一段自查**（写进台账 §三）：`ui.rs:897` / `:1310` / `:1348-1350` 三处闸门断言的都是那个**已死键名** ⇒ **闸门一直绿着，而它守的机制早已失效**。与该闸门 2026-09-23 自记的那次「键名只剩在注释里、断言照样绿」是**同一失效模式第二次**，已单列 ADR-0032 行动项 P0-d（判据须换成「机制还在不在」而非「字符串还在不在」）。**注意 `ui.rs:895` 的 `dataset.platform` 断言是对的，勿一并误改**。
+  5. **顺带记录的独立缺陷**：web 档快捷键配置存 `localStorage["dsh.keybindings.v1"]`，壳恒以 `--port 0` 启动 ⇒ origin 每次启动都变 ⇒ **用户改过的快捷键从未持久化**（ADR-0032 §5.1，与本次决策解耦）。
+  6. 索引加 0032 行（与 ADR 同批，符合维护约定）；ADR-0029 头部加移交指针 + §8 回写依赖表，其 §2 约束 2 的「失败必须静默降级」在标记层被推翻（改为显式降级 + 自动回退），**窗口层与注入层骨架继续有效**。
+- **影响**：**仅周知，无代码行为变化**。ADR-0032 的 P0 四步（a 契约表+版本闸+原子性闸门 / b conformance 套件产品化 / c 金丝雀+回滚+降级呈现 / d 修假绿闸门）**均未开始**；降级文案键尚未进 `content/zh-CN.ts`。**本机正式档引擎 dsh 0.2.0-rc.1 + macOS 宿主档 = 工作台启动红屏**，待 P0-a 落地才止血；在此之前若要立即恢复可用，按 ADR-0032 方案 E 把引擎降回 `0.1.7-rc.1` 应急。
+- **凭据**：三变体实测（marker-only → 启动失败且 `shortcuts.get` 零调用；marker + `dshDesktop{protocolVersion,keyboard,shortcuts}` + `dshOnboarding` → **启动转绿**且 dsh 确实消费，`get` ×31；纯 web 档探针静默无假阳性）⇒ 方案 A 可行性与降级探针同时成立；5 个文档经逐块核验——表格列数一致、相对链接全解析、交叉引用标题全存在；`git diff` 仅 3 修改 + 2 新建，全在 `docs/`（既有未跟踪文件 `docs/plans/notifications-*`、`os-integration-*` 非本次产物）。文档改动无测试面。
+- **合入**：**待定，尚未提交**。依 AGENTS §8.6 收尾：文档改动无测试项，diff 已人肉核对无越界；提交走 CONTRIBUTING 正常通道。
+
 ### 2026-09-24 修订 · 插件操作体验四连（升级自动重启 / 市场排序 / 安装 loading / 重启提示收口为唯一面）—— guan（AI 协作）
 
 - **触发**：维护者四点裁定——① 关于页升级 dsh 后自动重启当前 profile（装完不重启 = 新引擎一直不接管）；② 「添加插件」弹窗补排序、与插件中心同默认下载量；③ 弹窗市场安装点击后 loading 到**真正装完**；④ 所有插件安装/卸载给统一「重启后生效」提示 + 重启按钮。追问**不得重复造轮子/一种逻辑两种交互**后，重启提示整体收口到实验能力既有横幅模式。

@@ -40,11 +40,141 @@
 
 | 24 | **插件侧问题不砖启动；仍砖的只有用户层自写坏**（安全模式删除的依据，ADR-0031） | `plugins.rs::quarantine_patch`（「备份并放空」兜底，2026-09-24 由 `safe_mode.rs` 迁入）；`boot_failure.rs::PluginRowFailed` 动作表（首屏 = 行归壳所有时的 `quarantine_plugin_row`，次级 = `safe_mode_reset`） | dsh **0.1.7-rc.1**（2026-09-24 克隆体 `~/.dsh-dock-dev/profiles/111` 实测 + 引擎源码锚定；跑后还原现场）：① **悬空 insert 行不砖**：写 `- insert:` + `- id: dsh-dock--test-dangling` + `name: '@deepseek-ai/dsh-no-such-package-xyz'` → 75s 观察窗内 web 正常就绪（`http://127.0.0.1:60908/?token=…`），上游仅 warning `1 entry did not activate … failed to import`——**推翻 2026-09-16 真机事故的 exit 1 行为**（0.1.6→0.1.7 之间上游已变更；ADR-0026 §2 表内「原样启动 exit 1（37.5s）」是旧版记录）；② **版本不兼容不砖**（源码）：`loadProfileDirectory`（`dsh-app-boot/lib/index.js:925`）对不兼容 bundle 整层 skip + stderr；行级由 `prepareProfileEntries` 预检（`:2028-2080`）自动 `disabled`——上游另有 `dsh plugin allow-version` / plugin manager 的 exact-version 豁免通道（`--accept-risk`）；③ **required 集是固定 7 项**（`requiredStartupEntryIds`，`lib/index.js:3819`）：`agent-loop` / `webserver` / `modules` / `connection` / `headless-runner` / `acp` / `sdk-jsonrpc-server` + bootstrap include 根——optional 条目激活失败只 warning；④ **仍砖的两类**（今天均复现 exit 1）：YAML 语法坏 → `failed to parse overlay … YAMLException`（`parsePatchList` 抛错，`--dump-config` 同样失败 ⇒ 行枚举不出来）；核心条目配置写坏（实测 `webserver` 的 `port: "not-a-number"`）→ `2 required plugins did not activate / webserver (required) ValidationError`。**升级复核项**：`requiredStartupEntryIds` 是否扩大/引入通配；optional 行激活失败是否恢复「整树拒绝加载」语义；`parsePatchList` 是否改为容忍 `null`（复现点 23 ④ 同源）；官方 desktop 的 `sanitizeProfile` bundle 重置语义是否进入 CLI | 2026-09-24 |
 
+| 25 | **宿主契约标记 `data-platform`：它与 `dshDesktop` 是同一份声明的两半**（ADR-0032 的依据） | `frontend/src/injected/immersive-chrome.js:193`（打标记）、`:55`（拖拽带钩子）、`:112-127`（几何兜底带）；`src-tauri/src/ui.rs:897`＋`:1310`＋`:1348-1350`（三处断言**均钉着已死键名** `data-shell-leading-band` ⇒ **假绿**；同文件 `:895` 的 `"dataset.platform"` 是对的，勿误改）、`ui.rs:65/153`（窗口层） | dsh **0.2.0-rc.1**（2026-09-29 本机正式档引擎实测 + 官方客户端 `app.asar` 源码锚定）：① **标记被当作运行时身份的判据**：`dsh-client-shortcuts/lib/client.js:721` `detectEnvironment` 读 `document.documentElement.dataset.platform` → `runtime: desktop === void 0 ? "web" : "desktop"`；`:1854-1855` `runtime==="desktop" && window.dshDesktop?.keyboard === void 0` ⇒ **`throw new Error("Desktop keyboard bridge unavailable")`** ⇒ `shortcuts` 服务从未注册 ⇒ **23 个客户端条目 pending**（rc.2 上为 25）。**A/B 实测（本机反代逐字节转发，唯一变量 = 该属性）**：不加 → 正常挂载；加上 → 逐字复现 `Failed to load plugins`。② **标记与能力对象在官方 preload 里恒同时在场**：`app.asar → lib/preload-app.cjs:826` `markDocumentPlatform()` **无条件**执行；`:823` `exposeInMainWorld("dshDesktop", … ? createProductApi() : { protocolVersion: 1 })` **无条件**暴露（非 `dsh-app://app` 主帧降级为残桩）⇒ 壳只抄前半句即宣称了「我是官方 macOS Electron 宿主」。上游对该标记的**自述语义**见 `dsh-client-ui-primitives/lib/index.js:7947-7949` 的 `isDarwinDesktop()` 注释原文 *"true only inside the macOS Electron shell"*。③ **标记的 JS 消费者实测只有 4 处**（全树 grep `dataset\.platform`，排除 `web-frontend/dist`）：`ui-primitives/lib/index.js:7947`（定义）、`ui-layout/lib/client.js:240`（→ `:241` `collapsedWidth` 56→0、`:314` `leadingMounted`）、`ui-sidebar/lib/client.js:261`、`dsh-client-shortcuts/lib/client.js:721`——**3 处以「表现」消费、1 处以「身份」消费，而文档只描述了身份含义**（上游 issue 的诉求即此）。其余全部是被 `html[data-platform='darwin']` 选中的 CSS（页面透明、侧栏 tint、`--dsh-frame-top-clearance: 48px`、plugin-manager `calc(28px + var(--dsh-frame-top-clearance))`）。④ **拖拽带钩子已改名且语义变更**：ADR-0029 §7.3 登记的 `data-shell-leading-band` 在 0.2.0-rc.1 **全树 0 命中**；仅存 `data-shell-leading`，且它是 AppFrame overlay 层里 `leadingMounted &&` 的 **leadingSeat**（`ui-layout/lib/client.js:350`，同处新增 `data-shell-overlay`），**不是**那条 52px / `pointer-events:none` 的拖拽带 ⇒ 壳 `BAND_SELECTOR` 恒查不到、**静默退回 52px 兜底几何带**（拖拽仍可用，故未暴露）；`ui.rs:895` 闸门断言的正是这个**已死键名**，于是长期假绿。⑤ **`"dshDesktop" in globalThis` 是全有全无的开关**（7 个消费者，较 0.1.7 之前新增 2 个）：`dsh-client-shortcuts`、`dsh-client-ui-settings-account`（`:4197` 进场；缺 `dshOnboarding` ⇒ `:4165` throw）、`dsh-client-ui-settings-models`（`:4010`/`:4076` 关掉凭证引导槽）、`dsh-client-product-analytics`（**:20 起注册远端遥测策略流 ← 隐私面**）、`dsh-client-ui-chat`（`:12393` 转写默认）、`dsh-client-ui-settings-general`（`:978`）、`dsh-client-ui-sidebar-browser`（`:1597`，**只给 `protocolVersion` 即保持 iframe ⇒ 可安全省略**）；可选字段 `deviceInfo`（`settings-account:4361`，`void 0` 兜底回退 `navigator.userAgent`）**可安全省略**。⑥ **键盘桥的成因是 Electron 原生菜单截键**：`dsh-client-shortcuts/lib/client.js:736-815` 的 `installKeyboard`，`native = keyboard !== undefined && (platform === "macos" \|\| platform === "windows")`（`:1884`）时 `:809` `if (native) return;` ⇒ **可配置快捷键不再走 DOM**；`installNativeKeyboard` 把 `composing` **硬编码为 `false`**（`:894` 起，dispatch 处）⇒ WKWebView 壳若直接中继 DOM 事件，输入法组合期会误触发（壳侧必须自守 composition）。⑦ **桌面档的存活探针 = 我们自己的 `shortcuts.get` 被调用**：构造函数 `:1882` → `syncDefinitions()`（`:1948-1950`）→ `this.adapter.get(...)`，桌面档 `adapter` 即 `window.dshDesktop?.shortcuts`（`:879-881`）⇒ 健康 ⟺ 被调用。**2026-09-29 三变体实测**：marker-only → 启动失败且 `get` **零次**调用；marker + `dshDesktop{protocolVersion,keyboard,shortcuts}` + `dshOnboarding` → **启动转绿**且 dsh 确实消费（`keyboard.subscribe` ×1、`shortcuts.subscribe` ×1、`shortcuts.get` **×31**）；纯 web 档 → 探针静默无假阳性。⑧ **快捷键配置在 web 档存不下来**：`webShortcutStorage` 用 `localStorage["dsh.keybindings.v1"]`（`:849`），而壳恒以 `--port 0` 启动（`shell.rs:122`，OS 随机端口）⇒ **origin 每次启动都变 ⇒ 用户改过的快捷键从未持久化**（独立缺陷，ADR-0032 §5.1）。**升级复核项**：`detectEnvironment` 的 runtime 判据是否改为能力对象（**改为即 ADR-0032 §3.1 的键盘负资产整条退役**）；`data-platform` 的 JS 消费者集合是否新增/改名（尤其是否出现第 5 处以「身份」消费的消费者）；`dshDesktop` 字段集合与 `protocolVersion` 语义；`"dshDesktop" in globalThis` 消费者是否再增；`data-shell-leading` / `data-shell-overlay` 的语义与几何是否再变；`installNativeKeyboard` 是否改为透传 `composing`；官方 preload 的门条件（`dsh-app:` + `app` + `isMainFrame`）是否变化 | 2026-09-29 |
+
 ## 二、计划复现点（4.3 Profile 管理器落地时入册）
 
 （空——复现点 6/7/8 均已落地，见第一节；后续新增复现点在此登记后随实现转一。）
 
 ## 三、复核记录（append-only）
+- **2026-09-29 沉浸式栈物理删除（维护者裁定「删」，ADR-0032 §16）**：§15.5 的问题
+  （ADR-0029 三层是否物理删除）裁定为**删**。删除面：整脚本 `immersive-chrome.js` +
+  纯模型 `immersiveChrome.ts` + 其 vitest；`ui.rs` 的 macOS `Overlay`/`hidden_title`/`Effect::Sidebar`
+  + `builder` 的 `mut` 与其 `cfg_attr` 兜底；`traffic_lights.rs` 整模块（AppKit FFI 红绿灯定位）
+  + 三处 `align` 接线；`hostcontract.rs` 整模块；`LaunchSpec.host_mode` 与计算、
+  `Executor::host_mode()`、`boot.rs` 的 `ShellState.host_mode`/落账/fragment 下发/窗口形态切换；
+  IPC `get_host_contract` 三处 + 登记册条目 + 两个展示组件与其测试 + `hostContract` 字典组 +
+  `types/ipc.ts`/`tauri.ts`；**ACL 三条**（`core:window:allow-start-dragging`、
+  `core:window:allow-toggle-maximize`、`allow-get-host-contract`，permissions 61 → 58；
+  已确认前两条无其他使用者）。**换来的东西 = 一条反向闸门**：
+  `ui.rs::no_desktop_claim_tests::ui_never_claims_desktop_host` 一并钉死五条腿
+  （`title_bar_style(Overlay)` / `hidden_title(true)` / `Effect::Sidebar` / `traffic_lights::` /
+  `include_str!(immersive-chrome.js)`），**负例已验证**（注入合法的
+  `w.title_bar_style(tauri::TitleBarStyle::Overlay)` 死代码即红，并指路「先改 §15/ADR-0029 并重跑 §14」）。
+  `window_background_tests` 里那条"注释承诺 ≠ 代码事实"的半句断言随对象消失，
+  收窄为 `main_window_keeps_its_title`（只保窗口标题不得被顺手删）。ADR-0029 头部标注**已退役**、
+  索引行加重建警告。**最终形态**：dsh-dock = 原生窗口 + Web 承载工作台 + 管理面；
+  对 dsh 文档的注入只剩 `platform_script`/`link-hook`/`switcher`/`handoff-curtain`（后三者与本档无关）。
+  **本复现点（25）继续有效**——标记语义、消费者全集、两处漂移是事实资产，与壳做不做沉浸式无关；
+  将来上游若放开标记须按 §9 重开并复核本行。
+- **2026-09-29 终裁：dsh-dock 定位为「web 档套壳」——本档相关结论整体收束**（ADR-0032 §15）：
+  维护者裁定原话「我感觉跑偏了，我只想做个 web 档的套壳」+「dsh 提不了 issue，方案 A 不太好」。
+  **作废**：ADR-0032 §3 方案 A（成为契约完整的桌面宿主）与 P1/P2/P3/P4 全部不做；
+  §13 的 P1 前置实验降为决策史；四项待裁定（遥测 / region 旁路 / P4 / P2 同批）随之失效。
+  **方案 D（时序打标记）经实测量定不可行**（§14）：同一反代下唯一变量 = 打标记时刻，
+  观测点用**渲染期烘焙**的 `[data-shell-leading]`（`leadingMounted = darwin && sidebarCollapsed`；
+  注：首版误用 `--dsh-frame-top-clearance` 计算值——那是 **CSS 变量、实时生效**，任何时刻打标记
+  都会变 48px，**区分不了 JS 布局是否读到**，已更正）。结果：`document-start` / `DOMContentLoaded` /
+  `+1 rAF` 三档稳定红屏；**`+2 rAF` 不稳定（4 次里 2 次红屏）**；`+8 rAF` 干净但表现层没拿到（3/3）；
+  `window load` 干净且拿到（3/3）——**V5/V6 非单调 ⇒ 无可预测模型**。两条独立否决理由：
+  ① 最优时刻仍有 ~50% 红屏概率；② 无法解释为何能工作，而失效方向是"工作台起不来"。
+  ⇒ **方案 A（放弃沉浸式观感）是唯一答案，不是退让**。
+  **保留**：P0-a 版本闸 + 原子性闸门（正是"诚实 web 套壳"的执行机制）、本复现点 25。
+  **撤除**：降级提示整块（注入层 `renderDegradedNotice`/`shouldShowHostNotice`/打扰去重键 +
+  两处展示面的 warn 色调与原因），并**收回**当时为它开的存储边界——沉浸式脚本现在**只读不写**
+  （连 sessionStorage 也不碰），由闸门正向钉住，另加两道**反向闸门**防"顺手加回"。
+  两处展示面改为**中性事实陈述**（「当前形态：系统原生 / 沉浸式」+ dsh 版本）。
+  **待维护者确认**：ADR-0029 三层（标记注入 + 窗口 overlay/红绿灯 + 拖拽自驱）是否物理删除
+  （当前是一套永不执行的死代码；ADR-0032 §15.5 建议删，但属产品级取舍故未擅动）。
+- **2026-09-29 P1 前置实验（ADR-0032 §13）**：在 harness 里注入宿主契约**第 1 代最小集**
+  （`dshDesktop{protocolVersion:1,keyboard,shortcuts}` + `dshOnboarding` + `data-platform`），
+  dsh 0.2.0-rc.1 实测。**已证实三项**：① 启动干净（0 pending）；② 桥**被 dsh 消费**
+  （`keyboard.subscribe`×1、`shortcuts.subscribe`×1、`shortcuts.get`**×21**）；
+  ③ 投递路径可用（listener 可调用、无异常）⇒ **P1 可行性前提成立**。
+  **两项结论来自源码、无需实测**：④ `dsh-client-shortcuts:912` 的 native 分支把
+  `composing`/`defaultPrevented` **硬编码为 false**，而 `:661` 的 `dispatch` 正是靠这两个字段过滤
+  ⇒ **壳必须自守 composition**，否则 IME 组合期快捷键误触发；⑤ `:675`
+  `priority = runtime==="desktop" && (windows||macos)` ⇒ **desktop 档旁路 region 门控**，
+  P1 之后可配置快捷键不再按焦点区域过滤（相对今天 web 档的**真实行为变化**）。
+  **未决**：判据"投递是否真的触发命令"未测到（需工作区加载才好观测，harness 里 dsh 的
+  工作区引导难以自动化）⇒ 建议降级为 P1 验收项。**遥测**：`product-analytics:20`
+  `if (!("dshDesktop" in globalThis)) return;` ⇒ 桥存在即激活远端策略流，**须维护者裁定**。
+  **rig 经验 6 条**（写入 ADR §13.4，P0-b 产品化时必须一次性解决）：launch token 一次性
+  （复用 URL 恒 401）/ 反代必须直通 SSE（缓冲会 BodyTimeoutError 带崩 rig）/ 必须转发 POST body /
+  `Runtime.evaluate` 要 `awaitPromise` 且表达式自 `JSON.stringify` / 探针须断言"脚本确实执行过"
+  （防 vacuous 全绿）/ 观测点要选"会变的量"（`[data-sidebar-collapsed]` 的**存在性**在未加载
+  工作区时也为真，是错的观测点）。
+- **2026-09-29 P0-c②（常驻可查面）**：动机 = 补我自己留下的洞——P0-c① 的降级提示里
+  「打开控制中心」是唯一真动作按钮，但当时控制中心**没有任何宿主契约信息**，按钮承诺了
+  目的地没有的东西。落地：`hostcontract::view_for()` 纯函数 → `HostContractView`
+  （camelCase；`reason` 只在 safe 态非空且为**机器判据**）；只读 IPC `get_host_contract`
+  （三处同步 + 登记册；dsh 版本走既有 `engines::probe_engine`，不另起探测）；
+  控制中心偏好页**顶部**（默认落地 tab ⇒ 点完按钮不用再点一次）+ 关于页运行环境区
+  同源两处、均 macOS-only（Win/Linux 恒原生，ADR-0030）。文案按**失败方向分三种**
+  （版本未知 ≠ 版本不兼容 ≠ 代次不足），并断言未知**不得**被写成「不兼容」——否则把用户
+  引向错误动作。凭据：Rust 540 passed（+10）/ clippy 0 / fmt 净；前端 719 passed（+13）/
+  tsc 0 / oxlint 0；闸门负例 2 项（撤 reason 渲染 ⇒ 红、撤字典键 ⇒ 红）。
+  **两处返工**：① `StateBlock` 无 `warn` tone 且是大号居中块，不适合承载 inline 原因，
+  改用既有 `DimNote`/裸段落；② 测试里 `not.toContain("invoke(")` 的**断言字符串本身**
+  触发 Rust 闸门 `no_direct_invoke_outside_tauri_ts`（它只剔 `//` 行不剔字符串）——
+  该检查本就全局覆盖全部前端文件，测试里复述是净负收益，删掉。
+  **教训**：想写「禁某模式」的断言前，先确认该禁令是否已有全局闸门；有就别复述。
+- **2026-09-29 P0-c①验证（窗口层原子性 + 降级提示呈现）**：P0-a 只翻了页面层、窗口层仍
+  `TitleBarStyle::Overlay` ⇒ 出现 ADR-0029 立档时判定的半坏形态（红绿灯悬浮在**不通明**的
+  web 页面上）。故让同一个 `host_mode` 同时驱动两处：`traffic_lights::set_desktop_host_active`
+  （safe 档 = `set_effects(None)` + `TitleBarStyle::Visible` + `set_decorations(true)`，
+  且红绿灯重放 `align` **同源自停**——原生装饰后系统自管按钮位才是正确位）。
+  降级提示 `renderDegradedNotice()` 五种行为实测通过（初次展开 / 12s 自动收为状态点 /
+  点状态点重开 / 详情开合 / 「知道了」记键后刷新不重复打扰）。**新边界**：注入层**首次**往
+  dsh 文档写 Web Storage——只写 `sessionStorage`（不落盘）、键 `dsh-dock-` 前缀、值仅
+  「已读过哪版裁决」；**禁 localStorage**（那是 dsh 自己的持久状态区，`dsh.keybindings.v1`
+  就在其中）。**刻意不做**：`hostContract` 持久化登记延后——当前裁决完全由
+  `mode_for(版本)` 确定性算出，没有"试过才知道"的中间态，确定性重算严格优于缓存
+  （没有缓存就没有「壳升级后代次变了但缓存没失效」那类 bug）。新增 5 条闸门均做负例验证
+  （窗口同源 / 键名三方 / 裁决形状 / 存储边界 / 顺序）。
+- **2026-09-29 P0-a 落地 + 闭环（ADR-0032 行动项第一项）**：新增
+  `src-tauri/src/hostcontract.rs`（契约表 + `HostContractMode` + fragment 通道），
+  `resolve::LaunchSpec` 增 `host_mode`（`engine_launch_spec` 按探测到的 dsh 版本 fail-closed
+  定出；bundle 档恒 Safe），`Executor` trait 增 `host_mode()`（LocalExecutor 取 launch、WSL 默认
+  None ⇒ boot 兜底 Safe），`boot.rs` 导航时把裁决写进 URL fragment 下发，
+  `immersive-chrome.js` 增 `HOST_MODE` 门（非 desktop 即 return，**fail-closed**）。
+  **当日三段实测闭环**（壳自己的注入脚本原文驱动反代，dsh 0.2.0-rc.1，唯一变量 = fragment）：
+  `safe` ⇒ `data-platform=null` 且工作台干净；`desktop` ⇒ 仍复现 23 条 pending 红屏；
+  fragment 缺失 ⇒ fail-closed 不打标记。判据全过（含"脚本确实执行过"的反 vacuous 断言）。
+  新增机器闸门 `immersive_script_gates_on_the_host_contract_verdict`（三判据：裁决键名与
+  Rust 常量一致 / fail-closed 早退在场 / **标记写入点必须在裁决之后**——顺序即语义），
+  并抽 `effective_code` 供新旧闸门共用剔注释。凭据：`cargo test --lib` **535 passed / 0 failed**、
+  `cargo clippy --all-targets` 绿、`cargo fmt --check` 绿；前端 `tsc -b` 0 错、`oxlint` 0 告警、
+  vitest **708 passed**（68 文件，immersionChrome 由 20 → 26 例）。**遗留边界两条**：
+  ① dsh 若 `replaceState` 抹掉 fragment，刷新后丢判据 ⇒ fail-closed 退 web 档（安全方向）；
+  ② **P0-a 单独上线是"止血"中间态、不是发布态**——判 safe 时只有 tracing 日志、界面无提示，
+  违红线 3「禁静默降级」，必须与 P0-c（提示面 + 持久化登记）同批或更早上。
+  **探针踩坑记忆**：`__DSH_PLATFORM__.os` 真实值是 `std::env::consts::OS` = `macos` 而非
+  `darwin`——首次探针填错，三个场景全绿但全 vacuous（"没打标记"是脚本没跑，不是门拦住了）。
+  **判据全过的同时可能一个都没验到**，故探针必须自带反 vacuous 断言。
+- **2026-09-29 新增复现点 25（宿主契约标记；ADR-0032 的依据）——本次含一条「假绿闸门」自查**：
+  触发 = 维护者报「升级 dsh 0.1.7-rc.2 后 dsh-dock 启动报 `Failed to load plugins`」，并追加
+  关键事实**「浏览器打开没问题，就是 dsh-dock 打开有问题」**。当日引擎已升至 **0.2.0-rc.1**，
+  故障依旧。本机反代逐字节转发做 A/B（唯一变量 = `<html data-platform="darwin">`）⇒ 逐字复现
+  `Failed to load plugins` + 23 条 pending（rc.2 上为 25）。根因 = `data-platform` 被
+  `dsh-client-shortcuts:721` 当作**运行时身份**判据，而壳只兑现了官方 preload 那份声明
+  （`:823` 能力对象 + `:826` 标记，**恒同时在场**）的**表现层一半** ⇒ 结论：**不是「dsh 改了接口」，
+  是壳的声明不完整**（ADR-0032 §1.3）。同日机器枚举出两处漂移，其中一处**已经静默坏了很久**：
+  ① ADR-0029 §7.3 登记的拖拽带钩子 `data-shell-leading-band` **全树 0 命中**（改名
+  `data-shell-leading` 且语义从「52px 拖拽带」变为 overlay 层 leadingSeat）⇒ 壳静默退回兜底
+  几何带（拖拽仍可用 ⇒ 无人发现）；② 标记的 JS 消费者实测 **4 处**（3 处表现 + 1 处身份），
+  与 ADR-0029 §7.3 当时登记的 1 处相差甚远。**自查（本次最重要的账目）**：`ui.rs:897` /
+  `:1310` / `:1348-1350` 三处闸门断言的正是那个**已死键名** `data-shell-leading-band`——
+  **闸门一直绿着，而它守的机制早已失效**（同文件 `:895` 的 `dataset.platform` 断言是对的，
+  不在此列）。这与 2026-09-23 那次「键名只剩在注释里、断言照样绿」（该闸门自己的注释即记录）是
+  **同一失效模式第二次发生**，故 ADR-0032 行动项 P0-d 单列：闸门判据必须换成**能红的**判据
+  （新钩子名 + 几何兜底判据），不能只断言字符串存在。**可行性同日实测（三变体）**：marker-only
+  → 启动失败且 `shortcuts.get` 零调用；marker + `dshDesktop{protocolVersion,keyboard,shortcuts}`
+  + `dshOnboarding` → **启动转绿**且 dsh 确实消费（`get` ×31）；纯 web 档探针静默无假阳性 ⇒
+  「自动降级」的存活探针成立（ADR-0032 §6.1）。**独立缺陷一并记账**：web 档快捷键配置存于
+  `localStorage["dsh.keybindings.v1"]`，而壳恒以 `--port 0` 启动 ⇒ origin 每次启动都变 ⇒
+  **用户改过的快捷键从未持久化**（ADR-0032 §5.1，与本档解耦）。
+
 - 2026-09-24 新增复现点 24（插件侧问题不砖启动；ADR-0031 删除安全模式的依据）：维护者
   亲测「插件不兼容不会让 dsh 起不来」→ 壳侧同日三组复现实测坐实并推广（悬空行 = warning、
   仍砖的只有 YAML 语法坏与核心条目配置写坏两类用户层自写坏）。ADR-0026 的一键停用立项

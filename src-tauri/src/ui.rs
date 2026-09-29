@@ -60,17 +60,6 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     // 与 switcher.js 的分工：幕布管"进/出工作台的过渡"，胶囊管"常驻互跳入口"。
     let handoff_curtain_script = include_str!("../../frontend/src/injected/handoff-curtain.js");
 
-    // 沉浸式标题栏（2026-09-21，ADR-0029；拖拽机制 2026-09-23 改版，见该档 §7）：官方客户端的
-    // 沉浸式 chrome 真相源在 dsh 自己的 web 前端（`packages/client` 里按
-    // `html[data-platform='darwin']` 生效的一整批桌面 CSS：透明底、侧栏 tint、顶栏与红绿灯
-    // 共行；源锚见 ADR-0029 §1 表与 §7.3）。壳里它们休眠，本脚本补两件事：① 补打 dsh 官方
-    // Electron preload 同款标记；② **按几何语义自驱窗口拖拽**（读 dsh 自己发布的
-    // `data-shell-leading-band` 钩子 + 它的交互元素排除表 ⇒ `startDragging()`）。
-    // 注意：不要再回到「翻译 `-webkit-app-region`」那条路 —— WKWebView 不认该属性，
-    // 2026-09-23 已实测证伪（ADR-0029 §7.1）。仅 macOS 生效（与下方窗口配置的 cfg 同门），
-    // 只认工作台 origin，拿不到拖拽带即静默降级（用顶部 52px 兜底几何带）。
-    let immersive_script = include_str!("../../frontend/src/injected/immersive-chrome.js");
-
     // 运行平台判定注入（2026-08-26 裁定）：WSL 仅存在于 Windows——非 Windows
     // 机器对 WSL 零感知：首次启动不出环境选择页、顶栏无「在 WSL 中打开」、
     // 菜单/托盘无 WSL 项。平台能力经 Rust `cfg!` 编译期判定注入
@@ -86,91 +75,64 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     // 2026-08-27 前端迁移：所有窗口加载 SPA 根路径，React 按窗口 label 路由
     // （frontend-migration §3.1）；子页面经 pathname 可达（get_asset 兜底链）。
     // 2026-09-21 ADR-0029：`mut` 仅供下方 macOS 段的 overlay/vibrancy 重新赋值——
-    // 非 macOS 目标该段被 cfg 掉，`mut` 看似多余；按目标显式 allow，避免三平台
-    // clippy（-D warnings）在 Win/Linux 上被 unused_mut 炸掉。
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut builder =
-        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-            .title("DSH Dock")
-            .inner_size(1280.0, 820.0)
-            .min_inner_size(960.0, 640.0)
-            .resizable(true)
-            .center()
-            // 2026-09-10 批次 E：底色见 WINDOW_BACKGROUND 常量（三处一致性有测试锁定）。
-            .background_color(WINDOW_BACKGROUND)
-            .on_navigation(move |url| {
-                // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
-                //
-                // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
-                // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
-                // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
-                // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
-                // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
-                // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
-                let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
-                    || matches!(url.host_str(), Some("tauri.localhost"));
-                let loopback_dsh = matches!(
-                    url.host_str(),
-                    Some("127.0.0.1") | Some("localhost") | Some("[::1]")
-                );
-                if shell_page || loopback_dsh {
-                    return true;
-                }
-                if matches!(url.scheme(), "http" | "https") {
-                    let allowed = is_allowed_external_url(url.as_str());
-                    tracing::info!("外链导航拦截：url={url} allowed={allowed}");
-                    if allowed {
-                        if let Err(e) = open::that_detached(url.as_str()) {
-                            tracing::error!("外链打开失败：{e}");
-                        }
-                    }
-                    // 非白名单：既不导航也不打开（壳不成为任意跳板）。
-                } else {
-                    tracing::info!("未知协议导航拦截：{url}");
-                }
-                false
-            })
-            .on_new_window(move |url, _features| {
-                // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
+    // 2026-09-29（ADR-0032 §15）：随沉浸式栈删除，`mut` 不再需要
+    // （原先只有 macOS 分支里的 `.effects(...)` 要它，且要靠 cfg_attr allow 兜住
+    //  Win/Linux 的 unused_mut——现在三平台一致，无需任何 allow）。
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+        .title("DSH Dock")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(960.0, 640.0)
+        .resizable(true)
+        .center()
+        // 2026-09-10 批次 E：底色见 WINDOW_BACKGROUND 常量（三处一致性有测试锁定）。
+        .background_color(WINDOW_BACKGROUND)
+        .on_navigation(move |url| {
+            // 返回 true = 放行导航。壳页面与回环 dsh 放行；其余 http(s) 外链转浏览器。
+            //
+            // 壳页判定（2026-08-26 修正）：Tauri v2 的 App 内嵌资源在 macOS/Linux 用
+            // `tauri://localhost`（scheme=tauri），Windows 用 `http://tauri.localhost`
+            // （WebView2 不支持自定义 scheme，走虚拟 host 映射——tauri-utils 源码
+            // config.rs 明示 access-control-allow-origin: http://tauri.localhost）。
+            // 只按 scheme 判 shell_page 会在 Windows 上把启动页当外链拦掉 → 白屏
+            // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
+            let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
+                || matches!(url.host_str(), Some("tauri.localhost"));
+            let loopback_dsh = matches!(
+                url.host_str(),
+                Some("127.0.0.1") | Some("localhost") | Some("[::1]")
+            );
+            if shell_page || loopback_dsh {
+                return true;
+            }
+            if matches!(url.scheme(), "http" | "https") {
                 let allowed = is_allowed_external_url(url.as_str());
-                tracing::info!("新窗口请求：url={url} allowed={allowed}");
+                tracing::info!("外链导航拦截：url={url} allowed={allowed}");
                 if allowed {
                     if let Err(e) = open::that_detached(url.as_str()) {
-                        tracing::error!("外链打开失败（新窗口路径）：{e}");
+                        tracing::error!("外链打开失败：{e}");
                     }
                 }
-                tauri::webview::NewWindowResponse::Deny
-            })
-            .initialization_script(&platform_script)
-            .initialization_script(hook_script)
-            .initialization_script(switcher_script)
-            .initialization_script(handoff_curtain_script);
-
-    // 沉浸式标题栏（ADR-0029）——仅 macOS：overlay 标题栏（红绿灯浮在内容左上角、
-    // 原生标题文字隐去）+ Sidebar 材质 vibrancy（对标官方 Electron 的
-    // `vibrancy:'sidebar'` + `visualEffectState:'active'`，main.ts:125-132）。
-    // 窗口底色**保持不透明**（WINDOW_BACKGROUND 三处一致性不动）：毛玻璃靠 dsh
-    // 工作台页面自身的 `html[data-platform='darwin']{background:transparent}` 透出，
-    // 壳页面（启动屏等）仍画不透明底，首帧不闪色口径不变。
-    // Windows/Linux 无红绿灯且 Tauri 稳定版无 titleBarOverlay 等价物 → 保持原生装饰。
-    //
-    // 2026-09-21：上面这句"原生标题文字隐去"原先只是**注释里的承诺**——代码只设了
-    // `title_bar_style(Overlay)`，而 Overlay 仅让红绿灯浮起，**不会**隐去 `.title()`
-    // 的文字，于是红绿灯旁边长期挂着一行「DSH Dock」（维护者截图圈出）。补上真正
-    // 隐去它的那一项：`hidden_title(true)`（macOS-only）。注意**窗口标题本身不动**
-    // ——它仍供窗口切换器/任务栏/关于弹窗使用，这里只关掉标题栏里的那份渲染。
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .effects(
-                tauri::window::EffectsBuilder::new()
-                    .effects([tauri::window::Effect::Sidebar])
-                    .state(tauri::window::EffectState::Active)
-                    .build(),
-            );
-    }
+                // 非白名单：既不导航也不打开（壳不成为任意跳板）。
+            } else {
+                tracing::info!("未知协议导航拦截：{url}");
+            }
+            false
+        })
+        .on_new_window(move |url, _features| {
+            // 新窗口请求（window.open / target=_blank）：一律拒绝，白名单内转浏览器。
+            let allowed = is_allowed_external_url(url.as_str());
+            tracing::info!("新窗口请求：url={url} allowed={allowed}");
+            if allowed {
+                if let Err(e) = open::that_detached(url.as_str()) {
+                    tracing::error!("外链打开失败（新窗口路径）：{e}");
+                }
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .initialization_script(&platform_script)
+        .initialization_script(hook_script)
+        .initialization_script(switcher_script)
+        .initialization_script(handoff_curtain_script);
 
     // Windows 沉浸式标题栏：2026-09-22 进场（`73c6af1`），**2026-09-23 维护者裁定撤回**
     // （ADR-0030）。此处保留撤回理由，避免后人「照官方方案」再加一次：
@@ -193,31 +155,11 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     //
     // 2026-09-23 裁定：`decorations(false)` 不得再按平台加回本文件。
 
-    let window = builder.initialization_script(immersive_script).build()?;
-
-    // 红绿灯定位（ADR-0029）：目标 = 与侧边栏收起按钮（dsh darwin topStrip 的 toggle，
-    // 52px 条带垂直居中）同一水平线，即官方 Electron 的 trafficLightPosition x16/y18。
-    // 建窗后先落一次（主线程、未 show，用户看不到跳变）。
-    // 调用点三平台同构：函数内部按 target_os 分叉（非 macOS = no-op）。
-    crate::traffic_lights::align(&window);
-
-    // 落位不是一次性的：探针实测 AppKit 在 resize 时把标准按钮弹回默认位（show 不会）。
-    // 且 reset 可能发生在**不发 Tauri 窗口事件**的时机（tao 建窗后的内部 setFrame、
-    // vibrancy 视图插入等）——所以三管齐下：
-    //   ① 任何窗口事件都重放（align 内部幂等 + 变化检测，已就位即静默，不刷屏）；
-    //   ② setup 结束后经主线程事件循环补一枪（覆盖"建窗后内部 reset 无事件"）；
-    //   ③ 首次落位打 info 并读回帧坐标——实机核对"到底生效没有"以日志为凭据。
-    #[cfg(target_os = "macos")]
-    {
-        let lights = window.clone();
-        window.on_window_event(move |event| {
-            if !matches!(event, tauri::WindowEvent::Destroyed) {
-                crate::traffic_lights::align(&lights);
-            }
-        });
-        let lights = window.clone();
-        let _ = app.run_on_main_thread(move || crate::traffic_lights::align(&lights));
-    }
+    // 2026-09-29（ADR-0032 §15）：本窗口**不再注入任何脚本**到主窗口。
+    // 壳的定位是 web 档套壳——不宣称桌面身份、不打 `data-platform`、不调红绿灯定位，
+    // 窗口用系统原生装饰。原先的沉浸式栈（标记注入 + overlay + 红绿灯 AppKit 定位 +
+    // 几何语义自驱拖拽）已随该裁定整体删除；理由与实测见 ADR-0032 §15/§14。
+    let window = builder.build()?;
 
     // 「关窗 = 隐藏」而非销毁（2026-09-21，修维护者报的「关掉工作台窗口后，点控制台的
     // 『返回工作台』没反应」）：
@@ -754,35 +696,22 @@ mod window_background_tests {
         assert!(result.is_err(), "缺少 --color-bg 时解析器应报错");
     }
 
-    /// 沉浸式标题栏（ADR-0029）的**实现**闸门。
+    /// 主窗口标题必须保留（2026-09-29 随沉浸式栈删除后**唯一**还剩的窗口层契约）。
     ///
-    /// 事故形态：注释一直写着「原生标题文字隐去」，代码却只设了
-    /// `title_bar_style(Overlay)`——Overlay 仅让红绿灯浮到内容上，**不会**隐去
-    /// `.title()` 的文字，于是红绿灯旁边长期挂着一行「DSH Dock」（维护者截图圈出）。
-    /// 这是"注释承诺 ≠ 代码事实"的典型，靠人读注释永远发现不了。
-    ///
-    /// 断言从**生产段源码**取（截到测试模块之前），避免测试自身的字面量把闸门
-    /// 变成永远为真——同 `lifecycle::tests::production_code_view_truncates_at_the_real_test_module`。
+    /// 历史：本用例原是 ADR-0029 的「注释承诺 ≠ 代码事实」闸门——注释写着"原生标题文字隐去"，
+    /// 代码却只设了 Overlay，于是红绿灯旁长期挂着一行「DSH Dock」（维护者截图圈出）。
+    /// 沉浸式栈整体删除后（ADR-0032 §15），那半句断言失去对象，**只保留标题本身**这条：
+    /// 它仍供窗口切换器 / 任务栏 / 关于弹窗使用，不得被顺手删掉。
     #[test]
-    fn macos_titlebar_hides_native_title_text() {
+    fn main_window_keeps_its_title() {
         let src = include_str!("ui.rs");
         let production = src
             .split("mod window_background_tests")
             .next()
             .expect("ui.rs 应含 window_background_tests 模块");
         assert!(
-            production.contains("TitleBarStyle::Overlay"),
-            "macOS 应使用 overlay 标题栏（红绿灯浮在内容左上角）"
-        );
-        assert!(
-            production.contains("hidden_title(true)"),
-            "macOS 段必须 `hidden_title(true)`：Overlay 只让红绿灯浮起，\
-             **不会**隐去 `.title()` 的文字——漏掉它，红绿灯旁会一直挂着一行窗口名"
-        );
-        assert!(
             production.contains(r#".title("DSH Dock")"#),
-            "窗口标题本身要保留（窗口切换器/任务栏/关于弹窗仍用它），\
-             被隐藏的只是标题栏里的那份渲染"
+            "主窗口标题不得删除：窗口切换器 / 任务栏 / 关于弹窗仍用它"
         );
     }
 
@@ -859,67 +788,6 @@ mod window_background_tests {
         assert!(
             !has_literal,
             "检测到硬编码 Color(...) 字面量——请改用 crate::ui::WINDOW_BACKGROUND"
-        );
-    }
-}
-
-/// 沉浸式标题栏（ADR-0029）注入脚本的**内容契约闸门**。
-///
-/// 脚本跑在 dsh 工作台文档里、无打包器、无单测环境，Rust 侧只能按内容钉契约。
-/// 钉的是四件「被误删也不会立刻炸、但沉浸式会静默死掉」的事：
-///   ① 双重注入 guard（同文档重入防护，与既有脚本同款）；
-///   ② macOS 平台门（v1 仅 macOS；Win/Linux 保持原生装饰，与窗口配置的 cfg 同门）；
-///   ③ 标记值 `darwin`（必须与 dsh 官方 preload 打的同款，见 ADR-0029 §1）；
-///   ④ 拖拽机制要件（2026-09-23 改版后：几何语义 —— 读 dsh 的拖拽带钩子 + 命中测试；
-///      旧「app-region → `data-tauri-drag-region`」键名已作废，见 ADR-0029 §7）。
-#[cfg(test)]
-mod immersive_chrome_tests {
-    #[test]
-    fn immersive_script_carries_its_contract() {
-        let src = include_str!("../../frontend/src/injected/immersive-chrome.js");
-        // 只有**生效代码**才算数：注释里为说明历史而引用旧键名会干扰纯 contains 断言
-        // （本闸门 2026-09-23 就栽过一次 —— 键名只剩在注释里，断言照样绿）。
-        let code = src
-            .lines()
-            .filter(|line| {
-                let trimmed = line.trim_start();
-                !(trimmed.starts_with("//")
-                    || trimmed.starts_with("/*")
-                    || trimmed.starts_with('*'))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        for needle in [
-            "window.__dshDockImmersiveInjected", // ① 重入 guard
-            "platform.os !== 'macos'",           // ② v1 平台门
-            "dataset.platform",                  // ③ 补打 dsh 官方标记的落点
-            "'darwin'",                          // ③ 标记值（= DSH_PLATFORM_MARKER）
-            "data-shell-leading-band",           // ④ 拖拽带钩子（dsh 发布）
-            "elementFromPoint",                  // ④ 命中测试：决定拖动还是点击
-        ] {
-            assert!(
-                code.contains(needle),
-                "immersive-chrome.js 的生效代码缺少契约要素 `{needle}`——ADR-0029 的机制\
-                 会因此静默失效（工作台回退原生标题栏 / 窗口拖不动）。若确有重构，\
-                 请同步本闸门与 ADR。"
-            );
-        }
-    }
-
-    /// 主窗口注入链必须挂上沉浸式脚本（接线闸门：只进主窗口，控制中心窗口
-    /// label=profiles 是壳页面，不得挂——它由 `commands/window.rs` 单独创建）。
-    #[test]
-    fn main_window_wires_immersive_script() {
-        let src = include_str!("ui.rs");
-        assert!(
-            src.contains(".initialization_script(immersive_script)"),
-            "主窗口注入链缺少 immersive_script——ADR-0029 的唤醒步（①）没接上"
-        );
-        // 反例守卫：控制中心窗口不得挂沉浸式脚本（壳页面无 dsh 桌面 CSS，挂了也是空转）。
-        let window_rs = include_str!("commands/window.rs");
-        assert!(
-            !window_rs.contains("immersive"),
-            "控制中心窗口（壳页面）不应引用沉浸式脚本"
         );
     }
 }
@@ -1090,22 +958,28 @@ mod main_window_lifecycle_tests {
     }
 }
 
-/// Windows 维持原生装饰的「防复辟」闸门（2026-09-23 维护者裁定，ADR-0030）。
+/// **壳不得宣称桌面身份**的防复辟闸门（2026-09-29 维护者裁定，ADR-0032 §15）。
 ///
-/// 撤回的是一次真机事故（issue #16：**窗口不能移动 / 缩放 / 关闭**）：`decorations(false)`
-/// 在 Windows 上摘掉 `WS_CAPTION | WS_THICKFRAME`（缩放 + 贴靠随之消失），而替代它的自绘控件
-/// 缺 ACL 授权、拖拽条是伪元素挂不上属性 —— 三件事各自都足够让窗口变砖。本模块保证这半成品
-/// 不会再被悄悄加回来。
+/// dsh-dock 的定位是 **web 档套壳**：以 Web 方式承载 dsh 工作台 + 一套管理面。
+/// 因此壳**永不**向 dsh 文档写 `data-platform` / 不提供 `dshDesktop` / 不做窗口 overlay。
+///
+/// 为什么需要一道**反向**闸门：2026-09 那一轮事故（ADR-0032 §1）正是「只抄了官方声明的
+/// 表现层一半」——打了标记却没有能力对象，于是 `dsh-client-shortcuts` 构造即抛错、
+/// 23+ 个客户端条目 pending、工作台启动红屏。而"打标记能让旧版 dsh 好看一点"这个诱惑
+/// 一直存在，很容易被后人重新加回来。本模块让那件事**加回来就红**。
+///
+/// 同时也保留 ADR-0030 的 Windows 防复辟（同一条路线的另一侧）。
 #[cfg(test)]
-mod windows_native_decorations_tests {
+mod no_desktop_claim_tests {
     fn ui_source() -> &'static str {
         include_str!("ui.rs")
-            .split("mod windows_native_decorations_tests")
+            .split("mod no_desktop_claim_tests")
             .next()
             .expect("split 至少返回一段")
     }
 
-    /// 正例：窗口链上的 `decorations(false)` 一处都不许有（只允许出现在解释性注释里）。
+    /// 正例：窗口链上不得有 `decorations(false)`（Windows 侧 ADR-0030 的防复辟，
+    /// 2026-09-23 issue #16 真机事故）。
     #[test]
     fn windows_window_stays_decorated() {
         for (idx, line) in ui_source().lines().enumerate() {
@@ -1114,245 +988,47 @@ mod windows_native_decorations_tests {
                     line.trim_start().starts_with("//"),
                     "ui.rs:{} 出现了实际生效的 decorations(false)：Windows 必须维持原生装饰\
                      （2026-09-23 裁定，ADR-0030）——它会摘掉 WS_CAPTION|WS_THICKFRAME，\
-                     鼠标缩放与 Aero Snap 一并消失，而拖拽条/自绘控件在 Windows 上都无可用接线",
+                     鼠标缩放与 Aero Snap 一并消失",
                     idx + 1
                 );
             }
         }
     }
 
-    /// 反例方向：注入脚本里的 Windows 沉浸式分支（标记 / 自绘控件 / Tauri window API 调用）
-    /// 必须已整体移除——断言的是**代码形态**（注释里引用官方标记名不在此列）。
+    /// **核心反向闸门**：主窗口不得再注入任何脚本、不得设 overlay/隐标题/vibrancy、
+    /// 不得做红绿灯定位。这些是沉浸式栈的四条腿，缺一条整套就不成立，故一并钉死。
     #[test]
-    fn injected_script_has_no_windows_branch() {
-        let injected = include_str!("../../frontend/src/injected/immersive-chrome.js");
-        for needle in [
-            "installWindowsTitlebar",
-            "dsh-dock-window-controls",
-            "setAttribute('data-windows-titlebar'",
-        ] {
-            assert!(
-                !injected.contains(needle),
-                "注入脚本仍带 Windows 沉浸式分支（{needle}）：2026-09-23 裁定 Windows 维持原生装饰\
-                 （ADR-0030），该分支的控件调用没有 ACL 授权、拖拽条是伪元素，属半成品"
-            );
-        }
-    }
-
-    /// 撤回不得误伤 macOS 档：Overlay + 隐标题那套仍在原位。
-    #[test]
-    fn macos_immersive_path_is_intact() {
+    fn ui_never_claims_desktop_host() {
         let src = ui_source();
-        assert!(
-            src.contains("title_bar_style(tauri::TitleBarStyle::Overlay)"),
-            "macOS 的 Overlay 标题栏（ADR-0029）不得随本次回退丢失"
-        );
-        assert!(
-            src.contains(".hidden_title(true)"),
-            "macOS 隐藏标题文字（ADR-0029 §3）不得随本次回退丢失"
-        );
-    }
-}
-
-/// 沉浸式拖拽的接线闸门（2026-09-23 第二次改版后重建，沿用 issue #16 与 WKWebView 实测的教训）。
-///
-/// 两道链必须同时成立，缺一即「窗口拖不动 / 页面被吃掉」：
-///
-/// ① **机制（2026-09-23 改版）**：注入脚本按**几何语义**自驱拖拽 —— 命中点落在 dsh 自己的
-///    拖拽带矩形内（`data-shell-leading-band`，取不到则顶部 52px 兜底）∧ 在 `#root` 内
-///    ∧ 不在 dsh 的交互元素排除表上 ⇒ `startDragging()`；双击（按下不算、抬起未移动才算）
-///    ⇒ `toggleMaximize()`。旧机制「扫 `-webkit-app-region` → 写 `data-tauri-drag-region`」
-///    已由本机 WKWebView 探针**证伪**（`CSS.supports` 为 false、CSSOM 读回为空；且拖拽带是
-///    `pointer-events:none`，命中测试型机制永远看不到它），**不得回流**。
-///
-/// ② **权限**：脚本调用的 window 命令**都不在** `core:window:default`（tauri 2.11.5 = 28 条
-///    只读 getter + `internal_toggle_maximize`）里 —— `start_dragging` 与 `toggle_maximize`
-///    都必须显式授权，否则 ACL 拒绝且被 `.catch` 吞掉，用户侧只剩「拖不动 / 双击没反应」。
-///    本模块用**命令 → 权限反查**（从脚本里抽 `win.<method>(`）堵住这类静默失效，
-///    2026-09-23 一天内它已连中两次（先 `start_dragging`、后 `toggle_maximize`）。
-///
-/// 另钉住「TS 纯模型 ↔ 注入脚本」的常量同步：两处靠人肉同步（无打包器），是最易漂的一环。
-#[cfg(test)]
-mod immersive_drag_acl_tests {
-    const INJECTED: &str = include_str!("../../frontend/src/injected/immersive-chrome.js");
-    const PURE_MODEL: &str = include_str!("../../frontend/src/lib/immersiveChrome.ts");
-
-    /// 取 `marker` 之后、`stop` 之前的片段里所有双引号字面量并拼接（这两处的字面量内只有
-    /// 单引号，故按 `"` 切分取奇数段即可）。
-    fn joined_literals(src: &str, marker: &str, stop: &str) -> String {
-        let start = src
-            .find(marker)
-            .unwrap_or_else(|| panic!("源码里找不到常量锚点 {marker}"))
-            + marker.len();
-        let rest = &src[start..];
-        let end = rest
-            .find(stop)
-            .unwrap_or_else(|| panic!("常量 {marker} 之后找不到结束锚点 {stop}"));
-        rest[..end].split('"').skip(1).step_by(2).collect()
-    }
-
-    fn capability_permissions() -> Vec<String> {
-        let json: serde_json::Value =
-            serde_json::from_str(include_str!("../capabilities/default.json"))
-                .expect("capabilities/default.json 非法 JSON");
-        json["permissions"]
-            .as_array()
-            .expect("capabilities/default.json 缺 permissions 数组")
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect()
-    }
-
-    /// 注入脚本里所有 `win.<method>(` 调用（去重），用于**反推**它依赖哪些 window 权限。
-    ///
-    /// 只认方法名后紧跟 `(` 的形态：属性探测（如 `win && win.getCurrentWindow ? …`）不算调用。
-    fn window_api_calls(code: &str) -> Vec<String> {
-        let mut calls: Vec<String> = Vec::new();
-        let mut rest = code;
-        while let Some(idx) = rest.find("win.") {
-            let after = &rest[idx + 4..];
-            let name: String = after
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric())
-                .collect();
-            let tail = &after[name.len()..];
-            if !name.is_empty() && tail.starts_with('(') && !calls.contains(&name) {
-                calls.push(name);
-            }
-            rest = if tail.is_empty() { "" } else { &tail[1..] };
-        }
-        calls.sort();
-        calls
-    }
-
-    /// **命令 → 权限反查**闸门（2026-09-23 第三轮补）：静默失效的根因是「脚本调命令、
-    /// capabilities 没授、`.catch` 吞掉」。前两轮各修一处（`start_dragging`、
-    /// `toggle_maximize`）——本闸门从脚本**反推**它调了哪些 window 命令，逐条要求在
-    /// 映射表与 capabilities 里都有落点，杜绝第三次。
-    #[test]
-    fn every_window_command_the_script_calls_is_granted() {
-        let calls = window_api_calls(&injected_code());
-        assert!(
-            !calls.is_empty(),
-            "反查失败：没在脚本里找到任何 `win.<method>(` 调用"
-        );
-        // (脚本里的调用, 对应权限)：`None` = 纯客户端 API、不产生 IPC/ACL 面。
-        let required: &[(&str, Option<&str>)] = &[
-            ("startDragging", Some("core:window:allow-start-dragging")),
-            ("toggleMaximize", Some("core:window:allow-toggle-maximize")),
-            ("getCurrentWindow", None),
-        ];
-        let perms = capability_permissions();
-        for call in &calls {
-            let entry = required
-                .iter()
-                .find(|(name, _)| name == call)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "注入脚本调用了未登记的 window 命令 `win.{call}(`：必须先在映射表里登记它\
-                         对应的权限、再在 capabilities 显式授权 —— 否则 ACL 拒绝且被 `.catch` \
-                         吞掉，用户侧只剩「没反应」（issue #16 的同一类静默失效）"
-                    )
-                });
-            if let Some(perm) = entry.1 {
-                assert!(
-                    perms.iter().any(|p| p == perm),
-                    "脚本调用 `win.{call}(` 需要 `{perm}`，但 capabilities/default.json 未授予 \
-                     —— 该命令不在 core:window:default 里（tauri 2.11.5），漏授即静默失效"
-                );
-            }
-        }
-        // 反向：映射表里不该留脚本已不再调用的死条目（否则权限面留白没人回收）。
-        for (name, _) in required {
-            assert!(
-                calls.iter().any(|c| c == name),
-                "映射表里的 `win.{name}(` 已不在脚本中调用：请同步回收该映射（必要时连同权限）"
-            );
-        }
-    }
-
-    #[test]
-    fn drag_region_permissions_are_granted() {
-        let perms = capability_permissions();
-        assert!(
-            perms.iter().any(|p| p == "core:default"),
-            "capabilities 丢了 core:default：双击拖拽区最大化（internal_toggle_maximize）会失效"
-        );
-        assert!(
-            perms
-                .iter()
-                .any(|p| p == "core:window:allow-start-dragging"),
-            "缺 core:window:allow-start-dragging：`data-tauri-drag-region` 的单击拖拽会被 ACL \
-             拒绝、窗口拖不动（tauri 2.11.5 的 core:window:default 不含它 —— v1.3.0~v1.3.2 实况）"
-        );
-    }
-
-    /// 注入脚本的**生效代码**（剥掉整行注释：`//`、`/*`、`*`、`*/` 开头）——闸门断言的是
-    /// 代码形态，注释里为说明历史而引用被证伪的属性名不算违规。
-    fn injected_code() -> String {
-        INJECTED
-            .lines()
-            .filter(|line| {
-                let trimmed = line.trim_start();
-                !(trimmed.starts_with("//")
-                    || trimmed.starts_with("/*")
-                    || trimmed.starts_with('*'))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// 机制闸门：几何语义的四个要件齐全，且两条**已证伪**的老机制不得回流。
-    #[test]
-    fn injected_script_drives_drag_by_geometry() {
-        let code = injected_code();
-        for needle in [
-            "data-shell-leading-band", // dsh 发布的拖拽带钩子
-            "elementFromPoint",        // 命中测试：决定这一下是拖动还是点击
-            "startDragging()",         // 窗口拖拽
-            "toggleMaximize()",        // 双击最大化
-            "#root",                   // 拖拽面锚点（body 下全是 no-drag 浮层）
+        for (needle, why) in [
+            (
+                "title_bar_style(tauri::TitleBarStyle::Overlay)",
+                "overlay 标题栏——它让红绿灯浮在内容上，而页面**不会**为它让位（ADR-0032 §15）",
+            ),
+            (
+                ".hidden_title(true)",
+                "隐去标题文字——只在 overlay 形态下才有意义",
+            ),
+            (
+                "Effect::Sidebar",
+                "vibrancy 毛玻璃——它透出的是 dsh 的 **web** 底色，观感是「糊掉的浅色窗口」",
+            ),
+            (
+                "traffic_lights::",
+                "红绿灯 AppKit 定位——原生装饰下系统自管的按钮位才是正确位",
+            ),
+            (
+                "include_str!(\"../../frontend/src/injected/immersive-chrome.js\")",
+                "沉浸式注入脚本——它打 `data-platform`，即宣称桌面身份",
+            ),
         ] {
             assert!(
-                code.contains(needle),
-                "注入脚本缺几何语义要件 {needle}：窗口会拖不动或按钮点不动"
+                !src.contains(needle),
+                "ui.rs 仍含 `{needle}`：{why}。\
+                 2026-09-29 维护者裁定 dsh-dock 定位为 **web 档套壳**（ADR-0032 §15），\
+                 沉浸式栈已整体删除，不得回流。若确要恢复，请先改 ADR-0032 §15 与 ADR-0029，\
+                 并重跑 §14 的时序实验证明有可靠时机。"
             );
         }
-        for dead in ["-webkit-app-region", "data-tauri-drag-region"] {
-            assert!(
-                !code.contains(dead),
-                "注入脚本的生效代码里出现了已被证伪的老机制 {dead}：WKWebView 不认\
-                 `-webkit-app-region`（CSS.supports=false、CSSOM 读回为空），且拖拽带是\
-                 pointer-events:none，命中测试型机制看不到它 —— 该路径 2026-09-23 起已废弃，\
-                 不得回流"
-            );
-        }
-    }
-
-    /// 同步闸门：TS 纯模型与注入脚本的常量必须逐字一致（无打包器，两处同步靠人肉）。
-    #[test]
-    fn injected_script_constants_match_the_pure_model() {
-        let js_exclusion = joined_literals(INJECTED, "var EXCLUSION_SELECTOR =", ";\n");
-        let ts_exclusion =
-            joined_literals(PURE_MODEL, "export const DRAG_EXCLUSION_SELECTOR =", "\n\n");
-        assert_eq!(
-            js_exclusion, ts_exclusion,
-            "交互元素排除表两处不一致：与 dsh `web/src/base.css:72-78` 的 no-drag 列表必须\
-             逐字同步（改一处漏一处 ⇒ 按钮被拖拽吃掉或可拖区莫名挖洞）"
-        );
-        assert!(
-            js_exclusion.contains("button") && js_exclusion.contains("[role='tab']"),
-            "排除表内容可疑：至少应覆盖 button 与 [role='tab']"
-        );
-        assert!(
-            INJECTED.contains("'[data-shell-leading-band]'")
-                && PURE_MODEL.contains(r#""[data-shell-leading-band]""#),
-            "拖拽带钩子两处不一致（须同为 [data-shell-leading-band]）"
-        );
-        assert!(
-            INJECTED.contains("FALLBACK_BAND_HEIGHT = 52")
-                && PURE_MODEL.contains("DRAG_BAND_FALLBACK_HEIGHT = 52"),
-            "兜底带高两处不一致（须与 dsh .leadingBand 的 52px 同值）"
-        );
     }
 }
