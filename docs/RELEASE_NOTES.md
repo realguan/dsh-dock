@@ -5,7 +5,7 @@
 ---
 
 ## [v1.3.4] - 2026-09-29
-<!-- coverage: 19d9129 1a55878 2ed5ee7 3ce0f8e 8bbe2a3 91358ea 91967e5 930d6a0 94d5e7d ab51ee6 af4f77e d4ba4c0 f0ec206 f8835b4 fb3aae4 -->
+<!-- coverage: 0ed091a 19d9129 1a55878 2ed5ee7 3ce0f8e 8bbe2a3 91358ea 91967e5 930d6a0 94d5e7d ab51ee6 af4f77e af97e50 d4ba4c0 f0ec206 f8835b4 fb3aae4 -->
 
 ### 🌟 核心亮点 (Highlights)
 - **工作台又能正常打开了**：上一版给 macOS 打的「桌面壳」标记，在 dsh 升级之后会让工作台启动即报错、大片功能不可用；本版改为按 dsh 版本判定该不该打这个标记，问题消失。
