@@ -31,6 +31,30 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-29 发版 · **v1.3.4 准备就绪 · 快车道直推 master**（工作台红屏修复 + 沉浸式栈退役）—— guan（AI 协作）
+
+- **触发**：维护者裁定「提交，准备打新 tag」。
+- **变更（两次提交，均已落盘）**：
+  1. `d4ba4c0 refactor(chrome)!: 删除沉浸式栈，dsh-dock 正式定位为 Web 承载壳` —— 13 文件，+1470 / −1206。含删除面、ACL 收回、防复辟反向闸门、ADR-0032（新建 756 行）、ADR-0029 退役标注、索引、复现台账、广播。
+  2. `94d5e7d release: v1.3.4 —— 工作台红屏修复与沉浸式栈退役` —— 版本号三处同步（`Cargo.toml` / `tauri.conf.json` / `frontend/package.json`）+ `Cargo.lock` + `docs/RELEASE_NOTES.md` 顶部规范日志。
+- **发版前自检（CI 同款判据，本地已跑）**：
+  - `Verify tag version consistency`：三处版本号一致（`1.3.4`）✅
+  - 发布日志文档门禁：`grep -qE "^## \[v?1\.3\.4\]" docs/RELEASE_NOTES.md` ✅
+  - `scripts/extract-release-notes.py v1.3.4` 实跑可提取（1581 字符，来源 `docs/RELEASE_NOTES.md`）✅
+  - `scripts/tests/test_extract_release_notes.py` 通过 ✅
+- **凭据**：Rust `517 passed / 0 failed`、clippy `-D warnings` **0**、`cargo fmt --check` 净；前端 `682 passed`（67 文件）、`tsc -b` 0 错、`oxlint` 0 告警（183 文件）；`scripts/tests/*.py` 六项全过。反向闸门负例验证 1 项（注入合法的 `title_bar_style(Overlay)` 死代码即红）。
+- **合入**：**快车道直推 master**（单人维护者 + AI 协作档；`git diff` 已人肉读过，含"会话前既有改动"与"净零文件"两类隔离核对）。**未合并**会话前既有的 4 个未跟踪文件与 2 个已修改文件（`.github/workflows/build.yml`、`frontend/pnpm-lock.yaml`、`docs/plans/notifications-*`、`docs/plans/os-integration-*`、`scripts/check-appimage-perms.py`、`scripts/tests/test_appimage_perms.py`）——它们属另一次意图，不由本次代劳。
+- **待办**：**tag 尚未创建**（`v1.3.4`）。打 tag 会触发三平台构建 + GitHub Release 发布，故留待维护者确认后执行；命令见下方「打 tag 步骤」。
+- **注**：`cnb` 远端滞后 master 124 个提交（另行同步，本次不涉及）；`origin` 本次推送含一个更早未推的提交 `3ce0f8e`。
+
+#### 打 tag 步骤（确认后执行）
+
+```bash
+git push origin master
+git tag -a v1.3.4 -m "v1.3.4 —— 工作台红屏修复与沉浸式栈退役"
+git push origin v1.3.4
+```
+
 ### 2026-09-29 修订 · **沉浸式栈物理删除 + ADR-0029 退役**（ADR-0032 §16）—— guan（AI 协作）
 
 - **触发**：维护者裁定「删」。即 §15.5 提出的问题——ADR-0029 那三层（标记注入 / 窗口 overlay+红绿灯 / 几何语义自驱拖拽）是否物理删除。裁定前状态：一套**永不执行的死代码**（`HOST_MODE !== 'desktop'` 时脚本早退），有闸门护着但会误导后来人。
