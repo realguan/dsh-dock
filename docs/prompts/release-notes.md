@@ -20,9 +20,15 @@
 先跑下面这条命令，拿到区间与应填清单，再动笔：
 
 ```bash
-# tag 未建时用 HEAD 预演（发版流程里通常如此）
-python3 scripts/check-release-coverage.py HEAD --prev <上个 tag> --print
+# ① 拿区间与应填清单（tag 未建时用 HEAD 预演——发版流程里通常如此）
+python3 scripts/check-release-coverage.py HEAD --prev <上个 tag> --version <本版号> --print
+
+# ② 写完全部正文与覆盖清单后，再校验一次（这一步就是 CI 会跑的那条）
+python3 scripts/check-release-coverage.py HEAD --prev <上个 tag> --version <本版号>
 ```
+
+`--version` 在预演时**必须给**：入参是 `HEAD` 或 sha 时推不出 `[vX.Y.Z]` 小节是哪一个，
+脚本会直接报错而不是猜（猜会报出「缺少覆盖清单」这种指向错误原因的错）。
 
 **为什么强制**：2026-09-29 的 v1.3.4 就是在这里栽的——发布日志凭记忆写，
 区间内 10 个提交里 4 个用户可感知的改动（会话维护模块下线、安全模式删除、

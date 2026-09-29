@@ -78,6 +78,23 @@ def compare_coverage(expected: list[str], actual: list[str]) -> tuple[list[str],
     return missing, extra
 
 
+VERSION_RE = re.compile(r"\d+(\.\d+)*([-+].*)?$")
+
+
+def resolve_version(tag: str, override: str | None) -> str | None:
+    """发布日志里的版本号；推不出来返回 None。
+
+    为什么需要 override：发版流程里本脚本常在 **tag 建立之前** 被跑（先补清单再打 tag），
+    此时入参是 `HEAD` 或某个 sha——从它推版本号不可能，必须显式给 `--version`。
+    反过来若默默取 `tag.lstrip("v")`，就会去读 `[vHEAD]` 小节，报出「缺少覆盖清单」
+    这种**指向错误原因**的错，把人带沟里（本次实现时就先踩了一次）。
+    """
+    if override:
+        return override.lstrip("v")
+    candidate = tag.lstrip("v")
+    return candidate if VERSION_RE.fullmatch(candidate) else None
+
+
 def commit_range(rev: str, prev: str | None, repo: str) -> list[str] | None:
     """区间内的短哈希；rev 不是合法版本对象时返回 None（由调用方给可读报错）。
 
@@ -135,6 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="发布日志覆盖清单闸门（账目必须平）")
     p.add_argument("tag", help="要校验的 tag 或任意 rev")
     p.add_argument("--prev", default=None, help="手工指定上个 tag（默认自动取最近一个）")
+    p.add_argument(
+        "--version",
+        default=None,
+        help="发布日志里的版本号（如 1.3.4）。tag 未建、用 HEAD 预演时**必须**给——"
+        "否则无从知道该读哪个小节。",
+    )
     p.add_argument("--repo", default=".", help="仓库路径（默认当前目录）")
     p.add_argument("--notes", default=None, help="RELEASE_NOTES.md 路径（默认 <repo>/docs/RELEASE_NOTES.md）")
     p.add_argument("--print", dest="print_only", action="store_true", help="只打印区间与应填清单，不判定")
@@ -145,7 +168,15 @@ def main() -> int:
     args = build_parser().parse_args()
     repo = os.path.abspath(args.repo)
     notes_path = args.notes or os.path.join(repo, "docs", "RELEASE_NOTES.md")
-    version = args.tag.lstrip("v")
+    version = resolve_version(args.tag, args.version)
+    if version is None:
+        print(
+            f"::error::无法从 `{args.tag}` 推出发布日志的版本号（它不像 vX.Y.Z）。\n"
+            f"tag 未建、用 HEAD/某个 sha 预演时请显式给版本：\n"
+            f"  scripts/check-release-coverage.py {args.tag} --prev {args.prev or '<上个 tag>'} --version 1.3.4",
+            file=sys.stderr,
+        )
+        return 1
 
     prev = args.prev or previous_tag(args.tag, repo)
     if prev is None and not args.prev:

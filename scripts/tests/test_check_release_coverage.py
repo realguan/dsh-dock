@@ -16,6 +16,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
 parse_coverage = _MODULE.parse_coverage
+resolve_version = _MODULE.resolve_version
 compare_coverage = _MODULE.compare_coverage
 split_sections = _MODULE.split_sections
 
@@ -81,6 +82,27 @@ class CompareCoverageTest(unittest.TestCase):
         missing, extra = compare_coverage(["a", "b"], ["a", "a"])
         self.assertEqual(missing, ["b"])
         self.assertEqual(extra, [])
+
+
+class ResolveVersionTest(unittest.TestCase):
+    """发版前用 HEAD 预演是常态，版本推导必须可靠——推不出来就要报错，不能猜。"""
+
+    def test_tag_form_yields_version(self) -> None:
+        self.assertEqual(resolve_version("v1.3.4", None), "1.3.4")
+        self.assertEqual(resolve_version("1.3.4", None), "1.3.4")
+
+    def test_override_wins_and_accepts_v_prefix(self) -> None:
+        self.assertEqual(resolve_version("HEAD", "1.3.4"), "1.3.4")
+        self.assertEqual(resolve_version("HEAD", "v1.3.4"), "1.3.4")
+
+    def test_non_version_rev_yields_none_instead_of_guessing(self) -> None:
+        """`HEAD` / sha 绝不能变成 `[vHEAD]` 这种假版本号——那会报出指向错误原因的错。"""
+        self.assertIsNone(resolve_version("HEAD", None))
+        self.assertIsNone(resolve_version("af4f77e", None))
+        self.assertIsNone(resolve_version("master", None))
+
+    def test_prerelease_tag_is_accepted(self) -> None:
+        self.assertEqual(resolve_version("v1.4.0-rc.1", None), "1.4.0-rc.1")
 
 
 class NotesOnlyPathTest(unittest.TestCase):
