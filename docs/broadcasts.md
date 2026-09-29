@@ -31,6 +31,18 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-09-30 修复 · **AppImage 权限闸门 + Tauri bundler 0o770 绕行**（补登 2026-09-28 的工作）—— guan（AI 协作）
+
+- **背景（为什么这条迟至今日才落）**：该工作 2026-09-28 就已在工作区完成（脚本 + 18 项单测 + workflow 接线齐全），但一直**未提交、也未广播**，与 master 隔了五天。本轮准备 v1.3.4 发版时发现：**打 tag 会不带这批修复**，v1.3.4 的 AppImage 很可能重蹈 v1.3.3 被目录站拒收的覆辙——维护者裁定「先把这批提交，再打 tag」。**本条同时是对「工作区长期未提交」这一形态的补记**。
+- **真因（上游缺陷 + 只有机器能兜底）**：Tauri bundler（[tauri-apps/tauri#16155](https://github.com/tauri-apps/tauri/issues/16155)，dev 分支至今未修）的 `write_and_make_executable()` 把下载的工具按 **`0o770`** 落盘（含 `AppRun-<arch>`）；`linuxdeploy.rs` 用 `fs::copy` **保权**复制成 `<AppDir>/AppRun`，GTK 插件装 apprun-hooks 后改名为 `AppRun.wrapped` ⇒ 镜像里出现**唯一一个「other 不可读 / owner 可执行而 other 不可执行」**的文件（v1.3.3 实测 352 条中恰 1 条）。
+- **为什么此前一路绿灯**：普通用户走 FUSE 挂载时文件属主 = 启动者，`770` 也够执行 ⇒ **构建者本机、CI、任何"自己跑一遍"的验证都测不出来**；只有「root 挂载、他人 uid 运行」（firejail、AppImageHub 目录站）会在 `AppRun` 第 12 行 `exec .../AppRun.wrapped` 处 `Permission denied`、应用 11 秒退出无窗口 —— **这正是 v1.3.3 被目录站拒收（PR #6208，标签 `error-not-executable` / `error-app-exits`）的真因**。属「本机绿灯 ≠ 对外可用」的典型。
+- **变更**：
+  1. `scripts/check-appimage-perms.py`（新）：读 **squashfs 元数据**（`unsquashfs -lln`，不受 umask 影响，正是挂载者在 firejail 里看到的那一份）判定——① any 条目 other 不可读 → 红；② owner 可执行但 other 不可执行 → 红；③ 目录 other 不可进入 → 红；④ 符号链接豁免（权限恒 `lrwxrwxrwx`，不承载执行语义）；⑤ **解析不出任何条目同样判红**（不接受静默绿）。纯文本输入 ⇒ 无 Linux 机器也能复核。
+  2. `scripts/tests/test_appimage_perms.py`（新，18 项，全过）。
+  3. `.github/workflows/build.yml`：加 `squashfs-tools` 系统依赖；**Pre-seed `AppRun-<arch>` 为 0755**（bundler 只在工具缺失时下载 ⇒ 预置即绕行，上游修复后删除本步）；构建后加**权限闸门**读镜像元数据。
+- **凭据**：`scripts/tests/test_appimage_perms.py` 18 项全过；`scripts/tests/*.py` 九项全过；本变更只动 workflow 与 scripts，不涉 Rust / 前端。
+- **合入**：**快车道直推 master**（随 v1.3.4 发版一并）。
+
 ### 2026-09-29 闸门 · **发布日志「账目必须平」**（修 v1.3.4 漏项的结构性成因）—— guan（AI 协作）
 
 - **触发**：维护者发现 v1.3.4 发布日志只写了本次会话的改动，漏掉区间内 4 个用户可感知的提交。追问「如何避免下次再出现」。维护者倾向「优化提示词即可」；举证后改为**提示词 + 一条最小机器判据**同时做。

@@ -148,13 +148,16 @@ jobs:
         if: matrix.rust_target != ''
         run: rustup target add ${{ matrix.rust_target }}
 
-      # Tauri v2 官方要求的系统依赖（Linux 构建安装包必需）
+      # Tauri v2 官方要求的系统依赖（Linux 构建安装包必需）。
+      # `squashfs-tools` 是本仓库自己加的（2026-09-28）：下方 AppImage 权限闸门用
+      # `unsquashfs -lln` 直接读镜像元数据，不进安装包、不随壳分发。
       - name: Ubuntu system deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            squashfs-tools \
             build-essential \
             curl \
             wget \
@@ -264,6 +267,30 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      # 2026-09-28：Tauri bundler 的 x86_64 AppImage 缺陷绕行（上游 tauri-apps/tauri#16155，
+      # 截至当日 dev 分支仍未修）。链条：bundler 的 `write_and_make_executable()` 把下载的
+      # 工具按 **0o770** 落盘（含 `AppRun-<arch>`）→ `linuxdeploy.rs` 用 `fs::copy`
+      # **保权**复制成 `<AppDir>/AppRun` → GTK 插件装 apprun-hooks 后 linuxdeploy 把它改名
+      # 为 `AppRun.wrapped` ⇒ 镜像里唯一一个「other 不可读 / owner 可执行而 other 不可执行」
+      # 的文件。普通用户 FUSE 挂载时属主=启动者，770 也够 ⇒ **构建者本机与 CI 自测都无感**；
+      # 只有「root 挂载、他人 uid 运行」（firejail、AppImageHub 目录站）在 AppRun 第 12 行
+      # `exec .../AppRun.wrapped` 处 `Permission denied`，应用 11 秒内退出、无窗口 ——
+      # 这就是 v1.3.3 被目录站拒收（PR #6208，标签 error-not-executable / error-app-exits）的真因。
+      # bundler 只在工具缺失时下载 ⇒ 预置一份 0755 的即可绕行；下一步权限闸门守回归。
+      # **上游修复后删除本步**（判据：tauri-bundler 的 `write_and_make_executable` 不再写 0o770）。
+      - name: Pre-seed AppRun tool as 0755 (Tauri AppImage 0o770 workaround)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"  # bundler 取 target 三元组首段（x86_64 / aarch64），与本值一致
+          tools_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"  # tauri-bundler 默认工具缓存
+          mkdir -p "$tools_dir"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$tools_dir/AppRun-$arch" \
+            "https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-$arch"
+          chmod 755 "$tools_dir/AppRun-$arch"
+          ls -l "$tools_dir/AppRun-$arch"
 
       # 私钥只注入 tag 构建步骤，绝不写入 GITHUB_ENV；因此 PR 的 cargo/npm 命令
       # 无法读取发布密钥。tag 必须签名，缺密钥直接失败而非发布不可更新的安装器。
@@ -401,6 +428,32 @@ jobs:
           else
             cargo tauri build --no-sign
           fi
+
+      # 2026-09-28：AppImage 权限闸门。owner-only 权限**只对启动者之外的 uid 可见**
+      # （见上方 Pre-seed 步骤的完整链条）⇒ 构建者本机、CI 里任何"自己跑一遍"的验证
+      # 都测不出来，只有机器读镜像元数据才能兜底。读的是 squashfs 元数据而非解包后的
+      # 文件系统（不受 umask 影响），判据与上游 tauri-apps/tauri#16155 的建议一致。
+      # 它同时守住绕行步骤失效（上游换下载路径 / 缓存目录变动 ⇒ 0o770 复活）。
+      - name: Gate - AppImage file permissions (other-readable / other-executable)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
+          test "${#appimages[@]}" -eq 1 || {
+            echo "::error::期望恰好 1 个 AppImage，实际 ${#appimages[@]} 个：${appimages[*]}"
+            exit 1
+          }
+          appimage="${appimages[0]}"
+          chmod +x "$appimage"
+          # `--appimage-offset` 由运行时直接回答（不挂载、不需要 FUSE）；
+          # `-lln` = 详细列表 + 数字 uid/gid，输出交给纯逻辑脚本判定。
+          offset="$("$appimage" --appimage-offset)"
+          listing="$RUNNER_TEMP/appimage-listing.txt"
+          unsquashfs -lln -o "$offset" "$appimage" > "$listing"
+          head -n 5 "$listing"
+          python3 scripts/check-appimage-perms.py "$listing"
 
       # Tauri 对 updater tarball 的默认名**不含架构**（`DSH Dock.app.tar.gz`）：
       # 两个 macOS leg 会产出**同名文件** ⇒ Release 资产重名（生成脚本会拒绝）且
