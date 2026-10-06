@@ -85,7 +85,9 @@ export function MarketplaceView({
         api.listProfiles().catch(() => [] as ProfileSummary[]),
         api.listAllPlugins().catch(() => [] as AggregatePlugin[]),
       ])
-      setProfiles(profs)
+      // 官方保留档（desktop，2026-10-06）不进安装目标：`dsh plugin --profile desktop`
+      // 必被上游拒绝，摆在选择器里只会让用户点到一次注定失败的安装。
+      setProfiles(profs.filter((p) => !p.reserved))
 
       const map = new Map<string, string[]>()
       for (const p of allPlugins) {

@@ -2,6 +2,7 @@
 // 名字校验镜像 / 模板表形状 / 创建结果归纳。
 import { describe, expect, it } from "vitest"
 import {
+  isReservedProfileName,
   PROFILE_LIST_FALLBACK_ERROR,
   profileListError,
   summarizeCreateOutcome,
@@ -21,6 +22,26 @@ describe("validateProfileName（逐字镜像 dsh resolveProfileDir 拒绝集）"
     for (const good of ["web", "headless", "my-profile", "中文名", ".hidden", "a b", "..foo"]) {
       expect(validateProfileName(good), `${good} 应放行`).toBeNull()
     }
+  })
+})
+
+// 保留名（2026-10-06）：dsh 启动器对 desktop 无条件报错，壳不得发起任何写操作。
+describe("isReservedProfileName（镜像 profiles::is_reserved_profile）", () => {
+  it("大小写不敏感命中 dsh 的 toLowerCase 判定", () => {
+    for (const reserved of ["desktop", "Desktop", "DESKTOP", "DeSkToP"]) {
+      expect(isReservedProfileName(reserved), `${reserved} 应判为保留名`).toBe(true)
+    }
+  })
+
+  it("不额外加码：近似名不是保留名", () => {
+    for (const free of ["desktop2", "my-desktop", "desktop ", " web", "web"]) {
+      expect(isReservedProfileName(free), `${free} 不该被拦`).toBe(false)
+    }
+  })
+
+  it("它不改变 validateProfileName 的拒绝集（两者语义分离）", () => {
+    expect(validateProfileName("desktop")).toBeNull()
+    expect(isReservedProfileName("desktop")).toBe(true)
   })
 })
 

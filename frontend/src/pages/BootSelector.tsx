@@ -17,6 +17,7 @@ import {
   Star,
 } from "lucide-react"
 import { api } from "@/lib/tauri"
+import { isReservedProfileName } from "@/lib/profiles"
 import { useI18n } from "@/stores/i18nStore"
 import type { BootErrorEvent } from "@/types/events"
 import type { ProfileSummary } from "@/types/ipc"
@@ -121,12 +122,17 @@ export function BootSelector() {
   // 计算展示的工作台列表（富元数据加持）
   const displayProfiles = (() => {
     const summaryMap = new Map(profileSummaries.map((p) => [p.name, p]))
-    const candidateNames =
+    const rawCandidates =
       urlCandidateNames.length > 0
         ? urlCandidateNames
         : profileSummaries.length > 0
           ? profileSummaries.map((p) => p.name)
           : ["web"]
+    // 官方保留档（desktop，2026-10-06）：dsh 启动器拒绝外部启动它 ⇒ 不进选择器。
+    // 后端候选名单已滤一遍，但 URL 参数可被手改，故这里按名字再滤一次
+    // （IPC 入口 `choose_profile` 另有权威守卫，三层都拦得住）。
+    const filtered = rawCandidates.filter((n) => !isReservedProfileName(n))
+    const candidateNames = filtered.length > 0 ? filtered : ["web"]
 
     return candidateNames.map((name) => {
       const summary = summaryMap.get(name)

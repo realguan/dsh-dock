@@ -966,6 +966,41 @@ fn is_repo_segment(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
+/// 插件变更（安装 / 卸载 / 更新）的 dsh 转发参数（纯函数，可测）：
+/// `dsh plugin --profile <p> <verb> <spec> [--registry <url>]`。
+///
+/// 抽出来的理由是**保留名守卫必须落在能单测的纯函数里**（2026-10-06）：`desktop`
+/// 由官方 Electron 客户端独占，`dsh plugin --profile desktop …` 必被上游拒绝
+/// （`bin.js:36`，本机实测 exit 1）——壳不得发起，否则市场安装/卸载会以一句英文
+/// 上游报错收场。
+///
+/// 按次指定源（ADR-0006 §6）：`dsh plugin` 是 pnpm 薄转发器，参数逐字透传
+/// （`apps/cli/src/plugin.ts:98`），故 `--registry <url>` 直接生效——取包仍发生在
+/// pnpm 子进程内，壳不开网络客户端、也不改写用户的 npm 配置。
+pub(crate) fn plugin_mutation_args(
+    verb: &str,
+    profile: &str,
+    spec: &str,
+    registry: Option<&str>,
+) -> Result<Vec<String>, String> {
+    crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
+    validate_install_spec(spec)?;
+    let mut args = vec![
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        verb.to_string(),
+        spec.to_string(),
+    ];
+    if let Some(url) = registry {
+        args.push("--registry".to_string());
+        args.push(url.to_string());
+    }
+    Ok(args)
+}
+
 /// 安装/卸载/更新（阻塞转发，IPC 层走 spawn_blocking；超时同创建 600s）。
 /// profile 必须已物化（模板名先创建/首启）；spec 先过校验。
 ///
@@ -982,23 +1017,7 @@ pub fn mutate_plugin_blocking(
     // 选择策略与兜底见 ADR-0006 §6 / `plugin_registry.rs`；本函数只把结论变成参数。
     registry: Option<&str>,
 ) -> Result<PluginOpOutcome, String> {
-    crate::profiles::validate_profile_name(profile)?;
-    // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
-    validate_install_spec(spec)?;
-    let mut args = vec![
-        "plugin".to_string(),
-        "--profile".to_string(),
-        profile.to_string(),
-        op.verb().to_string(),
-        spec.to_string(),
-    ];
-    // 按次指定源（ADR-0006 §6）：`dsh plugin` 是 pnpm 薄转发器，参数逐字透传
-    // （`apps/cli/src/plugin.ts:98`），故 `--registry <url>` 直接生效——取包仍发生在
-    // pnpm 子进程内，壳不开网络客户端、也不改写用户的 npm 配置。
-    if let Some(url) = registry {
-        args.push("--registry".to_string());
-        args.push(url.to_string());
-    }
+    let args = plugin_mutation_args(op.verb(), profile, spec, registry)?;
     let log_path = data_dir.join("plugin-op.log");
     let run = match world {
         crate::mgmt::World::Local => {
@@ -1128,6 +1147,37 @@ mod op_tests {
         ] {
             assert!(validate_plugin_spec(bad).is_err(), "{bad}");
         }
+    }
+
+    /// 保留名守卫（2026-10-06）：`dsh plugin --profile desktop …` 必被上游拒绝
+    /// （`bin.js:36`，本机实测 exit 1）⇒ 交付参数构造必须前置拒绝，市场安装/卸载
+    /// 才不会以一句英文上游报错收场。
+    #[test]
+    fn plugin_mutation_args_refuse_reserved_profile() {
+        for reserved in ["desktop", "Desktop"] {
+            let err = plugin_mutation_args("add", reserved, "dsh-pet", None).unwrap_err();
+            assert!(err.contains("官方桌面客户端"), "{reserved} -> {err}");
+        }
+        // 常规档：五元参数（plugin --profile <p> <verb> <spec>），注册表按需追加
+        assert_eq!(
+            plugin_mutation_args("add", "web", "dsh-pet", None).unwrap(),
+            vec!["plugin", "--profile", "web", "add", "dsh-pet"]
+        );
+        assert_eq!(
+            plugin_mutation_args("remove", "web", "dsh-pet", Some("https://r.example")).unwrap(),
+            vec![
+                "plugin",
+                "--profile",
+                "web",
+                "remove",
+                "dsh-pet",
+                "--registry",
+                "https://r.example"
+            ]
+        );
+        // 非法名 / 非法 spec 仍在同一入口拒绝（守卫不替代既有校验）
+        assert!(plugin_mutation_args("add", "a/b", "dsh-pet", None).is_err());
+        assert!(plugin_mutation_args("add", "web", "--frozen-lockfile", None).is_err());
     }
 
     #[test]
@@ -1659,6 +1709,9 @@ fn fetch_dump_rows(
     world: &crate::mgmt::World,
 ) -> Result<DumpFacts, String> {
     crate::profiles::validate_profile_name(profile)?;
+    // 保留名连只读行表也取不到：`--dump-config` 同样过启动器的 rejectElectronProfile
+    // （2026-10-06 实测）⇒ 提前给出可读的中文原因，不把上游那句英文 stderr 端给用户。
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     let args = [
         "--profile".to_string(),
         profile.to_string(),
@@ -1988,6 +2041,9 @@ pub fn set_plugin_disabled(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    // 保留名（desktop，2026-10-06）：壳自己的 patch 内核**不经 dsh CLI**，上游拦不住
+    // ⇒ 写入口自行拒绝（写进去 = 改官方客户端自己的档案）。客体孪生同款。
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     let mut patch = PatchFile::read(&patch_path)?;
@@ -2009,6 +2065,9 @@ pub fn set_plugin_disabled(
 /// **调用方必须先经用户确认**（前端 ConfirmDialog）。
 pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
     crate::profiles::validate_profile_name(profile)?;
+    // 保留名（desktop，2026-10-06）：本动作会把 profile 层 patch 备份后**放空**——
+    // 落在官方客户端档案上就是清掉它自己的用户层，绝不执行。
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     if !patch_path.is_file() {
         return Err(format!(
@@ -2031,6 +2090,7 @@ pub fn set_plugin_disabled_in_guest(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     let rel = format!("profiles/{profile}/cordis.patch.yml");
     let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
@@ -2083,6 +2143,7 @@ pub fn ensure_catalog_insert_row(
     config: &[(&str, crate::official_catalog::ConfigValue)],
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     let mut patch = PatchFile::read(&patch_path)?;
@@ -2383,6 +2444,7 @@ pub fn needs_insert_row(declares_bundle: bool) -> bool {
 /// 返回 `true` = 实际改动了文件；行本就不存在 → `false`（幂等）。
 pub fn remove_catalog_insert_row(home: &Path, profile: &str, row_id: &str) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     if !is_shell_row_id(row_id) {
         return Err(format!(
@@ -2658,6 +2720,45 @@ mod patch_tests {
         assert!(quarantine_patch(&home, "nope").is_err());
         // 非法 profile 名（路径遍历防线）同样拒绝
         assert!(quarantine_patch(&home, "../evil").is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 保留名（desktop，2026-10-06）：壳自己的 patch 写入内核不经 dsh CLI，上游拦不住
+    /// ⇒ 四个写入口必须自行拒绝，且**文件一字节不动**（拒绝必须是前置的）。
+    #[test]
+    fn patch_writers_refuse_reserved_profile_without_touching_files() {
+        let home = tmp();
+        let patch = home.join("profiles/desktop/cordis.patch.yml");
+        std::fs::create_dir_all(patch.parent().unwrap()).unwrap();
+        let original = format!("{HEADER}- id: keep-me\n");
+        std::fs::write(&patch, &original).unwrap();
+
+        // ① 启停（异常：写进官方客户端档案）② 兜底放空（会清掉它的用户层）
+        let err = set_plugin_disabled(&home, "desktop", "keep-me", true).unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        let err = quarantine_patch(&home, "desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        // ③ 策展挂载行写入 ④ 行删除
+        let err =
+            ensure_catalog_insert_row(&home, "desktop", "dsh-dock-x", "pkg", &[]).unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        let err = remove_catalog_insert_row(&home, "desktop", "dsh-dock-x").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        // ⑤ 配置行复制：**目标**是官方档（来源放行——那是官方档的合法出路）
+        let err = copy_plugin_config_blocking(&home, "web", "desktop", "pkg", &home).unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+
+        assert_eq!(
+            std::fs::read_to_string(&patch).unwrap(),
+            original,
+            "拒绝必须是前置的：官方档 patch 不得被改写"
+        );
+        let backups = std::fs::read_dir(patch.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".bak-"))
+            .count();
+        assert_eq!(backups, 0, "拒绝路径不得留下备份（没写就谈不上覆写）");
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -3055,6 +3156,9 @@ pub fn copy_plugin_config_blocking(
 ) -> Result<CopyConfigOutcome, String> {
     crate::profiles::validate_profile_name(source)?;
     crate::profiles::validate_profile_name(target)?;
+    // 保留名（desktop，2026-10-06）：**只拦目标**——来源是官方档时是纯读（把它的
+    // 配置搬到别的 profile 正是官方档的合法出路）；目标写成官方档则是改它的档案。
+    crate::profiles::ensure_not_reserved_profile(target)?;
     if source == target {
         return Err("来源与目标是同一个 profile".to_string());
     }
@@ -3166,6 +3270,8 @@ pub fn copy_plugin_config_in_guest(
 ) -> Result<CopyConfigOutcome, String> {
     crate::profiles::validate_profile_name(source)?;
     crate::profiles::validate_profile_name(target)?;
+    // 保留名只拦目标（同宿主分支：来源是官方档 = 合法读取）。
+    crate::profiles::ensure_not_reserved_profile(target)?;
     if source == target {
         return Err("来源与目标是同一个 profile".to_string());
     }
@@ -3458,6 +3564,7 @@ pub fn ensure_catalog_insert_row_in_guest(
     config: &[(&str, crate::official_catalog::ConfigValue)],
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     let rel = format!("profiles/{profile}/cordis.patch.yml");
     let mut patch = read_guest_patch(distro, &rel)?;
@@ -3475,6 +3582,7 @@ pub fn remove_catalog_insert_row_in_guest(
     row_id: &str,
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     validate_row_id(row_id)?;
     if !is_shell_row_id(row_id) {
         return Err(format!(

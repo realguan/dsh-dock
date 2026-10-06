@@ -2,7 +2,12 @@
 // 已占用预判；后端校验仍是权威。创建走 dsh plugin install（本地初始化，
 // 秒级）；「已创建未装插件」按后端契约展示为 pending 而非失败。
 import { useState } from "react"
-import { summarizeCreateOutcome, TEMPLATE_BUNDLES, validateProfileName } from "@/lib/profiles"
+import {
+  isReservedProfileName,
+  summarizeCreateOutcome,
+  TEMPLATE_BUNDLES,
+  validateProfileName,
+} from "@/lib/profiles"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { CreateProfileOutcome, ProfileSummary } from "@/types/ipc"
@@ -40,7 +45,11 @@ export function ProfileCreateDialog({
   const [phase, setPhase] = useState<Phase>({ kind: "form" })
 
   const trimmed = name.trim()
-  const invalid = validateProfileName(trimmed)
+  // 官方保留名（desktop，2026-10-06）先判：它过了 dsh 的名字规则，却会被启动器
+  // 拒绝建/启——前端预检与后端 `creation_blocker` 同口径，权威仍在后端。
+  const invalid = isReservedProfileName(trimmed)
+    ? t.profiles.nameReserved
+    : validateProfileName(trimmed)
   const occupied = existing.some((p) => p.name === trimmed && p.materialized && p.dependencies.length > 0)
   const templateHint = TEMPLATE_BUNDLES[trimmed] ? t.profiles.createTemplateHint(trimmed) : null
 

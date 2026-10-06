@@ -3,6 +3,7 @@ import type { AggregatePlugin, PluginRowState, RuntimeEntry } from "@/types/ipc"
 // profiles::validate_profile_name（dsh resolveProfileDir @ 318）——前端只做
 // 输入预检提效，后端校验仍是权威（不可信边界在 IPC 之外）。
 // 模板 bundle 列表镜像后端 PROFILE_TEMPLATES（dsh-app-boot @ 323）。
+// 保留名（desktop）判定镜像后端 profiles::is_reserved_profile（2026-10-06）。
 
 /** 内置模板名 → 初始化 bundle 列表（未物化时的「首启将得到」预览）。 */
 export const TEMPLATE_BUNDLES: Record<string, readonly string[]> = {
@@ -19,6 +20,19 @@ export function validateProfileName(name: string): string | null {
   if (name === "..") return "名字不能是 .."
   if (name === "node_modules") return "node_modules 是保留名（dsh 内部使用）"
   return null
+}
+
+/**
+ * 官方 Electron 桌面客户端独占的保留 profile 名（2026-10-06）。
+ * 判定逐字镜像 dsh 启动器 `lib/bin.js:36` 的 `profile.toLowerCase() === "desktop"`
+ * ——大小写不敏感、**不额外加码**（`desktop2` / `my-desktop` 都不算保留名）。
+ * 后端 `profiles::is_reserved_profile` 是权威；这里只做输入预检与入口可见性。
+ */
+export const RESERVED_ELECTRON_PROFILE = "desktop"
+
+/** 是否保留名（镜像后端 profiles::is_reserved_profile）。 */
+export function isReservedProfileName(name: string): boolean {
+  return name.toLowerCase() === RESERVED_ELECTRON_PROFILE
 }
 
 /** 创建结果的前端展示态：ready=基础 + Web 工作台就绪；pending=已创建待装插件；failed=未物化。 */

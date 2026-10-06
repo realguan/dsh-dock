@@ -12,6 +12,7 @@ import {
   Puzzle,
   RefreshCw,
   Search,
+  ShieldAlert,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react"
@@ -69,6 +70,7 @@ export function ProfileDetailPane({
   materialized,
   isRunning,
   isSwitching = false,
+  reserved = false,
   busy,
   onLaunch,
   onNotice,
@@ -81,6 +83,8 @@ export function ProfileDetailPane({
   materialized: boolean
   isRunning: boolean
   isSwitching?: boolean
+  /** 官方 Electron 独占的保留名（2026-10-06）：四个 tab 仍是只读清点，但启动入口关闭。 */
+  reserved?: boolean
   busy: boolean
   onLaunch: () => void
   onNotice: (text: string, kind?: "ok" | "warn") => void
@@ -600,7 +604,8 @@ export function ProfileDetailPane({
         opBusy === `update:${item.entry.name}` ||
         opBusy === `toggle:${item.entry.name}`
       }
-      opBusy={opBusy !== null}
+      // 官方保留档（desktop，2026-10-06）：行内动作全部关闭（后端四个写入口也会拒）。
+      opBusy={opBusy !== null || reserved}
       latest={updateMap?.[item.entry.name]}
       onToggle={() => toggleDisabled(item.entry.name)}
       onUpdate={() => runOp("update", item.entry.name)}
@@ -719,6 +724,17 @@ export function ProfileDetailPane({
         </div>
       )}
 
+      {/* 官方保留档（desktop，2026-10-06）：本页四个 tab 全是只读清点，读得到；
+          但启动/改名/删除/插件变更在壳里一律关闭 ⇒ 说清为什么 + 出路（复制）。 */}
+      {reserved && (
+        <div className="px-5 pt-3">
+          <div className="flex items-start gap-2 rounded-lg border border-line bg-wash px-3 py-2 text-label text-dim">
+            <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-faint" aria-hidden />
+            <span>{t.profiles.reservedHint}</span>
+          </div>
+        </div>
+      )}
+
       {/* 主体工作区 */}
       <div className="flex-1 overflow-y-auto p-5">
         {error && (
@@ -744,7 +760,13 @@ export function ProfileDetailPane({
             <p className="text-dim mt-1 max-w-md text-xs leading-relaxed">
               {t.profiles.notMaterializedBody}
             </p>
-            <Button size="sm" onClick={onLaunch} disabled={busy} className="mt-4 gap-1.5">
+            <Button
+              size="sm"
+              onClick={onLaunch}
+              disabled={busy || reserved}
+              title={reserved ? t.profiles.reservedHint : undefined}
+              className="mt-4 gap-1.5"
+            >
               <Play className="size-3.5" />
               <span>{t.profiles.launch}</span>
             </Button>
@@ -840,7 +862,8 @@ export function ProfileDetailPane({
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     size="sm"
-                    disabled={opBusy !== null}
+                    disabled={opBusy !== null || reserved}
+                    title={reserved ? t.profiles.reservedHint : undefined}
                     onClick={() => {
                       setAddDialogTab("market")
                       setAddDialogOpen(true)
@@ -1021,6 +1044,7 @@ export function ProfileDetailPane({
           {tab === "mcp" && (
             <McpManager
               profileName={name}
+              readOnly={reserved}
               patchYaml={detail?.patch_yaml ?? null}
               onNotice={onNotice}
             />

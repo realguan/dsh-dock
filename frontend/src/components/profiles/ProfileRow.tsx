@@ -8,6 +8,7 @@ import {
   Pencil,
   Play,
   RotateCw,
+  ShieldAlert,
   Star,
   Trash2,
 } from "lucide-react"
@@ -59,7 +60,7 @@ export function ProfileRow({
   onDelete,
 }: ProfileRowProps) {
   const { t } = useI18n()
-  const { name, materialized, bundles, dependencies, web_ui } = profile
+  const { name, materialized, bundles, dependencies, web_ui, reserved } = profile
 
   const metaLine = materialized
     ? [
@@ -139,6 +140,19 @@ export function ProfileRow({
               </span>
             )}
 
+            {/* 官方保留名（desktop，2026-10-06）：中性底只表事实——该档由官方
+                Electron 客户端独占，dsh 启动器拒绝外部启动与管理它 ⇒ 行内写入口
+                全部禁用，徽标 title 给出出路（复制成别的名字）。 */}
+            {reserved && (
+              <span
+                title={t.profiles.reservedHint}
+                className="bg-line-soft text-dim inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-meta font-medium leading-none"
+              >
+                <ShieldAlert className="size-2.5" />
+                {t.profiles.tagReserved}
+              </span>
+            )}
+
             {/* 模板 / 已创建 */}
             {!materialized && (
               <span className="bg-line-soft text-dim rounded-full px-1.5 py-0.5 text-meta leading-none">
@@ -170,15 +184,25 @@ export function ProfileRow({
             <Button
               size="icon-sm"
               variant="outline"
-              title={busy ? t.profiles.launchWorking : t.profiles.restart}
+              title={
+                reserved ? t.profiles.reservedHint : busy ? t.profiles.launchWorking : t.profiles.restart
+              }
               aria-label={busy ? t.profiles.launchWorking : t.profiles.restart}
-              disabled={busy}
+              disabled={busy || reserved}
               onClick={onRestart}
             >
               <RotateCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
             </Button>
           ) : web_ui ? (
-            <Button size="sm" variant="outline" title={busy ? t.profiles.launchWorking : t.profiles.launch} disabled={busy} onClick={onLaunch}>
+            <Button
+              size="sm"
+              variant="outline"
+              title={
+                reserved ? t.profiles.reservedHint : busy ? t.profiles.launchWorking : t.profiles.launch
+              }
+              disabled={busy || reserved}
+              onClick={onLaunch}
+            >
               {busy ? (
                 <LoaderCircle className="size-3 animate-spin" aria-hidden />
               ) : (
@@ -217,6 +241,8 @@ export function ProfileRow({
                         label: t.profiles.actionDetail,
                         run: onDetail,
                         iconClass: undefined,
+                        // 只读详情对官方保留档**照常可用**
+                        disabled: false,
                       },
                       {
                         key: "default",
@@ -224,15 +250,18 @@ export function ProfileRow({
                         label: isDefault ? t.profiles.defaultIs : t.profiles.setDefault,
                         run: onSetDefault,
                         iconClass: isDefault ? "fill-current text-brand-deep" : undefined,
+                        disabled: reserved,
                       },
-                      { key: "copy", Icon: Copy, label: t.profiles.submitCopy, run: onCopy, iconClass: undefined },
-                      { key: "rename", Icon: Pencil, label: t.profiles.actionRename, run: onRename, iconClass: undefined },
+                      { key: "copy", Icon: Copy, label: t.profiles.submitCopy, run: onCopy, iconClass: undefined, disabled: false },
+                      { key: "rename", Icon: Pencil, label: t.profiles.actionRename, run: onRename, iconClass: undefined, disabled: reserved },
                     ] as const
-                  ).map(({ key, Icon, label, run, iconClass }) => (
+                  ).map(({ key, Icon, label, run, iconClass, disabled }) => (
                     <DropdownMenu.Item
                       key={key}
+                      disabled={disabled}
                       onClick={run}
-                      className={MENU_ITEM_CLASS}
+                      title={disabled ? t.profiles.reservedHint : undefined}
+                      className={cn(MENU_ITEM_CLASS, disabled && "cursor-not-allowed opacity-50")}
                     >
                       <Icon className={cn("size-3.5 text-dim", iconClass)} />
                       <span>{label}</span>
@@ -241,8 +270,14 @@ export function ProfileRow({
 
                   <DropdownMenu.Separator className="my-1 h-px bg-line" />
 
-                  {/* 删除：破坏性动作用 danger 语义色（修复"危险动作视觉最弱"的权重倒挂） */}
-                  <DropdownMenu.Item onClick={onDelete} className={MENU_ITEM_DANGER_CLASS}>
+                  {/* 删除：破坏性动作用 danger 语义色（修复"危险动作视觉最弱"的权重倒挂）；
+                      官方保留档禁用——删的是官方客户端自己的档案（2026-10-06）。 */}
+                  <DropdownMenu.Item
+                    disabled={reserved}
+                    onClick={onDelete}
+                    title={reserved ? t.profiles.reservedHint : undefined}
+                    className={cn(MENU_ITEM_DANGER_CLASS, reserved && "cursor-not-allowed opacity-50")}
+                  >
                     <Trash2 className="size-3.5" />
                     <span>{t.profiles.actionDelete}</span>
                   </DropdownMenu.Item>

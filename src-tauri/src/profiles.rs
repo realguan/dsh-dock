@@ -21,6 +21,12 @@
 //!   `dsh-profile-<目录名>`、`dsh.profile.bundles`、`dependencies`）+
 //!   cordis.patch.yml + pnpm-workspace.yaml；node_modules 由 pnpm 生成。
 //!
+//! ⚠️ **保留名 `desktop`**（2026-10-06，复现点 23 ③ 补记）：该名字由官方 Electron
+//! 桌面客户端独占（dsh `lib/bin.js:35-37 rejectElectronProfile`，boot 路径无条件拒绝）。
+//! 壳侧一切写入口——启动/切换、创建、重命名、删除、设为默认、插件变更——统一经
+//! [`ensure_not_reserved_profile`] 前置拒绝并给中文出路；列表与只读清点照常保留
+//! （`reserved` 字段供前端关入口），`复制`源为官方档时放行（唯一合法再利用路径）。
+//!
 //! ⚠️ 不可复用 `resolve::list_web_ui_profiles`（resolve.rs）：那是 webUi 选择器
 //! 原型，无条件注入 `"web"` 并跳过同名目录，与管理器「全量列出 + 两态区分」
 //! 语义不同（ADR-0009 §3 方案 E 评审裁定）。
@@ -70,6 +76,38 @@ pub fn validate_profile_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 官方 Electron 桌面客户端独占的保留 profile 名（2026-10-06，复现点 23 ③ 补记）。
+///
+/// dsh 启动器 `lib/bin.js:35-37 rejectElectronProfile` 对 `--profile desktop`
+/// **无条件**报错：`error: profile "desktop" is managed exclusively by the Electron
+/// application`；`plugin` 子命令只在调用方持有 `manageDesktopProfile` 开关时放行，
+/// 而该开关**只有官方客户端自己**（`app.asar` 内 `runDesktopCli()`）持有。
+/// 壳与 dsh 是严格 1:1 子进程契约 ⇒ 壳经 CLI 的任何写操作注定被拒。
+pub const RESERVED_ELECTRON_PROFILE: &str = "desktop";
+
+/// 保留名判定：逐字复刻 dsh 的 `profile.toLowerCase() === "desktop"`（大小写
+/// 不敏感，2026-10-06 实测 `Desktop` 同样被拒）——复刻判定，不自行加码。
+pub fn is_reserved_profile(name: &str) -> bool {
+    name.eq_ignore_ascii_case(RESERVED_ELECTRON_PROFILE)
+}
+
+/// 保留名写入口统一拒绝（**单源文案**）：命令面（启动 / 切换 / 创建 / 插件变更，
+/// 都要过 dsh 子进程）注定被上游拒绝；纯文件系统面（重命名 / 删除）虽能成功，但
+/// 处置的是官方客户端自己的档案 ⇒ 一律拒绝，并给可行动出路。
+///
+/// **只读面不在拒绝之列**：列表 / 详情 / 插件清点都保留，`复制`（源 = 官方档 →
+/// 目标为别的名字）更是官方档唯一的合法再利用路径。
+pub fn ensure_not_reserved_profile(name: &str) -> Result<(), String> {
+    if !is_reserved_profile(name) {
+        return Ok(());
+    }
+    Err(format!(
+        "profile「{name}」是官方桌面客户端的保留名：dsh 启动器拒绝外部启动与管理它\
+         （error: profile \"desktop\" is managed exclusively by the Electron application）。\
+         该 Profile 只能只读查看；要用它的配置，请「复制」成一个别的名字再启动。"
+    ))
+}
+
 /// 列表条目：已物化 profile 或未物化的内置模板名（两态合并，ADR-0009 方案 E）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ProfileSummary {
@@ -85,6 +123,10 @@ pub struct ProfileSummary {
     /// 是否 webUi 工作台（bundles 含 `WEBUI_BUNDLE`）：管理器「启动/切换」
     /// 入口的可见性依据——非 webUi 无工作台 URL 可导航（ADR-0009 §4 三次修订）。
     pub web_ui: bool,
+    /// 官方桌面客户端独占的保留名（[`RESERVED_ELECTRON_PROFILE`]，2026-10-06）：
+    /// 名字照列（只读清点有价值），但壳的一切写入口必须关闭——上游 dsh 拒绝启动它，
+    /// 纯文件系统面的改名/删除会损坏官方客户端自己的档案。
+    pub reserved: bool,
 }
 
 /// 扫描 `<home>/profiles/`：每个子目录 = 一个已物化 profile（目录名是唯一硬
@@ -153,11 +195,12 @@ pub fn scan_profiles_in_guest(distro: &str) -> Result<Vec<ProfileSummary>, Strin
 
 /// 客体档 webUi 候选名单（切换 / 默认档校验用）：恒含内置 `web`，其余取客体扫描
 /// 结果里 **bundles 含 WEBUI_BUNDLE** 的已物化 profile（`web` 不重复）。
-/// 判据与宿主 `resolve::list_web_ui_profiles` 同源（同一份 [`assemble_profile_summaries`]）。
+/// 判据与宿主 `resolve::list_web_ui_profiles` 同源（同一份 [`assemble_profile_summaries`]）；
+/// 保留名（desktop）**不入候选**——候选的语义是「壳可启动的目标」（2026-10-06）。
 pub fn web_ui_profiles_in_guest(distro: &str) -> Result<Vec<String>, String> {
     let mut out = vec!["web".to_string()];
     for p in scan_profiles_in_guest(distro)? {
-        if p.materialized && p.name != "web" && p.web_ui {
+        if p.materialized && p.name != "web" && p.web_ui && !p.reserved {
             out.push(p.name);
         }
     }
@@ -183,6 +226,7 @@ fn assemble_profile_summaries(entries: &[(String, Option<String>)]) -> Vec<Profi
             bundles,
             dependencies,
             web_ui,
+            reserved: is_reserved_profile(name),
         });
     }
     for (name, bundles) in PROFILE_TEMPLATES {
@@ -195,6 +239,7 @@ fn assemble_profile_summaries(entries: &[(String, Option<String>)]) -> Vec<Profi
             bundles: bundles.iter().map(|s| (*s).to_string()).collect(),
             dependencies: Vec::new(),
             web_ui: bundles.contains(&WEBUI_BUNDLE),
+            reserved: is_reserved_profile(name),
         });
     }
     out.sort_by(|a, b| {
@@ -460,6 +505,9 @@ fn declare_app_bundle(home: &Path, profile: &str, bundle: &str) -> Result<bool, 
 ///   重试 = 重跑同名命令——2026-08-28 起命令为 `install`，对空依赖同样幂等）。
 pub fn creation_blocker(home: &Path, profile: &str) -> Result<(), String> {
     validate_profile_name(profile)?;
+    // 保留名（desktop）不在可创建之列：转发链 `dsh plugin --profile desktop install`
+    // 必被上游拒绝（2026-10-06 实测 exit 1），放行只会造出一个永远起不来的档。
+    ensure_not_reserved_profile(profile)?;
     let dir = home.join("profiles").join(profile);
     if dir.exists() && !dir.is_dir() {
         return Err(format!(
@@ -873,6 +921,7 @@ pub fn create_profile_in_guest(
 /// 客体档创建前置校验（P2 生命周期下沉）。
 pub fn creation_blocker_in_guest(distro: &str, profile: &str) -> Result<(), String> {
     validate_profile_name(profile)?;
+    ensure_not_reserved_profile(profile)?;
     let existing = scan_profiles_in_guest(distro)?;
     if let Some(p) = existing.iter().find(|p| p.name == profile) {
         if p.materialized && !p.bundles.is_empty() {
@@ -956,9 +1005,12 @@ pub fn ensure_default_candidate_in_guest(distro: &str, name: &str) -> Result<(),
     ensure_default_candidate_from(&scan_profiles_in_guest(distro)?, name)
 }
 
-/// 纯校验内核（宿主 / 客体共用）：名字合法且在给定世界的扫描结果里。
+/// 纯校验内核（宿主 / 客体共用）：名字合法、非保留名、且在给定世界的扫描结果里。
 fn ensure_default_candidate_from(list: &[ProfileSummary], name: &str) -> Result<(), String> {
     validate_profile_name(name)?;
+    // 保留名不能当默认启动档：boot 时 dsh 必拒（2026-10-06）——星标会变成
+    // 「每次启动都失败」的常驻故障，必须在写入设置前拦住。
+    ensure_not_reserved_profile(name)?;
     if list.iter().any(|p| p.name == name) {
         Ok(())
     } else {
@@ -970,9 +1022,13 @@ fn ensure_default_candidate_from(list: &[ProfileSummary], name: &str) -> Result<
 
 /// 复制前置校验：源必须已物化（is_dir，未物化模板名无内容可复制）；目标名
 /// 合法且完全不存在（目录/文件都算占用——复制不是创建，不走半初始化重试语义）。
+///
+/// **保留名只拦目标**：源 = 官方 `desktop` 档放行——那是官方档唯一的合法再利用
+/// 路径（复制成别的名字即可启动，2026-10-06 实测该档 `--dump-config` 通过）。
 pub fn copy_blocker(home: &Path, source: &str, new_name: &str) -> Result<(), String> {
     validate_profile_name(source)?;
     validate_profile_name(new_name)?;
+    ensure_not_reserved_profile(new_name)?;
     if !home.join("profiles").join(source).is_dir() {
         return Err(format!(
             "源 profile「{source}」不存在或尚未物化——复制需要已初始化的 profile 目录"
@@ -985,9 +1041,14 @@ pub fn copy_blocker(home: &Path, source: &str, new_name: &str) -> Result<(), Str
 }
 
 /// 重命名前置校验：旧名存在（is_dir）；新名合法且完全不存在。
+///
+/// **两头都拦保留名**：新名 = `desktop`（占名，dsh 拒启动）；旧名 = `desktop`
+/// （= 把官方客户端自己的档案移走，属损坏性写操作，2026-10-06）。
 pub fn rename_blocker(home: &Path, old_name: &str, new_name: &str) -> Result<(), String> {
     validate_profile_name(old_name)?;
     validate_profile_name(new_name)?;
+    ensure_not_reserved_profile(old_name)?;
+    ensure_not_reserved_profile(new_name)?;
     if !home.join("profiles").join(old_name).is_dir() {
         return Err(format!("profile「{old_name}」不存在或尚未物化"));
     }
@@ -1040,6 +1101,9 @@ pub fn rename_profile_dir(
 /// 容忍悬空 profile 引用）；符号农场残留链接不做（stale 链接对模块解析不可见，
 /// 且 dsh heal 幂等）。调用方先做存在性检查与运行中防护。
 pub fn delete_profile_dir(home: &Path, name: &str) -> Result<(), String> {
+    // 保留名：删掉的是官方客户端自己的 profile ⇒ 损坏性写操作，一律拒绝
+    // （2026-10-06）。真要从盘上清掉，请在官方客户端卸载后手工删除目录。
+    ensure_not_reserved_profile(name)?;
     let dir = home.join("profiles").join(name);
     fs::remove_dir_all(&dir).map_err(|e| format!("删除目录失败（{}）：{e}", dir.display()))
 }
@@ -1053,6 +1117,7 @@ pub fn copy_profile_in_guest(
 ) -> Result<LifecycleOutcome, String> {
     validate_profile_name(source)?;
     validate_profile_name(new_name)?;
+    ensure_not_reserved_profile(new_name)?;
     let existing = scan_profiles_in_guest(distro)?;
     if !existing.iter().any(|p| p.name == source && p.materialized) {
         return Err(format!(
@@ -1081,6 +1146,8 @@ pub fn rename_profile_in_guest(
 ) -> Result<LifecycleOutcome, String> {
     validate_profile_name(old_name)?;
     validate_profile_name(new_name)?;
+    ensure_not_reserved_profile(old_name)?;
+    ensure_not_reserved_profile(new_name)?;
     let existing = scan_profiles_in_guest(distro)?;
     if !existing
         .iter()
@@ -1113,6 +1180,7 @@ pub fn delete_profile_in_guest(
     data_dir: &Path,
 ) -> Result<DeleteOutcome, String> {
     validate_profile_name(profile)?;
+    ensure_not_reserved_profile(profile)?;
     let existing = scan_profiles_in_guest(distro)?;
     if !existing.iter().any(|p| p.name == profile && p.materialized) {
         return Err(format!(
@@ -1403,6 +1471,130 @@ mod profiles_tests {
                 "名字 {good:?} dsh 允许，壳不得拒绝"
             );
         }
+    }
+
+    // ---------- 保留名 desktop（官方 Electron 独占，2026-10-06 复现点 23 ③） ----------
+
+    /// 判定逐字复刻 dsh `profile.toLowerCase() === "desktop"`：大小写不敏感，
+    /// 且**不扩大**拒绝集（`desktop2` / `my-desktop` / `desktop ` 都不保留）。
+    #[test]
+    fn reserved_name_matches_dsh_case_insensitive_rule() {
+        for reserved in ["desktop", "Desktop", "DESKTOP", "DeSkToP"] {
+            assert!(is_reserved_profile(reserved), "{reserved:?} 应判为保留名");
+            assert!(ensure_not_reserved_profile(reserved).is_err());
+        }
+        for free in ["desktop2", "my-desktop", "desktop ", " web", "web"] {
+            assert!(!is_reserved_profile(free), "{free:?} 不是保留名（勿加码）");
+            assert_eq!(ensure_not_reserved_profile(free), Ok(()));
+        }
+    }
+
+    /// 拒绝文案必须可行动：指明上游原因 + 出路（复制成别的名字），不是一句代号。
+    #[test]
+    fn reserved_rejection_is_actionable() {
+        let err = ensure_not_reserved_profile("desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        assert!(
+            err.contains("managed exclusively"),
+            "含上游原文便于检索：{err}"
+        );
+        assert!(err.contains("复制"), "给出可行动出路：{err}");
+    }
+
+    /// 列表仍**照列**保留名（只读清点有价值），但 `reserved=true` 供前端关入口；
+    /// 该档 bundles 含 web-app ⇒ `web_ui` 依旧为 true（这正是用户能点到启动的成因）。
+    #[test]
+    fn scan_marks_reserved_profile_but_keeps_listing_it() {
+        let home = tmp();
+        materialize(&home, "desktop", PKG_WEB);
+        let list = scan_profiles(&home);
+        let d = list
+            .iter()
+            .find(|p| p.name == "desktop")
+            .expect("保留名照列");
+        assert!(
+            d.materialized && d.web_ui,
+            "官方档确实是 webUi（web_ui 判据不变）"
+        );
+        assert!(d.reserved, "必须带保留名标记，供前端关闭写入口");
+        assert!(
+            list.iter().filter(|p| p.reserved).count() == 1,
+            "模板名（web/headless）不得被误标"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 创建：保留名一律拒绝（转发链 `dsh plugin --profile desktop install` 必被
+    /// 上游拒绝，放行只会造出一个永远起不来的档）。
+    #[test]
+    fn creation_blocker_rejects_reserved_name() {
+        let home = tmp();
+        for name in ["desktop", "Desktop"] {
+            let err = creation_blocker(&home, name).unwrap_err();
+            assert!(err.contains("官方桌面客户端"), "{err}");
+        }
+        assert_eq!(creation_blocker(&home, "desktopish"), Ok(()));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 复制：**源 = 保留名放行**（官方档唯一的合法再利用路径），目标 = 保留名拒绝。
+    #[test]
+    fn copy_blocker_allows_reserved_source_but_not_target() {
+        let home = tmp();
+        materialize(&home, "desktop", PKG_WEB);
+        assert_eq!(
+            copy_blocker(&home, "desktop", "desktop-copy"),
+            Ok(()),
+            "复制出来另起名字 = 官方档的合法出路"
+        );
+        materialize(&home, "alpha", PKG_ALPHA);
+        let err = copy_blocker(&home, "alpha", "desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 重命名：**两头都拦**——新名占保留名（dsh 拒启动）、旧名是保留名（移走官方档案）。
+    #[test]
+    fn rename_blocker_rejects_reserved_on_both_ends() {
+        let home = tmp();
+        materialize(&home, "alpha", PKG_ALPHA);
+        let err = rename_blocker(&home, "alpha", "desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        materialize(&home, "desktop", PKG_WEB);
+        let err = rename_blocker(&home, "desktop", "desktop-renamed").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        assert_eq!(rename_blocker(&home, "alpha", "alpha2"), Ok(()));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 删除：拒绝保留名，且**目录必须原样还在**（守卫不得先删后报错）。
+    #[test]
+    fn delete_profile_dir_refuses_reserved_and_keeps_directory() {
+        let home = tmp();
+        materialize(&home, "desktop", PKG_WEB);
+        let err = delete_profile_dir(&home, "desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        assert!(
+            home.join("profiles")
+                .join("desktop")
+                .join("package.json")
+                .is_file(),
+            "拒绝必须是前置的：官方档文件不得被动过"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// 设为默认：保留名不可当选（否则星标 = 每次启动都失败）。
+    #[test]
+    fn default_candidate_rejects_reserved_even_when_listed() {
+        let home = tmp();
+        materialize(&home, "desktop", PKG_WEB);
+        let list = scan_profiles(&home);
+        assert!(list.iter().any(|p| p.name == "desktop"), "先确认它在列表里");
+        let err = ensure_default_candidate_from(&list, "desktop").unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
+        assert_eq!(ensure_default_candidate_from(&list, "web"), Ok(()));
+        std::fs::remove_dir_all(&home).ok();
     }
 
     // ---------- 扫描器：两态合并 + node_modules 农场排除 ----------

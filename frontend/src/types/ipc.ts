@@ -93,6 +93,12 @@ export interface ProfileSummary {
   dependencies: string[]
   /** 是否 webUi 工作台（bundles 含 dsh-web-app）：启动/切换入口的可见性依据 */
   web_ui: boolean
+  /**
+   * 官方 Electron 桌面客户端独占的保留名（`desktop`，2026-10-06）：dsh 启动器
+   * 拒绝外部启动与管理它 ⇒ 壳的启动/切换/设为默认/改名/删除/插件变更入口必须
+   * 关闭；列表与只读清点照常（`web_ui` 仍为 true——官方档确实是个工作台）。
+   */
+  reserved: boolean
 }
 
 /// 单个 profile 详情（package.json 关键字段 + cordis.patch.yml 原文）。

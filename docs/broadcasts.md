@@ -31,6 +31,36 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-06 修复 · 官方保留名 `desktop` 写入口全线收口（此前点「启动」必撞 dsh 英文报错）—— guan（AI 协作）
+
+- **触发**：在控制中心选中官方 Electron 客户端物化的 `desktop` 档点「启动」，错误卡显示
+  `DSH 进程已退出（代码 1）：profile "desktop" is managed exclusively by the Electron application`。
+- **根因（上游机制，不是壳坏了）**：`@deepseek-ai/dsh` 的 `lib/bin.js:35-37 rejectElectronProfile`
+  对 `--profile desktop` **无条件**报错（大小写不敏感）；`plugin` 子命令只在调用方持有
+  `manageDesktopProfile` 时放行，而该开关**只有官方 Electron 自己**传（`app.asar` 内 `runDesktopCli()`）。
+  本机实测（dsh `0.2.1-alpha.1`）：`--profile desktop` / `--profile Desktop` /
+  `plugin --profile desktop install` 三条均逐字复现该 stderr 且 exit 1；把同一份配置目录**只改名**
+  为 `desktop-copy` 后 `--dump-config` exit 0 ⇒ 这是**纯名字守卫**。
+- **壳侧缺口（本次修的对象）**：`scan_profiles` 全量列目录 + `web_ui` 由 bundles 判定
+  （官方档恰含 `dsh-web-app`）⇒ 它被当成普通 webUi 工作台摆出「启动」按钮，
+  `switch_profile` 的 webUi 候选校验查的又是同一份名单，一路放行到 spawn。
+  同一根因还波及：设为默认、创建/重命名同名档、**删除或改名官方档案本身**、
+  市场安装、插件启停、MCP profile 层、策展挂载行、配置复制目标——后四类**不经 dsh CLI**，
+  上游拦不住，会真的写进官方客户端的 `cordis.patch.yml`。
+- **变更**（动到：`src-tauri/src/{profiles,resolve,boot,plugins,mcp,ipc,lib}.rs`、
+  `src-tauri/src/commands/{boot,plugin,console}.rs`、`frontend/src/**`、本档 + 台账）：
+  `desktop` 定为**保留名**——壳的一切写入口前置拒绝并给中文出路（"复制成别的名字再启动"），
+  只读面（列表 / 详情 / 插件清点）保留，**唯一允许的写 = 复制**成非保留名；
+  判定单源 `profiles::{is_reserved_profile, ensure_not_reserved_profile}`，
+  前端镜像 `lib/profiles.ts::isReservedProfileName`（徽标「官方保留」+ 关闭启动/设为默认/改名/删除
+  + 选择器与市场安装目标过滤）；`ProfileSummary.reserved` 走 IPC 形状闸门（fixture + TS + Rust 三处同步）。
+- **影响**：仅周知——`desktop` 档在控制中心变只读并带「官方保留」徽标；要用它的配置请先「复制」。
+- **凭据**：`cargo test` 528 绿（新增保留名用例：判定正反例 / 四类 blocker / 候选过滤 / 切换校验 /
+  patch 写入口"拒绝必须是前置的、文件一字节不动"）、`cargo fmt --check` 与
+  `clippy --all-targets -- -D warnings` 干净；前端 typecheck / oxlint 0 warning / 685 测试绿。
+- **未做（留待裁定）**：是否升格 ADR——本改动落在 ADR-0009 的 profile 生命周期口径内
+  （新增一条"保留名只读"边界），故先只补台账 + 本广播，未新立 ADR。
+
 ### 2026-09-30 修复 · **覆盖闸门在 CI 里静默跳过**（自己犯了要消灭的那类假绿）—— guan（AI 协作）
 
 - **触发**：v1.3.4 打 tag 后核对 CI 日志，发现新闸门**报绿却什么都没查**：

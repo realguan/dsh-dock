@@ -721,8 +721,9 @@ fn probe_no_open_cmd(mut cmd: std::process::Command, timeout: std::time::Duratio
 /// 存储的默认 profile 直接作为本次启动 profile（并跳过选择器）当且仅当：
 /// 它在 webUi 候选内。壳的启动链路以「日志解析 URL → WebView 导航」为前提，
 /// 非 webUi profile（如 headless）boot 后无 URL 可导航——自动启动必然超时，
-/// 故不在候选的存储值（headless / 自定义无 webUi / 已被手工删除）一律回退
-/// 常规流程（多 webUi 仍出选择器），不猜用户意图。未存储 = None 不消费。
+/// 故不在候选的存储值（headless / 自定义无 webUi / 已被手工删除 / **官方保留名
+/// `desktop`**——候选侧已滤，见 `list_web_ui_profiles`）一律回退常规流程
+/// （多 webUi 仍出选择器），不猜用户意图。未存储 = None 不消费。
 pub fn consume_default_profile(
     stored: Option<&str>,
     webui_candidates: &[String],
@@ -735,6 +736,10 @@ pub fn consume_default_profile(
 /// 用户 home 下「webUi=true」的 profile 列表：scan profiles/*/package.json 的
 /// dsh.profile.bundles 是否含 `@deepseek-ai/dsh-web-app`；官方 web 恒为首选。
 /// （F-b：boot 选择器数据源；v1 默认 profile 仍是 manifest.default_profile。）
+///
+/// **保留名不入候选**（2026-10-06）：本名单的语义是「壳可启动的目标」，而 dsh
+/// 启动器对 `desktop` 无条件报错（`rejectElectronProfile`）——放进来只会让用户
+/// 在选择器里点到一个注定失败的工作台。判据与 profiles 侧同源。
 pub fn list_web_ui_profiles(home: &Path) -> Vec<String> {
     let mut out = vec!["web".to_string()];
     let Ok(entries) = fs::read_dir(home.join("profiles")) else {
@@ -749,6 +754,9 @@ pub fn list_web_ui_profiles(home: &Path) -> Vec<String> {
             continue;
         };
         if name == "web" {
+            continue;
+        }
+        if crate::profiles::is_reserved_profile(&name) {
             continue;
         }
         let manifest = dir.join("package.json");
@@ -946,6 +954,9 @@ mod tests {
         // 非 webUi（headless）/已删除名：不消费（自动启动无 URL 可导航或必然失败）
         assert_eq!(consume_default_profile(Some("headless"), &cands), None);
         assert_eq!(consume_default_profile(Some("ghost"), &cands), None);
+        // 官方保留名 desktop：候选侧已滤 ⇒ 存储值不命中即不消费（出选择器，
+        // 而不是拿一个 dsh 必拒的名字去启动；2026-10-06）
+        assert_eq!(consume_default_profile(Some("desktop"), &cands), None);
         // 未设置：不消费
         assert_eq!(consume_default_profile(None, &cands), None);
     }
@@ -965,8 +976,16 @@ mod tests {
             r#"{"dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base"]}}}"#,
         )
         .unwrap();
+        // 保留名：即便 bundles 含 web-app（官方 desktop 档的真实形状）也不入候选——
+        // 候选的语义是「壳可启动的目标」，而 dsh 启动器对该名无条件报错（2026-10-06）。
+        std::fs::create_dir_all(home.join("profiles/desktop")).unwrap();
+        std::fs::write(
+            home.join("profiles/desktop/package.json"),
+            r#"{"dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]}}}"#,
+        )
+        .unwrap();
         let list = list_web_ui_profiles(&home);
-        // web 恒在首，custom-a 含 web-app，custom-b 不含
+        // web 恒在首，custom-a 含 web-app，custom-b 不含，desktop 被保留名规则滤掉
         assert_eq!(list, vec!["web".to_string(), "custom-a".to_string()]);
         std::fs::remove_dir_all(&home).ok();
     }

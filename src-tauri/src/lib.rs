@@ -577,6 +577,11 @@ mod tests {
             let err = ensure_switchable_profile(bad, &cands).unwrap_err();
             assert!(err.contains("webUi"), "{bad} -> {err}");
         }
+        // 官方保留名 desktop：**即便被手工塞进候选**（选择器 URL 参数可改）也拒绝，
+        // 且给的是专用原因（不是笼统的"不是 webUi 工作台"）——2026-10-06
+        let with_reserved = vec!["web".to_string(), "desktop".to_string()];
+        let err = ensure_switchable_profile("desktop", &with_reserved).unwrap_err();
+        assert!(err.contains("官方桌面客户端"), "{err}");
     }
 
     /// 版本一致性契约（2026-09-01 维护者裁定）：关于页/更新中心的当前版本

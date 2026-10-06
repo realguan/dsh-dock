@@ -384,6 +384,11 @@ export const t = {
     tagMaterialized: "已创建",
     tagTemplate: "可首启",
     tagNoUi: "无界面",
+    // 官方 Electron 客户端独占的保留名（desktop，2026-10-06）：徽标 + 写入口禁用说明
+    tagReserved: "官方保留",
+    reservedHint:
+      "官方桌面客户端独占的 Profile：dsh 启动器拒绝外部启动与管理它，因此这里只能只读查看——要用它的配置，请「复制」成一个别的名字再启动。",
+    nameReserved: "desktop 是官方桌面客户端的保留名，请换一个名字",
     templateHint: "内置模板 · 首次启动自动创建",
     defaultBadge: "默认启动",
     runningBadge: "运行中",

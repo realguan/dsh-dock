@@ -740,10 +740,15 @@ pub(crate) fn boot_target_home(app: &tauri::AppHandle) -> Option<std::path::Path
 /// 切换目标的可启动性校验（纯函数）：webUi 候选内才可切换——非 webUi
 /// （headless / 无 web-app 的自定义档）无 URL 可导航；不存在的名字会被 dsh
 /// 拒绝或意外物化。名字合法性已由调用方 `validate_profile_name` 先行把关。
+///
+/// **保留名先判**（2026-10-06）：`desktop` 由官方 Electron 客户端独占，dsh 启动器
+/// 对它无条件报错——这里给出**专用**原因（而非笼统的"不是 webUi 工作台"），
+/// 因为用户点得到它（该档 bundles 含 web-app，`web_ui=true`），文案必须解释得清。
 pub(crate) fn ensure_switchable_profile(
     profile: &str,
     webui_candidates: &[String],
 ) -> Result<(), String> {
+    crate::profiles::ensure_not_reserved_profile(profile)?;
     if webui_candidates.iter().any(|c| c == profile) {
         Ok(())
     } else {

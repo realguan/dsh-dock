@@ -435,6 +435,7 @@ mod gate_tests {
                 bundles: Vec::new(),
                 dependencies: Vec::new(),
                 web_ui: false,
+                reserved: false,
             }
         );
         assert_shape!(

@@ -2,7 +2,7 @@
 // 差异只在 api 与说明文案；完成后 warnings（如 patch ../ 引用）就地展示，
 // 不静默吞掉——那是 ADR-0009 明文要求的人工检查提示。
 import { useState } from "react"
-import { validateProfileName } from "@/lib/profiles"
+import { isReservedProfileName, validateProfileName } from "@/lib/profiles"
 import { api } from "@/lib/tauri"
 import { useI18n } from "@/stores/i18nStore"
 import type { ProfileSummary } from "@/types/ipc"
@@ -49,7 +49,11 @@ export function ProfileNameDialog({
     mode === "rename" && trimmed === source
       ? t.profiles.renameSame
       : trimmed !== ""
-        ? validateProfileName(trimmed)
+        ? // 官方保留名（desktop，2026-10-06）先判：占名 = dsh 拒启动；旧名是保留名
+          // 的情况由后端 `rename_blocker` 拒（此处只管用户输入的新名）。
+          isReservedProfileName(trimmed)
+          ? t.profiles.nameReserved
+          : validateProfileName(trimmed)
         : null
   const occupied = existing.some((p) => p.name === trimmed)
   const nameError = trimmed === "" ? null : (invalid ?? (occupied ? t.profiles.nameOccupied : null))

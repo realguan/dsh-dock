@@ -60,8 +60,10 @@ describe("未物化 profile：不发请求、只给一句人话", () => {
     expect(paneSrc, "主体按物化分支").toMatch(/\{!materialized \? \(/)
     expect(paneSrc, "给出人话标题").toContain("t.profiles.notMaterializedTitle(")
     expect(paneSrc, "给出解释与出路").toContain("t.profiles.notMaterializedBody")
+    // 2026-10-06：该按钮多了 `|| reserved`（官方保留档即使未物化也不给启动）——
+    // 判据没变：**唯一动作仍是启动**，只是多一个前置条件。
     expect(paneSrc, "唯一动作 = 启动（启动即物化）").toMatch(
-      /onClick=\{onLaunch\} disabled=\{busy\}/,
+      /onClick=\{onLaunch\}\s*\n\s*disabled=\{busy \|\| reserved\}/,
     )
     // 页头不再谎报"正在加载配置档案…"（那份档案永远不会到）
     expect(paneSrc, "页头给「未物化」标").toContain("t.profiles.notMaterializedTag")

@@ -14,8 +14,13 @@ use crate::settings;
 use tauri::Manager;
 
 /// 唯一 IPC 命令（②b profile 选择器）：选定 profile → 用 pending 的会话启动。
+///
+/// 保留名守卫（2026-10-06）：选择器候选已由 `resolve::list_web_ui_profiles` 滤掉
+/// `desktop`，但 URL 查询参数可被手改 ⇒ 这里是**入口侧**的最后一道闸，保证
+/// 「壳永远不会拿保留名去 spawn dsh」（否则用户只会看到上游那句英文报错）。
 #[tauri::command]
 pub fn choose_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+    crate::profiles::ensure_not_reserved_profile(&profile)?;
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let mut executor = state
         .pending

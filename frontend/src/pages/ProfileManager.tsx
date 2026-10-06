@@ -217,8 +217,19 @@ export function ProfileManager() {
     }
   }, [list, activeProfile, defaultProfile, selectedName])
 
+  // 官方保留档（desktop，2026-10-06）：行内写入口已禁用，这里再做一道前端兜底——
+  // 真要点到（键盘/程序化路径）也给同一句解释，而不是让壳拿一个必被 dsh 拒绝的名字去启动。
+  const reservedBlocked = useCallback(
+    (name: string) => list.find((p) => p.name === name)?.reserved === true,
+    [list],
+  )
+
   // 设为默认
   const handleSetDefault = (name: string) => {
+    if (reservedBlocked(name)) {
+      showToast(t.profiles.reservedHint, "warn")
+      return
+    }
     setRowBusy(name)
     api
       .setDefaultProfile(name)
@@ -232,6 +243,10 @@ export function ProfileManager() {
 
   // 启动 / 切换
   const handleLaunch = (name: string) => {
+    if (reservedBlocked(name)) {
+      showToast(t.profiles.reservedHint, "warn")
+      return
+    }
     if (activeProfile !== null) {
       setSwitchTarget(name)
       return
@@ -475,6 +490,7 @@ export function ProfileManager() {
             <ProfileDetailPane
               name={currentSelectedProfile?.name ?? null}
               materialized={currentSelectedProfile?.materialized ?? false}
+              reserved={currentSelectedProfile?.reserved ?? false}
               isRunning={rowIsRunning(
                 activeProfile,
                 handoff,

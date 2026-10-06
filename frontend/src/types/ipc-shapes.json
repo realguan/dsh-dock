@@ -82,6 +82,7 @@
     "dependencies",
     "materialized",
     "name",
+    "reserved",
     "web_ui"
   ],
   "QuarantineRow": [

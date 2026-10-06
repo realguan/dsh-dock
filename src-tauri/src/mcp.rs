@@ -1176,6 +1176,7 @@ fn text_has_tag(content: &str) -> bool {
 pub fn save_mcp_server(home: &Path, profile: &str, server: McpServerConfig) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
     let scope = server.scope;
+    ensure_writable_scope(profile, scope)?;
     // profile 层要求 profile 已物化（写它的目录）；全局层与具体 profile 无关。
     if scope == McpScope::Profile {
         let profile_dir = home.join("profiles").join(profile);
@@ -1247,6 +1248,17 @@ fn stale_row_error(server_name: &str, row_id: &str, why: &str) -> String {
     )
 }
 
+/// 保留名写入守卫（**scope 感知**，纯函数可测；2026-10-06）：`Profile` 层写的是
+/// 官方 Electron 客户端自己的 `profiles/desktop/cordis.patch.yml` ⇒ 拒绝；`Global`
+/// 层（`$DSH_HOME/cordis.patch.yml`，对所有 profile 生效）与具体 profile 无关，照常。
+/// 宿主/客体两侧的 save / delete 共用同一判据。
+pub fn ensure_writable_scope(profile: &str, scope: McpScope) -> Result<(), String> {
+    if scope == McpScope::Profile {
+        crate::profiles::ensure_not_reserved_profile(profile)?;
+    }
+    Ok(())
+}
+
 /// 删除指定层里的 MCP 服务器配置（无改动零写入）。
 ///
 /// **必须按层删**：删除的语义是"从这条生效范围里拿掉"，所以调用方要带上条目所在层
@@ -1265,6 +1277,7 @@ pub fn delete_mcp_server(
     row_id: Option<&str>,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    ensure_writable_scope(profile, scope)?;
     let patch_path = scope.patch_path(home, profile);
     if !patch_path.is_file() {
         return Ok(());
@@ -1312,6 +1325,7 @@ pub fn save_mcp_server_in_guest(
     server: McpServerConfig,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    ensure_writable_scope(profile, server.scope)?;
     let pkg_rel = format!("profiles/{profile}/package.json");
     let patch_rel = server.scope.patch_rel_path(profile);
     // profile 层要确认 profile 已物化；全局层只碰 home 根的那份 patch。
@@ -1344,6 +1358,7 @@ pub fn delete_mcp_server_in_guest(
     row_id: Option<&str>,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
+    ensure_writable_scope(profile, scope)?;
     let patch_rel = scope.patch_rel_path(profile);
     let files = crate::guest::read_files(distro, std::slice::from_ref(&patch_rel))?;
     let content = files
@@ -1374,6 +1389,22 @@ mod tests {
 
     /// 一条带 `!!js` secret 引用的行（上游文档推荐的传 token 写法，本机真实存在）。
     const TAGGED_ROW: &str = "- insert:\n    - id: mcp-tagger\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: tagger\n        transport: stdio\n        command: npx\n        args:\n          - -y\n        env:\n          TOKEN: !!js process.env.X\n";
+
+    /// 保留名（desktop，2026-10-06）：MCP 写入按**层**判——profile 层写的是官方
+    /// Electron 客户端自己的 patch ⇒ 拒绝；全局层与具体 profile 无关 ⇒ 放行。
+    #[test]
+    fn reserved_profile_blocks_only_profile_layer_writes() {
+        for reserved in ["desktop", "Desktop"] {
+            let err = ensure_writable_scope(reserved, McpScope::Profile).unwrap_err();
+            assert!(err.contains("官方桌面客户端"), "{reserved} -> {err}");
+            assert_eq!(
+                ensure_writable_scope(reserved, McpScope::Global),
+                Ok(()),
+                "全局层不写官方档案，不该被拦"
+            );
+        }
+        assert_eq!(ensure_writable_scope("web", McpScope::Profile), Ok(()));
+    }
 
     #[test]
     fn mcp_crud_flow_on_patch_yaml() {

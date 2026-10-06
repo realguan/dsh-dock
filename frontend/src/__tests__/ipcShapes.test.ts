@@ -86,6 +86,7 @@ describe("IPC 形状契约（TS 接口 ↔ 共享 fixture）", () => {
       bundles: true,
       dependencies: true,
       web_ui: true,
+      reserved: true,
     })
   })
 

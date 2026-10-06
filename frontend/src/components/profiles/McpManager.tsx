@@ -356,10 +356,14 @@ function SecretChip({ name, value }: { name: string; value: string }) {
 
 export function McpManager({
   profileName,
+  readOnly = false,
   onNotice,
 }: {
   profileName: string
   patchYaml?: string | null
+  /** 官方保留档（desktop，2026-10-06）：本档只能只读查看——新增/编辑/删除/启停
+   *  全部关闭（后端 `mcp::ensure_writable_scope` 是权威闸门，这里只做呈现）。 */
+  readOnly?: boolean
   onNotice?: (msg: string, kind?: "ok" | "warn") => void
 }) {
   const { t } = useI18n()
@@ -749,7 +753,13 @@ export function McpManager({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={openCreateDialog} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={openCreateDialog}
+            disabled={readOnly}
+            title={readOnly ? t.profiles.reservedHint : undefined}
+            className="gap-1.5"
+          >
             <Plus className="size-3.5" />
             <span>{t.profiles.mcpAddBtn}</span>
           </Button>
@@ -855,7 +865,7 @@ export function McpManager({
                                     : t.profiles.mcpDisableAria(s.name)
                                 }
                                 checked={!s.disabled}
-                                disabled={isToggling || isDeleting}
+                                disabled={isToggling || isDeleting || readOnly}
                                 onCheckedChange={() => void handleToggleDisabled(s, idx)}
                               />
                               <span
@@ -905,6 +915,8 @@ export function McpManager({
                               size="sm"
                               variant="outline"
                               onClick={() => openEditDialog(s)}
+                              disabled={readOnly}
+                              title={readOnly ? t.profiles.reservedHint : undefined}
                               className="gap-1"
                             >
                               <Edit2 className="size-3" />
@@ -941,7 +953,7 @@ export function McpManager({
                                   dupSameLayer: dup.sameScope,
                                 })
                               }
-                              disabled={isDeleting}
+                              disabled={isDeleting || readOnly}
                             >
                               {isDeleting ? (
                                 <LoaderCircle className="size-3 animate-spin" />

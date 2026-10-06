@@ -382,6 +382,11 @@ export const enUS: AppCopy = {
     tagMaterialized: "Created",
     tagTemplate: "Template",
     tagNoUi: "Headless",
+    // Reserved profile owned by the official Electron desktop client (2026-10-06).
+    tagReserved: "Official",
+    reservedHint:
+      "Owned by the official desktop client: the dsh launcher refuses to boot or manage it from outside, so this profile is read-only here — to use its configuration, copy it under a different name and launch that.",
+    nameReserved: "desktop is reserved for the official desktop client — pick another name",
     templateHint: "Built-in template · Materialized automatically on first launch",
     defaultBadge: "Default",
     runningBadge: "Running",

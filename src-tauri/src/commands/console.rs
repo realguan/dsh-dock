@@ -200,6 +200,10 @@ pub async fn list_mcp_servers(
     .map_err(|e| format!("读取 MCP 服务列表任务异常终止：{e}"))?
 }
 /// MCP 管理：保存或更新单个 MCP 服务（4.7）
+///
+/// 保留名（desktop，2026-10-06）：**profile 层**写入在 `mcp::save_mcp_server` /
+/// `_in_guest` 里由 `mcp::ensure_writable_scope` 拒绝（写的是官方客户端自己的
+/// `cordis.patch.yml`）；全局层与具体 profile 无关，照常。
 #[tauri::command]
 pub async fn save_mcp_server(
     app: tauri::AppHandle,
@@ -235,6 +239,7 @@ pub async fn delete_mcp_server(
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
     let scope = scope.unwrap_or_default();
+    // 保留名（desktop，2026-10-06）：同 save——profile 层在 mcp 侧统一拒绝。
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
             let home = crate::resolve::user_dsh_home();
