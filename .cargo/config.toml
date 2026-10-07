@@ -10,5 +10,13 @@
 # identifier。
 #
 # 注：--config 相对路径按启动时 CWD 解析，故固定从 src-tauri/ 运行。
+#
+# ⚠️ 「用哪个 dsh home」别名管不了（2026-10-07）：cargo 别名只展开成 cargo 参数，
+# **不能设环境变量**（实测 `!cmd` 形式的 shell 别名不被支持），而 dsh home 的选择靠
+# `DSH_HOME`（优先级最高）+ debug 构建的默认 `~/.dsh-dock-dev`。故两条"一条命令"
+# 的启动入口在脚本里（各带 `--print` 只查目录不启动）：
+#     ./scripts/dev.sh    → 正式档：生产 identifier + 正式 home ~/.dsh
+#     ./scripts/tdev.sh   → 隔离档：.dev identifier + ~/.dsh-dock-dev（把 DSH_HOME 钉死，
+#                           防调用环境里已导出的 DSH_HOME 静默绕过隔离）
 [alias]
 tdev = "tauri dev --config tauri.dev.conf.json"

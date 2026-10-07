@@ -34,8 +34,15 @@ cargo test        # 全绿 = 环境就绪（首次编译需几分钟）
 # ④ 跑起来（默认在线极简档；首次启动需联网补 Node/dsh）
 #    debug 构建的前端从 devUrl（localhost:1420）加载：直接 `cargo run` 而
 #    vite 未运行 = 壳窗口白屏（主窗口被 dsh 导航掩盖，独立壳窗口全白）。
-cargo tdev             # = cargo tauri dev --config tauri.dev.conf.json；dev 档
-                       #   独立 identifier，与已安装 dsh-dock 同开互不挤（推荐）
+#
+#    两条「一条命令」入口，差别**只在用哪两个配置目录**（2026-10-07，各带 --print
+#    可只查目录不启动；口径由 scripts/tests/test_dev_scripts.py 守）：
+./scripts/tdev.sh      # 隔离档（推荐日常开发）：identifier …dsh-dock.dev
+                       #   + dsh home ~/.dsh-dock-dev，显式钉住 DSH_HOME
+./scripts/dev.sh       # 正式档：生产 identifier + 正式 dsh home ~/.dsh
+                       #   （与已安装 dsh-dock 同一份数据 ⇒ 先退出已安装应用）
+cargo tdev             # 等价于 ./scripts/tdev.sh 的启动链（dev 配置），但不设
+                       #   DSH_HOME ⇒ 环境里若已导出它，隔离会被静默绕过
 # 或两终端：cd frontend && npm run dev   +   cd src-tauri && cargo run
 ```
 

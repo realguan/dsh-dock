@@ -31,6 +31,31 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 开发体验 · 两条「一条命令」启动入口（dev = 正式目录 / tdev = 隔离目录）—— guan（AI 协作）
+
+- **触发**：维护者要「一条命令就能开始测试」，且 `dev` 用**正式**配置目录、`tdev` 用**隔离测试**目录。
+- **为什么做不成 cargo 别名**（实测）：cargo 别名只展开成 cargo 参数、**不能设环境变量**；
+  `!cmd` 形式的 shell 别名直接被拒（`error: no such command: '!echo'`）。而「用哪个 dsh home」
+  唯一开关就是 `DSH_HOME`（`resolve.rs::user_dsh_home` 里优先级最高；未设置时 **debug 构建一律**
+  落 `~/.dsh-dock-dev`，判据 `cfg!(debug_assertions)`）⇒ 只能由脚本承担。
+- **新增**：
+  - `scripts/dev.sh` —— 正式档：生产 identifier + `~/.dsh`；启动前若已安装的 DSH Dock.app 在跑
+    会提示先退出（同 identifier 单实例锁 + 同 `~/.dsh` 会话写锁）。
+  - `scripts/tdev.sh` —— 隔离档：`.dev` identifier + `~/.dsh-dock-dev`，并把 `DSH_HOME`
+    **钉死**：该变量优先级最高，调用环境里只要有人导出过它（从 dsh 会话里起的终端就会），
+    debug 的隔离默认值会被**静默绕过**、直接写真实 `~/.dsh`。
+  - 两者都自动跑 `tauri dev`（含 beforeDevCommand = vite，避开"`cargo run` 没起 vite = 壳窗口白屏"
+    那个老坑），并支持 `--print` 只打印本次用到的目录与命令。
+- **机器闸门**：`scripts/tests/test_dev_scripts.py`（CI Linux leg 与发布辅助测试同批执行）——
+  断言 dev=正式 / tdev=隔离、两者 home 与 identifier **都不同**、脚本可执行、且调用环境预置
+  `DSH_HOME` 也带不偏。改错即红，不靠人记。
+- **变更（宪法级）**：`docs/CONTRIBUTING.md` §1④ 给出两条命令、`cargo tdev` 与脚本的差异
+  及各自落到的目录；`.cargo/config.toml` 注释记下"别名不能设 env"这条实测结论并指向脚本。
+- **影响**：仅周知——日常开发推荐 `./scripts/tdev.sh`（隔离）；要看真实 profile / 会话用
+  `./scripts/dev.sh`（先退出已安装应用）。
+- **凭据**：`scripts/tests` 74 tests OK（本批新增 5 条）；两脚本 `--print` 实测输出符合上表；
+  `bash -n` 语法通过。
+
 ### 2026-10-06 修复 · 官方保留名 `desktop` 写入口全线收口（此前点「启动」必撞 dsh 英文报错）—— guan（AI 协作）
 
 - **触发**：在控制中心选中官方 Electron 客户端物化的 `desktop` 档点「启动」，错误卡显示
