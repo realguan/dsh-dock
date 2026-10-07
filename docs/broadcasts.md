@@ -31,6 +31,30 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 事故 · v1.3.5 tag 构建 Windows leg 判红：真机锚辅助函数只标了 `cfg(test)`，Windows 上成 dead_code —— guan（AI 协作）
+
+- **现象**：tag `v1.3.5` 的 `build`（[37632593005](https://github.com/realguan/dsh-dock/actions/runs/37632593005)）
+  —— `windows-latest` leg 在 **`Rust clippy gate`** 判红（`error: function
+  engine_data_dir_for_test is never used`，exit 1）；`macos-latest` / `macos-latest-x86_64` /
+  `ubuntu-latest` 三条 leg **全部成功**（安装包已构建/签名）；`release` job 因有 leg 失败**未运行**
+  ⇒ **无 GitHub Release、无产物发布**（`gh release list` 仍以 v1.3.4 为 latest）。
+- **根因（本次工作的锅）**：`paths::engine_data_dir_for_test` 只标了 `#[cfg(test)]`，而它唯三调用点
+  （`shell::engine_session_is_guarded_and_reaped`、`lifecycle::{parent_role_probe,
+  real_dsh_is_reaped_when_shell_is_sigkilled}`）**都是 `#[cfg(unix)]` 的真机锚** —— Windows 上一个都不存在，
+  于是该函数在 Windows 的 `--all-targets` 里成 dead_code，`-D warnings` 直接判红。
+  宿主（macOS）clippy 看不见这类问题 —— 正是 AGENTS §1「clippy 须逐目标各跑一次」那条老坑；
+  本机缺 mingw，Windows 交叉 clippy 跑不起来，只能靠 CI 兜（教训：**只被 unix 门用例引用的
+  `cfg(test)` 辅助函数，必须与调用点同门收敛**）。
+- **修复**：`2092b50 fix(paths)` —— 收窄为 `#[cfg(all(test, unix))]`（Windows 上函数与引用一起消失，
+  结构上不再可能被判 dead）。同批新 master run（37635268964）实测：Windows leg 的
+  `Rust clippy gate` = **success** ✓，coverage / macOS×2 / ubuntu 亦全绿。
+- **另两条被误读成"报错"的运行（备查）**：① master push run `37632567343` = `cancelled`，是
+  `concurrency.cancel-in-progress`（组 `build-refs/heads/master`，tag 不参与）被我 52 秒后的下一个
+  push 正常取代，**不是失败**；② 同一 run 的 `macos-latest-x86_64` leg 在 `Rust toolchain` 步骤失败，
+  日志原文 = rustup 连 `static.rust-lang.org` **tcp connect error: Operation timed out (os error 60)**，
+  属 runner 网络抖动（同一步在同日的 tag run 里成功）。
+- **影响**：v1.3.5 **尚未发布**（无 Release 产物）。发版方式（重指 v1.3.5 / 切 v1.3.6）待维护者裁定。
+
 ### 2026-10-07 发版 · **v1.3.5 推送完成**（tag `v1.3.5`，CI 构建中）—— guan（AI 协作）
 
 - **推送**：`origin/master` `392ef87..aff98c4`（7 个提交）＋ annotated tag **`v1.3.5`**
