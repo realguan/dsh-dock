@@ -2795,6 +2795,7 @@ mod tests {
 
         let spec = crate::resolve::resolve_launch_engine_ready(
             &data_dir,
+            &crate::paths::test_dsh_home(),
             "web".to_string(),
             Some("0.1.5-rc.2"),
         )
@@ -2842,6 +2843,7 @@ mod tests {
         let (data_dir, _shim) = ready_engine_fixture(&root, true);
         let spec = crate::resolve::resolve_launch_engine_ready(
             &data_dir,
+            &crate::paths::test_dsh_home(),
             "web".to_string(),
             Some("0.1.5-rc.2"),
         )
@@ -2867,6 +2869,7 @@ mod tests {
 
         let spec = crate::resolve::resolve_launch_engine_ready(
             &data_dir,
+            &crate::paths::test_dsh_home(),
             "web".to_string(),
             Some("0.1.5-rc.2"),
         )
@@ -2894,6 +2897,7 @@ mod tests {
         let run = || {
             crate::resolve::resolve_launch_engine_ready(
                 &data_dir,
+                &crate::paths::test_dsh_home(),
                 "web".to_string(),
                 Some("0.1.5-rc.2"),
             )

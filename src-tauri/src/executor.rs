@@ -221,6 +221,9 @@ pub struct LocalExecutor {
     manifest: ProductManifest,
     resources_dir: PathBuf,
     data_dir: PathBuf,
+    /// 用户数据根（setup 期解析一次后注入）：probe 里 `list_web_ui_profiles` 与
+    /// "本次启动是否用户世界档"的比对都用它（2026-10-07；不再现读环境变量）。
+    paths: std::sync::Arc<crate::paths::Paths>,
     path_env: String,
     launch: Option<LaunchSpec>,
     proc: Option<crate::shell::DshProcess>,
@@ -229,11 +232,17 @@ pub struct LocalExecutor {
 }
 
 impl LocalExecutor {
-    pub fn new(manifest: ProductManifest, resources_dir: PathBuf, data_dir: PathBuf) -> Self {
+    pub fn new(
+        manifest: ProductManifest,
+        resources_dir: PathBuf,
+        data_dir: PathBuf,
+        paths: std::sync::Arc<crate::paths::Paths>,
+    ) -> Self {
         Self {
             manifest,
             resources_dir,
             data_dir,
+            paths,
             path_env: crate::resolve::effective_path(),
             launch: None,
             proc: None,
@@ -268,6 +277,7 @@ impl Executor for LocalExecutor {
             sink(1, "done", "运行环境已就绪");
             crate::resolve::resolve_launch_engine_ready(
                 &self.data_dir,
+                &self.paths.dsh_home,
                 self.manifest.terminal.default_profile.clone(),
                 status.dsh.as_deref(),
             )
@@ -290,6 +300,7 @@ impl Executor for LocalExecutor {
                 &self.resources_dir,
                 &self.path_env,
                 &self.data_dir,
+                &self.paths.dsh_home,
                 progress,
             )
             .map_err(|e| {
@@ -304,7 +315,7 @@ impl Executor for LocalExecutor {
             );
             launch
         };
-        let home = crate::resolve::user_dsh_home();
+        let home = self.paths.dsh_home.clone();
         let profiles = crate::resolve::list_web_ui_profiles(&home);
         // 4.3④ defaultProfile 消费（2026-08-28）：用户设过默认且在 webUi 候选
         // 内 → 直接用它启动并跳过选择器。仅覆盖 dsh_home = 用户 home 的档位

@@ -30,6 +30,7 @@ mod mcp;
 mod mcp_probe;
 mod mgmt;
 mod official_catalog;
+mod paths;
 mod plugin_registry;
 // 「唯一网络面」（AGENTS §7 / ADR-0006）的机器闸门。**只存在于测试构建**：它没有
 // 任何运行时职责，全部内容 = 源码扫描 + 豁免表 + 单测（2026-09-11，A2）。
@@ -153,26 +154,37 @@ pub fn run() {
         // 同时作用于 check 与 download，见 updater.rs blocked_check）。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // 用户数据根（app 数据目录 + dsh home）：**全仓唯一一次解析**
+            // （身份 identifier + 平台目录 + DSH_HOME），此后全程注入 `ShellState`。
+            // 2026-10-07 第一性原理重构：此前 dsh home 由散落各处的 `user_dsh_home()`
+            // 现读环境变量决定，会出现"app 数据目录正式 / dsh home 隔离"的混合态。
+            let paths = std::sync::Arc::new(paths::Paths::resolve(app.handle())?);
+
             // 壳侧诊断日志落 `<数据目录>/shell.log`；dev（debug 构建）双写
             // stdout——`cargo tauri dev` 终端实时可见 boot/引擎引导/网络各阶段
             // （release 纯文件：GUI 下 stdout 无处可去，Windows 无控制台）。
             // 子进程输出在 dsh-shell.log（shell.rs）；两者分离。
-            if let Ok(data_dir) = app.path().app_data_dir() {
-                if let Ok(file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(data_dir.join("shell.log"))
-                {
-                    boot::init_tracing(file);
-                }
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(paths.data_dir.join("shell.log"))
+            {
+                boot::init_tracing(file);
             }
+            // 「写的是哪一份用户数据」永不静默：一行说清档位与两个目录。
+            tracing::info!(
+                world = paths.world.label(),
+                dsh_home = %paths.dsh_home.display(),
+                data_dir = %paths.data_dir.display(),
+                "用户数据根已解析"
+            );
             // 资源根解析（dev/prod 差异）已由 executor_for_mode（Local 档）内部处理：
             //   - 生产（bundle）：Tauri v2 保留相对 src-tauri 的路径前缀，
             //     `resources/**` 落在 `.app/Contents/Resources/resources/`；
             //   - dev（cargo run，macOS）：resource_dir() 指向不存在的 target/Resources，
             //     回退链：exe_dir/resources（tauri-build 的副本，Windows 语义）→
             //     CARGO_MANIFEST_DIR/resources（源码树，本仓库开发常态）。
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = paths.data_dir.clone();
             std::fs::create_dir_all(&data_dir)?;
 
             // 子进程生命周期子系统（ADR-0015）：**必须在任何 spawn 之前**装配
@@ -191,6 +203,8 @@ pub fn run() {
             // 启动页的 IPC（版本状态、重试）也有可用状态，不能因 `state()` panic
             // 把原本可展示的错误卡变成整个应用退出。
             let state = Arc::new(boot::ShellState {
+                // 用户数据根（setup 顶部已解析）：命令层经 `paths::dsh_home_of(&app)` 取。
+                paths: paths.clone(),
                 session: Mutex::new(None),
                 session_epoch: AtomicU64::new(0),
                 active_mode: Mutex::new(None),
@@ -336,7 +350,8 @@ pub fn run() {
                     settings::Mode::Local
                 };
                 *boot_state.active_mode.lock().unwrap() = Some(mode);
-                match boot::executor_for_mode(mode, &boot_app, boot_data) {
+                let boot_paths = boot_state.paths.clone();
+                match boot::executor_for_mode(mode, &boot_app, boot_data, boot_paths) {
                     Ok(executor) => {
                         boot::launch_executor_after_probe(boot_state, boot_app, executor, token)
                     }

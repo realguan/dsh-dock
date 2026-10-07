@@ -31,8 +31,8 @@
 //! 原型，无条件注入 `"web"` 并跳过同名目录，与管理器「全量列出 + 两态区分」
 //! 语义不同（ADR-0009 §3 方案 E 评审裁定）。
 //!
-//! home 解析复用壳既有链 `resolve::user_dsh_home()`（$DSH_HOME 环境变量 →
-//! `~/.dsh`），与壳 spawn dsh 时注入的 DSH_HOME 同源；不能自行读环境变量——
+//! home 由**调用方注入**（`lib.rs` setup 期经 `paths::Paths::resolve` 解析一次，
+//! 见 2026-10-07 第一性原理重构）：本模块不读环境变量、不判断构建档——
 //! dsh 侧解析优先级是 显式配置 > 环境变量 > `~/.dsh`（dsh-home-paths @ 73），
 //! 壳以 env → 默认 为其可见范围。管理器仅覆盖壳侧本地 home，WSL 客体内
 //! profile 明确范围外（handoff-4.3-readonly §4.4）。
@@ -132,7 +132,7 @@ pub struct ProfileSummary {
 /// 扫描 `<home>/profiles/`：每个子目录 = 一个已物化 profile（目录名是唯一硬
 /// 身份，Spike B §2.1——半初始化目录也占名，照列、字段置空），再加未物化的
 /// 内置模板名（web/headless）。排序：已物化在前，各组内按名字典序。
-/// 纯函数：home 由调用方传入（IPC 层用 `resolve::user_dsh_home()`）。
+/// 纯函数：home 由调用方传入（IPC 层用 `paths::dsh_home_of(&app)`）。
 pub fn scan_profiles(home: &Path) -> Vec<ProfileSummary> {
     let mut entries: Vec<(String, Option<String>)> = Vec::new();
     if let Ok(read_dir) = fs::read_dir(home.join("profiles")) {
@@ -844,16 +844,17 @@ fn output_tail(text: &str) -> String {
 pub fn create_profile_blocking(
     profile: &str,
     data_dir: &Path,
+    // 用户数据根里的 dsh home（调用方注入，见 `paths.rs`；本模块不自己解析环境）。
+    home: &Path,
 ) -> Result<CreateProfileOutcome, String> {
     let bundle = WEBUI_BUNDLE;
-    let home = crate::resolve::user_dsh_home();
-    creation_blocker(&home, profile)?;
+    creation_blocker(home, profile)?;
     let toolchain = crate::engines::resolve_toolchain(data_dir)?;
     let args = create_command_args(profile);
     let run = run_toolchain_forward(
         &toolchain,
         &args,
-        &home,
+        home,
         &data_dir.join("profile-create.log"),
         data_dir,
     )?;
@@ -866,14 +867,14 @@ pub fn create_profile_blocking(
     // Web 工作台声明（幂等）——创建即 webUi 候选，可设为默认启动。失败降级
     // pending 态（重试幂等补写），不静默吞掉。
     let webui_error = if run.code == Some(0) && materialized && !bundle.is_empty() {
-        declare_app_bundle(&home, profile, bundle).err()
+        declare_app_bundle(home, profile, bundle).err()
     } else {
         None
     };
     // 构建脚本默认批准（ADR-0013，2026-09-09）：物化后写一次，此后该 profile 的
     // 插件操作不再撞 pnpm 12 审批门（写失败只告警，不改变创建结果）。
     if materialized {
-        crate::build_policy::ensure_profile_build_policy_best_effort(profile);
+        crate::build_policy::ensure_profile_build_policy_best_effort(home, profile);
     }
     Ok(classify_create_outcome(
         profile,

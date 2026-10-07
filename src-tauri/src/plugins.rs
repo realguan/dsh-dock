@@ -1012,6 +1012,8 @@ pub fn mutate_plugin_blocking(
     profile: &str,
     spec: &str,
     data_dir: &Path,
+    // 用户数据根里的 dsh home（本地世界用；调用方注入，见 `paths.rs`）。
+    dsh_home: &Path,
     world: &crate::mgmt::World,
     // 本轮要用的 registry（`None` = 不传 `--registry`，沿用 pnpm 配置 = 用户自己的源）。
     // 选择策略与兜底见 ADR-0006 §6 / `plugin_registry.rs`；本函数只把结论变成参数。
@@ -1021,7 +1023,7 @@ pub fn mutate_plugin_blocking(
     let log_path = data_dir.join("plugin-op.log");
     let run = match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home;
             if !home
                 .join("profiles")
                 .join(profile)
@@ -1035,11 +1037,11 @@ pub fn mutate_plugin_blocking(
             // pnpm 12 构建脚本默认批准（ADR-0013）：操作前幂等补写 profile 的
             // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
             // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
-            crate::build_policy::ensure_profile_build_policy_best_effort(profile);
+            crate::build_policy::ensure_profile_build_policy_best_effort(home, profile);
             crate::profiles::run_toolchain_forward(
                 &crate::engines::resolve_toolchain(data_dir)?,
                 &args,
-                &home,
+                home,
                 &log_path,
                 data_dir,
             )?
@@ -1252,19 +1254,28 @@ mod op_tests {
     fn mutate_rejects_unmaterialized_profile_and_bad_spec_before_spawn() {
         // 未物化：先于任何 spawn/网络拒绝
         let data_dir = std::env::temp_dir().join("dsh-dock-op-test");
+        // 测试专用 home（`~/.dsh-dock-test`）：**永不**指向用户真实数据（paths.rs 口径）
+        let home = crate::paths::test_dsh_home();
         let ghost = format!("dsh-dock-ghost-{}", std::process::id());
         let local = crate::mgmt::World::Local;
-        assert!(
-            mutate_plugin_blocking(PluginOp::Install, &ghost, "pkg", &data_dir, &local, None)
-                .unwrap_err()
-                .contains("尚未初始化")
-        );
+        assert!(mutate_plugin_blocking(
+            PluginOp::Install,
+            &ghost,
+            "pkg",
+            &data_dir,
+            &home,
+            &local,
+            None
+        )
+        .unwrap_err()
+        .contains("尚未初始化"));
         // 非法 spec：同样先拒（伪 profile 名保证不触发 spawn）
         assert!(mutate_plugin_blocking(
             PluginOp::Install,
             &ghost,
             "-flag",
             &data_dir,
+            &home,
             &local,
             None
         )
@@ -1278,6 +1289,7 @@ mod op_tests {
             "../escape",
             "pkg",
             &data_dir,
+            &home,
             &wsl,
             None
         )
@@ -1293,10 +1305,19 @@ mod op_tests {
         let wsl = crate::mgmt::World::Wsl {
             distro: "Ubuntu".to_string(),
         };
-        let err = mutate_plugin_blocking(PluginOp::Install, "web", "pkg", &data_dir, &wsl, None)
-            .unwrap_err();
+        let home = crate::paths::test_dsh_home();
+        let err = mutate_plugin_blocking(
+            PluginOp::Install,
+            "web",
+            "pkg",
+            &data_dir,
+            &home,
+            &wsl,
+            None,
+        )
+        .unwrap_err();
         assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
-        let err = plugin_rows_blocking("web", &data_dir, &wsl).unwrap_err();
+        let err = plugin_rows_blocking("web", &data_dir, None, &wsl).unwrap_err();
         assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
         let err = list_profile_plugins_in_guest("Ubuntu", "web").unwrap_err();
         assert!(err.contains("仅在 Windows 宿主可用"), "{err}");
@@ -1680,9 +1701,11 @@ fn patch_entry_map_text(text: &str) -> std::collections::BTreeMap<String, (bool,
 pub fn plugin_rows_blocking(
     profile: &str,
     data_dir: &Path,
+    // 本地世界用：用户数据根里的 dsh home；客体档（`World::Wsl`）不用宿主 home ⇒ `None`。
+    dsh_home: Option<&Path>,
     world: &crate::mgmt::World,
 ) -> Result<Vec<PluginRowState>, String> {
-    let (rows, manifest_text, patch) = fetch_dump_rows(profile, data_dir, world)?;
+    let (rows, manifest_text, patch) = fetch_dump_rows(profile, data_dir, dsh_home, world)?;
     let deps = dependency_names(&manifest_text)?;
     Ok(build_row_states(&rows, &deps, &patch))
 }
@@ -1706,6 +1729,8 @@ type DumpFacts = (
 fn fetch_dump_rows(
     profile: &str,
     data_dir: &Path,
+    // 本地世界用：用户数据根里的 dsh home（客体档不使用 ⇒ `None`）。
+    dsh_home: Option<&Path>,
     world: &crate::mgmt::World,
 ) -> Result<DumpFacts, String> {
     crate::profiles::validate_profile_name(profile)?;
@@ -1720,7 +1745,8 @@ fn fetch_dump_rows(
     let log_path = data_dir.join("plugin-rows.log");
     let (run, manifest_text, patch) = match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home =
+                dsh_home.ok_or_else(|| "本地世界缺少 dsh home（paths 未注入）".to_string())?;
             let dir = home.join("profiles").join(profile);
             let manifest_path = dir.join("package.json");
             if !manifest_path.is_file() {
@@ -1729,7 +1755,7 @@ fn fetch_dump_rows(
             let run = crate::profiles::run_toolchain_forward(
                 &crate::engines::resolve_toolchain(data_dir)?,
                 &args,
-                &home,
+                home,
                 &log_path,
                 data_dir,
             )?;
@@ -3178,7 +3204,7 @@ pub fn copy_plugin_config_blocking(
     }
     // 行 id 定位：dump-config 来源 profile（一次 spawn 全量行表，秒级）。
     // 本函数为本地世界分支（WSL 客体分支见 `copy_plugin_config_in_guest`）。
-    let row_id = plugin_rows_blocking(source, data_dir, &crate::mgmt::World::Local)?
+    let row_id = plugin_rows_blocking(source, data_dir, Some(home), &crate::mgmt::World::Local)?
         .into_iter()
         .find(|r| r.pkg_name == package)
         .map(|r| r.id)
@@ -3307,6 +3333,7 @@ pub fn copy_plugin_config_in_guest(
     let row_id = plugin_rows_blocking(
         source,
         data_dir,
+        None,
         &crate::mgmt::World::Wsl {
             distro: distro.to_string(),
         },

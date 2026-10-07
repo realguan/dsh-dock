@@ -804,7 +804,7 @@ mod tests {
     fn engine_session_is_guarded_and_reaped() {
         use crate::lifecycle::{self, Role};
 
-        let data_dir = crate::resolve::launch_data_dir_for_test();
+        let data_dir = crate::paths::engine_data_dir_for_test();
         let engine = match crate::engines::engine_dsh_bin(&data_dir) {
             Some(b) => b,
             None => {
@@ -819,7 +819,7 @@ mod tests {
         let launch = LaunchSpec {
             node_bin: node,
             dsh_entry: crate::resolve::DshEntry::Launcher { bin: engine },
-            dsh_home: crate::resolve::user_dsh_home(),
+            dsh_home: crate::paths::test_dsh_home(),
             profile: "web".to_string(),
             tier: crate::manifest::TierKind::Engine,
             no_open: true,

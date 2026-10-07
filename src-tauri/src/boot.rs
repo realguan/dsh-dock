@@ -124,6 +124,9 @@ pub(crate) fn boot_token_stale(current: u64, token: u64, shutting_down: bool) ->
 
 /// 壳运行时状态：当前执行环境会话（executor）+ 主窗口句柄 + 待选 profile 的会话。
 pub(crate) struct ShellState {
+    /// 用户数据根（app 数据目录 + dsh home）：`lib.rs` setup 期**解析一次**，此后
+    /// 命令层只取不解析（2026-10-07；`paths.rs` 是唯一权威）。
+    pub(crate) paths: Arc<crate::paths::Paths>,
     /// 当前会话的执行器（local / wsl；ssh 预留）。等待/监护线程对它做短锁轮询，
     /// 不独占锁——退出处理器随时能拿到会话做 teardown（同生命周期纪律）。
     pub(crate) session: crate::executor::Session,
@@ -627,7 +630,8 @@ pub(crate) fn guard_session(
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     let shell_url = ui::shell_app_url(&handle);
                     let _ = state_clone.window.navigate(shell_url);
-                    match executor_for_mode(mode, &handle, data_dir) {
+                    let paths = state_clone.paths.clone();
+                    match executor_for_mode(mode, &handle, data_dir, paths) {
                         Ok(executor) => {
                             launch_executor_after_probe(state_clone, handle, executor, token)
                         }
@@ -825,10 +829,13 @@ pub(crate) fn launch_executor_after_probe(
 }
 
 /// 按运行环境构建执行器（local/wsl 同等地位的统一入口：首启 / 重试 / 菜单切换共用）。
+///
+/// `paths` = setup 期解析一次的用户数据根（2026-10-07 起注入；执行器不再自己读环境）。
 pub(crate) fn executor_for_mode(
     mode: settings::Mode,
     app: &tauri::AppHandle,
     data_dir: PathBuf,
+    paths: Arc<crate::paths::Paths>,
 ) -> Result<Box<dyn crate::executor::Executor>, String> {
     match mode {
         settings::Mode::Local => {
@@ -840,6 +847,7 @@ pub(crate) fn executor_for_mode(
                 manifest,
                 resources_dir,
                 data_dir,
+                paths,
             )))
         }
         settings::Mode::Wsl => {
@@ -877,7 +885,8 @@ pub(crate) fn lib_boot_again(
     *state.active_mode.lock().unwrap() = Some(mode);
     // 交接阶段推进：旧会话已停、环境解析与 spawn 归「启动新会话」（ADR-0014）。
     state.advance_handoff(HandoffPhase::Booting);
-    match executor_for_mode(mode, &app, data_dir) {
+    let paths = state.paths.clone();
+    match executor_for_mode(mode, &app, data_dir, paths) {
         Ok(executor) => launch_executor_after_probe(state, app, executor, token),
         Err(e) => emit_boot_error(&app, &e, ""),
     }
@@ -921,7 +930,8 @@ pub(crate) fn switch_mode(
         // 新会话就绪后 run_executor_session 会把主窗口导航过去。
         let shell_url = ui::shell_app_url(&app_handle);
         let _ = state.window.navigate(shell_url);
-        match executor_for_mode(mode, &app, data_dir) {
+        let paths = state.paths.clone();
+        match executor_for_mode(mode, &app, data_dir, paths) {
             Ok(executor) => launch_executor_after_probe(state, app, executor, token),
             Err(e) => emit_boot_error(&app, &e, ""),
         }

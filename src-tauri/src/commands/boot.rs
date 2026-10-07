@@ -132,10 +132,13 @@ pub fn choose_mode(app: tauri::AppHandle, mode: String, set_default: bool) -> Re
     }
     *state.active_mode.lock().unwrap() = Some(m);
     let handle = app.clone();
-    std::thread::spawn(move || match executor_for_mode(m, &handle, data_dir) {
-        Ok(executor) => launch_executor_after_probe(state, handle, executor, token),
-        Err(e) => emit_boot_error(&handle, &e, ""),
-    });
+    let paths = state.paths.clone();
+    std::thread::spawn(
+        move || match executor_for_mode(m, &handle, data_dir, paths) {
+            Ok(executor) => launch_executor_after_probe(state, handle, executor, token),
+            Err(e) => emit_boot_error(&handle, &e, ""),
+        },
+    );
     Ok(())
 }
 /// 错误卡动作（retry / upgrade）：重新解析并启动；upgrade 先升级全局 dsh。
@@ -237,7 +240,8 @@ pub fn terminal_action(
             // 写会改错文件（动用户的 `~/.dsh` 同名 profile）且不可能生效。故显式拒绝该档，
             // 口径同 WSL 客体档（patch 在客体文件系统里，宿主路径写不到）：宁可报错，
             // 不回落宿主。
-            let user_home = crate::resolve::user_dsh_home();
+            // 用户世界 home（setup 期已解析一次）：下面拿它当"是否为快照档"的参照点。
+            let user_home = crate::paths::dsh_home_of(&app);
             let home = crate::boot::boot_target_home(&handle).unwrap_or_else(|| user_home.clone());
             if home != user_home {
                 emit_boot_error(

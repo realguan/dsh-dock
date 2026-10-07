@@ -1163,13 +1163,13 @@ mod tests {
         // 路径）当被守护对象，否则用 `sleep` 替身。前者是"用户会话被孤儿占死"
         // 那条链路的逐字复刻，故由专门的 `real_dsh_...` 用例驱动。
         let pid = if std::env::var("DSH_DOCK_LIFECYCLE_REAL_DSH").is_ok() {
-            let data_dir = crate::resolve::launch_data_dir_for_test();
+            let data_dir = crate::paths::engine_data_dir_for_test();
             let engine = crate::engines::engine_dsh_bin(&data_dir).expect("本机引擎未就绪");
             let node = crate::engines::engine_node_bin(&data_dir).expect("引擎 node");
             let launch = crate::resolve::LaunchSpec {
                 node_bin: node,
                 dsh_entry: crate::resolve::DshEntry::Launcher { bin: engine },
-                dsh_home: crate::resolve::user_dsh_home(),
+                dsh_home: crate::paths::test_dsh_home(),
                 profile: "web".to_string(),
                 tier: crate::manifest::TierKind::Engine,
                 no_open: true,
@@ -2032,7 +2032,7 @@ mod tests {
     #[ignore = "需要本机已装引擎（engines/bin）；CI 与无引擎环境跳过"]
     fn real_dsh_is_reaped_when_shell_is_sigkilled() {
         // 无引擎（CI / 干净机器）时优雅跳过——本用例是"真机锚"，不进默认套件。
-        if crate::engines::engine_dsh_bin(&crate::resolve::launch_data_dir_for_test()).is_none() {
+        if crate::engines::engine_dsh_bin(&crate::paths::engine_data_dir_for_test()).is_none() {
             eprintln!("跳过：本机引擎未就绪");
             return;
         }

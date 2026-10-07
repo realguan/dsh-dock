@@ -195,9 +195,10 @@ pub fn ensure_engine_linker_best_effort(engines_dir: &Path) {
 
 /// 读 profile 的 pnpm-workspace.yaml → 幂等补写 → 原子替换。返回 true 表示
 /// 本次确实写了（无变化返回 false，不触碰文件）。
-pub fn ensure_profile_build_policy(profile: &str) -> Result<bool, String> {
+///
+/// `home` = 用户数据根里的 dsh home（调用方注入，见 `paths.rs`；本模块不自己解析环境）。
+pub fn ensure_profile_build_policy(home: &std::path::Path, profile: &str) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
-    let home = crate::resolve::user_dsh_home();
     let path = home
         .join("profiles")
         .join(profile)
@@ -225,8 +226,8 @@ pub fn ensure_profile_build_policy(profile: &str) -> Result<bool, String> {
 
 /// 插件操作/创建链的幂等前置：写失败只告警不阻断——默认批准是「少一次门槛」
 /// 的便利，不是操作前置条件；写入失败时 pnpm 的原始报错仍随 detail 返回。
-pub fn ensure_profile_build_policy_best_effort(profile: &str) {
-    match ensure_profile_build_policy(profile) {
+pub fn ensure_profile_build_policy_best_effort(home: &std::path::Path, profile: &str) {
+    match ensure_profile_build_policy(home, profile) {
         Ok(true) => {
             tracing::info!(
                 "已写入 dangerouslyAllowAllBuilds: true（profile「{profile}」，ADR-0013）"

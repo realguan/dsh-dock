@@ -24,10 +24,9 @@ pub async fn list_profiles(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::profiles::ProfileSummary>, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
-        crate::mgmt::World::Local => Ok(crate::profiles::scan_profiles(
-            &crate::resolve::user_dsh_home(),
-        )),
+        crate::mgmt::World::Local => Ok(crate::profiles::scan_profiles(&dsh_home)),
         crate::mgmt::World::Wsl { distro } => crate::profiles::scan_profiles_in_guest(&distro),
     })
     .await
@@ -42,10 +41,9 @@ pub async fn get_profile_detail(
     profile: String,
 ) -> Result<crate::profiles::ProfileDetail, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
-        crate::mgmt::World::Local => {
-            crate::profiles::read_profile_detail(&crate::resolve::user_dsh_home(), &profile)
-        }
+        crate::mgmt::World::Local => crate::profiles::read_profile_detail(&dsh_home, &profile),
         crate::mgmt::World::Wsl { distro } => {
             crate::profiles::read_profile_detail_in_guest(&distro, &profile)
         }
@@ -82,8 +80,11 @@ pub async fn create_profile(
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
-        crate::mgmt::World::Local => crate::profiles::create_profile_blocking(&profile, &data_dir),
+        crate::mgmt::World::Local => {
+            crate::profiles::create_profile_blocking(&profile, &data_dir, &dsh_home)
+        }
         crate::mgmt::World::Wsl { distro } => {
             crate::profiles::create_profile_in_guest(&distro, &profile, &data_dir)
         }
@@ -102,9 +103,10 @@ pub async fn copy_profile(
     new_name: String,
 ) -> Result<crate::profiles::LifecycleOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::profiles::copy_blocker(&home, &source, &new_name)?;
             let warnings = crate::profiles::copy_profile_tree(
                 &home.join("profiles").join(&source),
@@ -134,6 +136,7 @@ pub async fn rename_profile(
     new_name: String,
 ) -> Result<crate::profiles::LifecycleOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app
         .path()
         .app_data_dir()
@@ -142,7 +145,7 @@ pub async fn rename_profile(
     crate::profiles::running_conflict(active.as_deref(), &old_name)?;
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::profiles::rename_blocker(&home, &old_name, &new_name)?;
             let warnings = crate::profiles::rename_profile_dir(&home, &old_name, &new_name)?;
             // defaultProfile 引用同步（load-modify-save，防抹掉其他字段）
@@ -175,6 +178,7 @@ pub async fn delete_profile(
     profile: String,
 ) -> Result<crate::profiles::DeleteOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app
         .path()
         .app_data_dir()
@@ -184,7 +188,7 @@ pub async fn delete_profile(
     crate::profiles::running_conflict(active.as_deref(), &profile)?;
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             if !home.join("profiles").join(&profile).is_dir() {
                 return Err(format!(
                     "profile「{profile}」不存在或尚未物化——无目录可删除"
@@ -223,9 +227,10 @@ pub async fn delete_profile(
 /// （`consume_default_profile`），跨世界残留名字**不消费**（同上，出选择器），不会误启动。
 #[tauri::command]
 pub fn set_default_profile(app: tauri::AppHandle, profile: String) -> Result<(), String> {
+    let dsh_home = crate::paths::dsh_home_of(&app);
     match crate::mgmt::current_world(&app)? {
         crate::mgmt::World::Local => {
-            crate::profiles::ensure_default_candidate(&crate::resolve::user_dsh_home(), &profile)?
+            crate::profiles::ensure_default_candidate(&dsh_home, &profile)?
         }
         crate::mgmt::World::Wsl { distro } => {
             crate::profiles::ensure_default_candidate_in_guest(&distro, &profile)?
@@ -261,13 +266,12 @@ pub fn get_default_profile(app: tauri::AppHandle) -> Result<Option<String>, Stri
 #[tauri::command]
 pub fn switch_profile(app: tauri::AppHandle, profile: String) -> Result<serde_json::Value, String> {
     crate::profiles::validate_profile_name(&profile)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     // 世界择源（ADR-0016 §5 读侧下沉）：候选 = **当前世界**的 webUi profile 名单。
     // 此前这里恒读宿主 home——WSL 模式下会拿宿主名单去校验客体 profile（错世界），
     // 是 P1 时登记在案、随本批读侧下沉消掉的边界。
     let candidates = match crate::mgmt::current_world(&app)? {
-        crate::mgmt::World::Local => {
-            crate::resolve::list_web_ui_profiles(&crate::resolve::user_dsh_home())
-        }
+        crate::mgmt::World::Local => crate::resolve::list_web_ui_profiles(&dsh_home),
         crate::mgmt::World::Wsl { distro } => crate::profiles::web_ui_profiles_in_guest(&distro)?,
     };
     ensure_switchable_profile(&profile, &candidates)?;

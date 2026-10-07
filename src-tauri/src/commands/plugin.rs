@@ -77,10 +77,11 @@ pub async fn apply_official_patch_row(
     package: String,
 ) -> Result<crate::official_catalog::RowWriteOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // 客体档（2026-09-21 下沉，P0）：写侧交客体孪生（同一内核）；宿主 home 仅在本地档需要。
     let home = match &world {
-        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Local => Some(dsh_home.clone()),
         crate::mgmt::World::Wsl { .. } => None,
     };
     let verify_profile = profile.clone();
@@ -148,13 +149,18 @@ pub async fn apply_official_patch_row(
         // 写后自证（2026-09-15 补，ADR-0020）：回读 dump-config 组合树确认该行真的生效。
         // 理由：patch 写法不对时 DSH 会**退出码 0 地静默丢弃**条目，只校验"文件写成功"
         // 抓不到它。dump-config 自身失败时**不得谎报成功**——明确告知"已写入但未能复核"。
-        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
-            .map_err(|e| {
-                format!(
-                    "挂载行已写入，但写后复核未能执行（dump-config 读取失败）：{e}\
+        let rows = crate::plugins::plugin_rows_blocking(
+            &verify_profile,
+            &data_dir,
+            home.as_deref(),
+            &world,
+        )
+        .map_err(|e| {
+            format!(
+                "挂载行已写入，但写后复核未能执行（dump-config 读取失败）：{e}\
                          ——请人工确认该行是否生效。"
-                )
-            })?;
+            )
+        })?;
         crate::plugins::verify_catalog_row(&rows, &row_id, &package)?;
         Ok(crate::official_catalog::RowWriteOutcome {
             changed,
@@ -181,11 +187,12 @@ pub async fn remove_official_patch_row(
     row_id: String,
 ) -> Result<bool, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // 客体档（2026-09-21 下沉，P0）：写侧交客体孪生（同一内核），**不再需要宿主 home**；
     // 自证仍走 world-aware 的 `plugin_rows_blocking`（它本就按世界取组合树）。
     let home = match &world {
-        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Local => Some(dsh_home.clone()),
         crate::mgmt::World::Wsl { .. } => None,
     };
     let verify_profile = profile.clone();
@@ -201,13 +208,18 @@ pub async fn remove_official_patch_row(
             }
         };
         // 删除后自证：回读 dump-config，确认该行真的不在组合树里了。
-        let rows = crate::plugins::plugin_rows_blocking(&verify_profile, &data_dir, &world)
-            .map_err(|e| {
-                format!(
-                    "挂载行已删除，但删除后复核未能执行（dump-config 读取失败）：{e}\
+        let rows = crate::plugins::plugin_rows_blocking(
+            &verify_profile,
+            &data_dir,
+            home.as_deref(),
+            &world,
+        )
+        .map_err(|e| {
+            format!(
+                "挂载行已删除，但删除后复核未能执行（dump-config 读取失败）：{e}\
                      ——请人工确认该行是否已消失。"
-                )
-            })?;
+            )
+        })?;
         if rows.iter().any(|r| r.id == row_id) {
             return Err(format!(
                 "删除后复核未通过：行 id「{row_id}」仍在组合树中——\
@@ -253,9 +265,10 @@ pub async fn list_experimental_capabilities(
     // 分类判据与后续分类逻辑**两侧共用**。绝不读宿主 home —— 那会把客体 profile 的插件
     // 全报成"未安装"（静默错数据，比报错更坏）。
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let home = match &world {
-        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Local => Some(dsh_home.clone()),
         crate::mgmt::World::Wsl { .. } => None,
     };
     tauri::async_runtime::spawn_blocking(move || {
@@ -318,7 +331,8 @@ pub async fn list_experimental_capabilities(
         };
 
         // 行态：一次 dump-config 拿全量行表（含 bundle 段落的贡献行合成条目）。
-        let rows = crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)?;
+        let rows =
+            crate::plugins::plugin_rows_blocking(&profile, &data_dir, Some(&dsh_home), &world)?;
 
         // 运行时版本**本地离线检出**（读 `engines/`，不触网）：钉版本的唯一依据。
         // 检出不到 → `None`，由 `resolve_capabilities` 走诚实降级（裸包名 + 显式告知）。
@@ -390,9 +404,10 @@ pub async fn list_profile_plugins(
     profile: String,
 ) -> Result<Vec<crate::plugins::PluginEntry>, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::plugins::list_profile_plugins(&home, &profile)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -459,6 +474,7 @@ fn mutate_with_registry_fallback(
     profile: &str,
     spec: &str,
     data_dir: &Path,
+    dsh_home: &Path,
     world: &crate::mgmt::World,
 ) -> Result<crate::plugins::PluginOpOutcome, String> {
     use crate::plugin_registry::{self as reg, RegistrySource};
@@ -476,6 +492,7 @@ fn mutate_with_registry_fallback(
         profile,
         spec,
         data_dir,
+        dsh_home,
         world,
         first.registry_arg(),
     )?;
@@ -496,6 +513,7 @@ fn mutate_with_registry_fallback(
         profile,
         spec,
         data_dir,
+        dsh_home,
         world,
         second.registry_arg(),
     )?;
@@ -571,12 +589,14 @@ pub async fn install_plugin(
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || {
         mutate_with_registry_fallback(
             crate::plugins::PluginOp::Install,
             &profile,
             &package,
             &data_dir,
+            &dsh_home,
             &world,
         )
     })
@@ -594,6 +614,7 @@ pub async fn remove_plugin(
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || {
         // 卸载不取包（不联网）：**不**走源策略，也不传 `--registry`。
         crate::plugins::mutate_plugin_blocking(
@@ -601,6 +622,7 @@ pub async fn remove_plugin(
             &profile,
             &package,
             &data_dir,
+            &dsh_home,
             &world,
             None,
         )
@@ -619,12 +641,14 @@ pub async fn update_plugin(
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || {
         mutate_with_registry_fallback(
             crate::plugins::PluginOp::Update,
             &profile,
             &package,
             &data_dir,
+            &dsh_home,
             &world,
         )
     })
@@ -644,8 +668,9 @@ pub async fn get_plugin_rows(
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || {
-        crate::plugins::plugin_rows_blocking(&profile, &data_dir, &world)
+        crate::plugins::plugin_rows_blocking(&profile, &data_dir, Some(&dsh_home), &world)
     })
     .await
     .map_err(|e| format!("行表任务异常终止：{e}"))?
@@ -663,9 +688,10 @@ pub async fn set_plugin_disabled(
     disabled: bool,
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::plugins::set_plugin_disabled(&home, &profile, &row_id, disabled)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -686,9 +712,10 @@ pub async fn check_plugin_updates(
     profile: String,
 ) -> Result<crate::plugins::PluginUpdateReport, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::plugins::check_updates_blocking(&home, &profile)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -716,10 +743,9 @@ pub async fn list_all_plugins(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::plugins::AggregatePlugin>, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
-        crate::mgmt::World::Local => Ok(crate::plugins::aggregate_plugins_blocking(
-            &crate::resolve::user_dsh_home(),
-        )),
+        crate::mgmt::World::Local => Ok(crate::plugins::aggregate_plugins_blocking(&dsh_home)),
         crate::mgmt::World::Wsl { distro } => {
             crate::plugins::aggregate_plugins_blocking_in_guest(&distro)
         }
@@ -741,17 +767,14 @@ pub async fn copy_plugin_config(
     package: String,
 ) -> Result<crate::plugins::CopyConfigOutcome, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("定位数据目录失败：{e}"))?;
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => crate::plugins::copy_plugin_config_blocking(
-            &crate::resolve::user_dsh_home(),
-            &source,
-            &target,
-            &package,
-            &data_dir,
+            &dsh_home, &source, &target, &package, &data_dir,
         ),
         crate::mgmt::World::Wsl { distro } => crate::plugins::copy_plugin_config_in_guest(
             &distro, &source, &target, &package, &data_dir,

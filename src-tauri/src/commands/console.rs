@@ -35,10 +35,11 @@ pub async fn get_system_diagnostics(
     app: tauri::AppHandle,
 ) -> Result<crate::diagnostics::SystemDiagnosticsReport, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             Ok(crate::diagnostics::collect_diagnostics(&home, &data_dir))
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -61,8 +62,9 @@ pub async fn get_app_logs(
     // 解析：`dsh` 在宿主档是 dsh-shell.log、客体档是 dsh-wsl.log；profile 级日志
     // 在客体档改读**客体** home（`diagnostics::resolve_log_target` 真值表）。
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::resolve::user_dsh_home();
+        let home = dsh_home.clone();
         let log_world = match &world {
             crate::mgmt::World::Local => crate::diagnostics::LogWorld::Local,
             crate::mgmt::World::Wsl { distro } => crate::diagnostics::LogWorld::Guest { distro },
@@ -82,9 +84,10 @@ pub async fn get_app_logs(
 #[tauri::command]
 pub async fn get_credentials_raw(app: tauri::AppHandle) -> Result<String, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::credentials::read_credentials(&home)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -98,9 +101,10 @@ pub async fn get_credentials_raw(app: tauri::AppHandle) -> Result<String, String
 #[tauri::command]
 pub async fn save_credentials_raw(app: tauri::AppHandle, content: String) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::credentials::overwrite_credentials(&home, &content)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -116,9 +120,10 @@ pub async fn get_credentials_summary(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::credentials::CredentialSummaryItem>, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::credentials::get_credentials_summary(&home)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -136,9 +141,10 @@ pub async fn set_credential_key(
     key: String,
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::credentials::set_provider_key(&home, &provider, &key)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -152,9 +158,10 @@ pub async fn set_credential_key(
 #[tauri::command]
 pub async fn get_dsh_settings_raw(app: tauri::AppHandle) -> Result<String, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::dsh_settings::read_dsh_settings(&home)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -168,9 +175,10 @@ pub async fn get_dsh_settings_raw(app: tauri::AppHandle) -> Result<String, Strin
 #[tauri::command]
 pub async fn save_dsh_settings_raw(app: tauri::AppHandle, content: String) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::dsh_settings::overwrite_dsh_settings(&home, &content)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -187,9 +195,10 @@ pub async fn list_mcp_servers(
     profile: String,
 ) -> Result<Vec<crate::mcp::McpServerConfig>, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::mcp::list_mcp_servers(&home, &profile)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -211,9 +220,10 @@ pub async fn save_mcp_server(
     server: crate::mcp::McpServerConfig,
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::mcp::save_mcp_server(&home, &profile, server)
         }
         crate::mgmt::World::Wsl { distro } => {
@@ -238,11 +248,12 @@ pub async fn delete_mcp_server(
     row_id: Option<String>,
 ) -> Result<(), String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     let scope = scope.unwrap_or_default();
     // 保留名（desktop，2026-10-06）：同 save——profile 层在 mcp 侧统一拒绝。
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
-            let home = crate::resolve::user_dsh_home();
+            let home = dsh_home.clone();
             crate::mcp::delete_mcp_server(&home, &profile, &server_name, scope, row_id.as_deref())
         }
         crate::mgmt::World::Wsl { distro } => crate::mcp::delete_mcp_server_in_guest(
@@ -275,10 +286,11 @@ pub async fn probe_mcp_server(
     row_id: Option<String>,
 ) -> Result<crate::mcp_probe::McpProbe, String> {
     let world = crate::mgmt::current_world(&app)?;
+    let dsh_home = crate::paths::dsh_home_of(&app);
     // 客体档（2026-09-21 P2 下沉）：**不回落本地**，而是把对话整体放进客体执行
     // （跨 wsl.exe 带不了长连接 stdio；协议件仍是宿主同一套纯函数）。
     let home = match &world {
-        crate::mgmt::World::Local => Some(crate::resolve::user_dsh_home()),
+        crate::mgmt::World::Local => Some(dsh_home.clone()),
         crate::mgmt::World::Wsl { .. } => None,
     };
     // 探测要复现 **dsh 子进程的解析条件**（2026-09-18）：PATH 用同源的
