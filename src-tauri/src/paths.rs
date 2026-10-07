@@ -167,10 +167,17 @@ pub fn test_dsh_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(TEST_HOME_DIR_NAME))
 }
 
-/// `#[cfg(test)]` 专用：需**真机引擎**的手工用例（引擎由已安装的正式/dev 包铺好）
+/// `#[cfg(all(test, unix))]` 专用：需**真机引擎**的手工用例（引擎由已安装的正式/dev 包铺好）
 /// 定位其数据目录。测试里没有 `AppHandle` 可问身份，故按构建档取——两个候选之一，
 /// 且**只读**（这些用例不写用户数据）。
-#[cfg(test)]
+///
+/// **为什么带 `unix`**：唯三调用点（`shell.rs::engine_session_is_guarded_and_reaped`、
+/// `lifecycle.rs::{parent_role_probe, real_dsh_is_reaped_when_shell_is_sigkilled}`）
+/// 都是 `#[cfg(unix)]` 的真机锚，Windows 上根本不存在。若这里只写 `cfg(test)`，
+/// Windows 的 `clippy --all-targets -D warnings` 会以 dead_code 判红
+/// ——2026-10-07 v1.3.5 tag 构建实测（宿主 clippy 看不见，正是 AGENTS §1 那条
+/// "clippy 须逐目标各跑一次"的又一例）。
+#[cfg(all(test, unix))]
 pub fn engine_data_dir_for_test() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
