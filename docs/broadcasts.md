@@ -31,6 +31,25 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 发版 · **v1.3.5 已发布（重指 tag 后全绿）** —— guan（AI 协作）
+
+- **处置（维护者裁定：重指 v1.3.5，不切新版本号）**：`2092b50` 修 Windows clippy →
+  `057d418` 事故落档 → `e45c588` 覆盖清单刷新（**只**动 `RELEASE_NOTES.md`，门禁豁免）→
+  `git tag -f v1.3.5` + `push -f`（`5e6445a` → **`1c290d8`**，指向 `e45c588`）。
+  重指前已确认首轮 tag **未产出任何 Release/产物**（`release` job 未运行、`gh release list`
+  仍以 v1.3.4 为 latest），因此强推公共 tag 没有改写任何已发布面向用户的东西。
+- **新 tag 构建（[37639125899](https://github.com/realguan/dsh-dock/actions/runs/37639125899)）全绿**：
+  `windows-latest` ✓ 7m13s · `ubuntu-latest` ✓ 5m6s · `macos-latest` ✓ 5m53s ·
+  `macos-latest-x86_64` ✓ 8m49s · `release` ✓ 50s；同批 master 运行（37639119107）亦 success ✓；
+  `spike-0003-verify`（tag）✓。
+- **产物（GitHub Release `v1.3.5` = Latest）**：macOS `aarch64.dmg` / `x64.dmg` + updater
+  `*.app.tar.gz`(+sig)；Windows `x64-setup.exe` / `x64_en-US.msi`(+sig)；Linux
+  `amd64.AppImage` / `amd64.deb` / `x86_64.rpm`(+sig)；`latest.json`。
+- **冻结期**：自此至三平台产物**人工验收**通过，master 只收 fix（CONTRIBUTING §8）。
+- **教训（详见上一事故条目）**：只被 `cfg(unix)` 用例引用的 `cfg(test)` 辅助函数，必须与调用点
+  同门收敛（`#[cfg(all(test, unix))]`）；宿主 clippy 看不见这类 Windows-only dead_code，
+  本机缺 mingw 时只能靠 CI 兜——发布前若能在 CI 上先跑一遍同分支构建，可省一轮 tag 重指。
+
 ### 2026-10-07 事故 · v1.3.5 tag 构建 Windows leg 判红：真机锚辅助函数只标了 `cfg(test)`，Windows 上成 dead_code —— guan（AI 协作）
 
 - **现象**：tag `v1.3.5` 的 `build`（[37632593005](https://github.com/realguan/dsh-dock/actions/runs/37632593005)）
