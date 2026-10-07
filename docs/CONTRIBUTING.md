@@ -35,14 +35,15 @@ cargo test        # 全绿 = 环境就绪（首次编译需几分钟）
 #    debug 构建的前端从 devUrl（localhost:1420）加载：直接 `cargo run` 而
 #    vite 未运行 = 壳窗口白屏（主窗口被 dsh 导航掩盖，独立壳窗口全白）。
 #
-#    两条「一条命令」入口，差别**只在用哪两个配置目录**（2026-10-07，各带 --print
-#    可只查目录不启动；口径由 scripts/tests/test_dev_scripts.py 守）：
-./scripts/tdev.sh      # 隔离档（推荐日常开发）：identifier …dsh-dock.dev
-                       #   + dsh home ~/.dsh-dock-dev，显式钉住 DSH_HOME
-./scripts/dev.sh       # 正式档：生产 identifier + 正式 dsh home ~/.dsh
+#    两条入口（都在 src-tauri/ 内跑；都会自动执行 beforeDevCommand = vite），
+#    差别**只在用哪一份用户数据**——由 app identifier 唯一决定
+#    （src-tauri/src/paths.rs，与 Tauri 用 identifier 推 app_data_dir() 同源）：
+cargo tdev             # 隔离档（推荐日常开发）：.dev identifier
+                       #   ⇒ 数据目录 …dsh-dock.dev、dsh home ~/.dsh-dock-dev
+                       #   （隔离档忽略环境里的 DSH_HOME —— 安全边界不得被环境击穿）
+cargo dev              # 正式档：生产 identifier ⇒ 正式数据目录 + ~/.dsh
                        #   （与已安装 dsh-dock 同一份数据 ⇒ 先退出已安装应用）
-cargo tdev             # 等价于 ./scripts/tdev.sh 的启动链（dev 配置），但不设
-                       #   DSH_HOME ⇒ 环境里若已导出它，隔离会被静默绕过
+# 起完自查：shell.log 首行 `用户数据根已解析 world=… dsh_home=… data_dir=…`
 # 或两终端：cd frontend && npm run dev   +   cd src-tauri && cargo run
 ```
 

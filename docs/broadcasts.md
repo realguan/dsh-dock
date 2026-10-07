@@ -31,6 +31,50 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 重构 · 用户数据根改由「身份」决定（`cargo dev` 正式档 / `cargo tdev` 隔离档）+ 删掉包装脚本 —— guan（AI 协作）
+
+- **触发**：维护者要「一条命令起开发，dev 用正式配置目录、tdev 用隔离测试目录」；上一轮用
+  两个 bash 脚本 + 环境变量实现后，维护者判定"不是 Rust/Tauri 的最佳实践"，要求按第一性
+  原理重做。
+- **第一性原理**：Tauri 自己推应用数据目录的方式是
+  `app_data_dir()` = `dirs::data_dir()/<Config.identifier>` —— **身份决定数据位置**
+  （`tauri-2.11.5/src/path/desktop.rs:247`）。壳的 dsh home 属同一类"用户数据根"，此前却由
+  `DSH_HOME` 环境变量 + `cfg!(debug_assertions)` 决定，与身份**不同源** ⇒
+  ① `cargo run` 出现「正式数据目录 + 隔离 dsh home」的混合态；
+  ② 调用环境里一个已导出的 `DSH_HOME`（从 dsh 会话起的终端就会导出）能把 `.dev` 档
+  **静默**指到真实 `~/.dsh`。
+- **变更**：
+  - 新增 `src-tauri/src/paths.rs`（**唯一权威 + 唯一解析点**）：`DataWorld::from_identifier`
+    （identifier 带 `.dev` 后缀 = 隔离档，与 `tauri.dev.conf.json` 这份官方 flavor 同源）、
+    `Paths{world, data_dir, dsh_home}`、纯函数 `resolve_pure`（`Prod`：`DSH_HOME` ??
+    `~/.dsh`；`Isolated`：恒 `~/.dsh-dock-dev` 并**忽略 `DSH_HOME`**——隔离是安全边界）。
+  - setup 期**解析一次**注入 `ShellState`；33 处调用点改 `paths::dsh_home_of(&app)`，
+    `executor` / `plugins` / `profiles` / `build_policy` / 启动链改为收 `&Path`；
+    删 `resolve::{user_dsh_home, dev_home_dir_name, launch_data_dir_for_test, TEST_HOME_DIR_NAME}`；
+    测试改 `paths::test_dsh_home()`（`~/.dsh-dock-test`，永不指向真实数据）。
+  - 启动打一行 `用户数据根已解析 world=… dsh_home=… data_dir=…`：写哪份用户数据**永不静默**。
+  - 机器闸门 `paths::paths_gate_tests`：全仓只允许 `paths.rs` 出现旧 API 名与
+    `var(_os)("DSH_HOME")` **读取**（`.env("DSH_HOME", …)` / `.env_remove` / `${DSH_HOME:-…}`
+    等"消费"用法不受影响——那是把已注入的值交给子进程）。
+  - 开发入口回到 Tauri 官方 flavor 机制：`.cargo/config.toml` 增 `dev = "tauri dev"`、
+    保留 `tdev = "tauri dev --config tauri.dev.conf.json"`；**删除上一轮的两个包装脚本与其
+    python 闸门**（它们是"模式不是一等公民"的补丁，方案落地后没有存在理由）。
+  - 口径落盘：ADR-0015 **追加 §9**（原 §1.2「构建档决定 home」修订为「身份决定数据」；
+    泄漏爆炸半径明确归**进程所有权**——lifeline + 启动期清扫 + 裸 `Command::spawn` 闸门，
+    数据路径不再兼任安全网）；AGENTS §6 例外册条目改语义；CONTRIBUTING §1④ 改回两条 alias。
+- **行为变更（有意，维护者已裁定）**：debug 构建**不再**一律用隔离 home —— `cargo tdev`
+  （`.dev` identifier）仍隔离；`cargo dev` / 裸 `cargo run`（生产 identifier）改用正式
+  `~/.dsh`。**与已安装 dsh-dock 同 identifier + 同 home ⇒ 同开前先退出已安装应用。**
+- **影响**：日常开发用 `cargo tdev`；要看真实 profile / 会话用 `cargo dev`；档位以启动日志
+  第一行自查（`用户数据根已解析 world=…`）。
+- **凭据**：`cargo test` **531 绿**（新增 paths 纯函数用例 4 条 + 源文本闸门 1 条）、
+  `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings` 干净；
+  `cargo dev --help` / `cargo tdev --help` 实测各自解析到对应的 `tauri dev` 链；
+  `scripts/tests` python 套件在删脚本后仍全绿。
+- **待办（维护者真机验收；AI 未跑 GUI）**：`cargo tdev` → 日志 `world=isolated`
+  且 dsh 子进程 `DSH_HOME=~/.dsh-dock-dev`；`cargo dev` → `world=prod` 且 `DSH_HOME=~/.dsh`
+  （自查 `ps eww -p <dsh pid> | tr ' ' '\n' | grep DSH_HOME`）。
+
 ### 2026-10-07 开发体验 · 两条「一条命令」启动入口（dev = 正式目录 / tdev = 隔离目录）—— guan（AI 协作）
 
 - **触发**：维护者要「一条命令就能开始测试」，且 `dev` 用**正式**配置目录、`tdev` 用**隔离测试**目录。

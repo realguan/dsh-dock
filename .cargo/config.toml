@@ -1,22 +1,26 @@
 # cargo 别名（cargo 从当前目录向上逐级发现 .cargo/config.toml）
 #
-#   cargo tdev   —— 本地调试默认档，在 src-tauri/ 内运行
-# 等价于：cargo tauri dev --config tauri.dev.conf.json
-# 作用：dev 构建改用独立 identifier（io.github.realguan.dsh-dock.dev），
-# 与已安装的 dsh-dock 同开互不挤（单实例锁 / 数据目录均隔离）。
+# 两条开发入口，差别**只在用哪份用户数据**——2026-10-07 第一性原理重构后，
+# 这件事由 app identifier 唯一决定（`src-tauri/src/paths.rs`，与 Tauri 自己用
+# identifier 推 `app_data_dir()` 同源）：
+#
+#   cargo dev    —— 正式档：生产 identifier（io.github.realguan.dsh-dock）
+#                    ⇒ 应用数据目录 + dsh home 都是正式的（`~/.dsh`）。
+#                    与已安装的 dsh-dock 同 identifier、同 home：同开先退出已安装应用
+#                    （单实例锁 + 同一份 profile/会话写锁）。
+#   cargo tdev   —— 隔离档（推荐日常开发）：tauri.dev.conf.json 的 `.dev` identifier
+#                    ⇒ 数据目录 `…dsh-dock.dev`、dsh home `~/.dsh-dock-dev`。
+#                    隔离档**忽略环境里的 DSH_HOME**（安全边界不得被环境变量击穿）。
+#
+# 两者都会跑 `beforeDevCommand`（vite → http://localhost:1420）：debug 构建的壳页面
+# 从那里加载，vite 未运行 = 壳窗口白屏（主窗口被 dsh 导航掩盖，独立壳窗口全白）。
+# 起完自查：`shell.log` 首行 `用户数据根已解析 world=… dsh_home=… data_dir=…`。
 #
 # ⚠️ 不要起名 `tauri`（alias tauri = "..."）——那会让 `cargo tauri build`
 # 也带上 dev 标识；出包 / CI（仓库根调用 cargo tauri build）必须保持生产
 # identifier。
 #
-# 注：--config 相对路径按启动时 CWD 解析，故固定从 src-tauri/ 运行。
-#
-# ⚠️ 「用哪个 dsh home」别名管不了（2026-10-07）：cargo 别名只展开成 cargo 参数，
-# **不能设环境变量**（实测 `!cmd` 形式的 shell 别名不被支持），而 dsh home 的选择靠
-# `DSH_HOME`（优先级最高）+ debug 构建的默认 `~/.dsh-dock-dev`。故两条"一条命令"
-# 的启动入口在脚本里（各带 `--print` 只查目录不启动）：
-#     ./scripts/dev.sh    → 正式档：生产 identifier + 正式 home ~/.dsh
-#     ./scripts/tdev.sh   → 隔离档：.dev identifier + ~/.dsh-dock-dev（把 DSH_HOME 钉死，
-#                           防调用环境里已导出的 DSH_HOME 静默绕过隔离）
+# 注：--config 相对路径按启动时 CWD 解析，故 tdev 固定从 src-tauri/ 运行。
 [alias]
+dev = "tauri dev"
 tdev = "tauri dev --config tauri.dev.conf.json"

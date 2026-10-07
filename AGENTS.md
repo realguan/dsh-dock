@@ -130,8 +130,10 @@
   `pluginRegistry` 插件安装源偏好与 `pluginRegistryLastGood` 上次可用源
   （2026-09-16，ADR-0006 §6：auto 先官方、失败换源、成功才记），
   `dismissedUpdate` 升级提示条已忽略版本键（2026-09-04，ADR-0010 升级呈现；
-  形如 `dsh@<ver>`，同键不再弹非阻断提示条）· `~/.dsh-dock-dev`（dev 构建的 dsh
-  home，2026-09-10，ADR-0015：与正式 `~/.dsh` 隔离，消除"开发期泄漏锁死正式包"）·
+  形如 `dsh@<ver>`，同键不再弹非阻断提示条）· `~/.dsh-dock-dev`（**`.dev` flavor 的
+  dsh home**，2026-10-07 修订自"dev 构建的 home"：档位改由 app identifier 决定
+  ——`cargo tdev` 隔离档 / `cargo dev` 正式档；隔离档**忽略环境 `DSH_HOME`**，
+  见 ADR-0015 §9 与 `src-tauri/src/paths.rs`）·
   `~/.dsh-dock-test`（`cargo test` 的 dsh home，2026-09-10 审核：测试**一律无视**
   环境里的 `DSH_HOME` 并锁进此目录——否则真机用例会打开用户真实 profile 与正式包
   抢同一 profile；可丢失可重建）。

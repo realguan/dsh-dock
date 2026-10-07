@@ -250,3 +250,59 @@ Windows 侧用 **Job Object**（`KILL_ON_JOB_CLOSE`，裸 FFI 不引依赖）；
 - 出现「用户经 dsh 起的长驻后台任务被误杀」的反馈（说明作用域收窄被破坏，§2.2 失守）；
 - Windows Job Object 赋值在真实用户环境失败（裸 FFI 路线复审，改回 `taskkill` + pid 清扫）；
 - 清扫层连续命中（说明守卫层有漏，须回到 §3 重新评估方案 B 的作用域设计）。
+
+---
+
+## 9. 追加修订（2026-10-07）· 数据归属改由「运行身份」决定，不再由构建档决定
+
+### 9.1 原条款与实测出的副作用
+
+§1.2 把"dev 与 prod 共用 `DSH_HOME`"列为事故放大器，§5 行动项据此让 **debug 构建**改用
+独立 home `~/.dsh-dock-dev`（`resolve::user_dsh_home()`：`DSH_HOME` 最高优先，其次
+`cfg!(debug_assertions)` 决定 `.dsh-dock-dev` / `.dsh`）。
+
+2026-10-06/07 实测出两个副作用：
+
+1. **与身份不同源**：应用数据目录由 app identifier 决定（Tauri `app_data_dir()` =
+   `data_dir()/<identifier>`），dsh home 却由构建档 + 环境变量决定 ⇒ `cargo run`
+   （生产 identifier + debug）会同时写「正式数据目录」与「隔离 dsh home」——
+   "我在哪一份用户数据上"有两个答案；
+2. **隔离可被环境静默击穿**：`DSH_HOME` 优先级最高，而 dsh 自身的运行环境会导出它
+   （本机从 dsh 会话起的终端即 `DSH_HOME=~/.dsh`）⇒ `.dev` 档也会写真实 home。
+
+两者叠加的结果是：开发档要"用正式数据"只能靠包装脚本 + 环境变量，而任何包装都拦不住
+调用环境里已有的 `DSH_HOME`。
+
+### 9.2 修订后的条款
+
+**运行身份（`Config.identifier`）唯一决定用户数据根**（唯一权威与唯一解析点 =
+`src-tauri/src/paths.rs`）：
+
+| 档 | 判据 | dsh home | `DSH_HOME` |
+| :--- | :--- | :--- | :--- |
+| `Prod` | identifier 不带 `.dev` 后缀 | `$DSH_HOME` ?? `~/.dsh` | 尊重（dsh 官方开关 = 用户主权） |
+| `Isolated` | `.dev` flavor（`tauri.dev.conf.json`） | `~/.dsh-dock-dev` | **忽略**——隔离是安全边界，环境变量不得击穿 |
+| `Test` | `cfg(test)` | `~/.dsh-dock-test` | 忽略 |
+
+启动期**解析一次**注入（`Paths` → `ShellState` → 命令层 `paths::dsh_home_of(&app)`；
+领域函数收 `&Path`）。全仓唯一读 `DSH_HOME` 的地方就是 `paths.rs`，由
+`paths::paths_gate_tests` 机器守（出现旧 API 名或 `var_os("DSH_HOME")` 即红）。
+
+开发入口因此回到 Tauri 自己的 flavor 机制（`--config` 合并）：`cargo dev`（正式档）/
+`cargo tdev`（隔离档），两条命令、零环境变量、零包装脚本。
+
+### 9.3 爆炸半径由谁承担（本修订的前提）
+
+原条款用"数据路径"兜"进程泄漏"，是放大器层面的补丁；本 ADR 的**主修**（§3 方案 A：
+生命线 watcher + 启动期清扫 + 全部 spawn 经 `lifecycle`，且裸 `Command::spawn()` 有机器
+闸门）才是所有权层面的解。本次明确：**泄漏风险归进程所有权**，数据路径不再兼任安全网；
+`.dev` 档保留物理隔离作为纵深防御，测试档继续硬隔离。
+
+### 9.4 代价与待验证
+
+- 裸 `cargo run`（debug + 生产 identifier）现在会写**真实** `~/.dsh`：以启动日志
+  `用户数据根已解析 world=… dsh_home=… data_dir=…` 显式暴露（永不静默），文档把
+  `cargo tdev` 定为日常入口；
+- **待维护者真机验收**（本修订由 AI 起草，未跑 GUI）：`cargo tdev` → 日志
+  `world=isolated` 且 dsh 子进程 `DSH_HOME=~/.dsh-dock-dev`；`cargo dev` → `world=prod`
+  且 `DSH_HOME=~/.dsh`（自查：`ps eww -p <dsh pid> | tr ' ' '\n' | grep DSH_HOME`）。
