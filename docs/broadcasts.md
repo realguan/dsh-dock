@@ -31,6 +31,28 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 发版 · **v1.3.5 准备就绪**（desktop 官方保留名收口 + 用户数据根身份化）—— guan（AI 协作）
+
+- **触发**：维护者裁定「从上个 tag 到现在的所有变动打新 tag，然后 push」。
+- **区间**：`v1.3.4..v1.3.5`（8 个提交，含本条目与版本号提交）；其中**用户可感知 1 项**
+  （控制中心的官方 `desktop` 档），其余为架构（数据根）/ 开发入口 / 发布流程 / 文档。
+- **内容提交（按时间序）**：
+  1. `e976781 fix(release)` + `392ef87 docs(broadcasts)`：覆盖闸门在 CI 里浅克隆静默跳过的事故
+     与修复（区分「真·首次发版」与「CI 没取历史」+ fail-closed）落档。
+  2. `eaa0d0c fix(profiles)`：`desktop` 定为**官方保留名**——启动/切换、设为默认、创建、
+     重命名两头、删除、市场安装、插件启停、兜底放空、策展挂载行、配置复制目标、MCP profile 层
+     等**一切写入口前置拒绝**并给中文出路；只读面（列表 / 详情 / 插件清点）保留；唯一允许的写
+     = 复制成非保留名。此前点「启动」只会撞 dsh 上游那句英文报错。
+  3. `2ad3524` → `0b1d731` → `4b5a655`：开发入口先以包装脚本落地，随即按第一性原理重构为
+     **身份决定数据根 + 解析一次注入**（新增 `src-tauri/src/paths.rs`，删掉散落 33 处的环境读取），
+     再删脚本、回归 Tauri 官方 flavor（`cargo dev` / `cargo tdev`）；配套 ADR-0015 追加 §9、
+     AGENTS §6 条目改语义、CONTRIBUTING §1④ 更新。
+  4. `932634e chore: 版本 1.3.5`（三处同步 + Cargo.lock）。
+- **发版前自检（CI 同款判据，本地已跑）**：`cargo test` 531 绿 / `fmt --check` / `clippy -D warnings`
+  干净 / 前端 typecheck · oxlint · vitest 685 绿 / `scripts/tests` python 69 绿 /
+  `check-release-coverage.py` 与 `extract-release-notes.py --strict` 见发布日志小节。
+- **影响**：tag 推送触发三平台 Release 构建；**冻结期起**（master 只收 fix），产物验收结果待回填。
+
 ### 2026-10-07 重构 · 用户数据根改由「身份」决定（`cargo dev` 正式档 / `cargo tdev` 隔离档）+ 删掉包装脚本 —— guan（AI 协作）
 
 - **触发**：维护者要「一条命令起开发，dev 用正式配置目录、tdev 用隔离测试目录」；上一轮用
