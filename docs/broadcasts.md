@@ -31,6 +31,26 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-07 发版 · **v1.3.5 推送完成**（tag `v1.3.5`，CI 构建中）—— guan（AI 协作）
+
+- **推送**：`origin/master` `392ef87..aff98c4`（7 个提交）＋ annotated tag **`v1.3.5`**
+  （tag 对象 `5e6445a`，指向 `aff98c4 docs(release): v1.3.5 发布日志与覆盖清单`）。
+- **发版闸门（推送前本地已跑，CI 同款判据）**：
+  - `check-release-coverage.py HEAD --prev v1.3.4 --version v1.3.5` → ✅ 覆盖清单与区间
+    **完全一致**（9 个提交，其中 1 个「只动发布日志」的提交按设计豁免）；
+  - `extract-release-notes.py v1.3.5 --strict` → ✅ 提取到 `## [v1.3.5] - 2026-10-07`；
+  - `cargo test` **531 绿**（含 `cargo_version_matches_tauri_conf` 三处版本一致闸门）+
+    `fmt --check` + `clippy --all-targets -D warnings`；前端 typecheck / oxlint 0 warning /
+    vitest 685 绿；`scripts/tests` python 69 绿。
+- **CI**：tag 触发的 `build` 运行（37632593005）已 queued、`spike-0003-verify` in_progress；
+  **冻结期起**（master 只收 fix），三平台产物验收结果待回填本档。
+- **刻意排除、未纳入本次发版的本地改动（非本轮工作）**：`frontend/pnpm-lock.yaml`
+  （本地删了 `@pnpm/exe` 条目，9-24 起就在工作区）与 3 个未跟踪的 `docs/plans/*.md`
+  （9-24 ~ 9-30）——留给维护者单独裁定，避免把不明的锁文件改动带给 CI 的
+  `pnpm install --frozen-lockfile`。
+- **远端说明**：`cnb` 远端停在 `v1.2.7`（v1.3.x 从未推过），本次只推 `origin`(GitHub)；
+  是否恢复 cnb 镜像另行裁定。
+
 ### 2026-10-07 发版 · **v1.3.5 准备就绪**（desktop 官方保留名收口 + 用户数据根身份化）—— guan（AI 协作）
 
 - **触发**：维护者裁定「从上个 tag 到现在的所有变动打新 tag，然后 push」。
