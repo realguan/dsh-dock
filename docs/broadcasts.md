@@ -31,6 +31,28 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-13 事故 · Linux CI 三红：inset 算术只在 macOS 宿主上验证过（算术与平台门焊死） —— guan（AI 协作）
+
+- 事故：`9ff92fc` 推送后 `coverage (baseline)` 与 `build (ubuntu-latest)` 双挂——
+  `chat_embed` 三个 inset 测试断言 32px 标题栏偏移，Linux 实得 0。
+- 根因：`page_origin_inset` 按设计**只在 macOS 补偏移**（Windows/Linux 子视窗
+  挂客户区，补了反而整体下移一个标题栏），但旧测试无条件断言 mac 专属结论——
+  算术与平台门焊死在一个函数里，「窗口 − 页面 = 标题栏」这条算术于是只在
+  macOS 宿主上验证过。AGENTS §1 同款坑的**运行时版**：宿主测试全绿 ≠
+  目标平台全绿（clippy 那条管编译期，这条管运行期）。
+- 修复（`aef09d3`）：抽出无门纯函数 `inset_math`（算术测试改打它——任何宿主
+  都跑）；`page_origin_inset` 收敛为「门 + dispatch」；门与端到端各配一支
+  `cfg(not(macos))` 对照测试——**分叉两侧都有测试代言**（AGENTS §5 跨平台
+  分叉必带）。
+- 复核：`aef09d3` 五 job 全绿（win / ubuntu / macos-x86_64 / macos-arm64 /
+  coverage）。宿主 `cargo test` 551 绿 + `fmt --check` + `clippy --all-targets`
+  干净；非 mac 分支由 Linux runner 实跑验证（交叉编译被 pkg-config sysroot
+  挡下，与 CI 用真 runner 同因）。
+- 另记一笔**非代码故障**（免下次重复排查）：同轮 `macos-latest`（arm64）首跑
+  因 GitHub runner 容量（"job was not acquired by Runner of type hosted"）
+  整任务未启动而判红，`gh run rerun --failed` 即过——此类红先看注解里的
+  capacity 提示，别当代码问题查。
+
 ### 2026-10-13 快车道 · 内嵌聊天宿主原语（ADR-0033）+ 自研插件货架 + 仓库清理 —— guan（AI 协作）
 
 - 变更（5 笔，按序）：
