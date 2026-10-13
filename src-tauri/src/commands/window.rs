@@ -147,15 +147,24 @@ pub fn open_profiles_window(app: tauri::AppHandle) {
 /// 聚焦主工作台窗口（label=main）。
 ///
 /// 返回 `Result` 而非 `()`（2026-09-21）：窗口**理论上恒在**（主窗口「关窗 = 隐藏」，
-/// 见 `ui::create_main_window`），但真缺了必须**如实报错**而不是静默 no-op ——
-/// 前端 `ProfileManager` 的「返回工作台」已挂了 `.catch(showToast)`，此前返回 `()`
-/// 让那条路径永远亮不起来，用户看到的就是"点了没反应"。
+/// 见 `ui::create_main_window`），但真缺了必须让用户回得到工作台，而不是只能看到
+/// 一句"请重新启动"——前端 `ProfileManager` 的「返回工作台」已挂 `.catch(showToast)`，
+/// 2026-10-12 真机实测：registry 丢失而 AX 仍可见窗口时，这里返回 Err 让按钮
+/// **永远点不动**。故缺失时重建（dsh 侧由 boot 重新导航恢复），而不是报错。
 #[tauri::command]
 pub fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if app.get_webview_window("main").is_none() {
-        return Err(
-            "主窗口不存在（可能已被系统回收）：请从托盘 / 菜单栏退出后重新启动。".to_string(),
-        );
+        let handle = app.clone();
+        crate::ui::post_to_event_loop(&app, move || match crate::ui::create_main_window(&handle) {
+            Ok(win) => {
+                tracing::info!("主窗口缺失，「返回工作台」按重建路径恢复");
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+            Err(e) => tracing::error!("重建主窗口失败：{e}"),
+        });
+        return Ok(());
     }
     bring_to_front(&app, "main");
     Ok(())
@@ -189,5 +198,29 @@ mod tests {
         assert!(include_str!("window.rs").contains("bring_to_front(&app, \"main\")"));
         assert!(include_str!("../lib.rs").contains("bring_to_front(app, \"main\")"));
         assert!(include_str!("../ui.rs").contains("bring_to_front(tray.app_handle(), \"main\")"));
+    }
+
+    /// 2026-10-12 真机实测：registry 丢失（`get_webview_window("main")` 为 None）
+    /// 而 AX 仍可见窗口时，「返回工作台」若返回 Err，按钮**永远点不动**。故缺失
+    /// 分支必须走重建路径，而不是把错误抛给前端 toast。
+    #[test]
+    fn missing_main_window_rebuilds_instead_of_erroring() {
+        let body = include_str!("window.rs");
+        let fns = body
+            .split("pub fn focus_main_window")
+            .nth(1)
+            .expect("focus_main_window 必须存在");
+        let missing = fns
+            .split("bring_to_front(&app, \"main\")")
+            .next()
+            .expect("函数体必须走到 bring_to_front");
+        assert!(
+            missing.contains("create_main_window"),
+            "主窗口缺失时必须重建（create_main_window），不得返回 Err 让按钮失灵"
+        );
+        assert!(
+            !missing.contains("return Err("),
+            "缺失分支不得再返回 Err——2026-10-12 实测这正是「点了没反应」的成因"
+        );
     }
 }
