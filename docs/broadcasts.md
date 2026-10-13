@@ -31,6 +31,30 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-13 快车道 · 内嵌聊天宿主原语（ADR-0033）+ 自研插件货架 + 仓库清理 —— guan（AI 协作）
+
+- 变更（5 笔，按序）：
+  - `abb1708 feat(chat)`：ADR-0033 壳侧落地——主窗口内原生子 Webview 挂载
+    `chat.deepseek.com` + 受限标题桥（`embed_chat_open/hide/resize/close/eval`
+    五命令；eval 限 `main` loopback 调用；标题消息白名单；远端客页零 capability）。
+    ADR-0033 立档并进索引，IPC 登记册 57 → 62。
+  - `8ae2543 fix(window)`：主窗口缺失时重建而非报错——修「返回工作台」按钮在
+    registry 丢失时永远点不动（2026-10-12 真机实测的成因）。
+  - `4f79941 feat(profiles)` + `07e881e refactor(profiles)`：profile 详情
+    「自研插件」货架——**收在「插件列表」tab 内的子 tab**（维护者反馈：不占第 5 个
+    顶级 tab），卡片样式对齐社区市场 MarketPluginCard，可装可卸；零新增 IPC /
+    后端 / 网络面。首条目 `dsh-deepseek-chat-embed`（github 钉 tag；**插件仓库
+    需先打齐 `v0.1.0` 标签**，tag 推进中）。
+  - `031144f docs(plans)`：清理三份未裁定 plan 稿（notifications /
+    os-integration / positioning-09-30）后的断链修复 + lockfile 重生成对齐
+    pnpm 12.3.1（`--frozen-lockfile` 实测通过）。
+- 影响：仅周知。ADR-0033 唯一未勾项 = macOS 真机验证工具栏/侧栏互斥（Rust
+  550 + 前端 702 测试已绿）；自研货架随壳发布即可用，其内嵌形态依赖壳侧原语
+  （本批已合入）。5 提交在 master 本地，**未推 origin**（推送与 CI 待维护者发落）。
+- 凭据：`cargo fmt --check` / `cargo test` 550 绿 / `cargo clippy --all-targets
+  -- -D warnings` 干净；前端 typecheck / oxlint 0 warning / 702 测试绿；
+  `pnpm install --frozen-lockfile` 通过。人肉读过全量 diff，工作区干净。
+
 ### 2026-10-07 发版 · **v1.3.5 已发布（重指 tag 后全绿）** —— guan（AI 协作）
 
 - **处置（维护者裁定：重指 v1.3.5，不切新版本号）**：`2092b50` 修 Windows clippy →
