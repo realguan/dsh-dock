@@ -31,6 +31,21 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-14 发版 · **v1.4.0 已发布**（内嵌聊天宿主原语 + 自研插件货架 + 返回工作台修复） —— guan（AI 协作）
+
+- tag `v1.4.0` → `951f12e`；Release（GitHub，非 draft）已出，17 个产物：
+  macOS `DSH.Dock_1.4.0_x64.dmg` / `_aarch64.dmg` + 两份 `.app.tar.gz`（updater）、
+  Windows `_x64-setup.exe` / `_x64_en-US.msi`、Linux `.deb` / `.rpm` / `amd64.AppImage`，
+  全部带 `.sig`，另有 `latest.json`。三平台 leg 齐备（机器闸门 `test_release_platform_matrix`
+  在 tag 构建里过）。
+- CI：tag 构建五 job 全绿（win / ubuntu / macos-x86_64 / macos-arm64 / release），
+  `spike-0003-verify` 亦绿；运行：<https://github.com/realguan/dsh-dock/actions/runs/38429388258>。
+- 覆盖清单 15 提交 + 1 豁免（发布日志提交），`check-release-coverage` 平账；
+  master 已同步 `951f12e`。
+- **冻结期进行中**：至三平台产物验收通过为止，master 只收 fix、不收 feat。
+  待办 = 维护者装机验收（含 ADR-0033 唯一未勾项：macOS 真机验证工具栏/侧栏互斥，
+  装 `dsh-deepseek-chat-embed`（插件仓库 `v0.1.0`）实点一遍）。
+
 ### 2026-10-14 发版 · v1.4.0 准备就绪（内嵌聊天宿主原语 ADR-0033 + 自研插件货架 + 返回工作台修复） —— guan（AI 协作）
 
 - 区间 `v1.3.5..HEAD`，覆盖清单见 `docs/RELEASE_NOTES.md` 顶部（check-release-coverage 平账后打 tag）。
