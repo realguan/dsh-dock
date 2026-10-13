@@ -162,7 +162,24 @@ pub struct EmbedRect {
     pub height: f64,
 }
 
-/// 页面视口原点相对子视窗坐标原点的偏移（逻辑像素）。
+/// 页面视口原点相对子视窗坐标原点的偏移（逻辑像素）——**带平台门的入口**。
+///
+/// 只在 macOS 补，且只在调用方报了 `frame` 时补：Windows/Linux 的子视窗直接挂客户区，
+/// 页面坐标即子视窗坐标（补了反而整体下移一个标题栏）；没报 frame 就没有可信差值，
+/// 宁可不补也不猜。算术本体在 {@link inset_math}（无门纯函数）。
+///
+/// **平台门与算术分离**（2026-10-13 Linux CI 三红的修法）：旧版把两者焊死在一个
+/// 函数里，测试只能跟着吃平台门——「窗口 − 页面 = 标题栏」这条算术于是只在 macOS
+/// 宿主上被验证过，Linux 上一跑全红（断言 32、实得 0；coverage 任务同因挂掉）。
+/// 分离后算术在任何宿主都可测，门本身由 cfg 成对测试钉住（AGENTS §5 跨平台分叉必带）。
+fn page_origin_inset(window_physical: (f64, f64), frame: Option<EmbedFrame>) -> (f64, f64) {
+    if !cfg!(target_os = "macos") {
+        return (0.0, 0.0);
+    }
+    inset_math(window_physical, frame)
+}
+
+/// 偏移**算术**（纯函数，无平台门）：窗口物理尺寸 − 页面视口（CSS × dpr）再除回 dpr。
 ///
 /// **2026-10-12 实测定论（「DSH Dock 右侧栏按钮全没了」的根因）**：macOS 上子视窗
 /// 挂在窗口内容视图里，而页面视口比整窗矮一条标题栏（本机：窗口 1280x795、页面
@@ -175,13 +192,8 @@ pub struct EmbedRect {
 /// `{ rect, frame }` 兄弟字段 —— `rect` 反序列化出的 `frame` 永远是 `None`，
 /// 偏移恒为 0，日志"看起来正常"，改了等于没改。
 ///
-/// 只在 macOS 补，且只在调用方报了 `frame` 时补：Windows/Linux 的子视窗直接挂客户区，
-/// 页面坐标即子视窗坐标（补了反而整体下移一个标题栏）；没报 frame 就没有可信差值，
-/// 宁可不补也不猜。
-fn page_origin_inset(window_physical: (f64, f64), frame: Option<EmbedFrame>) -> (f64, f64) {
-    if !cfg!(target_os = "macos") {
-        return (0.0, 0.0);
-    }
+/// 没报 `frame` / 非法 scale / 页面比窗口还大，都归零（不猜、不出负值）。
+fn inset_math(window_physical: (f64, f64), frame: Option<EmbedFrame>) -> (f64, f64) {
     let Some(frame) = frame else {
         return (0.0, 0.0);
     };
@@ -634,19 +646,21 @@ mod tests {
         }
     }
 
-    /// 本机实测：窗口 1280x795（物理 2560x1590）、页面视口 1280x763 @2x
+    /// 算术（无平台门，**任何宿主都必须成立**——2026-10-13 Linux CI 三红的修法：
+    /// 旧测试直接测带 mac 门的 `page_origin_inset`，这条算术只在 macOS 宿主上
+    /// 被验证过）：本机实测窗口 1280x795（物理 2560x1590）、页面视口 1280x763 @2x
     /// ⇒ 子视窗要下移 32px。偏移用物理像素减（页面 CSS × dpr）再除回 dpr，
     /// **不经过 `scale_factor()`**（那个读数实测不稳）。
     #[test]
-    fn page_origin_inset_is_the_window_minus_the_page() {
-        assert_eq!(page_origin_inset((2560.0, 1590.0), retina()), (0.0, 32.0));
+    fn inset_math_is_the_window_minus_the_page() {
+        assert_eq!(inset_math((2560.0, 1590.0), retina()), (0.0, 32.0));
     }
 
     /// 1x 显示器同样成立：窗口物理 1280x795、页面 1280x763 @1x ⇒ (0, 32)。
     #[test]
-    fn inset_works_on_a_1x_display_too() {
+    fn inset_math_works_on_a_1x_display_too() {
         assert_eq!(
-            page_origin_inset(
+            inset_math(
                 (1280.0, 795.0),
                 Some(EmbedFrame {
                     width: 1280.0,
@@ -661,14 +675,14 @@ mod tests {
     /// 调用方没报页面视口 ⇒ 没有可信差值 ⇒ 不补（宁可不补也不猜）。
     #[test]
     fn missing_frame_means_no_inset() {
-        assert_eq!(page_origin_inset((2560.0, 1590.0), None), (0.0, 0.0));
+        assert_eq!(inset_math((2560.0, 1590.0), None), (0.0, 0.0));
     }
 
     /// 非法 scale / 页面比窗口还大，都不得变成负偏移或除零。
     #[test]
     fn bad_scale_and_oversized_frame_clamp_to_zero() {
         assert_eq!(
-            page_origin_inset(
+            inset_math(
                 (2560.0, 1590.0),
                 Some(EmbedFrame {
                     width: 1280.0,
@@ -679,7 +693,7 @@ mod tests {
             (0.0, 0.0)
         );
         assert_eq!(
-            page_origin_inset(
+            inset_math(
                 (2560.0, 1590.0),
                 Some(EmbedFrame {
                     width: 1400.0,
@@ -691,13 +705,41 @@ mod tests {
         );
     }
 
-    /// 端到端那一下：页面 top=38 的 rect，在本机窗口（物理 2560x1590）/ 页面
-    /// 763 下必须落到窗口 y=70 —— 正好让出页面 0..38 那条 shell chrome。
+    /// 平台门语义（AGENTS §5 跨平台分叉必带，成对钉住）：
+    /// macOS 上补标题栏那条偏移。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn page_origin_inset_compensates_the_title_bar_on_macos() {
+        assert_eq!(page_origin_inset((2560.0, 1590.0), retina()), (0.0, 32.0));
+    }
+
+    /// 非 macOS **一律不补**：Windows/Linux 子视窗直接挂客户区，页面坐标即
+    /// 子视窗坐标——补了反而整体下移一个标题栏（2026-10-13 Linux CI 挂的正是
+    /// 缺这条对照：旧测试只有 mac 一支，分叉另一侧无测试代言）。
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn page_origin_inset_never_compensates_off_macos() {
+        assert_eq!(page_origin_inset((2560.0, 1590.0), retina()), (0.0, 0.0));
+    }
+
+    /// 端到端那一下（macOS）：页面 top=38 的 rect，在本机窗口（物理 2560x1590）/
+    /// 页面 763 下必须落到窗口 y=70 —— 正好让出页面 0..38 那条 shell chrome。
+    #[cfg(target_os = "macos")]
     #[test]
     fn child_position_applies_the_inset_to_the_page_box() {
         let (pos, size, inset) = child_position_with(rect(38.0), (2560.0, 1590.0), retina());
         assert_eq!(inset, (0.0, 32.0));
         assert_eq!((pos.x, pos.y), (820.0, 70.0));
+        assert_eq!((size.width, size.height), (461.0, 757.0));
+    }
+
+    /// 端到端（非 macOS）：页面坐标即子视窗坐标，top=38 就落 38，不补偏移。
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn child_position_leaves_the_page_box_alone_off_macos() {
+        let (pos, size, inset) = child_position_with(rect(38.0), (2560.0, 1590.0), retina());
+        assert_eq!(inset, (0.0, 0.0));
+        assert_eq!((pos.x, pos.y), (820.0, 38.0));
         assert_eq!((size.width, size.height), (461.0, 757.0));
     }
 
