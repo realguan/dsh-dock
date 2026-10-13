@@ -585,15 +585,19 @@ export const enUS: AppCopy = {
     tabPlugins: "Plugin List",
     // Experimental capabilities (ADR-0028: moved in from the plugin hub, tab next to Plugin List).
     tabCaps: "Experimental",
-    // First-party plugin shelf (2026-10-13: 5th tab in the profile detail pane;
-    // static catalog lives in lib/firstPartyPlugins.ts).
-    tabFirstParty: "First-Party",
+    // First-party plugin shelf sub-view (2026-10-13: a sub-tab inside the Plugin List
+    // tab — static catalog in lib/firstPartyPlugins.ts, cards styled after the
+    // community market's MarketPluginCard).
+    subtabInstalledPlugins: "Installed",
+    subtabFirstParty: "First-Party",
     // ── First-party plugin shelf (first-party = maintained by the shell team and
     //    curated per release; three catalogs with three trust levels — community
     //    market / official catalog / this shelf — boundaries in lib/firstPartyPlugins.ts) ──
-    firstPartyIntro:
-      "Plugins built by the DSH Dock team, curated per release. Once installed they are managed exactly like community plugins (list / toggle / remove).",
     firstPartyEmpty: "No first-party plugins ship with this version yet",
+    firstPartyNoDesc: "(no description provided)",
+    /** Shown in the card footer for uninstalled entries: the version the catalog pins
+     *  (installed entries show the version actually read from disk instead). */
+    firstPartyPin: (v: string) => `Catalog ${v}`,
     firstPartyInstall: "Install",
     firstPartyInstalled: (v: string) => `Installed ${v}`,
     firstPartyUpdateAvailable: (v: string) => `Update to ${v} available`,
@@ -603,7 +607,6 @@ export const enUS: AppCopy = {
     firstPartyUninstallConfirmTitle: "Uninstall first-party plugin",
     firstPartyUninstallConfirmBody: (name: string) =>
       `Uninstall ${name} from this profile? This removes the dependency and its mount declaration; session data is untouched, and you can reinstall it later.`,
-    firstPartyRepo: "Repository",
     firstPartyBusy: "Working…",
     // Keyed by entry id (the `id` field in firstPartyPlugins.ts): description +
     // host prerequisite note. Empty note = no prerequisite; the block is not rendered.
