@@ -5,6 +5,7 @@
 ---
 
 ## [v1.4.0] - 2026-10-14
+<!-- coverage: 031144f 07e881e 13a68ee 43dc29d 4f79941 61beb98 6d546ff 7bc281b 8ae2543 9ff92fc ab6c920 abb1708 ac6b25c aef09d3 f64d0ba -->
 
 ### 🌟 核心亮点 (Highlights)
 - **在 DSH Dock 窗口里直接聊 DeepSeek**：控制中心「插件列表」下新增「自研插件」货架，首个上架「DeepSeek 聊天内嵌」——装上后即可在应用窗口内以原生子窗口打开 chat.deepseek.com（右侧栏并排查阅或中央全屏对话），登录态随工作台持久保存，不必再跳去浏览器。
