@@ -29,7 +29,7 @@ serde_json = "1"
 serde_yaml = "0.9" # patch 切换（4.4③，ADR-0009 第四次修订）：最小读写面，上游停维护已知，收敛在 set_plugin_disabled 单函数便于后继替换
 sha2 = "0.10"
 tar = "0.4"
-tauri = { version = "2", features = ["tray-icon"] }  # 托盘（非 macOS 常驻更新入口，2026-08-24 裁定）；macOS 走系统菜单栏
+tauri = { version = "2", features = ["tray-icon", "unstable"] }  # 托盘（非 macOS 常驻更新入口，2026-08-24 裁定）；macOS 走系统菜单栏
 tauri-plugin-single-instance = "2" # 单实例：OS 级原语锁，二次启动=唤起已有窗口（无残留锁文件问题）
 tauri-plugin-updater = "2" # 桌面客户端自更新（2026-08-25）：检查→下载→安装，多平台
 ureq = "2" # 唯一网络面（updates 模块）：阻塞式小客户端，后台线程使用
@@ -47,7 +47,7 @@ nix = { version = "0.29", features = ["signal", "process", "fs"] }
 # 起见仍按目标收窄）。tauri 官方文档口径：窗口效果需 macOSPrivateApi。
 # 与上方 [dependencies] 的同名条目按「同 crate 同版本 → feature 并集」合并。
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "unstable"] }
 
 # 红绿灯定位（ADR-0029 配套）：裸 msg_send 调 AppKit `standardWindowButton:` +
 # `setFrameOrigin:`（Tauri 无此 API，官方 Electron 用 trafficLightPosition x16/y18）。

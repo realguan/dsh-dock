@@ -469,6 +469,11 @@ pub fn run() {
             commands::window::open_about,
             commands::window::get_shell_capabilities,
             commands::boot::get_boot_status,
+            commands::chat_embed::embed_chat_open,
+            commands::chat_embed::embed_chat_hide,
+            commands::chat_embed::embed_chat_resize,
+            commands::chat_embed::embed_chat_close,
+            commands::chat_embed::embed_chat_eval,
         ])
         .build(tauri::generate_context!())
         .expect("构建 Tauri app 失败")

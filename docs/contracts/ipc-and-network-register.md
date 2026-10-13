@@ -13,7 +13,7 @@
 
 ---
 
-## 一、IPC 命令登记（57 条）
+## 一、IPC 命令登记（62 条）
 
 > 新命令**先登记再实现**。清单一致性另有 cargo test 闸门：
 > `handler_matches_ipc_commands` / `capabilities_match_ipc_commands` /
@@ -77,7 +77,22 @@ seam 起子进程，http 分支为条目级网络豁免；**stdio 分支已下�
 
 **市场**：`fetch_market_registry`（2026-08-31）。
 
-**当前条数 = 57**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+**内嵌聊天子视窗（DSH Dock 原生多视窗，2026-10-10，ADR-0033）**：`embed_chat_open`
+`embed_chat_hide` `embed_chat_resize` `embed_chat_close`（几何 / 显隐 / 销毁：主窗口经
+`window.add_child` 挂载 `https://chat.deepseek.com/` 顶层原生子 Webview，绕开该站
+`frame-ancestors 'none'` 的 iframe 拦截；四者只操作 label `deepseek_chat_guest` 的
+既有子视窗，不触网、不读写文件）`embed_chat_eval`（ADR-0033 §4 方案 C：**唯一**
+「宿主 → 客页」脚本面。**调用方校验**：label 必须为 `main` 且其当前 URL 必须是
+loopback（`127.0.0.1` / `localhost` / `[::1]`）的本地工作台；远端聊天客页不在任何
+capability 内，本就无从调用。脚本 ≤ 16 KiB；结果由客页写进固定前缀的
+`document.title`，Rust 侧校验前缀 / request id（≤64，仅 `[A-Za-z0-9_-]`）/ 载荷
+（≤ 4 KiB，超限丢弃不截断）后向 `main` 发本地事件 `dsce:guest-message`
+（`kind = "result" | "expand"`，`camelCase` 载荷）；不记录页面内容、令牌或凭据。
+**不扩远端 capability 是本命令的安全前提**——客页拿到的只有"短暂改标题"这件事本身）。
+
+**当前条数 = 62**（`ipc.rs::COMMANDS` 为唯一事实源，`ipc::gate_tests` 四处比对；
+2026-10-10 净增 5：内嵌聊天子视窗四条几何/生命周期命令 + `embed_chat_eval`（ADR-0033；
+四条几何命令先于本册落地属登记滞后，随本批一并补齐）；
 2026-09-24 净减 2：安全模式整体删除（ADR-0031 取代 ADR-0026），`get_safe_mode_state` /
 `dismiss_safe_mode_notice` 两条命令与对应权限一并退役——上游 dsh 0.1.7-rc.1 实测推翻其
 立项前提（插件不兼容 / 悬空行都不砖启动，见行为台账复现点 24）；

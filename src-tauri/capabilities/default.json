@@ -70,6 +70,11 @@
     "allow-focus-main-window",
     "allow-open-about",
     "allow-get-shell-capabilities",
-    "allow-get-boot-status"
+    "allow-get-boot-status",
+    "allow-embed-chat-open",
+    "allow-embed-chat-hide",
+    "allow-embed-chat-resize",
+    "allow-embed-chat-close",
+    "allow-embed-chat-eval"
   ]
 }

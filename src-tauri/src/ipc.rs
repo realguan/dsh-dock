@@ -69,6 +69,11 @@ pub const COMMANDS: &[&str] = &[
     "open_about",
     "get_shell_capabilities",
     "get_boot_status",
+    "embed_chat_open",
+    "embed_chat_hide",
+    "embed_chat_resize",
+    "embed_chat_close",
+    "embed_chat_eval",
 ];
 
 /// snake_case 命令名 → kebab-case 权限名（`choose_profile` → `choose-profile`）。

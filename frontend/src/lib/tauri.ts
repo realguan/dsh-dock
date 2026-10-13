@@ -7,6 +7,11 @@
 // 参数拼写已对照现网 ui/*.html 逐一核实；choose_mode 的 { mode, setDefault }
 // 由 Tauri 自动映射 snake_case Rust 参数 set_default。
 import { invoke } from "@tauri-apps/api/core"
+
+/** 内嵌聊天子视窗的页面坐标盒。 */
+export type ChatRect = { left: number; top: number; width: number; height: number }
+/** 量出上面那个盒的页面视口尺寸与其 devicePixelRatio。 */
+export type ChatFrame = { width: number; height: number; scale: number }
 import type {
   AggregatePlugin,
   Capability,
@@ -188,4 +193,17 @@ export const api = {
 
   // 社区插件市场 Registry 拉取
   fetchMarketRegistry: () => invoke<string>("fetch_market_registry"),
+
+  // 内嵌 DeepSeek Chat 原生子视窗（Multi-Webview）
+  // `rect` 是**页面坐标**，`frame` 是页面视口尺寸 —— 壳用 `窗口 − frame` 得出
+  // 子视窗坐标原点相对页面视口的偏移（macOS 上就是标题栏；见 chat_embed.rs 注释）。
+  embedChatOpen: (rect: ChatRect, frame: ChatFrame) =>
+    invoke<void>("embed_chat_open", { rect, frame }),
+  embedChatHide: () => invoke<void>("embed_chat_hide"),
+  embedChatResize: (rect: ChatRect, frame: ChatFrame) =>
+    invoke<void>("embed_chat_resize", { rect, frame }),
+  embedChatClose: () => invoke<void>("embed_chat_close"),
+  // 客页受限 eval（ADR-0033）：仅本地工作台可调用，结果经 `dsce:guest-message` 回传
+  embedChatEval: (requestId: string, script: string) =>
+    invoke<void>("embed_chat_eval", { requestId, script }),
 }

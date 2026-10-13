@@ -7,6 +7,7 @@
 //! 四处一致由 `ipc::gate_tests` 拦，handler 条目可带模块路径）。
 
 pub mod boot;
+pub mod chat_embed;
 pub mod console;
 pub mod link;
 pub mod market;
