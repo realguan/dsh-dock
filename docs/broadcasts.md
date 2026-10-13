@@ -31,6 +31,19 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-14 发版 · v1.4.0 准备就绪（内嵌聊天宿主原语 ADR-0033 + 自研插件货架 + 返回工作台修复） —— guan（AI 协作）
+
+- 区间 `v1.3.5..HEAD`，覆盖清单见 `docs/RELEASE_NOTES.md` 顶部（check-release-coverage 平账后打 tag）。
+- 内容四块：① ADR-0033 壳侧内嵌原语（`chat_embed` 五命令 + 受限标题桥，客页零
+  capability）；② 自研插件货架（插件列表内子 tab，MarketPluginCard 同款卡片，首条目
+  `dsh-deepseek-chat-embed` 钉 `github:...#v0.1.0`）；③ `focus_main_window` 重建修复
+  （2026-10-12 真机「返回工作台」点不动）；④ README 两条用户口径（兑现 issue #18）。
+- 另含**进场前已躺在 master 未发布的 4 个 docs 提交**（`13a68ee`/`6d546ff`/`ab6c920`/
+  `ac6b25c`）——v1.3.4 同款「没人提示尚未发布」，本次一并清账。
+- 已知边界：ADR-0033 行动项唯一未勾 = macOS 真机验证工具栏/侧栏互斥（测试面已全绿：
+  Rust 551 / 前端 702 / CI 五 job；插件仓库 `v0.1.0` tag 已在远端）。
+- **冻结期自打 tag 起**：至三平台产物验收通过为止，master 只收 fix、不收 feat。
+
 ### 2026-10-13 事故 · Linux CI 三红：inset 算术只在 macOS 宿主上验证过（算术与平台门焊死） —— guan（AI 协作）
 
 - 事故：`9ff92fc` 推送后 `coverage (baseline)` 与 `build (ubuntu-latest)` 双挂——
