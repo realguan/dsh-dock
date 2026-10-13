@@ -11,8 +11,9 @@
 > 原状态：**设计定稿**（2026-09-29 维护者认可「降级的交互设计好，不然用户遇到后不知道怎么做」）。
 > 落地面见 [ADR-0032](../adr/0032-host-contract-and-safe-degradation.md) §7，实施随 **P0-c**。
 > 本文只写「用户看到什么、能做什么」；机制（三层降级、存活探针、记忆三元组）在 ADR-0032 §6。
-> 与 [`notifications-and-global-capsule-design-2026-09-24.md`](notifications-and-global-capsule-design-2026-09-24.md)
-> 同族：那份定义「壳什么时候该打扰人」，本份定义「契约降级这一件事该怎么被看见」。
+> 同族稿件（notifications-and-global-capsule-design-2026-09-24，定义「壳什么时候该打扰人」）
+> 已于 2026-10-13 随仓库清理删除（未经裁定的设计稿；当前代码即为最终决策与实现）。
+> 本份定义「契约降级这一件事该怎么被看见」。
 
 ---
 
