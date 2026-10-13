@@ -35,6 +35,12 @@ const CHINESE: Record<string, { zh: string; en: string }> = {
     zh: "记忆与上下文",
     en: "Memory & Context",
   },
+  // DSH Dock 自研插件（`firstPartyPlugins.ts` 目录）：安装后进 profile 依赖，
+  // 「插件列表」行与「自研插件」货架共用这一枚中文名——两处一个源。
+  "dsh-deepseek-chat-embed": {
+    zh: "DeepSeek 聊天内嵌",
+    en: "DeepSeek Chat Embed",
+  },
 }
 
 /**

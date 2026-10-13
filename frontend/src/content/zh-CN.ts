@@ -597,6 +597,32 @@ export const t = {
     tabPlugins: "插件列表",
     // 实验能力（ADR-0028：自插件中心迁入，与插件列表同页并列）。
     tabCaps: "实验能力",
+    // 自研插件货架（2026-10-13：profile 详情第 5 tab，静态目录见 lib/firstPartyPlugins.ts）。
+    tabFirstParty: "自研插件",
+    // ── 自研插件货架（DSH Dock 自研 = 壳团队维护、随版本精选；与社区市场 / 官方目录
+    //    三份清单三种可信度，边界见 lib/firstPartyPlugins.ts 文件头）──────────────
+    firstPartyIntro:
+      "DSH Dock 自研插件：由壳团队维护并随本版本精选，安装后与社区插件同一套管理（列表 / 启停 / 卸载）。",
+    firstPartyEmpty: "这一版还没有随附的自研插件",
+    firstPartyInstall: "安装",
+    firstPartyInstalled: (v: string) => `已安装 ${v}`,
+    firstPartyUpdateAvailable: (v: string) => `可更新至 ${v}`,
+    firstPartyUpdate: (v: string) => `更新至 ${v}`,
+    firstPartyNotInstalled: "未安装",
+    firstPartyUninstall: "卸载",
+    firstPartyUninstallConfirmTitle: "卸载自研插件",
+    firstPartyUninstallConfirmBody: (name: string) =>
+      `确定从本 Profile 卸载 ${name} 吗？卸载会移除依赖与挂载声明，会话数据不受影响；之后想用可以再装回来。`,
+    firstPartyRepo: "查看仓库",
+    firstPartyBusy: "处理中…",
+    // 按条目 id 取（firstPartyPlugins.ts 的 `id` 字段）：描述 + 宿主前置备注。
+    // 备注为空字符串 = 无前置，整块不渲染。
+    firstPartyItems: {
+      "deepseek-chat-embed": {
+        desc: "在 DSH Dock 窗口内原生内嵌 chat.deepseek.com：右侧栏并排查阅或中央全屏对话，登录态随 Profile 持久保存。",
+        note: "窗口内嵌需要较新版本的 DSH Dock 宿主支持（随 ADR-0033 内嵌原语发布）；在更早的版本上会自动降级为外部引导卡片——功能可用，但不是窗口内嵌。",
+      },
+    },
     // ── 插件列表三类合一（2026-09-20，ADR-0028 第二批：底座 / 第三方 / 实验性一行，
     //    「底座组合」tab 退役）────────────────────────────────────────────
     // 筛选 chips（与三个行内标记同名）。「内置」筛选含 dsh 自带的实验层——它们

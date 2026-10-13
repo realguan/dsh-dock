@@ -48,6 +48,7 @@ import { PluginAddDialog } from "@/components/profiles/PluginAddDialog"
 import { PluginListRow } from "@/components/profiles/pluginRows/PluginListRow"
 import { SystemBaseSection } from "@/components/profiles/pluginRows/SystemBaseSection"
 import { McpManager } from "@/components/profiles/McpManager"
+import { FirstPartyPlugins } from "@/components/profiles/FirstPartyPlugins"
 import { ExperimentalCapabilities } from "@/components/market/ExperimentalCapabilities"
 import { RestartNeededHint } from "@/components/ui/restart-hint"
 import {
@@ -83,14 +84,14 @@ export function ProfileDetailPane({
   materialized: boolean
   isRunning: boolean
   isSwitching?: boolean
-  /** 官方 Electron 独占的保留名（2026-10-06）：四个 tab 仍是只读清点，但启动入口关闭。 */
+  /** 官方 Electron 独占的保留名（2026-10-06）：五个 tab 仍是只读清点，但启动入口关闭。 */
   reserved?: boolean
   busy: boolean
   onLaunch: () => void
   onNotice: (text: string, kind?: "ok" | "warn") => void
 }) {
   const { t, activeLocale } = useI18n()
-  const [tab, setTab] = useState<"plugins" | "caps" | "patch" | "mcp">("plugins")
+  const [tab, setTab] = useState<"plugins" | "firstParty" | "caps" | "patch" | "mcp">("plugins")
   const [detail, setDetail] = useState<ProfileDetail | null>(null)
   const [plugins, setPlugins] = useState<PluginEntry[] | null>(null)
   const [runtime, setRuntime] = useState<PluginRuntimeSnapshot | null>(null)
@@ -683,9 +684,11 @@ export function ProfileDetailPane({
         {/* 顶部 Tab 切换（批次 3：第 6 份手搓分段器 → Segmented stretch；
             与顶栏导航同配方，靠"整宽等分"而非"更大更亮"区分层级）。
             2026-09-20（ADR-0028 第二批）：「底座组合」tab 退役——层栈并入「插件列表」
-            （行内「层 N」序标承载组合序），本面板收敛为 插件列表 / 实验能力 / MCP /
-            Patch 四段。 */}
-        <Segmented<"plugins" | "caps" | "patch" | "mcp">
+            （行内「层 N」序标承载组合序）。
+            2026-10-13：新增「自研插件」段（第 5 tab，静态货架见 lib/firstPartyPlugins.ts），
+            收敛为 插件列表 / 自研插件 / 实验能力 / MCP /
+            Patch 五段。 */}
+        <Segmented<"plugins" | "firstParty" | "caps" | "patch" | "mcp">
           className="mt-3"
           stretch
           ariaLabel={name}
@@ -706,6 +709,9 @@ export function ProfileDetailPane({
                 </>
               ),
             },
+            // 自研插件（2026-10-13）：壳团队自研插件的静态货架，紧邻插件列表放置——
+            // 它是插件列表的上游（从这里装，装完进插件列表管），装/卸走现成 IPC。
+            { value: "firstParty", icon: Puzzle, label: t.profiles.tabFirstParty },
             // 实验能力（ADR-0028：自插件中心迁入，档位 = 本页选中档，与插件列表同作用域）。
             { value: "caps", icon: FlaskConical, label: t.profiles.tabCaps },
             { value: "mcp", icon: Boxes, label: t.profiles.tabMcp },
@@ -715,7 +721,7 @@ export function ProfileDetailPane({
       </header>
 
       {/* 「重启后生效」统一提示（2026-09-24）：本档有插件/能力变更待重启时出现，
-          插件列表 / 实验能力 / MCP / Patch 四个 tab 共用这一条——caps 面板内的
+          插件列表 / 自研插件 / 实验能力 / MCP / Patch 五个 tab 共用这一条——caps 面板内的
           自带横幅已撤，全仓只有一个重启提示面（ui/restart-hint.tsx，动作链见
           lib/restartProfile.ts）。未物化的档不可能有待重启变更，不出。 */}
       {materialized && (
@@ -724,7 +730,7 @@ export function ProfileDetailPane({
         </div>
       )}
 
-      {/* 官方保留档（desktop，2026-10-06）：本页四个 tab 全是只读清点，读得到；
+      {/* 官方保留档（desktop，2026-10-06）：本页五个 tab 全是只读清点，读得到；
           但启动/改名/删除/插件变更在壳里一律关闭 ⇒ 说清为什么 + 出路（复制）。 */}
       {reserved && (
         <div className="px-5 pt-3">
@@ -744,8 +750,8 @@ export function ProfileDetailPane({
         )}
 
         {!materialized ? (
-          /* 未物化 = 目录还不存在：四个 tab 一个都没有内容可读（插件清单 / 能力目录 /
-             MCP 配置 / patch 原文全在目录里）。故不给四个各自报一次错，只给这一句人话
+          /* 未物化 = 目录还不存在：五个 tab 一个都没有内容可读（插件清单 / 能力目录 /
+             MCP 配置 / patch 原文全在目录里）。故不给五个各自报一次错，只给这一句人话
              + 唯一的出路（启动一次即物化）。
              2026-09-21 真机：原先插件列表 tab 显示详情读取失败的人话，实验能力 tab 却把
              `listExperimentalCapabilities` 的原始 OS 错误（`No such file or directory
@@ -1024,7 +1030,21 @@ export function ProfileDetailPane({
             </div>
           )}
 
-          {/* ================= Tab 1.5: 实验能力（ADR-0028，自插件中心迁入） =================
+          {/* ================= Tab 1.5: 自研插件货架（2026-10-13） =================
+              壳团队自研插件的静态目录（lib/firstPartyPlugins.ts）：一包一行，装/卸/
+              对齐版本。已装状态直接吃本页已加载的 `plugins`（禁双源：不另起取数链）；
+              保留档（desktop）与其余 tab 同口径 = 只读清点。 */}
+          {tab === "firstParty" && (
+            <FirstPartyPlugins
+              profileName={name ?? ""}
+              plugins={plugins}
+              readOnly={reserved}
+              onNotice={onNotice}
+              onChanged={reload}
+            />
+          )}
+
+          {/* ================= Tab 2: 实验能力（ADR-0028，自插件中心迁入） =================
               2026-09-21 维护者裁定：本 tab 是**实验性插件的唯一操作入口**——插件列表里
               实验性行只读平铺，开关/换后端/移除/修复全部收在这里（`focus` 深链随能力
               卡片退役：入口只剩"切到这个 tab"，不再需要"选中某个能力"）。 */}

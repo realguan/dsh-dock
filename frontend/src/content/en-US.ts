@@ -585,6 +585,34 @@ export const enUS: AppCopy = {
     tabPlugins: "Plugin List",
     // Experimental capabilities (ADR-0028: moved in from the plugin hub, tab next to Plugin List).
     tabCaps: "Experimental",
+    // First-party plugin shelf (2026-10-13: 5th tab in the profile detail pane;
+    // static catalog lives in lib/firstPartyPlugins.ts).
+    tabFirstParty: "First-Party",
+    // ── First-party plugin shelf (first-party = maintained by the shell team and
+    //    curated per release; three catalogs with three trust levels — community
+    //    market / official catalog / this shelf — boundaries in lib/firstPartyPlugins.ts) ──
+    firstPartyIntro:
+      "Plugins built by the DSH Dock team, curated per release. Once installed they are managed exactly like community plugins (list / toggle / remove).",
+    firstPartyEmpty: "No first-party plugins ship with this version yet",
+    firstPartyInstall: "Install",
+    firstPartyInstalled: (v: string) => `Installed ${v}`,
+    firstPartyUpdateAvailable: (v: string) => `Update to ${v} available`,
+    firstPartyUpdate: (v: string) => `Update to ${v}`,
+    firstPartyNotInstalled: "Not installed",
+    firstPartyUninstall: "Uninstall",
+    firstPartyUninstallConfirmTitle: "Uninstall first-party plugin",
+    firstPartyUninstallConfirmBody: (name: string) =>
+      `Uninstall ${name} from this profile? This removes the dependency and its mount declaration; session data is untouched, and you can reinstall it later.`,
+    firstPartyRepo: "Repository",
+    firstPartyBusy: "Working…",
+    // Keyed by entry id (the `id` field in firstPartyPlugins.ts): description +
+    // host prerequisite note. Empty note = no prerequisite; the block is not rendered.
+    firstPartyItems: {
+      "deepseek-chat-embed": {
+        desc: "Natively embeds chat.deepseek.com inside the DSH Dock window: side-by-side in the right pane or full-screen in the main area, with the login session persisted per profile.",
+        note: "In-window embedding requires a newer DSH Dock build with the host support (shipped with the ADR-0033 embed primitives). On earlier versions it degrades to an external companion card — usable, but not embedded in the window.",
+      },
+    },
     // ── Plugin list, three kinds in one (2026-09-20, ADR-0028 batch 2: base layers /
     //    third-party / experimental in one list; the Base Bundles tab is retired) ──
     // Filter chips (same names as the three row markers). The "Built-in" filter includes
