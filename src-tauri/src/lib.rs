@@ -232,8 +232,11 @@ pub fn run() {
             });
             app.manage(state.clone());
             // 启动页防陈旧缓存：WKWebView 曾把旧版启动页缓存下来（2026-08-23 实测）。
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.clear_all_browsing_data();
+            // 取 webview 而非 window：clear_all_browsing_data 是 Webview 方法；
+            // `webviews()` 枚举不受 is_webview_window 旗标影响（2026-10-14 事故，
+            // 见 ui::window_by_label 说明）。
+            if let Some(wv) = app.webviews().get("main") {
+                let _ = wv.clear_all_browsing_data();
             }
             // 更新检测（首启后台异步 + 常驻入口：macOS 应用菜单 / 其余平台托盘）。
             // 先给"检测中"初始状态，背景线程完成后经 boot:update 推送并刷新入口。

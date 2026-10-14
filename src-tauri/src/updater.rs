@@ -16,7 +16,6 @@
 
 use std::sync::Arc;
 
-use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
 use crate::boot::ShellState;
@@ -438,8 +437,11 @@ fn set_state(state: &Arc<ShellState>, app: &tauri::AppHandle, value: ClientUpdat
     }
     tracing::info!("客户端更新状态 → {:?}", value);
     *state.client_update.lock().unwrap() = Some(value.clone());
+    // 句柄走 ui::window_by_label（2026-10-14 同宗事故）：main 在聊天内嵌 guest
+    // 子视窗在场时，直呼 get_webview_window 会因 is_webview_window 旗标翻 false
+    // 而取不到窗口 ⇒ app:update 到不了工作台（详见 ui::window_by_label 说明）。
     for label in UPDATE_EVENT_TARGETS {
-        if let Some(win) = app.get_webview_window(label) {
+        if let Some(win) = crate::ui::window_by_label(app, label) {
             let _ = win.emit("app:update", value.clone());
         }
     }

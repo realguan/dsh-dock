@@ -51,8 +51,12 @@ pub(crate) fn bring_to_front(app: &tauri::AppHandle, label: &str) {
 /// 单次唤起：**顺序即正确性**（`unminimize → show → set_focus`，见 [`bring_to_front`]）。
 ///
 /// 返回 `false` = 窗口不存在（已记日志），调用方不必再补焦。
+///
+/// 句柄解析走 [`crate::ui::window_by_label`]——**禁直呼 `get_webview_window`**：
+/// 聊天内嵌的 guest 子视窗挂上后 `is_webview_window` 旗标翻 false，那条查找
+/// 路永久 None（2026-10-14 真机事故，详见 ui.rs 该函数的说明）。
 fn raise_once(app: &tauri::AppHandle, label: &str) -> bool {
-    let Some(win) = app.get_webview_window(label) else {
+    let Some(win) = crate::ui::window_by_label(app, label) else {
         tracing::warn!("唤起窗口失败：label={label} 不存在（窗口可能已被关闭）");
         return false;
     };
@@ -146,14 +150,14 @@ pub fn open_profiles_window(app: tauri::AppHandle) {
 }
 /// 聚焦主工作台窗口（label=main）。
 ///
-/// 返回 `Result` 而非 `()`（2026-09-21）：窗口**理论上恒在**（主窗口「关窗 = 隐藏」，
-/// 见 `ui::create_main_window`），但真缺了必须让用户回得到工作台，而不是只能看到
-/// 一句"请重新启动"——前端 `ProfileManager` 的「返回工作台」已挂 `.catch(showToast)`，
-/// 2026-10-12 真机实测：registry 丢失而 AX 仍可见窗口时，这里返回 Err 让按钮
-/// **永远点不动**。故缺失时重建（dsh 侧由 boot 重新导航恢复），而不是报错。
+/// 返回 `Result` 而非 `()`（2026-09-21）：前端 `ProfileManager` 的「返回工作台」
+/// 已挂 `.catch(showToast)`。句柄解析走 [`crate::ui::main_window`]（2026-10-14
+/// 真机：guest 子视窗在场时 `is_webview_window` 旗标翻 false，直呼
+/// `get_webview_window` 会让按钮时灵时不灵——详见 ui.rs 事故记录）；三种查找
+/// 都落空（窗口真被销毁）才走重建——dsh 侧由 boot 重新导航恢复。
 #[tauri::command]
 pub fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    if app.get_webview_window("main").is_none() {
+    if crate::ui::main_window(&app).is_none() {
         let handle = app.clone();
         crate::ui::post_to_event_loop(&app, move || match crate::ui::create_main_window(&handle) {
             Ok(win) => {
@@ -221,6 +225,56 @@ mod tests {
         assert!(
             !missing.contains("return Err("),
             "缺失分支不得再返回 Err——2026-10-12 实测这正是「点了没反应」的成因"
+        );
+    }
+
+    /// 2026-10-14 真机事故（v1.4.0 验收现场）的闸门：Tauri 的
+    /// `is_webview_window` 旗标 = 「窗口全部 webview 与窗口同名」，聊天内嵌
+    /// `add_child` 挂上 guest 后翻 false ⇒ 直呼 `get_webview_window("main")`
+    /// **永久 None**（webview 仍在地图里，重建还撞 already exists）⇒ 三条
+    /// 唤起路全灭，「时灵时不灵」的"不灵"就是 guest 在场。故一切找主窗口的
+    /// 调用点必须走 `ui::main_window` / `ui::window_by_label`；注释里允许
+    /// 引用这个坑（事故记录要留），**代码里直呼即红**。
+    #[test]
+    fn main_window_lookup_goes_through_the_resolver() {
+        for (name, src) in [
+            ("window.rs", include_str!("window.rs")),
+            ("chat_embed.rs", include_str!("chat_embed.rs")),
+            ("lib.rs", include_str!("../lib.rs")),
+        ] {
+            for line in src.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") {
+                    continue; // 注释允许引用（事故记录）
+                }
+                assert!(
+                    !trimmed.contains("get_webview_window(\"main\")"),
+                    "{name} 直呼了 get_webview_window(\"main\")——add_child 后旗标翻转必失效，\
+                     改走 ui::main_window() / ui::window_by_label()"
+                );
+            }
+        }
+        // 解析助手自身必须存在于 ui.rs 且两条查找路都在（get_window 主线 +
+        // webviews 枚举退路），防止将来被"简化"回单条查找。
+        let ui = include_str!("../ui.rs");
+        assert!(
+            ui.contains("pub(crate) fn main_window("),
+            "ui.rs 缺 main_window 解析助手"
+        );
+        assert!(
+            ui.contains("app.get_window(label)"),
+            "window_by_label 必须走 get_window（不受旗标影响的稳定 API）"
+        );
+        assert!(
+            ui.contains("app.webviews().get(label)"),
+            "window_by_label 必须保留 webviews 枚举退路"
+        );
+        // 更新事件的两条目标（main/about）同样必须走解析助手：main 中招时
+        // app:update 到不了工作台窗口（v1.4.0 同宗事故的另一个受害面）。
+        let updater = include_str!("../updater.rs");
+        assert!(
+            updater.contains("crate::ui::window_by_label(app, label)"),
+            "updater 的 UPDATE_EVENT_TARGETS 发射必须走 ui::window_by_label"
         );
     }
 }

@@ -186,6 +186,39 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
     Ok(window)
 }
 
+/// 按 label 取**窗口句柄**（2026-10-14 真机事故后立；一切「找窗口」的唯一入口）。
+///
+/// **为什么禁直呼 `get_webview_window`**（Tauri 2.11.5 源码锚定 `window/mod.rs`）：
+/// ```rust
+/// pub(crate) fn is_webview_window(&self) -> bool {
+///     self.webviews().iter().all(|w| w.label() == self.label())
+/// }
+/// ```
+/// 即「窗口的全部 webview 都与窗口同名」才认它是 webview window。聊天内嵌
+/// （ADR-0033）经 `add_child` 把 `deepseek_chat_guest` 挂上主窗口后，主窗口的
+/// webviews = ["main", "deepseek_chat_guest"] ⇒ 旗标翻 false ⇒
+/// `get_webview_window("main")` **永久返回 None**——而 webview 仍在地图里
+/// （此时新建同 label 报 `a webview with label main already exists`，重建路径
+/// 同样撞墙）。用户表现 = 开过聊天内嵌后，「返回工作台」/ 托盘左键 / 二次启动
+/// 三条唤起路**全部静默失灵**（v1.4.0 验收现场；「时灵时不灵」的"不灵"就是
+/// guest 子视窗在场，guest 销毁后自愈——所以表现得时好时坏）。
+///
+/// `get_window(label)` 走 windows 地图，**不受该旗标影响**（且是稳定 API）；
+/// `webviews()` 枚举 + `Webview::window()` 是第二退路（webview 在地图里而
+/// 窗口查找异常时仍可达）。机器闸门：`commands/window.rs` 的测试禁止调用方
+/// 直呼 `get_webview_window("main")`。
+pub(crate) fn window_by_label(app: &tauri::AppHandle, label: &str) -> Option<tauri::Window> {
+    if let Some(win) = app.get_window(label) {
+        return Some(win);
+    }
+    app.webviews().get(label).map(|webview| webview.window())
+}
+
+/// 主窗口（label=main）的窗口句柄。边界与事故记录见 {@link window_by_label}。
+pub(crate) fn main_window(app: &tauri::AppHandle) -> Option<tauri::Window> {
+    window_by_label(app, "main")
+}
+
 /// 定位含 product.manifest.json 的资源根（dev/prod 布局差异见 setup 注释）。
 pub(crate) fn resolve_resources_dir<M: tauri::Manager<tauri::Wry>>(app: &M) -> PathBuf {
     // dev 模式（debug_assertions）：源码树 resources 为最高优先级真理源，
@@ -943,6 +976,11 @@ mod main_window_lifecycle_tests {
     }
 
     /// IPC 命令缺失窗口时**必须报错**，不得静默 no-op（前端已挂 `.catch(showToast)`）。
+    ///
+    /// 2026-10-14 修订：判存在的查找从 `get_webview_window("main")` 改为
+    /// `ui::main_window` —— 前者在聊天内嵌 guest 子视窗在场时因
+    /// `is_webview_window` 旗标翻 false 而**永久 None**（v1.4.0 验收事故，
+    /// 详见 `window_by_label` 说明）。Result 返回形态不变（前端 catch 依赖它）。
     #[test]
     fn focus_main_window_reports_a_missing_window() {
         let src = include_str!("commands/window.rs").replace("\r\n", "\n");
@@ -952,8 +990,9 @@ mod main_window_lifecycle_tests {
              用户侧表现就是『点了没反应』"
         );
         assert!(
-            src.contains("get_webview_window(\"main\").is_none()"),
-            "必须前置判存在并给出可行动错误"
+            src.contains("crate::ui::main_window(&app).is_none()"),
+            "必须前置判存在并给出可行动错误（判存在走 ui::main_window，禁直呼 \
+             get_webview_window——add_child 旗标雷，2026-10-14）"
         );
     }
 }

@@ -208,9 +208,12 @@ fn inset_math(window_physical: (f64, f64), frame: Option<EmbedFrame>) -> (f64, f
 
 /// 主窗口的物理尺寸。`outer_size()` 原样返回，**不除 `scale_factor()`** ——
 /// 那个读数不稳定（见 `EmbedFrame::scale`），物理像素本身是可靠的。
+///
+/// 句柄走 `ui::main_window`（2026-10-14：guest 子视窗在场时直呼
+/// `get_webview_window` 会因 `is_webview_window` 旗标翻 false 而永久 None，
+/// 连这里的尺寸读数都会悄悄退化成 (0,0)——详见 ui.rs 事故记录）。
 fn window_physical_size(handle: &AppHandle) -> (f64, f64) {
-    handle
-        .get_webview_window("main")
+    crate::ui::main_window(handle)
         .and_then(|win| {
             let size = win.outer_size().ok()?;
             Some((size.width as f64, size.height as f64))
@@ -274,9 +277,10 @@ fn trace_bounds(
         return;
     };
     // 仅用于把子视窗 bounds 回读换算成逻辑像素打日志。
-    let sf = handle
-        .get_webview_window("main")
-        .and_then(|w| w.scale_factor().ok())
+    // 注意 `Window::scale_factor()` 返回 `Result`（与 WebviewWindow 的同名方法
+    // 签名不同），这里显式 `.ok()` 收成 f64。
+    let sf = crate::ui::main_window(handle)
+        .and_then(|win| win.scale_factor().ok())
         .unwrap_or(1.0);
     let (inset_x, inset_y) = inset;
     match wv.bounds() {
@@ -321,7 +325,9 @@ pub fn embed_chat_open(
         }
 
         // 2. 首次创建：在主窗口中挂载顶层子 Webview
-        let Some(main_win) = handle.get_webview_window("main") else {
+        //    主窗口句柄走 ui::main_window（2026-10-14：guest 二次挂载场景下
+        //    直呼 get_webview_window 会踩 is_webview_window 旗标雷，见 ui.rs）。
+        let Some(main_win) = crate::ui::main_window(&handle) else {
             tracing::warn!("embed_chat_open: 未找到主窗口");
             return;
         };
@@ -378,7 +384,7 @@ pub fn embed_chat_open(
                 }
             });
 
-        match main_win.as_ref().window().add_child(builder, pos, size) {
+        match main_win.add_child(builder, pos, size) {
             Ok(wv) => {
                 let _ = wv.show();
                 tracing::info!(
