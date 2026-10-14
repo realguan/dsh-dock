@@ -31,6 +31,30 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-14 修复 · v1.4.0 验收两连修（「返回工作台」失灵根因 + 货架卡片整容） —— guan（AI 协作）
+
+- **事故一（返回工作台时灵时不灵，v1.4.0 验收现场）**：根因锚定 Tauri 2.11.5
+  源码——`is_webview_window` 旗标 = 「窗口全部 webview 与窗口同名」，ADR-0033 的
+  guest 子视窗 `add_child` 挂上主窗口后旗标翻 false ⇒ `get_webview_window("main")`
+  **永久 None**（webview 仍在地图里，重建还撞 already exists）。即 v1.4.0 自己
+  引入的回归；v1.3.x 的 `8ae2543` 重建修复没治到根（它只治了"窗口真没了"那一半）。
+  受害面五处：返回工作台 / 托盘左键 / 二次启动 / `app:update` 发射 / 窗口尺寸读数。
+  修法（`a22cc8b`）：`ui.rs` 增 `window_by_label` / `main_window` 解析助手
+  （`get_window` 主线 + `webviews()` 枚举退路，均不受旗标影响），五处全量切换，
+  `window.rs` 新增源码闸门（禁直呼 + 助手双路在场 + updater 同律）。
+- **验收反馈二（货架卡片"丑" + 备注无意义）**（`922381b`）：删宿主前置备注段
+  （ADR/版本前提是贡献者上下文，不该占用户界面）；包名禁截断（窄卡片里被截成
+  "ds..."，违反 2026-09-17 裁定）；描述全文展示；底栏去掉与徽标重复的版本号，
+  改展安装来源（spec + GitHub 图标，与社区卡来源语言一致）。
+- 凭据：Rust `cargo test` 552 绿 + `fmt --check` + `clippy --all-targets` 干净；
+  前端 typecheck / oxlint 0 warning / 702 测试绿。
+- **另记一笔既有 flaky（非本次引入，勿当代码问题查）**：
+  `executor::guest_shell_tests::guest_stage_pnpm_script_lands_bundle_in_engine_bin`
+  用硬编码共享 `/tmp/dsh-dock-pnpm.tgz` 做 staging，同模块并行测试互踩、间歇性
+  挂（单独跑必过；本地三轮全量里挂两轮）。本次未碰 `executor.rs`；修它属独立
+  意图（每测试唯一临时目录），待排。
+- 冻结期中的两笔 fix，**未打 tag**；待维护者装机复验后按需 cut v1.4.1。
+
 ### 2026-10-14 发版 · **v1.4.0 已发布**（内嵌聊天宿主原语 + 自研插件货架 + 返回工作台修复） —— guan（AI 协作）
 
 - tag `v1.4.0` → `951f12e`；Release（GitHub，非 draft）已出，17 个产物：
