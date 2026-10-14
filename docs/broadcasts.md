@@ -72,6 +72,24 @@
   no-op（异常被 catch 成一条 warning，启动不受影响；旧部署 bootstrap 同样如此）。
 - **待办**：真机（dev 档）核对 desktop 档四个 tab 可操作、生命周期入口仍灰；发布时按
   `docs/prompts/release-notes.md` 记入 RELEASE_NOTES。
+- **2026-10-14 复核五修（Lead，`ed2b186`）**：发版前复核这份变更，改掉五处（均带闸门）——
+  ① **通道不可用要说清**：两个哨兵模式都依赖 dsh 的程序化选项 / 公开 API ⇒ 引擎比
+  0.2.0-rc.2 旧时通道不可用；此前组合树失败只回一句「行表查询失败（dsh 退出码 1）」、
+  插件失败把上游 `is managed exclusively by the Electron application` 原样端给用户。
+  现由 `profiles::reserved_channel_gap_hint`（只认守卫文本 / bootstrap 自述前缀两个特征，
+  不认版本号）翻成中文 + 出路（升级 dsh 引擎），转发链两个消费点共用，并保留输出尾部；
+  ② **bootstrap 纵深**：`--dsh-dock-dump` 档名拒绝 `/ \ . ..`（该脚本落在磁盘上，任何
+  本地进程都能跑），缺 `loadProfileDirectory`/`loadOptionalPatches`/`renderConfigDump`
+  时抛带自述前缀的中文错误（不抛裸 TypeError）——自述前缀与壳侧映射同源，测试钉住；
+  ③ **保留档没有"重启"**：内容面放开后该档也会有待重启标记，但生命周期面关闭 ⇒
+  `ui/restart-hint.tsx` 对该档**不给「立即重启」按钮**，改说「改动在官方客户端下次启动
+  时生效」，后端 `classify_op_outcome` 成功文案同口径（同一事实不许两种说法）；
+  ④ `mcp::ensure_writable_scope` 形参改 `_scope`（值不再参与判定，位置保留）；
+  ⑤ 文档三处对齐：ADR 方案 D 的 `loadProfileDirectory` 签名、复现点 26 标题粗体嵌套、
+  本条目的凭据数字（另侧自测快照 553/710 → 复核实测 **555/715**，五修后 **557/719**）。
+- 复核凭据：`cargo fmt --check` / `clippy --all-targets -D warnings` / `cargo test`
+  **557 绿**；前端 `typecheck` / `oxlint` 0 警告 / `vitest` **719 绿**（71 文件）。
+  Rust 侧未新增 IPC、未新增网络面；本轮**未打 tag**（冻结期继续，攒齐再发）。
 
 ### 2026-10-14 修复 · Profile 详情页头出现两份清单名（v1.4.0 验收第三条） —— guan（AI 协作）
 
