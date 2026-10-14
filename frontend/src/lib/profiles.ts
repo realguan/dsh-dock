@@ -35,6 +35,34 @@ export function isReservedProfileName(name: string): boolean {
   return name.toLowerCase() === RESERVED_ELECTRON_PROFILE
 }
 
+/**
+ * Profile 详情页头该不该展示「清单名」（manifest 里的真实包名）；该展示才返回它。
+ *
+ * dsh 约定：`dsh initProfile` 建档、壳自己的改名/复制，都把 package.json 的 `name`
+ * 写成 `dsh-profile-<目录名>`（`profiles.rs::rewrite_package_name` @ 1261 /
+ * `dsh initProfile`）。于是常规档位的清单名 = 左栏那个 profile 名换了层壳——
+ * 2026-09-21 维护者已就同一处说过「同一句话说两遍」，页头再摆一遍仍是冗余。
+ *
+ * 只有 package.json 被手改过、或目录被别的工具搬过的档位，清单名才真的带信息
+ * （与 profile 名不一致 ⇒ 别处拿不到），那时才展示。
+ *
+ * 2026-10-14 追记（真机截图：页头同时出现两份 `dsh-profile-web`）：页头那一行里
+ * 唯一会横向位移的文字正是这枚清单名——启动/重载过渡徽标出现时被推右 ~148px，
+ * 切换档位时又随 profile 名宽度变化。合成层复用旧栅格时，位移过的文字会在原位
+ * 留下残影（同排的 h2 不动、徽标自带独立层，所以只有它出现两份）。常规档位不再
+ * 渲染它 ⇒ 这一行没有会横向位移的文字，残影无从而来。
+ */
+export function manifestNameChip(
+  profileName: string | null | undefined,
+  packageName: string | null | undefined,
+): string | null {
+  const pkg = (packageName ?? "").trim()
+  if (pkg === "") return null
+  const profile = (profileName ?? "").trim()
+  if (profile !== "" && pkg === `dsh-profile-${profile}`) return null
+  return pkg
+}
+
 /** 创建结果的前端展示态：ready=基础 + Web 工作台就绪；pending=已创建待装插件；failed=未物化。 */
 export type CreateStatus = "ready" | "pending" | "failed"
 

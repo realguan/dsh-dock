@@ -22,7 +22,7 @@ import { useCopy } from "@/hooks/useCopy"
 import { useI18n } from "@/stores/i18nStore"
 import { useQueueStore } from "@/stores/queueStore"
 import { useRestartNeededStore } from "@/stores/restartNeededStore"
-import { runtimeChipFor, runtimeSummary } from "@/lib/profiles"
+import { manifestNameChip, runtimeChipFor, runtimeSummary } from "@/lib/profiles"
 import type { RuntimeChip } from "@/lib/profiles"
 import { pluginToggleTargets, splitSettledToggles, toggleIntent } from "@/lib/pluginToggle"
 import {
@@ -510,6 +510,10 @@ export function ProfileDetailPane({
       ? runtime.entries
       : []
 
+  // 页头「清单名」只在真的带信息（≠ `dsh-profile-<profile 名>` 约定）时展示，
+  // 判据与理由见 lib/profiles.ts::manifestNameChip。
+  const manifestChip = detail ? manifestNameChip(name, detail.package_name) : null
+
   // 运行态徽标文案与配色（2026-09-17）：文案走字典（en 不再漏中文）；
   // 配色只有 failed 用警示色、「运行中/加载中」用 ok 色，两个"还没到位"的状态
   // 用中性灰——旧版把「已停用」也刷成 ok 绿，是这次实机困惑的一部分。
@@ -650,9 +654,17 @@ export function ProfileDetailPane({
           还有同一个「设为默认」动作——详情头再摆一遍，就是同一句话说两遍（维护者截图
           圈出的那块）。这里只留两个别处**拿不到**的信息：
             · 会话正在启动/重载（过渡态，左栏只显示结果不显示过程）；
-            · 清单名 `package_name`（manifest 里的真实包名，与 profile 名可以不同）。
-          行高也从两行压到一行，把纵向空间还给下面真正要看的内容。 */}
-      <header className="border-b border-line bg-panel/90 px-5 py-3 backdrop-blur-xs">
+            · 清单名 `package_name`——**且只在它与 profile 名不一致时**（2026-10-14）：
+              dsh 建档与壳的改名/复制都把清单名写成 `dsh-profile-<目录名>`，常规档位
+              展示它仍是同一句话说两遍；判据见 lib/profiles.ts::manifestNameChip。
+          行高也从两行压到一行，把纵向空间还给下面真正要看的内容。
+
+          2026-10-14（真机截图：页头同时出现两份 `dsh-profile-web`）：这一行里唯一会
+          横向位移的文字就是清单名（过渡徽标出现时被推右 ~148px），合成层复用旧栅格
+          时残影会留在原位。两条修法叠加——不再渲染常规档位的清单名（这一行没有会
+          位移的文字），页头也不再做 `backdrop-blur`（背景恒为不透明面板底色，模糊
+          本来看不见，却白白换来一个独立合成层）。 */}
+      <header className="border-b border-line bg-panel px-5 py-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2
             className="text-ink truncate font-mono text-sm font-bold tracking-tight"
@@ -669,12 +681,14 @@ export function ProfileDetailPane({
             </span>
           )}
           {detail ? (
-            <span
-              className="text-faint truncate font-mono text-micro"
-              title={`${t.profiles.manifestNameLabel}${detail.package_name}`}
-            >
-              {detail.package_name}
-            </span>
+            manifestChip !== null && (
+              <span
+                className="text-faint truncate font-mono text-micro"
+                title={`${t.profiles.manifestNameLabel}${manifestChip}`}
+              >
+                {manifestChip}
+              </span>
+            )
           ) : materialized ? (
             <span className="text-faint text-micro">{t.profiles.detailLoading}</span>
           ) : (
