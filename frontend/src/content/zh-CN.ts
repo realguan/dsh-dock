@@ -609,9 +609,11 @@ export const t = {
     firstPartyEmpty: "这一版还没有随附的自研插件",
     firstPartyNoDesc: "（作者未提供描述）",
     firstPartyInstall: "安装",
+    firstPartyInstallWithVersion: (v: string) => `安装 v${v}`,
     firstPartyInstalled: (v: string) => `已安装 ${v}`,
-    firstPartyUpdateAvailable: (v: string) => `可更新至 ${v}`,
-    firstPartyUpdate: (v: string) => `更新至 ${v}`,
+    firstPartyInstalledWithVersion: (v: string) => `已安装 v${v}`,
+    firstPartyUpdateAvailable: (v: string) => `可更新至 v${v}`,
+    firstPartyUpdate: (v: string) => `更新至 v${v}`,
     firstPartyNotInstalled: "未安装",
     firstPartyUninstall: "卸载",
     firstPartyUninstallConfirmTitle: "卸载自研插件",
@@ -622,6 +624,7 @@ export const t = {
     firstPartyItems: {
       "deepseek-chat-embed": {
         desc: "在 DSH Dock 窗口内原生内嵌 chat.deepseek.com：右侧栏并排查阅或中央全屏对话，登录态随 Profile 持久保存。",
+        features: ["原生子视窗", "并排 / 全屏双模", "会话独立持久化"],
       },
     },
     // ── 插件列表三类合一（2026-09-20，ADR-0028 第二批：底座 / 第三方 / 实验性一行，

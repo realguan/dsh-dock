@@ -599,9 +599,11 @@ export const enUS: AppCopy = {
     firstPartyEmpty: "No first-party plugins ship with this version yet",
     firstPartyNoDesc: "(no description provided)",
     firstPartyInstall: "Install",
+    firstPartyInstallWithVersion: (v: string) => `Install v${v}`,
     firstPartyInstalled: (v: string) => `Installed ${v}`,
-    firstPartyUpdateAvailable: (v: string) => `Update to ${v} available`,
-    firstPartyUpdate: (v: string) => `Update to ${v}`,
+    firstPartyInstalledWithVersion: (v: string) => `Installed v${v}`,
+    firstPartyUpdateAvailable: (v: string) => `Update to v${v} available`,
+    firstPartyUpdate: (v: string) => `Update to v${v}`,
     firstPartyNotInstalled: "Not installed",
     firstPartyUninstall: "Uninstall",
     firstPartyUninstallConfirmTitle: "Uninstall first-party plugin",
@@ -612,6 +614,7 @@ export const enUS: AppCopy = {
     firstPartyItems: {
       "deepseek-chat-embed": {
         desc: "Natively embeds chat.deepseek.com inside the DSH Dock window: side-by-side in the right pane or full-screen in the main area, with the login session persisted per profile.",
+        features: ["Native Sub-webview", "Sidebar / Fullscreen Dual Mode", "Isolated Persistent Session"],
       },
     },
     // ── Plugin list, three kinds in one (2026-09-20, ADR-0028 batch 2: base layers /

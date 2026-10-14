@@ -41,7 +41,7 @@ export const FIRST_PARTY_PLUGINS: readonly FirstPartyPlugin[] = [
     package: "dsh-deepseek-chat-embed",
     // ⚠️ 钉的 tag 必须已在 GitHub 上存在（安装期 `git` 解析，缺 tag 即装失败）。
     // 发版流程：插件仓库打 `v<package.json version>` 并推送后，本行才生效。
-    spec: "github:realguan/dsh-deepseek-chat-embed#v0.1.0",
+    spec: "github:realguan/dsh-deepseek-chat-embed#v0.1.1",
     repo: "https://github.com/realguan/dsh-deepseek-chat-embed",
   },
 ]

@@ -1,31 +1,28 @@
-// FirstPartyPlugins.tsx —— 「自研插件」货架子视图（2026-10-13；2026-10-14 整容：
-// 从顶级 tab 收进「插件列表」tab 内作为子 tab，卡片样式对齐社区市场 MarketPluginCard）。
+// FirstPartyPlugins.tsx —— 「自研插件」货架子视图（2026-10-13；2026-10-14 视觉与布局重构）。
 //
-// 形态 = **社区市场同款卡片网格**（`rounded-2xl` + 品牌角标盒 + 等宽名按钮 + 描述 +
-// 底栏来源/动作），与 MarketplaceView 的 grid 断点一致——两个「可安装清单」长得一样，
-// 用户不用重新学。差异只在数据源与动作面：
-//   · 社区市场：远端 registry、跨档安装、队列/并发；
-//   · 本货架：壳内置静态目录、只装当前档、串行单发。
+// 定位：DSH Dock 团队官方策展的自研插件货架（收在「插件列表」tab 的子 tab 内）。
+// 布局与审美原则（frontend-design 规范）：
+//   · 宽裕横向展示卡：绝不使用在侧边栏分栏下导致宽度仅 250px 的狭窄多列栅格；
+//   · 完整舒展的信息层级：中文主标题、等宽版本胶囊、运行态徽标各得其所，不发生任何截断；
+//   · 核心能力一览：原生子视窗、双模并排/全屏、独立持久会话等特性微标签自然排布；
+//   · 桌面工匠质感：squircle 品牌图标盒、精炼的 GitHub 来源指示器、明确可点击的操作主按钮。
 //
-// 2026-10-14 v1.4.0 验收整容（维护者原话"好丑"+"备注对用户没有意义"）：
-//   ① 删掉宿主前置备注段——那是给贡献者看的内部上下文（ADR/版本前提），货架是
-//      给用户的，用户不需要知道宿主原语是什么；
-//   ② 包名**禁止截断**（承 2026-09-17 裁定"包名完整折行不许截断"，上一版
-//      `truncate` 在窄卡片里把 `dsh-deepseek-chat-embed` 截成 "ds..."）；
-//   ③ 描述不折行截断（我们的描述就一两句，截在半句中读着是坏的）；
-//   ④ 底栏去掉与徽标重复的版本号，改为展示**安装来源**（spec + GitHub 图标，
-//      与社区卡的来源语言一致）——版本归徽标，来源归底栏，各说一件事。
-//
-// 三条边界（承 lib/firstPartyPlugins.ts 文件头，勿混）：
-//   · 目录是**静态**的：增长 = 改 lib + 发壳新版，不引远端目录链；
-//   · 安装 / 卸载 / 激活**零新机制**：`install_plugin` / `remove_plugin` 现成 IPC，
-//     插件声明 `dsh.bundle` ⇒ `dsh plugin add` 自动进 bundle 层栈（ADR-0020），
-//     壳不写 patch；
-//   · 更新 = 再装一次（`pnpm add` 同 spec 覆盖即换版本）——github 形态吃不到
-//     npm 更新检查（ADR-0011 严格 npm 判别），不引第二条更新链。
+// 架构边界（承 lib/firstPartyPlugins.ts 文件头，勿混）：
+//   · 目录静态内置：新增/升级 = 改 lib + 发版，不引远端目录链；
+//   · 装/卸/激活零新机制：走现有 `install_plugin` / `remove_plugin` IPC；
+//   · 官方保留档（desktop）遵循 ADR-0034：开放内容面，动作按钮完全可用。
 
 import { useMemo, useState } from "react"
-import { Check, LoaderCircle, Puzzle, Trash2 } from "lucide-react"
+import {
+  Check,
+  Download,
+  ExternalLink,
+  LoaderCircle,
+  MessageSquareText,
+  Puzzle,
+  Sparkles,
+  Trash2,
+} from "lucide-react"
 
 import { api } from "@/lib/tauri"
 import { pluginChineseName } from "@/lib/pluginDisplay"
@@ -41,19 +38,35 @@ import { GithubIcon } from "@/components/market/MarketPluginCard"
 
 type Copy = ReturnType<typeof useI18n>["t"]
 
-/** 按目录条目 id 取双语文案。`firstPartyItems` 经 `AppCopy` 递归映射后是**具体字面量
- *  类型**（无索引签名），动态 id 取不到——这里显式断言成查表（漏 key 返回 null，
- *  调用方降级为兜底文案；目录闸门测试守着"每条目录都有文案"，正常不触发）。 */
-function itemCopy(copy: Copy, id: string): { desc: string } | null {
-  const table = copy.profiles.firstPartyItems as Record<string, { desc: string } | undefined>
+interface ItemCopyResult {
+  desc: string
+  features?: readonly string[]
+}
+
+/** 按目录条目 id 取双语文案（描述与核心能力标签）。 */
+function itemCopy(copy: Copy, id: string): ItemCopyResult | null {
+  const table = copy.profiles.firstPartyItems as Record<string, ItemCopyResult | undefined>
   return table[id] ?? null
 }
 
-/** 仓库 owner（`https://github.com/<owner>/<repo>` → `<owner>`）——卡片头
-//  `by <owner>` 行与社区卡同构；取不到返回空串（整块不渲染）。 */
+/** 仓库 owner（`https://github.com/<owner>/<repo>` → `<owner>`）。 */
 function repoOwner(repo: string): string {
   const match = /^https?:\/\/github\.com\/([^/]+)\//.exec(repo)
   return match?.[1] ?? ""
+}
+
+/** 格式化仓库短名（如 `realguan/dsh-deepseek-chat-embed`）。 */
+function repoShortName(repo: string, fallback: string): string {
+  const match = /^https?:\/\/github\.com\/([^/]+\/[^/]+)/.exec(repo)
+  return match?.[1] ?? fallback
+}
+
+/** 根据插件 id 选取专有视觉图标（赋予核心第一方插件鲜明的产品特征）。 */
+function getPluginIcon(id: string) {
+  if (id === "deepseek-chat-embed") {
+    return MessageSquareText
+  }
+  return Puzzle
 }
 
 export function FirstPartyPlugins({
@@ -74,8 +87,7 @@ export function FirstPartyPlugins({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<FirstPartyPlugin | null>(null)
 
-  // 货架行 = 静态目录 × 已装清单。plugins 为 null = 父级读取未回（本子视图与插件
-  // 列表同一次加载，正常不会出现），按"全未装"呈现，动作照常可用。
+  // 货架行 = 静态目录 × 已装清单。plugins 为 null 按"全未装"呈现。
   const rows = useMemo(() => firstPartyRows(FIRST_PARTY_PLUGINS, plugins ?? []), [plugins])
 
   const install = async (plugin: FirstPartyPlugin) => {
@@ -100,7 +112,7 @@ export function FirstPartyPlugins({
   const remove = async (plugin: FirstPartyPlugin) => {
     setBusyId(plugin.id)
     try {
-      // 卸载按**真实包名**（dependencies 里的键），不是安装 spec。
+      // 卸载按真实包名（dependencies 里的键），不是安装 spec。
       const out = await api.removePlugin(profileName, plugin.package)
       if (!out.ok) {
         onNotice(out.detail, "warn")
@@ -118,41 +130,68 @@ export function FirstPartyPlugins({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
+      <div className="max-w-2xl rounded-2xl border border-dashed border-line bg-bg p-8 text-center text-xs text-faint">
         {t.profiles.firstPartyEmpty}
       </div>
     )
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="flex flex-col gap-4 max-w-3xl">
       {rows.map((row) => {
         const { plugin, installed, installedVersion, updateAvailable } = row
         const busy = busyId === plugin.id
         const item = itemCopy(t, plugin.id)
         const chinese = pluginChineseName(plugin.package, activeLocale)
         const owner = repoOwner(plugin.repo)
+        const repoShort = repoShortName(plugin.repo, plugin.package)
+        const PluginIcon = getPluginIcon(plugin.id)
+        const features = item?.features ?? []
+
         return (
           <article
             key={plugin.id}
-            className="group relative flex flex-col justify-between rounded-2xl border border-line bg-panel p-4 shadow-2xs transition-all duration-200 hover:border-brand/40 hover:shadow-xs hover:-translate-y-0.5"
+            className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-line bg-panel p-5.5 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-xs"
           >
+            {/* 顶角柔和环境光晕（纯 token，增强层次深度） */}
+            <div
+              className="pointer-events-none absolute -top-12 -right-12 size-36 rounded-full bg-wash blur-2xl opacity-60 transition-opacity duration-300 group-hover:opacity-100"
+              aria-hidden
+            />
+
             <div>
-              {/* 卡头：品牌角标盒（自研 = 壳团队策展，走品牌色而非来源灰盒）
-                  + 等宽包名按钮（点开仓库，与社区卡同一交互；**完整折行不截断**） */}
-              <div className="flex items-start gap-2.5">
-                <div
-                  className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-brand/40 bg-wash text-brand-deep shadow-2xs transition-colors group-hover:border-brand"
-                  title={plugin.package}
-                >
-                  <Puzzle className="size-4.5" aria-hidden />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="min-w-0">
+              {/* 卡头：左侧图标与标题信息 + 右侧状态徽标（横向完全舒展，互不压迫） */}
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3.5 min-w-0">
+                  {/* 精致品牌图标容器 */}
+                  <div
+                    className="flex size-11.5 shrink-0 items-center justify-center rounded-xl border border-brand/25 bg-wash text-brand-deep shadow-2xs transition-all duration-200 group-hover:scale-105 group-hover:border-brand/40 group-hover:shadow-glow-sm"
+                    title={plugin.package}
+                  >
+                    <PluginIcon className="size-6" aria-hidden />
+                  </div>
+
+                  <div className="min-w-0">
+                    {/* 主标题行：中文主名 + 专属版本号胶囊 */}
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <h3 className="text-base font-semibold text-ink tracking-tight transition-colors group-hover:text-brand-deep">
+                        {chinese || plugin.package}
+                      </h3>
+
+                      {/* 专属版本胶囊：即使未安装也能一眼看见要装哪个版本 */}
+                      <span
+                        className="inline-flex shrink-0 items-center rounded-md border border-brand/20 bg-wash px-2 py-0.5 font-mono text-meta font-medium text-brand-deep"
+                        title={plugin.spec}
+                      >
+                        v{row.pinnedVersion}
+                      </span>
+                    </div>
+
+                    {/* 次级元数据行：包名（可点开仓库） + 作者 */}
+                    <div className="mt-1 flex items-center gap-2 text-meta text-faint">
                       <button
                         type="button"
-                        className="font-mono text-xs font-semibold text-ink tracking-tight hover:text-brand-deep cursor-pointer text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                        className="font-mono text-dim hover:text-brand-deep cursor-pointer text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/40"
                         title={plugin.package}
                         onClick={() => {
                           api.openExternal(plugin.repo).catch((e) => onNotice(String(e), "warn"))
@@ -160,95 +199,121 @@ export function FirstPartyPlugins({
                       >
                         {plugin.package}
                       </button>
-                    </h3>
-                    {/* 状态徽标占社区卡的分类徽位。按 2026-09-21 裁定**不挂「自研」标**——
-                        本子 tab 已按类分，再挂同类名是复述噪音（同社区卡在市场里不挂「社区」）。 */}
-                    {installed ? (
-                      updateAvailable ? (
-                        <Badge className="shrink-0 text-meta font-medium">
-                          {t.profiles.firstPartyUpdateAvailable(row.pinnedVersion)}
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="secondary"
-                          className="shrink-0 gap-1 text-meta font-medium border border-line/60 bg-wash text-dim"
-                        >
-                          <Check className="size-3" aria-hidden />
-                          {t.profiles.firstPartyInstalled(installedVersion ?? "")}
-                        </Badge>
-                      )
-                    ) : (
-                      <Badge variant="outline" className="shrink-0 text-meta font-medium text-faint">
-                        {t.profiles.firstPartyNotInstalled}
-                      </Badge>
-                    )}
+
+                      {owner && (
+                        <span>
+                          · by {owner}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-meta text-dim mt-0.5">
-                    {chinese}
-                    {chinese && owner ? " · " : ""}
-                    {owner ? `by ${owner}` : ""}
-                  </p>
+                </div>
+
+                {/* 状态徽标：独立占位，不与主标题抢占横向空间 */}
+                <div className="shrink-0 pt-0.5">
+                  {installed ? (
+                    updateAvailable ? (
+                      <Badge className="gap-1 border border-brand/30 bg-wash text-brand-deep text-meta font-medium px-2.5 py-1">
+                        <Sparkles className="size-3.5" aria-hidden />
+                        {t.profiles.firstPartyUpdateAvailable(row.pinnedVersion)}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="gap-1 border border-ok/30 bg-ok-soft text-ok text-meta font-medium px-2.5 py-1"
+                      >
+                        <Check className="size-3.5" aria-hidden />
+                        {t.profiles.firstPartyInstalledWithVersion(
+                          installedVersion ?? row.pinnedVersion,
+                        )}
+                      </Badge>
+                    )
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-line text-faint text-meta font-medium px-2.5 py-1"
+                    >
+                      {t.profiles.firstPartyNotInstalled}
+                    </Badge>
+                  )}
                 </div>
               </div>
 
-              {/* 描述：全文展示（我们的描述就一两句；截断只会在半句中读着是坏的） */}
-              <p className="mt-3 text-xs text-dim leading-relaxed">
+              {/* 能力特性胶囊行：横向齐整排布 */}
+              {features.length > 0 && (
+                <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                  {features.map((feat) => (
+                    <span
+                      key={feat}
+                      className="inline-flex items-center rounded-lg border border-line-soft bg-bg px-2.5 py-1 text-meta font-medium text-dim shadow-2xs"
+                    >
+                      {feat}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* 描述段落：自然舒展 */}
+              <p className="mt-3 text-xs leading-relaxed text-dim max-w-2xl">
                 {item?.desc || t.profiles.firstPartyNoDesc}
               </p>
             </div>
 
-            {/* 卡尾：安装来源（spec + GitHub 图标，与社区卡的来源语言一致） + 动作区。
-                保留档整块不渲染动作——没控件就不装作能点。 */}
-            <div className="mt-3.5 pt-3 border-t border-line/70 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between gap-2 min-h-[22px]">
-                <span
-                  className="flex min-w-0 items-center gap-1.5 text-meta text-faint"
-                  title={plugin.spec}
-                >
-                  <GithubIcon className="size-3 shrink-0" />
-                  <span className="truncate font-mono">{plugin.spec}</span>
-                </span>
-                {busy && (
-                  <span className="flex shrink-0 items-center gap-1.5 text-meta text-faint">
-                    <LoaderCircle className="size-3 animate-spin" aria-hidden />
-                    {t.profiles.firstPartyBusy}
-                  </span>
-                )}
-              </div>
+            {/* 卡尾：来源仓库胶囊（左） + 动作按钮区（右） */}
+            <div className="mt-5 flex min-h-[38px] items-center justify-between gap-4 border-t border-line/70 pt-3.5">
+              <button
+                type="button"
+                className="group/repo -ml-1.5 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 font-mono text-meta text-dim transition-colors hover:bg-bg hover:text-ink cursor-pointer"
+                title={plugin.repo}
+                onClick={() => {
+                  api.openExternal(plugin.repo).catch((e) => onNotice(String(e), "warn"))
+                }}
+              >
+                <GithubIcon className="size-4 shrink-0 text-faint transition-colors group-hover/repo:text-ink" />
+                <span>{repoShort}</span>
+                <ExternalLink className="size-3.5 shrink-0 text-faint opacity-50 transition-opacity group-hover/repo:opacity-100" />
+              </button>
 
-              {!busy && (
-                <div className="flex items-center justify-end gap-1.5">
+              {!busy ? (
+                <div className="flex shrink-0 items-center justify-end gap-2">
                   {installed ? (
                     <>
                       {updateAvailable && (
                         <Button
                           size="sm"
-                          className="h-7 gap-1 px-2.5 text-xs"
+                          className="h-8 gap-1.5 px-3.5 text-xs font-semibold shadow-2xs transition-all hover:shadow-xs cursor-pointer"
                           onClick={() => void install(plugin)}
                         >
+                          <Sparkles className="size-3.5" aria-hidden />
                           {t.profiles.firstPartyUpdate(row.pinnedVersion)}
                         </Button>
                       )}
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 gap-1 px-2.5 text-xs"
+                        className="h-8 gap-1.5 px-3 text-xs text-dim transition-colors hover:border-danger/30 hover:bg-danger-soft hover:text-danger cursor-pointer"
                         onClick={() => setConfirmTarget(plugin)}
                       >
-                        <Trash2 className="size-3" />
+                        <Trash2 className="size-3.5" aria-hidden />
                         {t.profiles.firstPartyUninstall}
                       </Button>
                     </>
                   ) : (
                     <Button
                       size="sm"
-                      className="h-7 gap-1 px-2.5 text-xs font-semibold"
+                      className="h-8 gap-1.5 px-4 text-xs font-semibold shadow-2xs transition-all hover:shadow-xs cursor-pointer"
                       onClick={() => void install(plugin)}
                     >
-                      {t.profiles.firstPartyInstall}
+                      <Download className="size-3.5" aria-hidden />
+                      {t.profiles.firstPartyInstallWithVersion(row.pinnedVersion)}
                     </Button>
                   )}
                 </div>
+              ) : (
+                <span className="flex shrink-0 items-center gap-2 px-3 py-1 text-meta text-faint">
+                  <LoaderCircle className="size-3.5 animate-spin text-brand-deep" aria-hidden />
+                  {t.profiles.firstPartyBusy}
+                </span>
               )}
             </div>
           </article>

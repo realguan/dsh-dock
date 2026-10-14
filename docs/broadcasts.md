@@ -31,6 +31,16 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-14 发版准备 · **v1.4.1 发布准备（自研货架全景重构 + 插件切 v0.1.1 + 退化 rect 让位防线）** —— guan（AI 协作）
+
+- **变更**：
+  1. `frontend/src/lib/firstPartyPlugins.ts` + `content/*.ts`：自研插件目录 `dsh-deepseek-chat-embed` 默认安装 spec 钉升级至最新发布 tag `v0.1.1`（上游已移除 pnpm 11 prepare 拦截白名单限制并修护浮层脱流不变量）；按钮与徽标带版本文案；
+  2. `frontend/src/components/profiles/FirstPartyPlugins.tsx`：自研货架布局重构为宽裕展示卡（废弃侧栏 250px 挤压的 3 列栅格，主标题、版本胶囊、特性微标签、底栏 GitHub 来源与操作按钮完整舒展，杜绝截断出界）；
+  3. `src-tauri/src/commands/chat_embed.rs`：原生子视窗增加退化 rect 让位防线（`rect_is_placeable`，0 宽/0 高/NaN 隐藏子视窗，避免动画或折叠期残存白卡）；
+  4. 版本号三处对齐升为 `1.4.1`（`Cargo.toml` / `tauri.conf.json` / `package.json`）。
+- **影响**：仅周知；代码、测试全绿，进入发版覆盖清单与打 tag 流程。
+- **凭据**：Rust fmt / clippy / 558 绿；前端 typecheck / oxlint 0 警告 / 719 绿；端口 1420 释放。
+
 ### 2026-10-14 口径变更 · **保留档 `desktop` 收窄为「只禁生命周期面」**（ADR-0034） —— guan（AI 协作）
 
 - **裁定（维护者原话）**：「desktop profile 虽然不支持启动重启，但是该 profile 下的管理

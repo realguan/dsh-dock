@@ -14,6 +14,15 @@
 //!      **比例**（`y_rate = y / window_height`），窗口尺寸一变就按比例重算，
 //!      与显式 `set_position/set_size` 互相打架；
 //!   2. 所有命令回读实际 bounds 并打日志，下次一眼定位是谁挪错了。
+//!
+//! ## 2026-10-14 诊断批注（退化 rect 白卡）
+//! 现场（官方 Electron 桌面版同源，Dock 侧同口径防线）：滚轮能把壳整页推上去，壳
+//! 内容下方露出一张 538x124 的聊天白卡。根因在插件侧 —— 浮层的 `position: fixed`
+//! 只写在可被 dispose 的 `<style>` 里，样式先走一步它就退化成 `<body>` 末尾的普通
+//! 块，把壳的文档撑高（Electron 侧已修：行内不变量 + 应用期清扫 + 同寿清理）。
+//! Dock 侧补的是第二条腿：**退化 rect 一律让位**（`rect_is_placeable`）。原生子视窗
+//! 在图层面之上、不参与页面滚动、页面也盖不住，按「最小 100x100」把退化盒子摆出去，
+//! 就是一张卡在窗口左上、谁也点不动的白卡 —— 宁可不显示，等真盒子到了再 `open`。
 
 use serde::Serialize;
 use tauri::{
@@ -230,6 +239,24 @@ fn window_physical_size(handle: &AppHandle) -> (f64, f64) {
 /// 可信值；算出可信值时刷新缓存。
 static LAST_GOOD_INSET: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
 
+/// 页面 rect 值得摆一个原生子视窗的最小边长（与插件 `syncToHost` 的 2px 同口径）。
+const MIN_GUEST_SIDE: f64 = 2.0;
+
+/// 页面 rect 是否值得摆一个原生子视窗（2026-10-14 现场故障的 Dock 侧防线）。
+///
+/// 插件在宿主被折叠 / 切走 / 还没量到 / 列正在动画推进时会送来退化 rect（0 宽、
+/// 0 高、NaN）。这类盒子若按「最小 100x100」继续摆，就是一张卡在窗口左上角、
+/// 页面盖不住、滚动也不带走的聊天白卡——原生子视窗在图层面之上，比页面里任何
+/// 层级都难善后。所以退化即让位：隐藏，等真盒子到了再由 `open`/`resize` 接回。
+fn rect_is_placeable(rect: EmbedRect) -> bool {
+    rect.left.is_finite()
+        && rect.top.is_finite()
+        && rect.width.is_finite()
+        && rect.height.is_finite()
+        && rect.width >= MIN_GUEST_SIDE
+        && rect.height >= MIN_GUEST_SIDE
+}
+
 /// 把插件的**页面坐标** rect 换算成 `add_child` 需要的窗口坐标。
 pub fn child_position(
     handle: &AppHandle,
@@ -312,6 +339,24 @@ pub fn embed_chat_open(
 ) -> Result<(), String> {
     let handle = app.clone();
     crate::ui::post_to_event_loop(&app, move || {
+        // 退化 rect 一律让位（2026-10-14 现场故障）：插件在宿主被折叠 / 还没量到 /
+        // 列正在动画时会送来这种盒子，旧口径把它抬到 100x100 继续摆，结果是一张
+        // 卡在窗口左上、谁也点不动的聊天白卡——而原生子视窗不参与页面滚动，页面
+        // 也盖不住它。等插件量到真盒子会再 open 一次。
+        if !rect_is_placeable(rect) {
+            if let Some(wv) = handle.get_webview(CHAT_GUEST_LABEL) {
+                let _ = wv.hide();
+            }
+            tracing::info!(
+                "embed[open:degenerate] rect=({},{},{},{}) 退化，让位不摆",
+                rect.left,
+                rect.top,
+                rect.width,
+                rect.height
+            );
+            return;
+        }
+
         // 页面坐标 → 窗口坐标：差值 = 窗口 chrome（标题栏），由 `frame` 揭示。
         let (pos, size, inset) = child_position(&handle, rect, frame);
 
@@ -455,6 +500,21 @@ pub fn embed_chat_resize(
 ) -> Result<(), String> {
     let handle = app.clone();
     crate::ui::post_to_event_loop(&app, move || {
+        // 退化 rect = 宿主已经不在页面上（折叠 / 切走 / 未量到）：让位，别按最小
+        // 尺寸摆一张白卡（见 embed_chat_open 的同口径判定）。
+        if !rect_is_placeable(rect) {
+            if let Some(wv) = handle.get_webview(CHAT_GUEST_LABEL) {
+                let _ = wv.hide();
+            }
+            tracing::info!(
+                "embed[resize:degenerate] rect=({},{},{},{}) 退化，隐藏子视窗",
+                rect.left,
+                rect.top,
+                rect.width,
+                rect.height
+            );
+            return;
+        }
         if let Some(wv) = handle.get_webview(CHAT_GUEST_LABEL) {
             let (pos, size, inset) = child_position(&handle, rect, frame);
             let _ = wv.set_position(pos);
@@ -773,5 +833,56 @@ mod tests {
             None,
         );
         assert_eq!((small.width, small.height), (100.0, 100.0));
+    }
+
+    /// 退化 rect（宿主折叠 / 未量到 / NaN）必须判为不可摆：宁可不显示，也不摆一张
+    /// 100x100 的白卡（2026-10-14 现场故障在 Dock 侧的防线）。
+    #[test]
+    fn degenerate_boxes_are_not_placeable() {
+        let zero_height = EmbedRect {
+            left: 0.0,
+            top: 446.0,
+            width: 538.0,
+            height: 0.0,
+        };
+        assert!(!rect_is_placeable(zero_height), "0 高 = 宿主已折叠");
+
+        let zero_width = EmbedRect {
+            left: 0.0,
+            top: 446.0,
+            width: 0.0,
+            height: 124.0,
+        };
+        assert!(!rect_is_placeable(zero_width), "0 宽 = 宿主已折叠");
+
+        let nan = EmbedRect {
+            left: f64::NAN,
+            top: 0.0,
+            width: 538.0,
+            height: 124.0,
+        };
+        assert!(!rect_is_placeable(nan), "NaN 坐标不可信");
+
+        let real = EmbedRect {
+            left: 0.0,
+            top: 446.0,
+            width: 538.0,
+            height: 124.0,
+        };
+        assert!(
+            rect_is_placeable(real),
+            "真盒子照摆（现场那张白卡的几何本身合法）"
+        );
+
+        let small = EmbedRect {
+            left: 0.0,
+            top: 0.0,
+            width: 4.0,
+            height: 4.0,
+        };
+        assert!(
+            rect_is_placeable(small),
+            "4x4 仍算可摆，由最小尺寸抬到 100x100"
+        );
     }
 }
