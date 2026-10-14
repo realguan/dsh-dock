@@ -31,6 +31,48 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-14 口径变更 · **保留档 `desktop` 收窄为「只禁生命周期面」**（ADR-0034） —— guan（AI 协作）
+
+- **裁定（维护者原话）**：「desktop profile 虽然不支持启动重启，但是该 profile 下的管理
+  功能还是应该需要支持的，不能都禁用了」＋「启动、删除、重命名、设置为默认 profile 这
+  一类的操作都禁用。插件、实验能力、MCP 等都正常使用」。
+- **问题**：2026-10-06 落地（`eaa0d0c`）的「一切写入口前置拒绝」把**一个事实**
+  （dsh 拒绝外部启动它）放大成了**整档只读**——详情页横幅当时写「只能只读查看」，
+  插件列表 / 实验能力 / MCP 三个 tab 的操作全灰。
+- **机制（2026-10-14 本机实测，dsh 0.2.0-rc.2 = 壳引擎）**：名字守卫**只在命令行解析器**
+  （`lib/bin.js:35-37`；boot `:112` 无条件、`plugin` `:119` 受程序化选项 `manageDesktopProfile`
+  控制、`--dump-config` 走主 action 恒拒）。dsh 自己在库层留了两条通道，壳按 ADR-0018 的
+  既有 bootstrap 加两个哨兵模式接上，**零复刻**：
+  ① `--dsh-dock-manage` → `runCli({manageDesktopProfile:true})`（插件装卸/更新，dsh 自己的
+  兼容门/写锁/回滚/bundles reconcile 全保留）；② `--dsh-dock-dump` →
+  `dsh-app-boot::loadProfileDirectory(dir, anchor, {userLayer:true})`＋`loadOptionalPatches`
+  ＋`renderConfigDump`（组合树行表，供启停/实验能力/写后自证）。**等价性**：同一份 shim 对
+  `web` 档的输出与 `engines/bin/dsh --profile web --dump-config` **`cmp`/`md5` 逐字节相同**
+  （正式档引擎 0.2.1-alpha.2：1719 行；dev 档 0.2.0-rc.2：1658 行）；`desktop` 档 exit 0 /
+  1474 行 / 196 条行 id / 47 段落。载体通道实测：`version-exemptions` → exit 0，真实内核
+  只读动词 `why ds-bot` → 输出依赖树；同一 argv 走普通 CLI → exit 1 英文守卫。
+  **过程中抓到并修掉一个真缺陷**：`profiles/<名>/cordis.yml` 是 dsh 自己的草稿文件——
+  官方客户端正在跑该档时，一次 boot 会把**组合后的完整树**写进去（实测 1460 行），而 CLI
+  在 dump 前会先 `prepareProfile` 把它重置成 `[]`；shim 第一版直接读它 ⇒ 基准非空 ⇒
+  **树翻倍**（196 → 391 行 id）。现改为组合到临时空 `[]` 文件（`renderConfigDump` 只用
+  basename 做标签 ⇒ 输出不变），既不写活跃档、也不翻倍。
+- **现行口径**：生命周期面（启动/重启/切换、设为默认、创建同名、重命名两头、删除）
+  **仍前置拒绝**；内容面（插件装卸/更新/启停、实验能力挂载行、MCP profile 层、配置复制目标）
+  **放行**；破坏性修复面（`quarantine_patch` 备份并放空用户层）**仍拒**（不在裁定列举内）。
+- **平台缺口（显式）**：WSL 客体世界没有壳 shim ⇒ 该世界的保留档**插件装卸/更新与组合树
+  查询**返回明确缺口错误（红线三：不静默降级）；纯文件面（启停/实验能力/MCP/复制）两侧一致。
+- **动到**：`src-tauri/src/{engines,profiles,plugins,mcp}.rs`、
+  `frontend/src/{components/profiles/**,components/market/MarketplaceView.tsx,pages/ProfileManager.tsx,content/*,types/ipc.ts}`、
+  `docs/adr/0034-*.md`＋索引、`docs/contracts/dsh-behavior-ledger.md`（复现点 23 修订 + 26 新增）、
+  本档、`README.md`。测试：`cargo test` **555 绿**（另侧自测快照写 553）、
+  `cargo clippy --all-targets -D warnings` 绿、`cargo fmt --check` 绿；前端
+  `typecheck` / `oxlint` 0 警告 / `vitest` **715 绿**（另侧自测快照写 710）。
+- **旁证（独立缺陷，不在本变更内修）**：`dsh-app-boot` 0.2.0-rc.2 **不再导出**
+  `healProfilesModuleFallback` ⇒ bootstrap 的 ADR-0019 客户端代理增强在该版本上是静默
+  no-op（异常被 catch 成一条 warning，启动不受影响；旧部署 bootstrap 同样如此）。
+- **待办**：真机（dev 档）核对 desktop 档四个 tab 可操作、生命周期入口仍灰；发布时按
+  `docs/prompts/release-notes.md` 记入 RELEASE_NOTES。
+
 ### 2026-10-14 修复 · Profile 详情页头出现两份清单名（v1.4.0 验收第三条） —— guan（AI 协作）
 
 - **现场**：真机截图圈出详情页头一行里并排两份灰字 `dsh-profile-web`（左栏档名 `web`）。

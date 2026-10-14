@@ -94,9 +94,12 @@ export interface ProfileSummary {
   /** 是否 webUi 工作台（bundles 含 dsh-web-app）：启动/切换入口的可见性依据 */
   web_ui: boolean
   /**
-   * 官方 Electron 桌面客户端独占的保留名（`desktop`，2026-10-06）：dsh 启动器
-   * 拒绝外部启动与管理它 ⇒ 壳的启动/切换/设为默认/改名/删除/插件变更入口必须
-   * 关闭；列表与只读清点照常（`web_ui` 仍为 true——官方档确实是个工作台）。
+   * 官方 Electron 桌面客户端独占的保留名（`desktop`，2026-10-06；口径 2026-10-14
+   * 收窄为**只禁生命周期面**，ADR-0034）：dsh 启动器拒绝外部启动它 ⇒ 壳的
+   * 启动/切换/设为默认/改名/删除入口必须关闭；**内容面**（插件装卸与启停、
+   * 实验能力、MCP、配置复制）照常可用——CLI 面由引擎 bootstrap 的载体开关
+   * （`runCli({manageDesktopProfile:true})`）与公开 API 组合树绕开命令行名字守卫。
+   * `web_ui` 仍为 true——官方档确实是个工作台，只是壳不启动它。
    */
   reserved: boolean
 }

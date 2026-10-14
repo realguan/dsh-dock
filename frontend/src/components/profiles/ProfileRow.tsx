@@ -140,9 +140,10 @@ export function ProfileRow({
               </span>
             )}
 
-            {/* 官方保留名（desktop，2026-10-06）：中性底只表事实——该档由官方
-                Electron 客户端独占，dsh 启动器拒绝外部启动与管理它 ⇒ 行内写入口
-                全部禁用，徽标 title 给出出路（复制成别的名字）。 */}
+            {/* 官方保留名（desktop，2026-10-06；口径 2026-10-14 = 只禁生命周期面，
+                ADR-0034）：中性底只表事实——该档由官方 Electron 客户端独占，
+                dsh 启动器拒绝外部启动它 ⇒ 行内**生命周期**入口关闭（启动 / 重启 /
+                设为默认 / 改名 / 删除）；插件与详情等内容面照常可用。 */}
             {reserved && (
               <span
                 title={t.profiles.reservedHint}
@@ -185,7 +186,11 @@ export function ProfileRow({
               size="icon-sm"
               variant="outline"
               title={
-                reserved ? t.profiles.reservedHint : busy ? t.profiles.launchWorking : t.profiles.restart
+                reserved
+                  ? t.profiles.reservedLifecycleHint
+                  : busy
+                    ? t.profiles.launchWorking
+                    : t.profiles.restart
               }
               aria-label={busy ? t.profiles.launchWorking : t.profiles.restart}
               disabled={busy || reserved}
@@ -198,7 +203,11 @@ export function ProfileRow({
               size="sm"
               variant="outline"
               title={
-                reserved ? t.profiles.reservedHint : busy ? t.profiles.launchWorking : t.profiles.launch
+                reserved
+                  ? t.profiles.reservedLifecycleHint
+                  : busy
+                    ? t.profiles.launchWorking
+                    : t.profiles.launch
               }
               disabled={busy || reserved}
               onClick={onLaunch}
@@ -260,7 +269,7 @@ export function ProfileRow({
                       key={key}
                       disabled={disabled}
                       onClick={run}
-                      title={disabled ? t.profiles.reservedHint : undefined}
+                      title={disabled ? t.profiles.reservedLifecycleHint : undefined}
                       className={cn(MENU_ITEM_CLASS, disabled && "cursor-not-allowed opacity-50")}
                     >
                       <Icon className={cn("size-3.5 text-dim", iconClass)} />
@@ -275,7 +284,7 @@ export function ProfileRow({
                   <DropdownMenu.Item
                     disabled={reserved}
                     onClick={onDelete}
-                    title={reserved ? t.profiles.reservedHint : undefined}
+                    title={reserved ? t.profiles.reservedLifecycleHint : undefined}
                     className={cn(MENU_ITEM_DANGER_CLASS, reserved && "cursor-not-allowed opacity-50")}
                   >
                     <Trash2 className="size-3.5" />

@@ -217,8 +217,9 @@ export function ProfileManager() {
     }
   }, [list, activeProfile, defaultProfile, selectedName])
 
-  // 官方保留档（desktop，2026-10-06）：行内写入口已禁用，这里再做一道前端兜底——
-  // 真要点到（键盘/程序化路径）也给同一句解释，而不是让壳拿一个必被 dsh 拒绝的名字去启动。
+  // 官方保留档（desktop）：**只兜生命周期面**（启动 / 切换 / 设为默认 / 改名 / 删除，
+  // ADR-0034）；内容面（插件 / 实验能力 / MCP）已放行，不在此列。真要点到
+  // （键盘/程序化路径）也给同一句解释，而不是让壳拿一个必被 dsh 拒绝的名字去启动。
   const reservedBlocked = useCallback(
     (name: string) => list.find((p) => p.name === name)?.reserved === true,
     [list],
@@ -227,7 +228,7 @@ export function ProfileManager() {
   // 设为默认
   const handleSetDefault = (name: string) => {
     if (reservedBlocked(name)) {
-      showToast(t.profiles.reservedHint, "warn")
+      showToast(t.profiles.reservedLifecycleHint, "warn")
       return
     }
     setRowBusy(name)
@@ -244,7 +245,7 @@ export function ProfileManager() {
   // 启动 / 切换
   const handleLaunch = (name: string) => {
     if (reservedBlocked(name)) {
-      showToast(t.profiles.reservedHint, "warn")
+      showToast(t.profiles.reservedLifecycleHint, "warn")
       return
     }
     if (activeProfile !== null) {

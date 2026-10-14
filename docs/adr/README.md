@@ -47,6 +47,7 @@
 | [0031](0031-remove-safe-mode-keep-patch-reset.md) | **删除安全模式**（一键停用 + 横幅记账 + `safe_mode.rs`），只保留「备份并放空 patch」兜底（2026-09-24 维护者裁定：上游 dsh 0.1.7-rc.1 实测插件不兼容/悬空行都不砖启动，ADR-0026 前提消失；仍砖的只有 YAML 语法坏与核心条目配置写坏两类用户层自写坏） |
 | [0032](0032-host-contract-and-safe-degradation.md) | **宿主契约：把「我是桌面宿主」变成一份完整的原子声明**（2026-09-29 维护者裁定采纳路径 A + 三层自动降级）——`data-platform` 与 `dshDesktop`/`dshOnboarding` **同源同翻**（官方 preload 里两者恒同时在场，壳此前只兑现表现层一半 ⇒ 上游开始对这项宣称收费）；降级 = 版本闸 → 首启金丝雀（交接幕布后）→ 运行时看门狗，存活探针**只观测我们自己的桥有没有被 dsh 消费**（`shortcuts.get`），落点永远可退回 web 宿主档；分期落地，**标记是最后一步**。§8 回写 ADR-0029 §7.3 两条失效依赖（`data-shell-leading-band` 已改名且语义变更、标记的 JS 消费者实测 4 处）。**⚠️ 2026-09-29 终裁收束（现行）：dsh-dock 定位为「web 档套壳」**（原话「我感觉跑偏了，我只想做个 web 档的套壳」）——§3 方案 A 与 P1/P2/P3/P4 **整体作废**；时序打标记（方案 D）经实测**不可行**（`+2 rAF` 4 次里 2 次红屏、且 `+8 rAF` 与 `window load` 结果**非单调** ⇒ 无可靠时刻）；降级提示撤除并收回其存储边界；沉浸式栈（标记注入 + 窗口 overlay/红绿灯 + 自驱拖拽）与 `hostcontract` 机制**物理删除**（维护者裁定「删」，§16），换成一条**防复辟反向闸门**`ui.rs::no_desktop_claim_tests`；ADR-0029 随之退役 |
 | [0033](0033-chat-guest-bridge.md) | 内嵌聊天 guest 桥：主窗口受限 eval + 标题短消息回传，远端客页无 Tauri IPC 权限 |
+| [0034](0034-reserved-profile-lifecycle-only.md) | **保留档 `desktop` 收窄为「只禁生命周期面」**（2026-10-14 维护者裁定：启动/删除/重命名/设为默认禁用，插件与实验能力、MCP 等内容面正常使用）——内容面的 CLI 通道由引擎 bootstrap 的两个哨兵模式绕开命令行名字守卫：`runCli({manageDesktopProfile:true})`（插件装卸/更新，dsh 自己的兼容门/写锁/回滚/reconcile 全保留）与 `dsh-app-boot::loadProfileDirectory` 公开 API 组合树（与 `--dump-config` **逐字节相同**，实测 `cmp` 全等）；零复刻、不新增机制类别（沿用 ADR-0018 bootstrap）；WSL 客体世界无壳 shim ⇒ 显式缺口报错 |
 
 ## 维护约定
 

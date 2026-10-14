@@ -210,9 +210,9 @@ pub async fn list_mcp_servers(
 }
 /// MCP 管理：保存或更新单个 MCP 服务（4.7）
 ///
-/// 保留名（desktop，2026-10-06）：**profile 层**写入在 `mcp::save_mcp_server` /
-/// `_in_guest` 里由 `mcp::ensure_writable_scope` 拒绝（写的是官方客户端自己的
-/// `cordis.patch.yml`）；全局层与具体 profile 无关，照常。
+/// **保留档的 profile 层照常可写**（2026-10-14 维护者裁定 / ADR-0034：MCP 属内容面，
+/// 保留档只禁生命周期面）；`mcp::ensure_writable_scope` 仍是唯一的写入前判据位
+/// （两层共用），它现在只做 profile 名校验。
 #[tauri::command]
 pub async fn save_mcp_server(
     app: tauri::AppHandle,
@@ -250,7 +250,7 @@ pub async fn delete_mcp_server(
     let world = crate::mgmt::current_world(&app)?;
     let dsh_home = crate::paths::dsh_home_of(&app);
     let scope = scope.unwrap_or_default();
-    // 保留名（desktop，2026-10-06）：同 save——profile 层在 mcp 侧统一拒绝。
+    // 保留档与常规档同口径（ADR-0034）：profile 层属内容面，照常可写。
     tauri::async_runtime::spawn_blocking(move || match world {
         crate::mgmt::World::Local => {
             let home = dsh_home.clone();

@@ -382,10 +382,13 @@ export const enUS: AppCopy = {
     tagMaterialized: "Created",
     tagTemplate: "Template",
     tagNoUi: "Headless",
-    // Reserved profile owned by the official Electron desktop client (2026-10-06).
+    // Reserved profile owned by the official Electron desktop client (2026-10-06;
+    // 2026-10-14 policy: lifecycle face only — ADR-0034).
     tagReserved: "Official",
     reservedHint:
-      "Owned by the official desktop client: the dsh launcher refuses to boot or manage it from outside, so this profile is read-only here — to use its configuration, copy it under a different name and launch that.",
+      "Owned by the official desktop client: lifecycle actions — launch, restart, set default, rename, delete — are closed here (the dsh launcher refuses to boot it from outside). Plugins, experimental capabilities and MCP stay fully manageable.",
+    reservedLifecycleHint:
+      "Official profile: launch / restart / set default / rename / delete are closed here (the dsh launcher refuses to boot it from outside) — plugins, experimental capabilities and MCP remain available.",
     nameReserved: "desktop is reserved for the official desktop client — pick another name",
     templateHint: "Built-in template · Materialized automatically on first launch",
     defaultBadge: "Default",
@@ -1238,6 +1241,12 @@ export const enUS: AppCopy = {
   // and capability switches all share it.
   restart: {
     neededHint: "Configuration changed. Restart this Profile to apply it.",
+    // Reserved profile (desktop, ADR-0034 as of 2026-10-14): its content stays
+    // editable, but the lifecycle face is closed — no restart entry in the
+    // shell, so the hint names the official client's next launch instead of
+    // offering a button that can only be refused.
+    reservedNeededHint:
+      "Configuration changed. This profile is launched by the official desktop client — changes apply the next time it starts.",
     nowBtn: "Restart Now",
   },
   // Shared copy for the destructive-action confirm dialog (2026-09-08, U9)

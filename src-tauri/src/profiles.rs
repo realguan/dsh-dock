@@ -21,11 +21,14 @@
 //!   `dsh-profile-<目录名>`、`dsh.profile.bundles`、`dependencies`）+
 //!   cordis.patch.yml + pnpm-workspace.yaml；node_modules 由 pnpm 生成。
 //!
-//! ⚠️ **保留名 `desktop`**（2026-10-06，复现点 23 ③ 补记）：该名字由官方 Electron
-//! 桌面客户端独占（dsh `lib/bin.js:35-37 rejectElectronProfile`，boot 路径无条件拒绝）。
-//! 壳侧一切写入口——启动/切换、创建、重命名、删除、设为默认、插件变更——统一经
-//! [`ensure_not_reserved_profile`] 前置拒绝并给中文出路；列表与只读清点照常保留
-//! （`reserved` 字段供前端关入口），`复制`源为官方档时放行（唯一合法再利用路径）。
+//! ⚠️ **保留名 `desktop`**（2026-10-06 落地；2026-10-14 收窄为**只禁生命周期面**，
+//! ADR-0034 / 复现点 26）：该名字由官方 Electron 桌面客户端独占
+//! （dsh `lib/bin.js:35-37 rejectElectronProfile`，boot 路径无条件拒绝）。
+//! **生命周期面**——启动/切换、创建、重命名、删除、设为默认——统一经
+//! [`ensure_not_reserved_profile`] 前置拒绝并给中文出路；**内容面**（插件装卸与启停、
+//! 实验能力、MCP、配置复制）照常可用，CLI 面经 [`run_reserved_forward`] 的 bootstrap
+//! 载体通道执行。列表与只读清点照常保留（`reserved` 字段供前端逐项门控），
+//! `复制`源为官方档时放行。
 //!
 //! ⚠️ 不可复用 `resolve::list_web_ui_profiles`（resolve.rs）：那是 webUi 选择器
 //! 原型，无条件注入 `"web"` 并跳过同名目录，与管理器「全量列出 + 两态区分」
@@ -91,20 +94,55 @@ pub fn is_reserved_profile(name: &str) -> bool {
     name.eq_ignore_ascii_case(RESERVED_ELECTRON_PROFILE)
 }
 
-/// 保留名写入口统一拒绝（**单源文案**）：命令面（启动 / 切换 / 创建 / 插件变更，
-/// 都要过 dsh 子进程）注定被上游拒绝；纯文件系统面（重命名 / 删除）虽能成功，但
-/// 处置的是官方客户端自己的档案 ⇒ 一律拒绝，并给可行动出路。
+/// 上游命令行名字守卫的报错特征串（复现点 23 ③ / 26 ① 逐字实测）。
+pub(crate) const RESERVED_GUARD_MARKER: &str = "managed exclusively by the Electron application";
+
+/// 壳 bootstrap 在**通道不可用**时的自述前缀（`engines.rs::dsh_bootstrap_mjs`）。
+/// 两处必须同源：改一处即由 `bootstrap_keeps_reserved_profile_channels` 判红。
+pub(crate) const RESERVED_CHANNEL_MISSING_MARKER: &str = "[dsh-dock] 保留档通道不可用";
+
+/// 保留档内容面**通道不可用**时的可行动中文（`None` = 不是这一类失败）。
 ///
-/// **只读面不在拒绝之列**：列表 / 详情 / 插件清点都保留，`复制`（源 = 官方档 →
-/// 目标为别的名字）更是官方档唯一的合法再利用路径。
+/// 载体开关（`runCli({manageDesktopProfile:true})`）与 `dsh-app-boot` 的公开 API
+/// 都随 dsh 版本走：引擎比 0.2.0-rc.2 旧时，前者被忽略（守卫照旧拒绝），后者可能
+/// 干脆不存在。此时用户本来只能看到一句上游英文或一条 JS 报错——按红线三「技术
+/// 不可能就显式说明原因」，这里把它翻成中文 + 出路（升级引擎），由转发链的两个
+/// 消费点（插件变更 / 组合树）共用。
+///
+/// 判据刻意只看**输出文本**、不看版本号：壳的引擎档位可指向任意 dsh 版本，维护
+/// 一份"最低版本表"会随上游漂移；而"守卫真的拒绝了 / bootstrap 自述通道缺失"才是
+/// 事实本身。
+pub(crate) fn reserved_channel_gap_hint(output: &str) -> Option<&'static str> {
+    if !output.contains(RESERVED_GUARD_MARKER) && !output.contains(RESERVED_CHANNEL_MISSING_MARKER)
+    {
+        return None;
+    }
+    Some(
+        "当前 dsh 引擎不支持保留档的内容面通道（需要带载体开关 manageDesktopProfile 的 dsh，\
+         壳引擎 0.2.0-rc.2 起提供）——请在「系统控制台」升级 dsh 引擎后重试。",
+    )
+}
+
+/// **生命周期面**的保留名拒绝（**单源文案**，ADR-0034）：启动 / 切换、设为默认、
+/// 创建同名档、重命名两头、删除——前两类 dsh 启动器无条件拒绝（连它自己的载体开关
+/// 也救不了 `bin.js:112`），后三类处置的是官方客户端自己的档案 ⇒ 一律拒绝并给出路。
+///
+/// **内容面（插件装卸与启停 / 实验能力 / MCP / 配置复制）不在此列**（2026-10-14
+/// 维护者裁定）：那些入口经引擎 bootstrap 的载体通道执行（`profiles::run_reserved_forward`），
+/// 见 ADR-0034 与复现点 26。
+///
+/// **只读面同样不在拒绝之列**：列表 / 详情 / 插件清点都保留，`复制`（源 = 官方档 →
+/// 目标为别的名字）仍是官方档的合法再利用路径。
 pub fn ensure_not_reserved_profile(name: &str) -> Result<(), String> {
     if !is_reserved_profile(name) {
         return Ok(());
     }
     Err(format!(
-        "profile「{name}」是官方桌面客户端的保留名：dsh 启动器拒绝外部启动与管理它\
-         （error: profile \"desktop\" is managed exclusively by the Electron application）。\
-         该 Profile 只能只读查看；要用它的配置，请「复制」成一个别的名字再启动。"
+        "profile「{name}」是官方桌面客户端的保留名：dsh 启动器拒绝外部启动它\
+         （error: profile \"desktop\" is managed exclusively by the Electron application），\
+         且它的档案归官方客户端所有 ⇒ 启动 / 重启 / 设为默认 / 改名 / 删除在壳里关闭。\
+         插件、实验能力、MCP 等内容管理照常可用；要整体另起一份配置，\
+         可「复制」成一个别的名字再启动。"
     ))
 }
 
@@ -123,9 +161,11 @@ pub struct ProfileSummary {
     /// 是否 webUi 工作台（bundles 含 `WEBUI_BUNDLE`）：管理器「启动/切换」
     /// 入口的可见性依据——非 webUi 无工作台 URL 可导航（ADR-0009 §4 三次修订）。
     pub web_ui: bool,
-    /// 官方桌面客户端独占的保留名（[`RESERVED_ELECTRON_PROFILE`]，2026-10-06）：
-    /// 名字照列（只读清点有价值），但壳的一切写入口必须关闭——上游 dsh 拒绝启动它，
-    /// 纯文件系统面的改名/删除会损坏官方客户端自己的档案。
+    /// 官方桌面客户端独占的保留名（[`RESERVED_ELECTRON_PROFILE`]，2026-10-06；
+    /// 口径 2026-10-14 = 只禁生命周期面，ADR-0034）：名字照列（只读清点有价值），
+    /// 启动/重启/设为默认/改名/删除必须关闭——上游 dsh 拒绝启动它，纯文件系统面的
+    /// 改名/删除会损坏官方客户端自己的档案；**内容面照常可用**（前端按动作逐项门控，
+    /// 后端只拦生命周期入口）。
     pub reserved: bool,
 }
 
@@ -556,6 +596,72 @@ pub fn run_toolchain_forward(
     )
 }
 
+/// 保留档转发的两种模式（ADR-0034，2026-10-14）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReservedForward {
+    /// 组合树（等价 `dsh --profile <名> --dump-config`）：走 `@deepseek-ai/dsh-app-boot`
+    /// 的公开 API `loadProfileDirectory`（其自述用途即"应用自有 profile 目录"），
+    /// 输出与命令行 dump **逐字节相同**（2026-10-14 本机等价性实测）。
+    Dump,
+    /// 插件装卸 / 更新：`runCli({ manageDesktopProfile: true })`——dsh 自己的插件
+    /// 管理器（兼容门、锁定、回滚、bundles reconcile 全保留）。
+    Manage,
+}
+
+/// 保留档转发的 argv 构造（**纯函数，可测**）：哨兵 + 原样参数。
+///
+/// bootstrap 侧对哨兵的处理是 `argv.slice(1)` 后交回 dsh 的解析器（`--dsh-dock-manage`）
+/// 或按目录组合（`--dsh-dock-dump`）——故这里**不得**改动、重排或补参，
+/// 否则 dsh 看到的不再是它自己的 argv。
+pub(crate) fn reserved_forward_argv(mode: ReservedForward, args: &[String]) -> Vec<String> {
+    let mut full: Vec<String> = Vec::with_capacity(args.len() + 1);
+    full.push(
+        match mode {
+            ReservedForward::Dump => "--dsh-dock-dump",
+            ReservedForward::Manage => "--dsh-dock-manage",
+        }
+        .to_string(),
+    );
+    full.extend(args.iter().cloned());
+    full
+}
+
+/// **保留档转发链**（ADR-0034）：`node <engines>/bin/dsh-boot.mjs <哨兵> <args…>`。
+///
+/// 为什么必须绕 bootstrap：dsh 的命令行解析器对 `--profile desktop` **无条件**拒绝
+/// （启动与 `--dump-config` 都拒；只有 `plugin` 子命令有载体开关，而 npm 版 dsh 连
+/// 这个开关都没有——壳引擎 0.2.0-rc.2 有）。bootstrap 本来就是壳驱动 dsh 的既有
+/// 形态（ADR-0017/0018），两个哨兵模式都在 **dsh 自己的代码**里执行，壳不复刻其逻辑。
+///
+/// 只用于**内容面**（插件 / 实验能力行表）；生命周期面（启动 / 改名 / 删除 /
+/// 设为默认）不在此列——启动守卫连载体开关也拦（`bin.js:112` 无条件）。
+pub fn run_reserved_forward(
+    toolchain: &crate::engines::DshToolchain,
+    mode: ReservedForward,
+    args: &[String],
+    dsh_home: &Path,
+    log_path: &Path,
+    data_dir: &Path,
+) -> Result<ForwardRun, String> {
+    let crate::engines::DshToolchain::Engine { node_bin, .. } = toolchain;
+    let shim = crate::engines::dsh_bootstrap_path(data_dir);
+    if !shim.is_file() {
+        return Err(format!(
+            "引擎 bootstrap 未落位（{}）——请先启动应用完成引擎引导后重试",
+            shim.display()
+        ));
+    }
+    let full: Vec<String> = reserved_forward_argv(mode, args);
+    run_dsh_forward(
+        node_bin,
+        &[shim.as_os_str()],
+        &full,
+        dsh_home,
+        log_path,
+        &crate::resolve::dsh_child_path(node_bin, data_dir),
+    )
+}
+
 /// 客体档孪生（ADR-0016 P1）：把同一份 dsh 转发链打进 WSL 客体。
 ///
 /// 与 [`run_toolchain_forward`] 的契约**逐项对齐**——同一个运维日志（追加/轮转/
@@ -661,7 +767,7 @@ fn format_utc(secs: u64) -> String {
 /// shell.rs spawn_dsh 同风格），200ms 轮询 try_wait，超时 kill。
 pub fn run_dsh_forward(
     program: &Path,
-    prepend: &[&Path],
+    prepend: &[&std::ffi::OsStr],
     args: &[String],
     dsh_home: &Path,
     log_path: &Path,
@@ -1321,6 +1427,48 @@ pub fn patch_relative_path_warnings(dir: &Path) -> Vec<String> {
 mod profiles_tests {
     use super::*;
 
+    /// **保留档转发 argv**（ADR-0034）：哨兵在前、dsh 自己的参数**逐字不动**。
+    ///
+    /// bootstrap 把 `argv.slice(1)` 交回 dsh 的解析器（manage）或当目录名（dump），
+    /// 所以这里的任何重排/补参都会让 dsh 看到不属于它的 argv——本测试钉住形状。
+    #[test]
+    fn reserved_forward_argv_prepends_sentinel_and_keeps_args_verbatim() {
+        let manage_args: Vec<String> = [
+            "plugin",
+            "--profile",
+            "desktop",
+            "add",
+            "ds-bot",
+            "--registry",
+            "https://registry.npmjs.org",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            reserved_forward_argv(ReservedForward::Manage, &manage_args),
+            vec![
+                "--dsh-dock-manage",
+                "plugin",
+                "--profile",
+                "desktop",
+                "add",
+                "ds-bot",
+                "--registry",
+                "https://registry.npmjs.org",
+            ]
+        );
+        assert_eq!(
+            reserved_forward_argv(ReservedForward::Dump, &["desktop".to_string()]),
+            vec!["--dsh-dock-dump", "desktop"]
+        );
+        // 空参数 = 只有哨兵（调用方不该这么用，但形状必须确定）
+        assert_eq!(
+            reserved_forward_argv(ReservedForward::Dump, &[]),
+            vec!["--dsh-dock-dump"]
+        );
+    }
+
     /// **客体档读侧在非 Windows 上必须是诚实错误**（ADR-0016 §2.6：绝不静默回落
     /// 宿主世界）——四条读路径全部由 `guest::list_dir` / `guest::read_files` 的非
     /// Windows 孪生兜底拒绝。
@@ -1502,8 +1650,40 @@ mod profiles_tests {
         assert!(err.contains("复制"), "给出可行动出路：{err}");
     }
 
-    /// 列表仍**照列**保留名（只读清点有价值），但 `reserved=true` 供前端关入口；
-    /// 该档 bundles 含 web-app ⇒ `web_ui` 依旧为 true（这正是用户能点到启动的成因）。
+    /// **通道不可用要说得清**（2026-10-14 复核）：载体通道随 dsh 版本走——引擎比
+    /// 0.2.0-rc.2 旧时，载体开关被忽略（守卫照旧拒绝）、公开 API 可能压根不存在。
+    /// 这两种失败只体现在输出文本里，判据必须认得它们并翻成中文 + 出路；其余输出
+    /// 一律不匹配（否则会把真正的安装失败也改写成"引擎太旧"）。
+    #[test]
+    fn reserved_channel_gap_hint_matches_only_channel_failures() {
+        // ① 上游名字守卫（旧引擎忽略载体开关）
+        let guarded = reserved_channel_gap_hint(
+            "error: profile \"desktop\" is managed exclusively by the Electron application",
+        )
+        .expect("守卫文本必须被认出");
+        assert!(guarded.contains("升级 dsh 引擎"), "{guarded}");
+        // ② bootstrap 自述的通道缺失（缺 API / 档名可疑）
+        assert!(
+            reserved_channel_gap_hint("[dsh-dock] 保留档通道不可用：未导出 renderConfigDump")
+                .is_some(),
+            "bootstrap 自述前缀必须被认出"
+        );
+        // ③ 反例：普通失败不得被改写（否则用户会被误导去升级引擎）
+        for other in [
+            "ERR_PNPM_FETCH_404  dsh-pet is not in this registry",
+            "error: profile \"web\" 尚未初始化",
+            "",
+        ] {
+            assert!(
+                reserved_channel_gap_hint(other).is_none(),
+                "不该匹配：{other:?}"
+            );
+        }
+    }
+
+    /// 列表仍**照列**保留名（只读清点有价值），但 `reserved=true` 供前端**逐项门控**
+    /// （只关生命周期入口，ADR-0034）；该档 bundles 含 web-app ⇒ `web_ui` 依旧为 true
+    /// （这正是用户能点到启动的成因）。
     #[test]
     fn scan_marks_reserved_profile_but_keeps_listing_it() {
         let home = tmp();

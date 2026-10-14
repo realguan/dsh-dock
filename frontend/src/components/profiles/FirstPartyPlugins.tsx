@@ -59,7 +59,6 @@ function repoOwner(repo: string): string {
 export function FirstPartyPlugins({
   profileName,
   plugins,
-  readOnly = false,
   onNotice,
   onChanged,
 }: {
@@ -67,8 +66,6 @@ export function FirstPartyPlugins({
   profileName: string
   /** 本档已装插件清单（`list_profile_plugins` 返回值，父级已加载——同页禁双源）。 */
   plugins: PluginEntry[] | null
-  /** 官方保留档（desktop）：只读清点，不给装 / 卸入口。 */
-  readOnly?: boolean
   onNotice: (text: string, kind?: "ok" | "warn") => void
   /** 装 / 卸成功后通知父级整页回读（清单 / 行表 / 运行态一起刷新）。 */
   onChanged: () => void
@@ -219,7 +216,7 @@ export function FirstPartyPlugins({
                 )}
               </div>
 
-              {!readOnly && !busy && (
+              {!busy && (
                 <div className="flex items-center justify-end gap-1.5">
                   {installed ? (
                     <>

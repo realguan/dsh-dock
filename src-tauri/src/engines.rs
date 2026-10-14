@@ -140,10 +140,18 @@ pub(crate) fn dsh_shim_windows() -> String {
 ///    dsh 自己的 `if (import.meta.main) await runCli()`（`lib/bin.js:168`）不会执行，
 ///    **只 import 不调用 = 什么都不发生**。
 ///
+/// 5. **保留档两个模式**（ADR-0034，2026-10-14）：dsh 的命令行解析器对
+///    `--profile desktop` 一律拒绝（启动与 `--dump-config` 都拒；只有 `plugin`
+///    子命令有载体开关）。壳要管的是该档的**内容面**（插件 / 实验能力 / MCP），
+///    故经 bootstrap 的两个哨兵模式执行——`runCli` 由 dsh 自己提供
+///    `manageDesktopProfile` 选项，组合树则走 `@deepseek-ai/dsh-app-boot` 的
+///    **公开 API**（`loadProfileDirectory` 自述用途即"应用自有 profile 目录"），
+///    两者都是调 dsh 自己的代码，壳不复刻任何 dsh 逻辑。
+///
 /// 绊线（ADR-0018 §6「失败要响亮」）：我们依赖的是 dsh 的**未公开内部判据**；若上游
 /// 改了它，此处必须给出可行动的错误，而不是一条看不懂的 EPERM。
 pub(crate) fn dsh_bootstrap_mjs() -> &'static str {
-    r#"// DSH Dock engine bootstrap (ADR-0018 / ADR-0019).
+    r#"// DSH Dock engine bootstrap (ADR-0018 / ADR-0019 / ADR-0034).
 //
 // On Windows a normal account lacks SeCreateSymbolicLinkPrivilege, so dsh's default
 // module-fallback mode (fs.symlinkSync) fails with `EPERM: symlink` at startup.
@@ -154,15 +162,74 @@ pub(crate) fn dsh_bootstrap_mjs() -> &'static str {
 process.pkg ??= { dshDock: true };
 
 import { createRequire } from "node:module";
-import { realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const entry = new URL(
   "../dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
   import.meta.url,
 );
+
+// --- reserved-profile modes (ADR-0034) -------------------------------------
+// `dsh --profile desktop` is refused outright for boot and for `--dump-config`;
+// only the `plugin` subcommand has a carrier switch. Both modes below are used
+// exclusively for that reserved profile, and both drive dsh's own code:
+//   --dsh-dock-manage <dsh args>  -> runCli({ manageDesktopProfile: true })
+//   --dsh-dock-dump   <name>      -> public app-boot composition, byte-identical
+//                                    to `dsh --profile <name> --dump-config`
+async function dumpReservedProfile(profileName) {
+  if (typeof profileName !== "string" || profileName === "") {
+    throw new Error("[dsh-dock] 保留档通道不可用：--dsh-dock-dump 需要一个 profile 名");
+  }
+  // Defence in depth: this file is a plain script on disk, so never let a name
+  // escape the profiles directory (the shell validates + only ever passes the
+  // reserved name; see profiles::validate_profile_name).
+  if (profileName === "." || profileName === ".." || /[\\/]/.test(profileName)) {
+    throw new Error(
+      "[dsh-dock] 保留档通道不可用：--dsh-dock-dump 拒绝含路径分隔符或为 . / .. 的 profile 名",
+    );
+  }
+  const home = process.env.DSH_HOME || join(homedir(), ".dsh");
+  const dir = join(home, "profiles", profileName);
+  // Same anchor dsh uses for itself: this installation's own package.json.
+  const installAnchor = realpathSync(fileURLToPath(new URL("../package.json", entry)));
+  const req = createRequire(installAnchor);
+  const appBoot = await import(pathToFileURL(req.resolve("@deepseek-ai/dsh-app-boot")).href);
+  // Version guard with an actionable message: an engine older than 0.2.0-rc.2 may
+  // not export the public composition API at all — a raw TypeError here would
+  // reach the user as a JS stack (ADR-0034 §5 / red line 3: say why, in Chinese).
+  for (const fn of ["loadProfileDirectory", "loadOptionalPatches", "renderConfigDump"]) {
+    if (typeof appBoot[fn] !== "function") {
+      throw new Error(
+        "[dsh-dock] 保留档通道不可用：当前 dsh 的 @deepseek-ai/dsh-app-boot 未导出 " +
+          fn +
+          "——组合树通道需要 0.2.0-rc.2 及以上（ADR-0034）。请升级 dsh 引擎后重试。",
+      );
+    }
+  }
+  const loaded = appBoot.loadProfileDirectory("dsh", dir, installAnchor, { userLayer: true });
+  const layers = loaded.layers.map((layer) => ({ label: layer.packageName, patches: layer.patches }));
+  if (existsSync(loaded.patchPath)) layers.push({ label: loaded.patchPath, patches: loaded.patches });
+  const homePatch = join(home, "cordis.patch.yml");
+  const homePatches = appBoot.loadOptionalPatches("dsh", homePatch);
+  if (homePatches !== undefined) layers.push({ label: homePatch, patches: homePatches });
+  // The profile root config is dsh's own scratch file: a boot leaves the COMPOSED
+  // tree in it, while `prepareProfile` resets it to the empty array before every
+  // CLI dump/boot. Compose over a fresh empty array instead of reading it —
+  // otherwise a post-boot snapshot counts as base entries and the tree doubles
+  // (measured 2026-10-14 on a live desktop profile: 196 -> 391 rows). Only the
+  // basename reaches the output, so this stays byte-identical to the CLI dump.
+  const baseDir = mkdtempSync(join(tmpdir(), "dsh-dock-dump-"));
+  const basePath = join(baseDir, "cordis.yml");
+  writeFileSync(basePath, "[]\n");
+  try {
+    process.stdout.write(appBoot.renderConfigDump("dsh", basePath, layers));
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+}
 
 try {
   const isVersionQuery = process.argv.slice(2).some(
@@ -195,7 +262,17 @@ try {
   // `import.meta.main` is false, so the entry's own
   // `if (import.meta.main) await runCli()` never fires.
   const mod = await import(entry.href);
-  await mod.runCli();
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--dsh-dock-dump") {
+    await dumpReservedProfile(argv[1]);
+  } else if (argv[0] === "--dsh-dock-manage") {
+    // Hand dsh back its own argv (minus the sentinel) so its parser sees the
+    // real `plugin --profile <name> …` invocation.
+    process.argv = [process.argv[0], process.argv[1], ...argv.slice(1)];
+    await mod.runCli({ manageDesktopProfile: true });
+  } else {
+    await mod.runCli();
+  }
 } catch (err) {
   if (err?.code === "EPERM" && err?.syscall === "symlink") {
     console.error(
@@ -216,9 +293,16 @@ pub(crate) fn dsh_client_proxies_mjs() -> &'static str {
     include_str!("dsh-client-proxies.mjs")
 }
 
+/// bootstrap 落位路径（**不写盘**；供保留档转发（ADR-0034）按路径 spawn 用）。
+///
+/// 与 [`write_dsh_bootstrap`] 共用 [`DSH_BOOTSTRAP_NAME`]，不并列字面量。
+pub(crate) fn dsh_bootstrap_path(data_dir: &Path) -> PathBuf {
+    engine_bin_dir(data_dir).join(DSH_BOOTSTRAP_NAME)
+}
+
 /// 落位 bootstrap（幂等；无变化零写入）。
 pub(crate) fn write_dsh_bootstrap(data_dir: &Path) -> Result<PathBuf> {
-    let path = engine_bin_dir(data_dir).join(DSH_BOOTSTRAP_NAME);
+    let path = dsh_bootstrap_path(data_dir);
     write_if_changed(&path, dsh_bootstrap_mjs().as_bytes(), false)?;
     Ok(path)
 }
@@ -2076,6 +2160,53 @@ mod tests {
         assert!(
             shim.is_ascii(),
             "shim 必须纯 ASCII（控制台代码页）：{shim:?}"
+        );
+    }
+
+    /// **保留档两个哨兵模式必须恒在**（ADR-0034，2026-10-14）：dsh 的命令行解析器对
+    /// `--profile desktop` 无条件拒绝（boot 与 `--dump-config` 都拒），保留档的**内容面**
+    /// 只能经这两个模式走 dsh 自己的代码（载体开关 + `dsh-app-boot` 公开 API）。
+    /// 删掉任一条都不会让编译器红——只会让该档的管理面静默失效，故在此钉住。
+    #[test]
+    fn bootstrap_keeps_reserved_profile_channels() {
+        let boot = dsh_bootstrap_mjs();
+        for needle in [
+            "--dsh-dock-dump",
+            "--dsh-dock-manage",
+            "manageDesktopProfile: true",
+            "loadProfileDirectory",
+            "renderConfigDump",
+            "mkdtempSync",
+        ] {
+            assert!(
+                boot.contains(needle),
+                "bootstrap 缺保留档通道 `{needle}`——该档内容面会静默失效：{boot}"
+            );
+        }
+        // 未命中哨兵时必须与从前**完全一致**（普通调用 = 不带选项的 runCli）
+        assert!(
+            boot.contains("await mod.runCli();"),
+            "缺默认分支：非保留档调用会拿不到 runCli"
+        );
+        // **失败要说得清**（2026-10-14 复核）：旧引擎缺 API / 档名可疑时必须是
+        // 一条带自述前缀的中文错误，而不是裸 TypeError（壳侧按该前缀翻成出路，
+        // 见 `profiles::reserved_channel_gap_hint`——两处同源，改一处即判红）。
+        assert!(
+            boot.contains(crate::profiles::RESERVED_CHANNEL_MISSING_MARKER),
+            "bootstrap 的自述前缀与壳侧映射已脱钩"
+        );
+        for needle in ["未导出", "拒绝含路径分隔符"] {
+            assert!(
+                boot.contains(needle),
+                "bootstrap 缺保留档失败自述 `{needle}`：{boot}"
+            );
+        }
+        // 落位路径与 Windows shim 指向的目标同源（单源常量，不并列字面量）
+        assert_eq!(
+            dsh_bootstrap_path(Path::new("/x/data"))
+                .file_name()
+                .and_then(|s| s.to_str()),
+            Some(DSH_BOOTSTRAP_NAME)
         );
     }
 

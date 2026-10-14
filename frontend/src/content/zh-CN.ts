@@ -384,10 +384,13 @@ export const t = {
     tagMaterialized: "已创建",
     tagTemplate: "可首启",
     tagNoUi: "无界面",
-    // 官方 Electron 客户端独占的保留名（desktop，2026-10-06）：徽标 + 写入口禁用说明
+    // 官方 Electron 客户端独占的保留名（desktop，2026-10-06；口径 2026-10-14 改为
+    // 「只禁生命周期面」——ADR-0034）：徽标 + 生命周期入口禁用说明 + 详情页横幅
     tagReserved: "官方保留",
     reservedHint:
-      "官方桌面客户端独占的 Profile：dsh 启动器拒绝外部启动与管理它，因此这里只能只读查看——要用它的配置，请「复制」成一个别的名字再启动。",
+      "官方桌面客户端独占的 Profile：启动、重启、设为默认、改名、删除这类生命周期操作在壳里关闭（dsh 启动器拒绝外部启动它）；插件、实验能力、MCP 等内容管理照常可用。",
+    reservedLifecycleHint:
+      "官方保留档：启动 / 重启 / 设为默认 / 改名 / 删除在壳里关闭（dsh 启动器拒绝外部启动它）——插件、实验能力、MCP 照常可用。",
     nameReserved: "desktop 是官方桌面客户端的保留名，请换一个名字",
     templateHint: "内置模板 · 首次启动自动创建",
     defaultBadge: "默认启动",
@@ -1233,6 +1236,9 @@ export const t = {
   // 动作链见 lib/restartProfile.ts。插件安装/卸载/更新/启停与能力开关共用。
   restart: {
     neededHint: "配置已变更：重启该 Profile 后才会生效",
+    // 保留档（desktop，ADR-0034 2026-10-14 口径）：内容面照常可改，但生命周期面
+    // 关闭（壳里没有重启入口）——它的"重启"是官方桌面客户端下次启动，故只说不按钮。
+    reservedNeededHint: "配置已变更：该档由官方桌面客户端启动，改动在它下次启动时生效",
     nowBtn: "立即重启",
   },
   // 破坏性操作确认对话框的通用文案（2026-09-08，U9）

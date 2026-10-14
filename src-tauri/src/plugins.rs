@@ -966,13 +966,49 @@ fn is_repo_segment(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
+/// 保留档在 WSL 客体世界的 **CLI 面缺口**（ADR-0034 §缺口，2026-10-14）。
+///
+/// 客体侧没有壳自写的 dsh bootstrap（它在宿主 `<engines>/bin/`），故载体开关与
+/// 公开 API 组合树都无法在客体里执行——`dsh plugin --profile desktop …` 与
+/// `--dump-config` 仍撞上游守卫。按红线三**显式报错**，不静默降级；
+/// 纯文件面（插件启停 / 实验能力挂载行 / MCP / 配置复制）不经 dsh CLI，客体照常可用。
+pub(crate) const RESERVED_GUEST_CLI_GAP: &str =
+    "保留档（desktop）在 WSL 客体世界暂不支持插件装卸 / 更新与组合树查询：\
+     客体侧没有壳的 dsh bootstrap，命令行守卫绕不开。\
+     该档的插件启停、实验能力、MCP 与配置复制照常可用。";
+
+/// 保留档 **CLI 面**的转发择源（纯函数，可测；ADR-0034）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReservedCliRoute {
+    /// 保留档 + 本地世界 ⇒ 走 bootstrap 的载体开关 / 公开 API 组合树。
+    Shim,
+    /// 其余（含非保留档的一切情形）⇒ 现状命令行转发。
+    Plain,
+}
+
+/// 判据单源：插件变更（`mutate_plugin_blocking`）与组合树（`fetch_dump_rows`）
+/// 共用同一份世界择源——两处各写一份 `if is_reserved` 就是两个真相源。
+pub(crate) fn reserved_cli_route(
+    profile: &str,
+    world: &crate::mgmt::World,
+) -> Result<ReservedCliRoute, String> {
+    if !crate::profiles::is_reserved_profile(profile) {
+        return Ok(ReservedCliRoute::Plain);
+    }
+    match world {
+        crate::mgmt::World::Local => Ok(ReservedCliRoute::Shim),
+        crate::mgmt::World::Wsl { .. } => Err(RESERVED_GUEST_CLI_GAP.to_string()),
+    }
+}
+
 /// 插件变更（安装 / 卸载 / 更新）的 dsh 转发参数（纯函数，可测）：
 /// `dsh plugin --profile <p> <verb> <spec> [--registry <url>]`。
 ///
-/// 抽出来的理由是**保留名守卫必须落在能单测的纯函数里**（2026-10-06）：`desktop`
-/// 由官方 Electron 客户端独占，`dsh plugin --profile desktop …` 必被上游拒绝
-/// （`bin.js:36`，本机实测 exit 1）——壳不得发起，否则市场安装/卸载会以一句英文
-/// 上游报错收场。
+/// **保留名不再在此拒绝**（ADR-0034，2026-10-14 维护者裁定：保留档只禁生命周期面，
+/// 插件 / 实验能力 / MCP 等内容面照常可用）：`--profile desktop` 的命令行守卫由
+/// **转发链**改用保留档专用模式绕开——见 [`crate::profiles::run_reserved_forward`]
+/// （`runCli({ manageDesktopProfile: true })`，dsh 自己的插件管理器）。
+/// 客体世界（WSL）没有壳 shim ⇒ 保留档的 CLI 面仍拒，判据在 `mutate_plugin_blocking`。
 ///
 /// 按次指定源（ADR-0006 §6）：`dsh plugin` 是 pnpm 薄转发器，参数逐字透传
 /// （`apps/cli/src/plugin.ts:98`），故 `--registry <url>` 直接生效——取包仍发生在
@@ -984,7 +1020,6 @@ pub(crate) fn plugin_mutation_args(
     registry: Option<&str>,
 ) -> Result<Vec<String>, String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
     // 安装/卸载/更新走宽口径三形态（ADR-0011）；更新检查/选版本仍严格 npm 判别
     validate_install_spec(spec)?;
     let mut args = vec![
@@ -1020,6 +1055,8 @@ pub fn mutate_plugin_blocking(
     registry: Option<&str>,
 ) -> Result<PluginOpOutcome, String> {
     let args = plugin_mutation_args(op.verb(), profile, spec, registry)?;
+    // 保留档 CLI 面的世界择源（ADR-0034）：本地走 shim、客体显式缺口。
+    let route = reserved_cli_route(profile, world)?;
     let log_path = data_dir.join("plugin-op.log");
     let run = match world {
         crate::mgmt::World::Local => {
@@ -1038,15 +1075,27 @@ pub fn mutate_plugin_blocking(
             // `dangerouslyAllowAllBuilds: true`，pnpm 不再进入审批门（复现点 12）。
             // 写失败只告警不阻断——操作本身可能根本不含构建脚本。
             crate::build_policy::ensure_profile_build_policy_best_effort(home, profile);
-            crate::profiles::run_toolchain_forward(
-                &crate::engines::resolve_toolchain(data_dir)?,
-                &args,
-                home,
-                &log_path,
-                data_dir,
-            )?
+            let toolchain = crate::engines::resolve_toolchain(data_dir)?;
+            if route == ReservedCliRoute::Shim {
+                // 保留档（ADR-0034）：命令行守卫由 bootstrap 的载体开关绕开，
+                // 仍跑 dsh 自己的插件管理器（兼容门 / 锁定 / 回滚 / reconcile 全保留）。
+                crate::profiles::run_reserved_forward(
+                    &toolchain,
+                    crate::profiles::ReservedForward::Manage,
+                    &args,
+                    home,
+                    &log_path,
+                    data_dir,
+                )?
+            } else {
+                crate::profiles::run_toolchain_forward(
+                    &toolchain, &args, home, &log_path, data_dir,
+                )?
+            }
         }
         crate::mgmt::World::Wsl { distro } => {
+            // 保留档在客体世界的 CLI 面缺口由 `reserved_cli_route` 前置拦下
+            // （红线三：技术不可能就明说，禁静默降级）；这里只剩常规档。
             // 客体 profile 存在性（读原语；宿主 home 在 WSL 模式下**不是**这个世界）
             let rel = format!("profiles/{profile}/package.json");
             let exists = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
@@ -1071,6 +1120,37 @@ pub fn mutate_plugin_blocking(
 
 /// 转发运行结果 → 插件操作结果（**纯函数**，本地 / 客体共用同一份分类与文案）：
 /// 退出码 0 = 成功；超时指向网络与 registry；其余取输出尾部做人读诊断。
+/// dsh 输出的尾部若干行（转发失败时给用户看的证据；空输出 = 空串）。
+fn op_output_tail(output: &str, lines: usize) -> String {
+    let all: Vec<&str> = output.lines().collect();
+    let start = all.len().saturating_sub(lines);
+    all[start..].join("\n")
+}
+
+/// 转发链失败时的**人话原因**（插件变更 / 组合树共用一处口径，2026-10-14 复核）。
+///
+/// 三类，按可行动性排：
+/// ① 保留档内容面**通道不可用**（旧引擎没有载体开关 / 没有 `dsh-app-boot` 公开 API）
+///    → 翻成中文 + 出路（升级引擎）。这类此前只会甩给用户一句上游英文，或干脆只剩
+///    一个退出码（红线三：技术不可能必须显式说明原因）；
+/// ② 有输出 → 带输出尾部（保留现场的原始证据，便于排障）；
+/// ③ 输出为空 → 只报退出码，不编造原因。
+fn forward_failure_reason(run: &crate::profiles::ForwardRun, label: &str) -> String {
+    let code = run
+        .code
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "未知".into());
+    if let Some(hint) = crate::profiles::reserved_channel_gap_hint(&run.output) {
+        return format!("{label}失败（dsh 退出码 {code}）：{hint}");
+    }
+    let tail = op_output_tail(&run.output, 8);
+    if tail.trim().is_empty() {
+        format!("{label}失败（dsh 退出码 {code}）")
+    } else {
+        format!("{label}失败（dsh 退出码 {code}）。输出尾部：\n{tail}")
+    }
+}
+
 fn classify_op_outcome(
     op: PluginOp,
     profile: &str,
@@ -1079,34 +1159,28 @@ fn classify_op_outcome(
 ) -> PluginOpOutcome {
     let ok = !run.timed_out && run.code == Some(0);
     let detail = if ok {
-        format!(
-            "已{label} {spec}（profile「{profile}」）——若该 profile 正在运行，重启后生效。",
-            label = op.label(),
-        )
+        // 保留档没有壳内重启入口（生命周期面关闭，ADR-0034）：它的"重启"是官方桌面
+        // 客户端下次启动。照抄常规档的「重启后生效」在该档是一句空承诺——用户找不到
+        // 那个重启按钮（2026-10-14 复核）。
+        if crate::profiles::is_reserved_profile(profile) {
+            format!(
+                "已{label} {spec}（profile「{profile}」）——该档由官方桌面客户端管理，\
+                 改动将在它下次启动时生效。",
+                label = op.label(),
+            )
+        } else {
+            format!(
+                "已{label} {spec}（profile「{profile}」）——若该 profile 正在运行，重启后生效。",
+                label = op.label(),
+            )
+        }
     } else if run.timed_out {
         format!(
             "{label}超时（10 分钟）已终止：网络或 registry 不可达时常见，检查网络后重试。",
             label = op.label()
         )
     } else {
-        let tail: String = run
-            .output
-            .lines()
-            .rev()
-            .take(8)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "{label}失败（dsh 退出码 {}）。输出尾部：\n{}",
-            run.code
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "未知".into()),
-            tail,
-            label = op.label()
-        )
+        forward_failure_reason(run, op.label())
     };
     PluginOpOutcome {
         ok,
@@ -1151,15 +1225,43 @@ mod op_tests {
         }
     }
 
-    /// 保留名守卫（2026-10-06）：`dsh plugin --profile desktop …` 必被上游拒绝
-    /// （`bin.js:36`，本机实测 exit 1）⇒ 交付参数构造必须前置拒绝，市场安装/卸载
-    /// 才不会以一句英文上游报错收场。
+    /// 保留档的**世界择源**（ADR-0034，2026-10-14 维护者裁定：保留档只禁生命周期面，
+    /// 插件 / 实验能力 / MCP 等内容面照常可用）：
+    /// 本地世界 ⇒ 走 bootstrap 的载体开关（`runCli({manageDesktopProfile:true})`，
+    /// dsh 自己的插件管理器）；客体世界没有壳 shim ⇒ **显式缺口**，不静默降级。
     #[test]
-    fn plugin_mutation_args_refuse_reserved_profile() {
+    fn reserved_cli_route_splits_local_and_guest() {
+        let local = crate::mgmt::World::Local;
+        let wsl = crate::mgmt::World::Wsl {
+            distro: "Ubuntu".to_string(),
+        };
         for reserved in ["desktop", "Desktop"] {
-            let err = plugin_mutation_args("add", reserved, "dsh-pet", None).unwrap_err();
-            assert!(err.contains("官方桌面客户端"), "{reserved} -> {err}");
+            assert_eq!(
+                reserved_cli_route(reserved, &local),
+                Ok(ReservedCliRoute::Shim),
+                "{reserved} 本地世界必须走 shim"
+            );
+            let err = reserved_cli_route(reserved, &wsl).unwrap_err();
+            assert!(err.contains("客体世界暂不支持"), "{reserved} -> {err}");
         }
+        // 常规档：两个世界都走现状命令行转发
+        assert_eq!(
+            reserved_cli_route("web", &local),
+            Ok(ReservedCliRoute::Plain)
+        );
+        assert_eq!(reserved_cli_route("web", &wsl), Ok(ReservedCliRoute::Plain));
+    }
+
+    /// 保留档的参数构造**不再前置拒绝**（ADR-0034）：转发链改由 bootstrap 的载体
+    /// 开关绕开命令行守卫，故这里必须产出与常规档**逐字相同**的 dsh 参数。
+    #[test]
+    fn plugin_mutation_args_accept_reserved_profile() {
+        assert_eq!(
+            plugin_mutation_args("add", "desktop", "dsh-pet", None).unwrap(),
+            vec!["plugin", "--profile", "desktop", "add", "dsh-pet"]
+        );
+        // 非法名仍被路径遍历防线拦下（与保留档口径无关）
+        assert!(plugin_mutation_args("add", "../evil", "dsh-pet", None).is_err());
         // 常规档：五元参数（plugin --profile <p> <verb> <spec>），注册表按需追加
         assert_eq!(
             plugin_mutation_args("add", "web", "dsh-pet", None).unwrap(),
@@ -1370,6 +1472,110 @@ mod op_tests {
             "输出尾部必须带上：{}",
             failed.detail
         );
+    }
+
+    /// 保留档内容面的**两种新文案**（2026-10-14 复核）：
+    /// ① 成功时不能承诺"重启后生效"——该档没有壳内重启入口，它的重启是官方客户端
+    ///    下次启动；
+    /// ② 通道不可用（旧引擎 / 上游名字守卫）时必须给中文出路，而不是把上游那句
+    ///    英文原样端出去。
+    #[test]
+    fn reserved_profile_ops_speak_of_next_official_launch_and_explain_the_gap() {
+        use crate::profiles::ForwardRun;
+        // ① 成功：保留档说"下次启动时生效"，常规档维持"重启后生效"
+        let reserved_ok = classify_op_outcome(
+            PluginOp::Install,
+            "desktop",
+            "dsh-pet",
+            &ForwardRun {
+                code: Some(0),
+                timed_out: false,
+                output: String::new(),
+            },
+        );
+        assert!(reserved_ok.ok);
+        assert!(
+            reserved_ok.detail.contains("下次启动时生效"),
+            "保留档不得承诺重启：{}",
+            reserved_ok.detail
+        );
+        assert!(
+            !reserved_ok.detail.contains("重启后生效"),
+            "保留档没有壳内重启入口：{}",
+            reserved_ok.detail
+        );
+        let plain_ok = classify_op_outcome(
+            PluginOp::Install,
+            "web",
+            "dsh-pet",
+            &ForwardRun {
+                code: Some(0),
+                timed_out: false,
+                output: String::new(),
+            },
+        );
+        assert!(
+            plain_ok.detail.contains("重启后生效"),
+            "{}",
+            plain_ok.detail
+        );
+
+        // ② 上游名字守卫（旧引擎忽略了载体开关）→ 翻成中文 + 出路
+        let guarded = classify_op_outcome(
+            PluginOp::Install,
+            "desktop",
+            "dsh-pet",
+            &ForwardRun {
+                code: Some(1),
+                timed_out: false,
+                output:
+                    "error: profile \"desktop\" is managed exclusively by the Electron application\n"
+                        .to_string(),
+            },
+        );
+        assert!(!guarded.ok);
+        assert!(
+            guarded
+                .detail
+                .contains("当前 dsh 引擎不支持保留档的内容面通道"),
+            "{}",
+            guarded.detail
+        );
+        assert!(
+            guarded.detail.contains("升级 dsh 引擎"),
+            "出口必须可行动：{}",
+            guarded.detail
+        );
+        assert!(
+            !guarded.detail.contains("managed exclusively"),
+            "不再甩上游英文：{}",
+            guarded.detail
+        );
+
+        // ③ bootstrap 自述的通道缺失（缺 API / 档名可疑）走同一处映射
+        let missing = forward_failure_reason(
+            &ForwardRun {
+                code: Some(1),
+                timed_out: false,
+                output: "[dsh-dock] 保留档通道不可用：当前 dsh 的 @deepseek-ai/dsh-app-boot 未导出 loadProfileDirectory——组合树通道需要 0.2.0-rc.2 及以上（ADR-0034）。请升级 dsh 引擎后重试。\n".to_string(),
+            },
+            "行表查询",
+        );
+        assert!(
+            missing.starts_with("行表查询失败（dsh 退出码 1）：当前 dsh 引擎不支持"),
+            "{missing}"
+        );
+
+        // ④ 空输出不编造原因（只报退出码）
+        let empty = forward_failure_reason(
+            &ForwardRun {
+                code: Some(1),
+                timed_out: false,
+                output: "   \n".to_string(),
+            },
+            "安装",
+        );
+        assert_eq!(empty, "安装失败（dsh 退出码 1）");
     }
 
     /// 纯装配：bundle / 官方内嵌（desktop-packages）/ 已装依赖 / 未装依赖四态。
@@ -1734,9 +1940,9 @@ fn fetch_dump_rows(
     world: &crate::mgmt::World,
 ) -> Result<DumpFacts, String> {
     crate::profiles::validate_profile_name(profile)?;
-    // 保留名连只读行表也取不到：`--dump-config` 同样过启动器的 rejectElectronProfile
-    // （2026-10-06 实测）⇒ 提前给出可读的中文原因，不把上游那句英文 stderr 端给用户。
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档 CLI 面的世界择源（ADR-0034）：本地走 bootstrap 的 dump 模式、
+    // 客体显式缺口——与插件变更共用同一份判据。
+    let route = reserved_cli_route(profile, world)?;
     let args = [
         "--profile".to_string(),
         profile.to_string(),
@@ -1752,18 +1958,32 @@ fn fetch_dump_rows(
             if !manifest_path.is_file() {
                 return Err(format!("profile「{profile}」尚未初始化"));
             }
-            let run = crate::profiles::run_toolchain_forward(
-                &crate::engines::resolve_toolchain(data_dir)?,
-                &args,
-                home,
-                &log_path,
-                data_dir,
-            )?;
+            // 保留档（ADR-0034）：`--dump-config --profile desktop` 同样撞启动器守卫
+            // （bin.js:112 无条件，载体开关也救不了），故走 bootstrap 的 dump 模式——
+            // 它用 `@deepseek-ai/dsh-app-boot` 的公开 API 组合同一个目录，输出与
+            // 命令行 dump 逐字节相同（2026-10-14 本机等价性实测），下游解析不变。
+            let toolchain = crate::engines::resolve_toolchain(data_dir)?;
+            let run = if route == ReservedCliRoute::Shim {
+                let dump_args = [profile.to_string()];
+                crate::profiles::run_reserved_forward(
+                    &toolchain,
+                    crate::profiles::ReservedForward::Dump,
+                    &dump_args,
+                    home,
+                    &log_path,
+                    data_dir,
+                )?
+            } else {
+                crate::profiles::run_toolchain_forward(
+                    &toolchain, &args, home, &log_path, data_dir,
+                )?
+            };
             // 自家 patch（缺失/损坏 = 空表，同清单容忍口径）
             let patch = patch_entry_map(&dir.join("cordis.patch.yml"));
             (run, fs_err(&manifest_path)?, patch)
         }
         crate::mgmt::World::Wsl { distro } => {
+            // 保留档在客体世界的组合树缺口由 `reserved_cli_route` 前置拦下。
             // 客体批量读（一次往返）：清单 + 自家 patch（patch 缺失 = 空表，同宿主口径）
             let rels = [
                 format!("profiles/{profile}/package.json"),
@@ -1783,12 +2003,10 @@ fn fetch_dump_rows(
         }
     };
     if run.timed_out || run.code != Some(0) {
-        return Err(format!(
-            "行表查询失败（dsh 退出码 {}）",
-            run.code
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "未知".into())
-        ));
+        // 原因不能丢（2026-10-14 复核）：保留档的内容面现在会真的走到这条转发链，
+        // 而"引擎不支持载体通道"这类失败只体现在输出里——只回一个退出码等于让用户
+        // 无从下手（ADR-0034 红线三）。与插件变更共用同一处口径。
+        return Err(forward_failure_reason(&run, "行表查询"));
     }
     Ok((
         parse_dump_rows_with_section(&run.output),
@@ -2067,9 +2285,8 @@ pub fn set_plugin_disabled(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
-    // 保留名（desktop，2026-10-06）：壳自己的 patch 内核**不经 dsh CLI**，上游拦不住
-    // ⇒ 写入口自行拒绝（写进去 = 改官方客户端自己的档案）。客体孪生同款。
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档（ADR-0034，2026-10-14 维护者裁定）：本动作是**纯文件面**（不经 dsh CLI）
+    // ⇒ 照常可用。保留档只禁生命周期面（启动 / 改名 / 删除 / 设为默认）。
     validate_row_id(row_id)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     let mut patch = PatchFile::read(&patch_path)?;
@@ -2091,8 +2308,9 @@ pub fn set_plugin_disabled(
 /// **调用方必须先经用户确认**（前端 ConfirmDialog）。
 pub fn quarantine_patch(home: &Path, profile: &str) -> Result<PathBuf, String> {
     crate::profiles::validate_profile_name(profile)?;
-    // 保留名（desktop，2026-10-06）：本动作会把 profile 层 patch 备份后**放空**——
-    // 落在官方客户端档案上就是清掉它自己的用户层，绝不执行。
+    // 保留档**仍然拒绝**（ADR-0034 §例外）：本动作会把 profile 层 patch 备份后
+    // **放空**——那是清掉官方客户端自己的用户层，属破坏性修复面，不在"内容面照常
+    // 可用"之列（维护者裁定只放开插件 / 实验能力 / MCP 的管理）。
     crate::profiles::ensure_not_reserved_profile(profile)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     if !patch_path.is_file() {
@@ -2116,7 +2334,7 @@ pub fn set_plugin_disabled_in_guest(
     disabled: bool,
 ) -> Result<(), String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档照常可用（ADR-0034）：纯文件面，与宿主孪生同口径。
     validate_row_id(row_id)?;
     let rel = format!("profiles/{profile}/cordis.patch.yml");
     let text = crate::guest::read_files(distro, std::slice::from_ref(&rel))?
@@ -2169,7 +2387,7 @@ pub fn ensure_catalog_insert_row(
     config: &[(&str, crate::official_catalog::ConfigValue)],
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档照常可用（ADR-0034）：实验能力挂载行是纯文件面写入。
     validate_row_id(row_id)?;
     let patch_path = home.join("profiles").join(profile).join("cordis.patch.yml");
     let mut patch = PatchFile::read(&patch_path)?;
@@ -2470,7 +2688,7 @@ pub fn needs_insert_row(declares_bundle: bool) -> bool {
 /// 返回 `true` = 实际改动了文件；行本就不存在 → `false`（幂等）。
 pub fn remove_catalog_insert_row(home: &Path, profile: &str, row_id: &str) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档照常可用（ADR-0034）：与写入侧同口径。
     validate_row_id(row_id)?;
     if !is_shell_row_id(row_id) {
         return Err(format!(
@@ -2749,42 +2967,44 @@ mod patch_tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
-    /// 保留名（desktop，2026-10-06）：壳自己的 patch 写入内核不经 dsh CLI，上游拦不住
-    /// ⇒ 四个写入口必须自行拒绝，且**文件一字节不动**（拒绝必须是前置的）。
+    /// **保留档内容面放行 / 破坏性修复面仍拒**（ADR-0034，2026-10-14 维护者裁定：
+    /// 保留档只禁生命周期面——启动 / 改名 / 删除 / 设为默认；插件启停、实验能力、
+    /// MCP 等**内容面**照常可用）。
+    ///
+    /// 本测试钉住分界：四个 patch 写入口对 `desktop` **真的落盘**（含备份），
+    /// 而「备份并放空」这一破坏性修复动作仍然前置拒绝、文件一字节不动。
     #[test]
-    fn patch_writers_refuse_reserved_profile_without_touching_files() {
+    fn patch_writers_allow_reserved_profile_but_quarantine_still_refuses() {
         let home = tmp();
         let patch = home.join("profiles/desktop/cordis.patch.yml");
         std::fs::create_dir_all(patch.parent().unwrap()).unwrap();
         let original = format!("{HEADER}- id: keep-me\n");
         std::fs::write(&patch, &original).unwrap();
 
-        // ① 启停（异常：写进官方客户端档案）② 兜底放空（会清掉它的用户层）
-        let err = set_plugin_disabled(&home, "desktop", "keep-me", true).unwrap_err();
-        assert!(err.contains("官方桌面客户端"), "{err}");
+        // ① 启停：写 `disabled` 单键（内容面，放行）
+        set_plugin_disabled(&home, "desktop", "keep-me", true).unwrap();
+        let after_toggle = std::fs::read_to_string(&patch).unwrap();
+        assert!(
+            after_toggle.contains("disabled: true"),
+            "启停必须真的落盘：{after_toggle}"
+        );
+        assert_ne!(after_toggle, original);
+        // ② 兜底放空：破坏性修复面，仍前置拒绝且**不改写**
         let err = quarantine_patch(&home, "desktop").unwrap_err();
         assert!(err.contains("官方桌面客户端"), "{err}");
-        // ③ 策展挂载行写入 ④ 行删除
-        let err =
-            ensure_catalog_insert_row(&home, "desktop", "dsh-dock-x", "pkg", &[]).unwrap_err();
-        assert!(err.contains("官方桌面客户端"), "{err}");
-        let err = remove_catalog_insert_row(&home, "desktop", "dsh-dock-x").unwrap_err();
-        assert!(err.contains("官方桌面客户端"), "{err}");
-        // ⑤ 配置行复制：**目标**是官方档（来源放行——那是官方档的合法出路）
-        let err = copy_plugin_config_blocking(&home, "web", "desktop", "pkg", &home).unwrap_err();
-        assert!(err.contains("官方桌面客户端"), "{err}");
-
         assert_eq!(
             std::fs::read_to_string(&patch).unwrap(),
-            original,
-            "拒绝必须是前置的：官方档 patch 不得被改写"
+            after_toggle,
+            "拒绝必须是前置的：quarantine 不得改写官方档 patch"
         );
-        let backups = std::fs::read_dir(patch.parent().unwrap())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains(".bak-"))
-            .count();
-        assert_eq!(backups, 0, "拒绝路径不得留下备份（没写就谈不上覆写）");
+        // ③ 策展挂载行写入 ④ 行删除（实验能力面，放行）
+        assert!(ensure_catalog_insert_row(&home, "desktop", "dsh-dock-x", "pkg", &[]).unwrap());
+        assert!(remove_catalog_insert_row(&home, "desktop", "dsh-dock-x").unwrap());
+        // ⑤ 配置行复制：目标写成官方档不再是保留名错误（该档尚未初始化 ⇒ 报的是
+        //    别的错，本断言只钉"不再是保留名拒绝"）
+        let err = copy_plugin_config_blocking(&home, "web", "desktop", "pkg", &home).unwrap_err();
+        assert!(!err.contains("官方桌面客户端"), "{err}");
+
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -3182,9 +3402,8 @@ pub fn copy_plugin_config_blocking(
 ) -> Result<CopyConfigOutcome, String> {
     crate::profiles::validate_profile_name(source)?;
     crate::profiles::validate_profile_name(target)?;
-    // 保留名（desktop，2026-10-06）：**只拦目标**——来源是官方档时是纯读（把它的
-    // 配置搬到别的 profile 正是官方档的合法出路）；目标写成官方档则是改它的档案。
-    crate::profiles::ensure_not_reserved_profile(target)?;
+    // 保留档照常可用（ADR-0034）：目标写成官方档 = 把配置复制进该档，属内容面；
+    // 来源是官方档本来就只有纯读（官方档的合法再利用路径）。
     if source == target {
         return Err("来源与目标是同一个 profile".to_string());
     }
@@ -3296,8 +3515,7 @@ pub fn copy_plugin_config_in_guest(
 ) -> Result<CopyConfigOutcome, String> {
     crate::profiles::validate_profile_name(source)?;
     crate::profiles::validate_profile_name(target)?;
-    // 保留名只拦目标（同宿主分支：来源是官方档 = 合法读取）。
-    crate::profiles::ensure_not_reserved_profile(target)?;
+    // 保留档照常可用（ADR-0034）：同宿主分支。
     if source == target {
         return Err("来源与目标是同一个 profile".to_string());
     }
@@ -3591,7 +3809,7 @@ pub fn ensure_catalog_insert_row_in_guest(
     config: &[(&str, crate::official_catalog::ConfigValue)],
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档照常可用（ADR-0034）：纯文件面，与宿主孪生同口径。
     validate_row_id(row_id)?;
     let rel = format!("profiles/{profile}/cordis.patch.yml");
     let mut patch = read_guest_patch(distro, &rel)?;
@@ -3609,7 +3827,7 @@ pub fn remove_catalog_insert_row_in_guest(
     row_id: &str,
 ) -> Result<bool, String> {
     crate::profiles::validate_profile_name(profile)?;
-    crate::profiles::ensure_not_reserved_profile(profile)?;
+    // 保留档照常可用（ADR-0034）：与写入侧同口径。
     validate_row_id(row_id)?;
     if !is_shell_row_id(row_id) {
         return Err(format!(

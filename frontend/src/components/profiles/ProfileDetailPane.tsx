@@ -85,7 +85,8 @@ export function ProfileDetailPane({
   materialized: boolean
   isRunning: boolean
   isSwitching?: boolean
-  /** 官方 Electron 独占的保留名（2026-10-06）：四个 tab 仍是只读清点，但启动入口关闭。 */
+  /** 官方 Electron 独占的保留名（2026-10-06；口径 2026-10-14 = 只禁生命周期面，
+   *  ADR-0034）：四个 tab 的内容面照常可操作，只有启动入口关闭。 */
   reserved?: boolean
   busy: boolean
   onLaunch: () => void
@@ -613,8 +614,10 @@ export function ProfileDetailPane({
         opBusy === `update:${item.entry.name}` ||
         opBusy === `toggle:${item.entry.name}`
       }
-      // 官方保留档（desktop，2026-10-06）：行内动作全部关闭（后端四个写入口也会拒）。
-      opBusy={opBusy !== null || reserved}
+      // 保留档（ADR-0034，2026-10-14 口径）：内容面**照常可操作**——行内动作不再因
+      // `reserved` 关闭；保留档只有生命周期面（启动 / 重启 / 设为默认 / 改名 / 删除）
+      // 在行与详情头关闭。
+      opBusy={opBusy !== null}
       latest={updateMap?.[item.entry.name]}
       onToggle={() => toggleDisabled(item.entry.name)}
       onUpdate={() => runOp("update", item.entry.name)}
@@ -745,8 +748,9 @@ export function ProfileDetailPane({
         </div>
       )}
 
-      {/* 官方保留档（desktop，2026-10-06）：本页四个 tab 全是只读清点，读得到；
-          但启动/改名/删除/插件变更在壳里一律关闭 ⇒ 说清为什么 + 出路（复制）。 */}
+      {/* 官方保留档（desktop，2026-10-06；口径 2026-10-14 改为「只禁生命周期面」，
+          ADR-0034）：四个 tab 的内容面照常可操作，只有启动/重启/设为默认/改名/删除
+          关闭 ⇒ 横幅说清这条分界，不让用户以为整页只读。 */}
       {reserved && (
         <div className="px-5 pt-3">
           <div className="flex items-start gap-2 rounded-lg border border-line bg-wash px-3 py-2 text-label text-dim">
@@ -785,7 +789,7 @@ export function ProfileDetailPane({
               size="sm"
               onClick={onLaunch}
               disabled={busy || reserved}
-              title={reserved ? t.profiles.reservedHint : undefined}
+              title={reserved ? t.profiles.reservedLifecycleHint : undefined}
               className="mt-4 gap-1.5"
             >
               <Play className="size-3.5" />
@@ -816,7 +820,6 @@ export function ProfileDetailPane({
                 <FirstPartyPlugins
                   profileName={name ?? ""}
                   plugins={plugins}
-                  readOnly={reserved}
                   onNotice={onNotice}
                   onChanged={reload}
                 />
@@ -907,8 +910,7 @@ export function ProfileDetailPane({
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     size="sm"
-                    disabled={opBusy !== null || reserved}
-                    title={reserved ? t.profiles.reservedHint : undefined}
+                    disabled={opBusy !== null}
                     onClick={() => {
                       setAddDialogTab("market")
                       setAddDialogOpen(true)
@@ -1091,7 +1093,6 @@ export function ProfileDetailPane({
           {tab === "mcp" && (
             <McpManager
               profileName={name}
-              readOnly={reserved}
               patchYaml={detail?.patch_yaml ?? null}
               onNotice={onNotice}
             />

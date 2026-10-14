@@ -1248,14 +1248,17 @@ fn stale_row_error(server_name: &str, row_id: &str, why: &str) -> String {
     )
 }
 
-/// 保留名写入守卫（**scope 感知**，纯函数可测；2026-10-06）：`Profile` 层写的是
-/// 官方 Electron 客户端自己的 `profiles/desktop/cordis.patch.yml` ⇒ 拒绝；`Global`
-/// 层（`$DSH_HOME/cordis.patch.yml`，对所有 profile 生效）与具体 profile 无关，照常。
-/// 宿主/客体两侧的 save / delete 共用同一判据。
-pub fn ensure_writable_scope(profile: &str, scope: McpScope) -> Result<(), String> {
-    if scope == McpScope::Profile {
-        crate::profiles::ensure_not_reserved_profile(profile)?;
-    }
+/// **写入前判据**（纯函数可测；2026-10-14 复核：判定已不再分层，形参是**位置保留**）。
+///
+/// 2026-10-06 起 `Profile` 层曾对保留名（desktop）整体拒绝；**2026-10-14 维护者
+/// 裁定改口径**（ADR-0034）：保留档只禁**生命周期面**（启动 / 改名 / 删除 /
+/// 设为默认），MCP 属内容面 ⇒ 两层现在同口径——都只校验 profile 名（路径遍历防线）。
+///
+/// 本函数保留为**单一判据位**（宿主 / 客体、save / delete 共用一处），后续若再收紧
+/// /放开只改这里；`_scope` 刻意留在签名里（值不再参与判定）：四个调用点都按"层"传参，
+/// 撤掉形参只会让调用点各改一遍，还丢掉将来按层分叉的位置。
+pub fn ensure_writable_scope(profile: &str, _scope: McpScope) -> Result<(), String> {
+    crate::profiles::validate_profile_name(profile)?;
     Ok(())
 }
 
@@ -1390,20 +1393,28 @@ mod tests {
     /// 一条带 `!!js` secret 引用的行（上游文档推荐的传 token 写法，本机真实存在）。
     const TAGGED_ROW: &str = "- insert:\n    - id: mcp-tagger\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: tagger\n        transport: stdio\n        command: npx\n        args:\n          - -y\n        env:\n          TOKEN: !!js process.env.X\n";
 
-    /// 保留名（desktop，2026-10-06）：MCP 写入按**层**判——profile 层写的是官方
-    /// Electron 客户端自己的 patch ⇒ 拒绝；全局层与具体 profile 无关 ⇒ 放行。
+    /// **保留档 MCP 写入按层放行**（ADR-0034，2026-10-14 维护者裁定：保留档只禁
+    /// 生命周期面——启动 / 改名 / 删除 / 设为默认；MCP 属内容面 ⇒ 照常可用）。
+    ///
+    /// 本测试钉住分界：`Profile` 层（写该档自己的 `cordis.patch.yml`）与 `Global` 层
+    /// 都放行；**非法 profile 名**仍被路径遍历防线拦下（与保留档口径无关）。
     #[test]
-    fn reserved_profile_blocks_only_profile_layer_writes() {
+    fn reserved_profile_may_write_both_scopes() {
         for reserved in ["desktop", "Desktop"] {
-            let err = ensure_writable_scope(reserved, McpScope::Profile).unwrap_err();
-            assert!(err.contains("官方桌面客户端"), "{reserved} -> {err}");
+            assert_eq!(
+                ensure_writable_scope(reserved, McpScope::Profile),
+                Ok(()),
+                "{reserved} 的 profile 层属内容面，应放行"
+            );
             assert_eq!(
                 ensure_writable_scope(reserved, McpScope::Global),
                 Ok(()),
-                "全局层不写官方档案，不该被拦"
+                "全局层与具体 profile 无关，应放行"
             );
         }
         assert_eq!(ensure_writable_scope("web", McpScope::Profile), Ok(()));
+        // 路径遍历防线不因保留档放开而松动
+        assert!(ensure_writable_scope("../evil", McpScope::Profile).is_err());
     }
 
     #[test]

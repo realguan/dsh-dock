@@ -85,9 +85,9 @@ export function MarketplaceView({
         api.listProfiles().catch(() => [] as ProfileSummary[]),
         api.listAllPlugins().catch(() => [] as AggregatePlugin[]),
       ])
-      // 官方保留档（desktop，2026-10-06）不进安装目标：`dsh plugin --profile desktop`
-      // 必被上游拒绝，摆在选择器里只会让用户点到一次注定失败的安装。
-      setProfiles(profs.filter((p) => !p.reserved))
+      // 官方保留档（desktop）**照常进安装目标**（ADR-0034，2026-10-14）：插件安装
+      // 属内容面，转发链由 bootstrap 的载体开关走 dsh 自己的插件管理器。
+      setProfiles(profs)
 
       const map = new Map<string, string[]>()
       for (const p of allPlugins) {
