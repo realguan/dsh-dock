@@ -88,7 +88,7 @@ describe("目录闸门（FIRST_PARTY_PLUGINS 自身健全性）", () => {
         // 动态 id 取值需显式查表断言。
         const table = dict.profiles.firstPartyItems as Record<
           string,
-          { desc: string; note: string } | undefined
+          { desc: string } | undefined
         >
         const item = table[p.id]
         expect(item, `${p.id} 缺 ${lang} 文案`).toBeDefined()

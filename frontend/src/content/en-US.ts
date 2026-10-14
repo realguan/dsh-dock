@@ -595,9 +595,6 @@ export const enUS: AppCopy = {
     //    market / official catalog / this shelf — boundaries in lib/firstPartyPlugins.ts) ──
     firstPartyEmpty: "No first-party plugins ship with this version yet",
     firstPartyNoDesc: "(no description provided)",
-    /** Shown in the card footer for uninstalled entries: the version the catalog pins
-     *  (installed entries show the version actually read from disk instead). */
-    firstPartyPin: (v: string) => `Catalog ${v}`,
     firstPartyInstall: "Install",
     firstPartyInstalled: (v: string) => `Installed ${v}`,
     firstPartyUpdateAvailable: (v: string) => `Update to ${v} available`,
@@ -608,12 +605,10 @@ export const enUS: AppCopy = {
     firstPartyUninstallConfirmBody: (name: string) =>
       `Uninstall ${name} from this profile? This removes the dependency and its mount declaration; session data is untouched, and you can reinstall it later.`,
     firstPartyBusy: "Working…",
-    // Keyed by entry id (the `id` field in firstPartyPlugins.ts): description +
-    // host prerequisite note. Empty note = no prerequisite; the block is not rendered.
+    // Keyed by entry id (the `id` field in firstPartyPlugins.ts): card description.
     firstPartyItems: {
       "deepseek-chat-embed": {
         desc: "Natively embeds chat.deepseek.com inside the DSH Dock window: side-by-side in the right pane or full-screen in the main area, with the login session persisted per profile.",
-        note: "In-window embedding requires a newer DSH Dock build with the host support (shipped with the ADR-0033 embed primitives). On earlier versions it degrades to an external companion card — usable, but not embedded in the window.",
       },
     },
     // ── Plugin list, three kinds in one (2026-09-20, ADR-0028 batch 2: base layers /

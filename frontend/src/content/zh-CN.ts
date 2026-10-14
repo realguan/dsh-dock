@@ -605,8 +605,6 @@ export const t = {
     //    三份清单三种可信度，边界见 lib/firstPartyPlugins.ts 文件头）──────────────
     firstPartyEmpty: "这一版还没有随附的自研插件",
     firstPartyNoDesc: "（作者未提供描述）",
-    /** 未装时卡尾事实行显示目录钉的版本（已装则显示实读版本）。 */
-    firstPartyPin: (v: string) => `目录版本 ${v}`,
     firstPartyInstall: "安装",
     firstPartyInstalled: (v: string) => `已安装 ${v}`,
     firstPartyUpdateAvailable: (v: string) => `可更新至 ${v}`,
@@ -617,12 +615,10 @@ export const t = {
     firstPartyUninstallConfirmBody: (name: string) =>
       `确定从本 Profile 卸载 ${name} 吗？卸载会移除依赖与挂载声明，会话数据不受影响；之后想用可以再装回来。`,
     firstPartyBusy: "处理中…",
-    // 按条目 id 取（firstPartyPlugins.ts 的 `id` 字段）：描述 + 宿主前置备注。
-    // 备注为空字符串 = 无前置，整块不渲染。
+    // 按条目 id 取（firstPartyPlugins.ts 的 `id` 字段）：卡片描述。
     firstPartyItems: {
       "deepseek-chat-embed": {
         desc: "在 DSH Dock 窗口内原生内嵌 chat.deepseek.com：右侧栏并排查阅或中央全屏对话，登录态随 Profile 持久保存。",
-        note: "窗口内嵌需要较新版本的 DSH Dock 宿主支持（随 ADR-0033 内嵌原语发布）；在更早的版本上会自动降级为外部引导卡片——功能可用，但不是窗口内嵌。",
       },
     },
     // ── 插件列表三类合一（2026-09-20，ADR-0028 第二批：底座 / 第三方 / 实验性一行，
