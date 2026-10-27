@@ -620,7 +620,7 @@ jobs:
         run: scripts/fetch-pnpm-bundle.sh
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-llvm-cov
 
