@@ -31,6 +31,18 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-30 发版 · **v1.4.2 已发布（工作台身份 token 握手 + 聊天内嵌插件 v0.1.2），进入冻结期** —— guan（AI 协作）
+
+- **变更**：tag `v1.4.2`（`da9a075`）已推 origin，CI `build` 三平台矩阵 + Release 全部 success；
+  产物已挂在 <https://github.com/realguan/dsh-dock/releases/tag/v1.4.2>（macOS arm64/x64
+  `.dmg` + `.app.tar.gz`、Windows `.msi` / `-setup.exe`、Linux `.deb`/`.rpm`/`.AppImage`，
+  含 `.sig` 与 `latest.json` v1.4.2），应用内更新通道已指向该版本。
+- **影响**：**进入冻结期**——Release notes 发出至三平台产物验收通过期间，master 只收
+  fix，不收 feat（CONTRIBUTING §8 / `docs/contracts/README.md` §冻结期）。需要验收的
+  同伴：三平台各装一次并确认能进工作台；WSL 客体模式请那位报障用户重点复验。其余：仅周知。
+- **凭据**：`gh run view 41022896573` = ubuntu/macos(arm64)/macos(x86_64)/windows 四 leg
+  + release job 全绿；`python3 scripts/check-release-coverage.py v1.4.2` 通过（5 提交）。
+
 ### 2026-10-30 缺陷修复 · **工作台身份改由 token 握手裁定，日志地址降为候选（ADR-0035）** —— guan（AI 协作）
 
 - **变更**：`8e22460`（后续含版本 bump 与发布日志提交）。起因是一位 Windows 用户的
