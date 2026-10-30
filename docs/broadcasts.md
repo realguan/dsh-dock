@@ -31,6 +31,24 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-10-30 缺陷修复 · **工作台身份改由 token 握手裁定，日志地址降为候选（ADR-0035）** —— guan（AI 协作）
+
+- **变更**：`8e22460`（后续含版本 bump 与发布日志提交）。起因是一位 Windows 用户的
+  WSL 客体模式永远卡在启动屏（5/5 全绿却进不去）。壳此前把「日志里第一个 `http(s)://`
+  词」当成工作台地址，而 dsh 的 stdout 是所有插件共享的自由文本——账号插件先打的
+  deepseek 地址顶替了工作台地址，导航被外链策略拦下，`navigate()` 返回值又被丢弃，
+  于是壳照播「已进入工作台」。改动要点：候选 = 回环主机 + 非空 `token=`；真伪由
+  launch token 握手（`303 + Set-Cookie`）裁定，失败只是换下一个候选；导航后必须
+  观察到 WebView 落到工作台 origin 才算成功；逃生口另存带 token 地址；token 不进日志。
+  新增 [`docs/adr/0035-workbench-identity-by-token-handshake.md`](./adr/0035-workbench-identity-by-token-handshake.md)。
+- **影响**：**行为变化**——就绪失败现在会**报错**（step4 红行 + 错误卡，会话保留）而不是
+  假绿；`workbench_url` 改为不含 launch token 的干净地址（托盘/前端拿到的也是干净地址）。
+  若有人在读 `docs/contracts/dsh-behavior-ledger.md` 复现点 1 做上游适配，判据已从
+  「日志文案」变为「日志候选 + token 握手」，请按新表述复核。其余：仅周知。
+- **凭据**：`cd src-tauri && cargo test --lib` 566 passed / 7 ignored；`cargo clippy
+  --all-targets -- -D warnings` 与 `cargo fmt --check` 全绿；前端零改动（`BootStep`
+  本就渲染 `error` 态）。diff 规模：11 文件 +546/−71（另新增 ADR 一份）。
+
 ### 2026-10-14 发版准备 · **v1.4.1 发布准备（自研货架全景重构 + 插件切 v0.1.1 + 退化 rect 让位防线）** —— guan（AI 协作）
 
 - **变更**：
