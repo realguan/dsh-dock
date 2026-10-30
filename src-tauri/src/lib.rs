@@ -109,6 +109,20 @@ pub(crate) const EXTERNAL_URL_HOSTS: &[&str] = &[
     "www.npmjs.com",
 ];
 
+/// 回环主机判定（**单一真相源**，2026-10-30 收口 / ADR-0035）。
+///
+/// 这套字符串此前在 `ui.rs::on_navigation` 与 `shell.rs` 的地址解析里**各写一份**
+/// ——"往里加一个写法就漏另一边"是必然的。工作台只可能是本机回环，两处同源。
+///
+/// 只认字面量，不做 DNS 解析：`127.0.0.1` 是 dsh 实际 bind 的地址；`localhost`
+/// 与 `[::1]` 是上游 `--public-url`、用户手输与 IPv6 监听的常见形态。
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "[::1]" | "::1"
+    )
+}
+
 /// 校验外链：仅 http/https，且主机等于或以白名单域结尾（`.example.com` 子域）。
 pub(crate) fn is_allowed_external_url(raw: &str) -> bool {
     let Ok(url) = tauri::Url::parse(raw) else {
@@ -213,6 +227,9 @@ pub fn run() {
                 pending: Mutex::new(None),
                 update_status: Mutex::new(None),
                 workbench_url: Mutex::new(None),
+                // 2026-10-30（ADR-0035）：带 launch token 的工作台地址，仅「在浏览器中
+                // 打开」用（系统浏览器没有 WebView 的 cookie jar）；只在内存。
+                workbench_browser_url: Mutex::new(None),
                 // 2026-09-15：/api 会话 Cookie 的壳内存副本（回环调用用；不落盘）。
                 workbench_cookie: Mutex::new(None),
                 forced_profile: Mutex::new(None),
@@ -389,7 +406,9 @@ pub fn run() {
                 "profiles_manager" => commands::window::open_profiles_window(handle),
                 "open_in_browser" => {
                     let state = handle.state::<Arc<boot::ShellState>>().inner().clone();
-                    let url = state.workbench_url.lock().unwrap().clone();
+                    // 2026-10-30（ADR-0035）：与 IPC 同一口径——优先带 token 的地址
+                    // （系统浏览器没有 WebView 的 cookie jar，干净地址恒 401）。
+                    let url = state.browser_open_url();
                     if let Some(url) = url {
                         if let Err(e) = open::that_detached(url.as_str()) {
                             tracing::error!("浏览器打开工作台失败：{e}");

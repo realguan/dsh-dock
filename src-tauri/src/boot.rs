@@ -145,8 +145,21 @@ pub(crate) struct ShellState {
     pub(crate) pending: Mutex<Option<Box<dyn crate::executor::Executor>>>,
     /// 最近一次更新检测结果（前端 chip / 托盘菜单共用）。
     pub(crate) update_status: Mutex<Option<crate::updates::UpdateStatus>>,
-    /// 当前工作台地址（dsh 就绪导航时记录；「在浏览器中打开」入口用）。
+    /// 当前工作台地址（dsh 就绪导航时记录）。
+    ///
+    /// **不带 launch token**（2026-10-30，ADR-0035）：这是 WebView 导航与
+    /// `get_workbench_url` / 插件回环 origin 的真相源，可以进日志、进前端；
+    /// 带 token 的形态另存 [`Self::workbench_browser_url`]。
     pub(crate) workbench_url: Mutex<Option<tauri::Url>>,
+    /// 当前工作台的**带 launch token** 地址，仅供「在浏览器中打开」用（2026-10-30）。
+    ///
+    /// 为什么需要：系统浏览器没有 WebView 的 cookie jar，拿干净地址进去必然 401。
+    /// 上游 `BrowserAuth.authorizeIndex` 每次只是把 `token` 与 `launchToken` 比对
+    /// （源码里没有任何 revoked/used 标记），dsh 进程存活期内**重复使用同一 token
+    /// 恒能再铸一次 cookie**——所以留一份带 token 的地址，正是把逃生口保住。
+    ///
+    /// **只在内存**：不落盘、不写日志、不下发前端（AGENTS §4.3）。每次握手成功时覆盖。
+    pub(crate) workbench_browser_url: Mutex<Option<String>>,
     /// 当前工作台的 **`/api` 会话 Cookie**（`name=value`，2026-09-15 新增）。
     ///
     /// 为什么需要：dsh 0.1.6-alpha.1 的 `/api` 有**两道**栅栏——
@@ -283,6 +296,17 @@ impl ShellState {
             .superseded(token, self.shutting_down.load(Ordering::SeqCst))
     }
 
+    /// 「在浏览器中打开」该用哪个地址（2026-10-30，ADR-0035）。
+    ///
+    /// 优先带 launch token 的那份：系统浏览器没有壳内 WebView 的 cookie jar，
+    /// 干净地址进去恒 401。只有拿不到 token 版本（老路径/尚未握手）才退回干净地址
+    /// ——退回等于可能 401，但总比"打不开"好，且绝不把 token 写进日志或前端。
+    pub(crate) fn browser_open_url(&self) -> Option<String> {
+        let token_url = self.workbench_browser_url.lock().unwrap().clone();
+        let clean = self.workbench_url.lock().unwrap().clone();
+        browser_url_preference(token_url, clean.as_ref())
+    }
+
     /// 推进在途交接的阶段（无交接或已终结时静默：不复活旧意图）。
     pub(crate) fn advance_handoff(&self, phase: HandoffPhase) {
         let mut guard = match self.handoff.lock() {
@@ -379,6 +403,27 @@ pub(crate) fn run_executor_session(
                 .as_mut()
                 .and_then(|e| e.read_ready_marker())
         };
+        // 身份裁定器（ADR-0035）：日志里的地址只是**候选**，真伪在这里握手。
+        // 上游 launch token 是每次启动新生成的进程令牌，只有我们 spawn 的那个 dsh
+        // 认它（303 + Set-Cookie）；第三方 URL（插件日志里的外链）必然失败 → 换下一个
+        // 候选继续等，而不是把壳推进"假就绪"。成功时顺带把 Cookie 注入 WebView，
+        // 于是 `Ready` 分支只需导航干净地址（token 不再出现在 WebView 的 URL 里）。
+        let mut confirm = |raw: &str| -> Option<String> {
+            let url = tauri::Url::parse(raw).ok()?;
+            match authenticate_workbench_session(&state, &url) {
+                Ok(clean) => {
+                    // 逃生口（ADR-0035）：留一份带 token 的地址给系统浏览器——
+                    // 上游 authorizeIndex 不做消费标记，进程存活期内可重复兑换。
+                    // 只在内存，绝不进日志/前端。
+                    *state.workbench_browser_url.lock().unwrap() = Some(raw.to_string());
+                    Some(clean.to_string())
+                }
+                Err(e) => {
+                    tracing::warn!("工作台候选身份握手未通过（换下一个候选）：{e}");
+                    None
+                }
+            }
+        };
         // 等待期运转指示：step2 已在 spawn 成功后收口，step3 从未发过 running
         // ——时间线上「启动工作台」永挂 loading 而「等待就绪」凭空 done（倒挂）。
         // 发 running 让卡头在等待期正确显示「等待就绪」。
@@ -387,6 +432,7 @@ pub(crate) fn run_executor_session(
             &log,
             &mut exited,
             &mut marker,
+            &mut confirm,
             BOOT_STALL,
             BOOT_STALL_GRACE,
             BOOT_TIMEOUT,
@@ -417,37 +463,55 @@ pub(crate) fn run_executor_session(
                 let _ = teardown_session(&state);
                 emit_boot_error(&app, &format!("DSH 未在预期时间内就绪{detail}"), &tail);
             }
-            shell::ReadyOutcome::Ready(raw) => {
+            shell::ReadyOutcome::Ready(clean) => {
+                // 走到这里 = 候选已通过 token 握手（`confirm` 里完成兑换 + Cookie 注入），
+                // `clean` 是去掉 launch token 的导航地址——token 不再进日志/不再进 URL 栏。
                 if !session_is_current(&state, epoch) || state.boot_superseded(token) {
                     return; // 就绪前被切走：不再导航/监护新会话
                 }
-                match tauri::Url::parse(&raw) {
+                match tauri::Url::parse(&clean) {
                     Ok(url) => {
-                        tracing::info!("DSH 已就绪，进入 {url}");
+                        tracing::info!("DSH 已就绪（身份已握手），进入 {url}");
                         *state.workbench_url.lock().unwrap() = Some(url.clone());
                         emit_step(&app, 3, "done", &format!("DSH 已就绪，地址：{url}"));
                         emit_step(&app, 4, "running", "正在打开工作台界面");
-                        let navigate_url = match authenticate_workbench_session(&state, &url) {
-                            Ok(Some(clean_url)) => clean_url,
-                            Ok(None) => url.clone(),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "预植入工作台认证 Cookie 失败（回退原地址导航）：{e}"
-                                );
-                                url.clone()
-                            }
-                        };
                         // 交接阶段推进（ADR-0014）：导航前标记「进入工作台」，
                         // 主窗口新文档首帧即按此渲染同款幕布，直到 React 接管。
                         state.advance_handoff(HandoffPhase::Entering);
-                        let _ = state.window.navigate(navigate_url);
+                        if let Err(e) = state.window.navigate(url.clone()) {
+                            // 导航未被受理：**绝不播报成功**（旧实现丢弃返回值 →
+                            // 5/5 全绿却仍在启动屏，真机事故的直接成因）。
+                            emit_step(&app, 4, "error", "工作台界面打开失败");
+                            emit_boot_error(
+                                &app,
+                                &format!("无法打开工作台界面：{e}"),
+                                &read_log_tail(&log),
+                            );
+                            return;
+                        }
+                        // 观察而非假设：`navigate()` 返回 Ok 只代表"受理"，可能被
+                        // `on_navigation` 判成外链（放系统浏览器 + 拦下 WebView）。
+                        // 只有 WebView 实际落到工作台 origin 才算"进去了"。
+                        if !confirm_workbench_entered(&state.window, &url, WORKBENCH_ENTER_TIMEOUT)
+                        {
+                            emit_step(&app, 4, "error", "工作台界面未能载入");
+                            emit_boot_error(
+                                &app,
+                                "工作台界面未能载入（导航被拦下或页面未落地）",
+                                &read_log_tail(&log),
+                            );
+                            // 会话**保留**：错误卡之后，托盘「在浏览器中打开」仍是逃生口。
+                            return;
+                        }
                         state.advance_handoff(HandoffPhase::Ready);
                         emit_step(&app, 4, "done", "已进入工作台");
                         guard_session(&app, &state, &log, epoch);
                     }
                     Err(e) => {
+                        // 理论上不可达（候选在 `parse_workbench_candidate` 里已 parse 过），
+                        // 留作防御：真出现就是壳内部不一致，必须报错而不是静默。
                         emit_step(&app, 3, "error", "服务地址无效");
-                        emit_boot_error(&app, &format!("DSH 报告了无效地址（{raw}）：{e}"), "");
+                        emit_boot_error(&app, &format!("DSH 报告了无效地址（{clean}）：{e}"), "");
                         let _ = teardown_session(&state);
                     }
                 }
@@ -460,14 +524,35 @@ pub(crate) fn run_executor_session(
 /// 为 dsh web（0.1.2+）在壳侧先兑换 token 并将 SameSite=Lax 的会话 Cookie 注入 WebView，
 /// 从而规避 WebKit 跨域导航（tauri://localhost → 127.0.0.1）在 303 重定向时
 /// 丢弃 SameSite=Strict Cookie 导致的 401（dsh web authentication required）。
+///
+/// 2026-10-30（ADR-0035）：本函数同时是**工作台身份的唯一裁定者**。
+/// 候选地址只从日志/标记文件里"读出来"，真伪在这里由 token 握手裁定——
+/// 上游 `authenticatedUrl` 附带的 token 是每次启动新生成的 process launch token，
+/// 只有**我们 spawn 的那个 dsh** 认它；换任何第三方 URL 都拿不到 303+Set-Cookie。
+/// 因此这里 `Err` = "这不是我们的工作台"，调用方据此换下一个候选（不是启动失败）；
+/// `Ok` = 已证实并就位（webserver 已监听 + browserAuth 已生效 + index 已可服务）。
+///
+/// 语义收紧（同一次改动）：
+/// - 只接受**回环**主机：壳托管的 dsh 恒在 127.0.0.1/localhost/[::1]，
+///   把 token 发给别的 host 等于外泄凭据；
+/// - 无 token / 无 Set-Cookie / 非 303 一律 `Err`。旧实现这两种情况返回
+///   `Ok(None)` 让调用方"回退原地址导航"，正是把猜测当真身、最终卡死启动屏的路径。
 pub(crate) fn authenticate_workbench_session(
     state: &ShellState,
     url: &tauri::Url,
-) -> anyhow::Result<Option<tauri::Url>> {
-    if !url.query().unwrap_or("").contains("token=") {
-        return Ok(None);
+) -> anyhow::Result<tauri::Url> {
+    if !url.host_str().is_some_and(crate::is_loopback_host) {
+        anyhow::bail!(
+            "工作台候选不是回环地址（拒发 launch token）：{}",
+            redact_url(url)
+        );
     }
-    tracing::info!("检测到工作台携带 launch token，在壳内预兑换会话 Cookie…");
+    if !url.query().unwrap_or("").contains("token=") {
+        anyhow::bail!("工作台候选未携带 launch token：{}", redact_url(url));
+    }
+    // 降到 debug：本函数现在在启动等待期被**反复**调用（ADR-0035 每候选每 400ms
+    // 一次，最多 25 次），info 级会把这行刷满壳日志；成功注入时另有一条 info。
+    tracing::debug!("检测到工作台携带 launch token，在壳内预兑换会话 Cookie…");
     let resp = ureq::builder()
         .redirects(0)
         .timeout(std::time::Duration::from_secs(5))
@@ -482,8 +567,10 @@ pub(crate) fn authenticate_workbench_session(
     };
 
     let Some(raw_cookie) = set_cookie_str else {
-        tracing::warn!("工作台响应未携带 Set-Cookie，回退原地址导航");
-        return Ok(None);
+        anyhow::bail!(
+            "工作台响应未携带 Set-Cookie（token 未被接受，非本进程工作台）：{}",
+            redact_url(url)
+        );
     };
 
     let mut parsed = tauri::webview::cookie::Cookie::parse(raw_cookie.as_str())
@@ -512,7 +599,62 @@ pub(crate) fn authenticate_workbench_session(
 
     let mut clean_url = url.clone();
     clean_url.set_query(None);
-    Ok(Some(clean_url))
+    Ok(clean_url)
+}
+
+/// 打日志/进错误卡前的地址脱敏（2026-10-30，ADR-0035）。
+///
+/// launch token 是凭据（AGENTS §4.3「绝不打密钥」），而本函数族的错误文案会同时进
+/// 壳日志与用户可见的错误卡。这里把 query 整段替换成 `?redacted`——路径与端口是诊断
+/// 必需，token 一个字都不能留（ASCII 标记：`Url::set_query` 会把非 ASCII 百分号编码）。
+fn redact_url(url: &tauri::Url) -> String {
+    let mut shown = url.clone();
+    if shown.query().is_some() {
+        shown.set_query(Some("redacted"));
+    }
+    shown.to_string()
+}
+
+/// 导航后**观察**主窗口是否真的落在工作台 origin 上（ADR-0035）。
+///
+/// 为什么需要：`navigate()` 返回 Ok 只说明"导航被受理"，而 `on_navigation`
+/// 可能把它判成外链——放行到系统浏览器再把 WebView 留在原地（旧实现在这种
+/// 情况下照样播报「已进入工作台」，用户于是永久卡在启动屏）。
+/// 只有 WebView 实际 URL 的 origin 等于期望 origin，才算"进去了"。
+///
+/// 轮询而非单次读：导航是异步的，读太早仍是旧文档（tauri://localhost）。
+fn confirm_workbench_entered(
+    window: &tauri::WebviewWindow,
+    expected: &tauri::Url,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if window
+            .url()
+            .ok()
+            .is_some_and(|current| current.origin() == expected.origin())
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                "导航后主窗口未落到工作台 origin（期望 {expected}，实际 {:?}）",
+                window.url().map(|u| u.to_string())
+            );
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// 逃生口地址选择（纯逻辑，2026-10-30 ADR-0035）。
+///
+/// 优先带 launch token 的那份——系统浏览器没有壳内 WebView 的 cookie jar，
+/// 干净地址进去恒 401；上游 `authorizeIndex` 不消费 token，进程存活期内可重复兑换。
+/// 没有 token 版本时退回干净地址（可能 401，但比"打不开"好）。
+fn browser_url_preference(token_url: Option<String>, clean: Option<&tauri::Url>) -> Option<String> {
+    token_url.or_else(|| clean.map(|u| u.to_string()))
 }
 
 /// 会话代际是否仍为当前：等待/监护线程每轮/关键节点调用；被外部切换则 false。
@@ -991,6 +1133,14 @@ pub(crate) const BOOT_STALL: std::time::Duration = std::time::Duration::from_sec
 /// 40 秒，误判卡死的代价却是 SIGKILL 掉一个**正要说出病因**的进程、日志全空。
 pub(crate) const BOOT_STALL_GRACE: std::time::Duration = std::time::Duration::from_secs(40);
 
+/// 导航后等待"WebView 真落到工作台 origin"的上限（2026-10-30，ADR-0035）。
+///
+/// 为什么单列一个常量而不是复用 `BOOT_TIMEOUT`：这一步不是"等 dsh 起来"，
+/// 而是"等一次已经发起的导航落地"。本机回环页面正常 100ms 内完成；
+/// 15s 是给慢机 + 首次 WebKit 编译留的余量。超时不是"慢"，而是**导航没发生**
+/// （被外链策略拦下 / 被重定向到别处），必须报错而不是无限等。
+pub(crate) const WORKBENCH_ENTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// dev 双写 MakeWriter：日志同落文件与 stdout（`cargo tauri dev` 终端实时可见）。
 /// 文件写入失败不阻断（追加语义尽力而为），stdout 失败忽略（GUI 无控制台）。
 pub(crate) struct TeeWriter {
@@ -1383,6 +1533,70 @@ mod update_ui_tests {
             "必须把原因写进 error：{:?}",
             out.dsh.error
         );
+    }
+}
+
+#[cfg(test)]
+mod browser_escape_hatch_tests {
+    use super::*;
+
+    fn url(raw: &str) -> tauri::Url {
+        tauri::Url::parse(raw).unwrap()
+    }
+
+    /// **复现锚（2026-10-30 真机事故，ADR-0035）**：`workbench_url` 改成干净地址后，
+    /// 「在浏览器中打开」必须还能拿到带 token 的那份——否则托盘逃生口被这一次修复
+    /// 顺手烧掉（系统浏览器没有 WebView 的 cookie jar，干净地址恒 401）。
+    #[test]
+    fn prefers_token_url_over_clean_url() {
+        let clean = url("http://127.0.0.1:42135/");
+        let picked = browser_url_preference(
+            Some("http://127.0.0.1:42135/?token=SL6rrH8".to_string()),
+            Some(&clean),
+        );
+        assert_eq!(
+            picked.as_deref(),
+            Some("http://127.0.0.1:42135/?token=SL6rrH8"),
+            "有 token 版本时必须优先用它，否则浏览器打开恒 401"
+        );
+    }
+
+    /// 尚未握手（只有干净地址）时退回干净地址：可能 401，但绝不返回 None
+    /// ——否则托盘菜单会像"点了没反应"。
+    #[test]
+    fn falls_back_to_clean_url_when_token_missing() {
+        let clean = url("http://127.0.0.1:42135/");
+        assert_eq!(
+            browser_url_preference(None, Some(&clean)).as_deref(),
+            Some("http://127.0.0.1:42135/")
+        );
+    }
+
+    /// 两者皆无 = 工作台未就绪：菜单点击应当是明确的无动作，而不是 panic/空串。
+    #[test]
+    fn none_when_no_workbench_at_all() {
+        assert_eq!(browser_url_preference(None, None), None);
+    }
+
+    /// launch token 不得进壳日志/错误卡（AGENTS §4.3）：本函数族的 `bail!` 文案会同时
+    /// 落日志与用户可见的错误卡，脱敏必须在源头做——否则那个把地址解析错的用户，
+    /// 会把自己工作台的凭据打进「运行日志」页面。
+    #[test]
+    fn redacts_launch_token_but_keeps_host_and_port() {
+        let raw = url("http://127.0.0.1:42135/?token=SL6rrH8emdKUA4mmfBp");
+        let shown = redact_url(&raw);
+        assert!(
+            !shown.contains("SL6rrH8emdKUA4mmfBp"),
+            "token 泄漏到日志文案：{shown}"
+        );
+        assert_eq!(shown, "http://127.0.0.1:42135/?redacted");
+    }
+
+    /// 没有 query 的地址原样返回（干净地址的诊断信息不该被改写）。
+    #[test]
+    fn redaction_is_noop_without_query() {
+        let clean = url("http://127.0.0.1:42135/");
+        assert_eq!(redact_url(&clean), "http://127.0.0.1:42135/");
     }
 }
 

@@ -74,6 +74,11 @@ start=spawn；就绪=轮询本地日志；teardown=优雅停止（SIGTERM→SIGK
 - **就绪**：`wsl.exe -e bash -lic '<模板>'` 的 stdout 转发到本地日志（wsl.exe 透传
   guest stdout），复用壳的通用日志轮询；日志里的 `127.0.0.1:<port>` 经 WSL2 转发从
   Windows 侧也通，capabilities `http://127.0.0.1:*` 零改动。
+  **2026-10-30（ADR-0035）**：日志/marker 里的地址只是**候选**——客体日志里同时会有
+  插件打印的外链（真机事故：`[llm-deepseek-account] model listing from
+  https://api.deepseek.com/…` 排在 ready 行前面，被当成工作台地址，导航被外链策略
+  拦下而壳仍播报成功）。候选必须经 launch token 握手（`303 + Set-Cookie`）证实才算
+  就绪；宿主与客体走同一条裁定路径。
 - **生命周期**：客体内 wrapper（后台 dsh + watcher 轮询 stop 标志）→ teardown 只
   `touch /tmp/dsh-dock-stop`，确定性停掉本会话 dsh，不误伤发行版内其它进程。
   （早期方案 `pkill -f 'dsh --profile web'` 有缺陷：dsh shim 最终 exec 成

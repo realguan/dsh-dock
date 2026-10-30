@@ -97,10 +97,9 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri:
             // （实测：Windows 启动白屏直到 dsh 就绪 navigate 到 127.0.0.1 才显示）。
             let shell_page = matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
                 || matches!(url.host_str(), Some("tauri.localhost"));
-            let loopback_dsh = matches!(
-                url.host_str(),
-                Some("127.0.0.1") | Some("localhost") | Some("[::1]")
-            );
+            // 回环判定与 shell 侧候选解析共用同一份真相源（`lib::is_loopback_host`）：
+            // 两处各写一份字符串集，迟早一处加 host 另一处没加（2026-10-30 收口）。
+            let loopback_dsh = url.host_str().is_some_and(crate::is_loopback_host);
             if shell_page || loopback_dsh {
                 return true;
             }

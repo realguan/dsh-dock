@@ -56,14 +56,15 @@ pub fn open_external(_app: tauri::AppHandle, url: String) -> Result<(), String> 
     }
 }
 /// 用系统默认浏览器打开当前工作台（壳内 WebView → 浏览器；dsh 就绪后可用）。
+///
+/// 2026-10-30（ADR-0035）：优先用**带 launch token** 的地址。系统浏览器没有壳内
+/// WebView 的 cookie jar，拿干净地址进去恒 401；上游 `authorizeIndex` 不消费 token，
+/// 进程存活期内可重复兑换 cookie，所以逃生口靠这一份地址存在。
 #[tauri::command]
 pub fn open_workbench_in_browser(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Arc<ShellState>>().inner().clone();
     let url = state
-        .workbench_url
-        .lock()
-        .unwrap()
-        .clone()
+        .browser_open_url()
         .ok_or_else(|| "工作台尚未就绪".to_string())?;
     open::that_detached(url.as_str()).map_err(|e| format!("打开浏览器失败：{e}"))
 }

@@ -13,7 +13,7 @@
 
 | # | 复现点 | 壳侧位置 | 依赖的 dsh / 工具链行为 | 最后复核 |
 |:--|:--|:--|:--|:--|
-| 1 | dsh 就绪判定 | `shell.rs`（`--port 0` → 日志轮询 URL；无进展判 `Stalled`） | dsh 启动日志格式（打印访问地址） | 基线 |
+| 1 | dsh 就绪判定 | `shell.rs`（`--port 0` → 日志/marker 轮询**候选**；无进展判 `Stalled`；候选真伪由 `boot.rs::authenticate_workbench_session` 的 token 握手裁定，ADR-0035） | dsh 启动日志的 ready 行 `dsh web: <回环URL?token=…>`（`authenticatedUrl` 恒附每进程新生成的 launch token）＋ 有效 token 回 `303 + set-cookie`；**不再依赖文案本身**（上游三种 `dsh web:` 行里有两种不含 URL：plain-HTTP 警告与 "opening the default browser"） | 2026-10-30 |
 | 2 | 宿主 dsh 版本闸 | `resolve.rs`（`version_at_least` / `engines.node` / 平台三重闸） | dsh `engines.node` 声明语义 | 基线 |
 | 3 | pnpm global-bin-dir 注入 + npm 回退 | `updates.rs`（`pnpm_global_bin_dirs`，ADR-0005） | pnpm 10 全局目录解析（GUI 无 rc） | 基线 |
 | 4 | WSL PATH 兼容探测 | `executor.rs`（`bash -lic` + nvm/fnm/n/volta 兜底扫描） | nvm/fnm 非交互 rc 守卫行为 | 2026-08-26 |
@@ -103,7 +103,12 @@
   工作区引导难以自动化）⇒ 建议降级为 P1 验收项。**遥测**：`product-analytics:20`
   `if (!("dshDesktop" in globalThis)) return;` ⇒ 桥存在即激活远端策略流，**须维护者裁定**。
   **rig 经验 6 条**（写入 ADR §13.4，P0-b 产品化时必须一次性解决）：launch token 一次性
-  （复用 URL 恒 401）/ 反代必须直通 SSE（缓冲会 BodyTimeoutError 带崩 rig）/ 必须转发 POST body /
+  （复用 URL 恒 401）
+  〔**2026-10-30 复核更正（ADR-0035）**：上游 `BrowserAuth.authorizeIndex` **只比对不消费**
+  ——`tokenMatches(tokens.join(""), this.launchToken)`，源码里没有任何 revoked/used 标记，
+  且 `processLaunchToken(owner)` 按 owner 记忆；故进程存活期内**复用带 token 的 URL 可反复
+  兑换 cookie**。当时 rig 拿到的 401 更可能来自 `requestAudience`/authority 绑定或
+  `/connect`（那条才有一次性 id 发放），排查时先看这两处再怀疑 token 消费。〕/ 反代必须直通 SSE（缓冲会 BodyTimeoutError 带崩 rig）/ 必须转发 POST body /
   `Runtime.evaluate` 要 `awaitPromise` 且表达式自 `JSON.stringify` / 探针须断言"脚本确实执行过"
   （防 vacuous 全绿）/ 观测点要选"会变的量"（`[data-sidebar-collapsed]` 的**存在性**在未加载
   工作区时也为真，是错的观测点）。

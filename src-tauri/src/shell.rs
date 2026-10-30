@@ -1,8 +1,12 @@
-//! 运行 dsh 子进程：spawn（`--port 0`）→ 从日志轮询实际 URL → 优雅停止。
+//! 运行 dsh 子进程：spawn（`--port 0`）→ 等 dsh 自报地址并经**身份握手**确认 → 优雅停止。
 //!
 //! 进程监护语义：
-//!   - `--port 0` 由 OS 分配端口，URL 从 dsh 打在 stdout 的地址行解析；
-//!   - 只认 `http://` / `https://` 开头的词，拒绝 `file://`（Node 栈帧）与 `data:`；
+//!   - `--port 0` 由 OS 分配端口，候选地址从 dsh 打在 stdout 的地址行提取；
+//!   - 候选判据 = **回环主机 + 携带 launch token**（ADR-0035），提取只是「提案」；
+//!   - **真伪由调用方裁定**：`wait_for_ready` 把候选交给 `confirm` 闭包，只有通过
+//!     token 握手（303 + `set-cookie: dsh-auth-*`）的候选才算就绪——文字永远不是
+//!     就绪的证据，只是"可能"的线索；
+//!   - 拒绝 `file://`（Node 栈帧）、`data:`，以及任何**非回环**地址；
 //!   - 优雅停止 = SIGTERM → 等待 grace → SIGKILL 兜底（unix；Windows 用 kill）。
 //!
 //! 与启动器/持久服务的差异：**产品壳与 dsh 严格同生命周期**（壳退 = dsh 停），
@@ -128,7 +132,7 @@ pub fn dsh_launcher_args(launch: &LaunchSpec) -> Vec<String> {
 }
 
 /// 启动等待的三种结局：
-/// - `Ready(url)`：日志出现访问地址，dsh 已就绪；
+/// - `Ready(url)`：候选地址经 `confirm` 握手**证实**为工作台，dsh 已就绪；
 /// - `Exited(code)`：**dsh 进程先退出了**——不再干等，直接判失败；
 /// - `Stalled`：进程还活着但日志长时间无进展（疑似卡死）或到硬上限。
 #[derive(Debug)]
@@ -137,6 +141,14 @@ pub enum ReadyOutcome {
     Exited(i32),
     Stalled,
 }
+
+/// 同一候选的握手重试间隔：给 dsh 的 webserver 半拍时间接受连接
+/// （地址行是「连接就绪后才打」的，极少数机器仍会差一个调度周期）。
+const CONFIRM_RETRY: Duration = Duration::from_millis(400);
+/// 同一候选最多握手几次（≈10s）后拉黑，回去等「真身」的地址行。
+/// 上限存在的理由：错误候选不该吃掉整个 `BOOT_TIMEOUT`（90s），
+/// 但也不能一次失败就放弃——慢半拍是常态。
+const CONFIRM_MAX_TRIES: u32 = 25;
 
 /// 进程存活感知的就绪等待（2026-08-24 裁定，Windows 冷启动慢场景）：
 /// 旧 `detect_url` 的死等上限在 Windows 上会被 Defender 首扫/Node 冷加载吃掉，
@@ -164,10 +176,17 @@ pub enum ReadyOutcome {
 /// 执行环境无关（executor.rs）：会话进程是否退出经 `exited` 回调查询（壳侧
 /// 对 `Session` 槽做短锁轮询）。调用方只传回"已退出 → Some(exit_code)"，
 /// 等待线程不独占会话锁 90s，退出处理器随时能拿到会话做 teardown。
+///
+/// **候选 ≠ 就绪**（2026-10-30，ADR-0035）：`confirm` 闭包是唯一裁定口——它拿到
+/// 候选地址，返回 `Some(干净地址)` 才算就绪（调用方在里面做 token 握手）。
+/// 返回 `None` 只是"这个候选不成立"，不是启动失败：回去继续等下一个候选，
+/// 直到进程退出 / 硬上限 / 停滞判据。这就是那次真机事故的正面写法——
+/// 之前候选即结论，于是第三方插件打出的一行 https 地址就能顶替工作台。
 pub fn wait_for_ready(
     log_path: &Path,
     exited: &mut dyn FnMut() -> Option<i32>,
     marker: &mut dyn FnMut() -> Option<String>,
+    confirm: &mut dyn FnMut(&str) -> Option<String>,
     stall: Duration,
     stall_grace: Duration,
     limit: Duration,
@@ -177,11 +196,23 @@ pub fn wait_for_ready(
     let mut last_grow = Instant::now();
     // 首次越过 `stall` 的时刻；`None` = 尚未进入宽限期（期间一旦有新输出即清空）。
     let mut stalled_since: Option<Instant> = None;
+    // 候选与裁定状态。同一候选会被反复提案（WSL marker 每轮整文件重读），
+    // 故按 `CONFIRM_RETRY` 限流握手；连续失败到 `CONFIRM_MAX_TRIES` 才拉黑——
+    // 服务只是慢半拍是常态，一次握手不成就放弃反而会误杀真身。
+    let mut pending: Option<String> = None;
+    let mut last_try: Option<Instant> = None;
+    let mut tries: u32 = 0;
+    let mut rejected: Vec<String> = Vec::new();
     loop {
-        // marker 优先：直读客体内哨兵文件，绕开 wsl.exe stdout 缓冲。命中即 Ready。
+        // marker 优先：直读客体内哨兵文件，绕开 wsl.exe stdout 缓冲。
+        // 命中只更新「候选」，不直接 Ready（候选不是证据）。
         if let Some(text) = marker() {
-            if let Some(url) = parse_detected_url(&text) {
-                return ReadyOutcome::Ready(url);
+            if let Some(cand) = parse_workbench_candidate(&text) {
+                if !rejected.contains(&cand) && pending.as_deref() != Some(cand.as_str()) {
+                    pending = Some(cand);
+                    tries = 0;
+                    last_try = None;
+                }
             }
         }
         // 主路径：log 文件轮询（本地执行器 / WSL 兜底）。wsl.exe 重定向日志
@@ -197,12 +228,34 @@ pub fn wait_for_ready(
                 scanned = start;
             }
             if text.len() > scanned && text.is_char_boundary(scanned) {
-                if let Some(url) = parse_detected_url(&text[scanned..]) {
-                    return ReadyOutcome::Ready(url);
+                if let Some(cand) = parse_workbench_candidate(&text[scanned..]) {
+                    if !rejected.contains(&cand) {
+                        pending = Some(cand);
+                        tries = 0;
+                        last_try = None;
+                    }
                 }
                 scanned = text.len();
                 last_grow = Instant::now();
                 stalled_since = None; // 有新输出 = 还活着在说话，退出宽限期
+            }
+        }
+        // 裁定：候选必须在这里换成「已证实」的干净地址，否则不算就绪。
+        if let Some(cand) = pending.clone() {
+            if last_try.is_none_or(|t: Instant| t.elapsed() >= CONFIRM_RETRY) {
+                last_try = Some(Instant::now());
+                tries += 1;
+                if let Some(proven) = confirm(&cand) {
+                    return ReadyOutcome::Ready(proven);
+                }
+                if tries >= CONFIRM_MAX_TRIES {
+                    // 只留 origin+path：候选里带着 launch token，token 是凭据，
+                    // 不进日志（AGENTS §4.3；2026-10-30 ADR-0035）。
+                    let shown = cand.split('?').next().unwrap_or_default();
+                    tracing::warn!("工作台身份握手连续未通过，放弃候选：{shown}");
+                    rejected.push(cand);
+                    pending = None;
+                }
             }
         }
         // 会话进程先退出：不干等，立即判失败（短锁回调，不阻塞退出处理器）。
@@ -227,13 +280,47 @@ pub fn wait_for_ready(
     ReadyOutcome::Stalled
 }
 
-/// 只接受 `http://` / `https://` 开头的词，去掉尾部 `/`/`,`/`;`。
-/// 拒绝 `file://`（Node 加载 bundle 的栈帧）与 `data:` 等，防止把报错路径
-/// 当访问地址（移植自启动器 process_guard，含回归测试）。
-pub fn parse_detected_url(text: &str) -> Option<String> {
+/// 从日志文本里挑出**可能是工作台**的地址（候选，不是结论）。
+///
+/// 2026-10-30 收口（ADR-0035，真机事故）：旧实现是「取第一个 `http(s)://` 开头的词」，
+/// 而 dsh 的 stdout 是与**所有插件共享**的自由文本。WSL 模式下账号插件先打了
+/// `[llm-deepseek-account] model listing from https://api.deepseek.com/models …`，
+/// 壳就把它当成了工作台地址：导航被外链策略拦下、却仍然播报「已进入工作台」，
+/// 用户永久卡在启动屏（真机表现：5/5 全绿但进不去，托盘"用浏览器打开"却没事）。
+///
+/// 收敛后的判据不看「文案里有没有 URL」，只看工作台的两条**身份前提**：
+///   1. **回环主机**——壳托管的 dsh 只可能在本机回环上（导航放行、插件回环查询、
+///      token 兑换全都只认回环）；
+///   2. **携带 launch token**——dsh 每次启动生成 `randomBytes(32)` 的 process
+///      launch token，只有**我们 spawn 的那个进程**知道（上游 `browser-auth` 的
+///      `processLaunchToken`），于是"带 token 的地址"在文本层就把第三方 URL 排除干净。
+///
+/// 即便如此，本函数仍只是**提案**：真伪由 `wait_for_ready` 的 `confirm`（token 握手）
+/// 裁定。文字永远不是就绪的证据——这是这次事故的根因教训。
+pub fn parse_workbench_candidate(text: &str) -> Option<String> {
     text.split_whitespace()
-        .find(|w| w.starts_with("http://") || w.starts_with("https://"))
-        .map(|url| url.trim_end_matches(['/', ',', ';']).to_string())
+        .filter(|w| w.starts_with("http://") || w.starts_with("https://"))
+        .find_map(|word| {
+            // 尾随标点：地址可能出现在任意插件的句子里，句读/括号/引号都要剥掉，
+            // 否则 `…?token=x)` 这类形态会解析失败而漏掉真身。
+            let trimmed = word.trim_end_matches([
+                '/', ',', ';', ')', ']', '"', '\'', '。', '，', '；', '）', '】', '”',
+            ]);
+            let url = tauri::Url::parse(trimmed).ok()?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return None;
+            }
+            if !crate::is_loopback_host(url.host_str()?) {
+                return None;
+            }
+            if !url
+                .query_pairs()
+                .any(|(k, v)| k == "token" && !v.is_empty())
+            {
+                return None;
+            }
+            Some(trimmed.to_string())
+        })
 }
 
 /// 优雅停止 dsh：unix 发 SIGTERM 等待 grace，超时 SIGKILL；Windows 收进程树。
@@ -340,35 +427,74 @@ mod tests {
     }
 
     #[test]
-    fn detects_url_from_line() {
+    fn detects_candidate_from_ready_line() {
         assert_eq!(
-            parse_detected_url("DSH web listening on http://127.0.0.1:34567/\n").as_deref(),
-            Some("http://127.0.0.1:34567")
+            parse_workbench_candidate("dsh web: http://127.0.0.1:34567/?token=abc\n").as_deref(),
+            Some("http://127.0.0.1:34567/?token=abc")
+        );
+    }
+
+    /// **真机事故回归**（2026-10-30，ADR-0035）：插件先打的非回环 URL 绝不能
+    /// 顶替工作台。取 Windows/WSL 用户诊断台里的**原始两行**（顺序照抄）。
+    #[test]
+    fn ignores_plugin_url_before_the_ready_line() {
+        let log = "[llm-deepseek-account] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n\
+dsh web: http://127.0.0.1:42135/?token=SL6rrH8emdKUA4mmfBp_IfNjO89tw_-RYyVf4pIVhw0\n";
+        assert_eq!(
+            parse_workbench_candidate(log).as_deref(),
+            Some("http://127.0.0.1:42135/?token=SL6rrH8emdKUA4mmfBp_IfNjO89tw_-RYyVf4pIVhw0"),
+            "候选必须是回环+带 token 的那一行，不能是插件打的外链"
+        );
+        // 只有插件那一行时：没有候选（旧实现会返回 deepseek 地址）。
+        assert_eq!(
+            parse_workbench_candidate(
+                "[llm-deepseek-account] model listing from https://api.deepseek.com/models loaded 2 model(s)\n"
+            ),
+            None
+        );
+    }
+
+    /// 无 launch token 的回环地址也不接收——壳无法证明"这是我们 spawn 的那个
+    /// dsh"（上游 `authenticatedUrl` 恒附 token，缺失即非本进程的 ready 行）。
+    #[test]
+    fn rejects_loopback_url_without_launch_token() {
+        assert_eq!(
+            parse_workbench_candidate("web: http://127.0.0.1:53599/"),
+            None
+        );
+        assert_eq!(
+            parse_workbench_candidate("web: http://127.0.0.1:53599/?token="),
+            None
+        );
+        // 非回环即便带 token 也不接收。
+        assert_eq!(
+            parse_workbench_candidate("web: https://evil.example.com/?token=abc"),
+            None
         );
     }
 
     #[test]
     fn detects_none_when_absent() {
-        assert_eq!(parse_detected_url("no url here"), None);
-        assert_eq!(parse_detected_url("booting...\n"), None);
+        assert_eq!(parse_workbench_candidate("no url here"), None);
+        assert_eq!(parse_workbench_candidate("booting...\n"), None);
     }
 
     #[test]
-    fn detects_url_in_utf16le_log() {
+    fn detects_candidate_in_utf16le_log() {
         // wsl.exe 重定向日志 = UTF-16LE（NUL 间隔）——read_log_auto 解码后
         // URL 词才是连续的 `http://`；旧实现 read_to_string 读成 `\x00h\x00t...`
         // 导致永远判 Stalled（2026-08-26 实机 bug 回归）。
-        let text = "dsh web: http://127.0.0.1:33375\n84) ExperimentalWarning\n";
+        let text = "dsh web: http://127.0.0.1:33375/?token=abc\n84) ExperimentalWarning\n";
         let mut bytes = vec![0xFF, 0xFE]; // BOM
         for u in text.encode_utf16() {
             bytes.extend_from_slice(&u.to_le_bytes());
         }
         let decoded = crate::resolve::decode_output_bytes(&bytes);
         assert!(
-            parse_detected_url(&decoded)
+            parse_workbench_candidate(&decoded)
                 .as_deref()
-                .is_some_and(|u| u == "http://127.0.0.1:33375"),
-            "UTF-16LE 解码后应匹配 URL，得到：{decoded:?}"
+                .is_some_and(|u| u == "http://127.0.0.1:33375/?token=abc"),
+            "UTF-16LE 解码后应匹配候选，得到：{decoded:?}"
         );
         // 无 BOM 的 UTF-16LE（老 wsl.exe 形态）同样命中
         let mut bytes2 = Vec::new();
@@ -377,7 +503,8 @@ mod tests {
         }
         let decoded2 = crate::resolve::decode_output_bytes(&bytes2);
         assert!(
-            parse_detected_url(&decoded2).as_deref() == Some("http://127.0.0.1:33375"),
+            parse_workbench_candidate(&decoded2).as_deref()
+                == Some("http://127.0.0.1:33375/?token=abc"),
             "无 BOM UTF-16LE 也应命中，得到：{decoded2:?}"
         );
     }
@@ -386,13 +513,16 @@ mod tests {
     fn rejects_node_stack_file_urls() {
         // Node 报错栈里的 file:// 源码路径绝不能被当成访问地址
         let text = "Error: cannot find module\n  at file:///x/dsh/lib/bin.js:1186\n";
-        assert_eq!(parse_detected_url(text), None);
-        assert_eq!(parse_detected_url("data:text/plain,hi"), None);
-        assert_eq!(parse_detected_url("node:internal/modules/run_main"), None);
-        // 真正的 http 地址仍正常识别
+        assert_eq!(parse_workbench_candidate(text), None);
+        assert_eq!(parse_workbench_candidate("data:text/plain,hi"), None);
         assert_eq!(
-            parse_detected_url("web: http://127.0.0.1:53599").as_deref(),
-            Some("http://127.0.0.1:53599")
+            parse_workbench_candidate("node:internal/modules/run_main"),
+            None
+        );
+        // 真正的候选（回环 + token）仍正常识别
+        assert_eq!(
+            parse_workbench_candidate("dsh web: http://127.0.0.1:53599/?token=x").as_deref(),
+            Some("http://127.0.0.1:53599/?token=x")
         );
     }
 
@@ -457,7 +587,7 @@ mod tests {
                 .open(&path2)
                 .unwrap();
             use std::io::Write;
-            writeln!(f, "DSH web listening on http://127.0.0.1:34567/").unwrap();
+            writeln!(f, "dsh web: http://127.0.0.1:34567/?token=t0k").unwrap();
         });
 
         match wait_for_ready(
@@ -471,11 +601,12 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut (|| None),
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_secs(1),
             Duration::from_secs(1), // 宽限期（本测不需它）
             Duration::from_secs(5),
         ) {
-            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34567"),
+            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34567/?token=t0k"),
             other => panic!("应判 Ready，得到 {other:?}"),
         }
         // 收尾：停掉模拟进程
@@ -568,6 +699,7 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut (|| None),
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_secs(5),
             Duration::from_secs(1), // 宽限期（本测不需它）
             Duration::from_secs(3),
@@ -620,6 +752,7 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut (|| None),
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_millis(50),
             Duration::from_secs(1),
             Duration::from_secs(5),
@@ -663,6 +796,7 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut (|| None),
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_millis(250),
             Duration::from_millis(500), // 宽限期：停滞后再等一会儿才认卡死
             Duration::from_secs(5),
@@ -712,7 +846,8 @@ mod tests {
         let mut marker = || marker_state.lock().unwrap().clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
-            *writer.lock().unwrap() = Some("dsh web: http://127.0.0.1:34777/\n".to_string());
+            *writer.lock().unwrap() =
+                Some("dsh web: http://127.0.0.1:34777/?token=t0k\n".to_string());
         });
 
         match wait_for_ready(
@@ -726,13 +861,100 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut marker,
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_millis(250), // stall 极短——若 marker 不命中会先 Stalled
             Duration::from_secs(1),     // 宽限期（marker 在 80ms 就命中，走不到这里）
             Duration::from_secs(5),     // 总上限
         ) {
-            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34777"),
+            // `Ready` 返回的是 **confirm 的产物**（boot.rs 里=去 token 的干净地址），
+            // 不是日志原文；此处 confirm 原样回传，故与候选逐字相同。
+            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:34777/?token=t0k"),
             other => panic!("marker 命中应判 Ready，得到 {other:?}"),
         }
+        if let Some(mut d) = slot.lock().unwrap().take() {
+            let _ = d.child.kill();
+            let _ = d.child.wait();
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **候选被拒 ≠ 启动失败**（2026-10-30，ADR-0035 第二条不变量）：
+    /// 日志里先出现一个"像工作台但握手失败"的回环候选（端口被别的进程占着 /
+    /// 上一轮残留地址），随后真身才打出来。壳必须换下一个候选继续等，
+    /// 既不能把假候选当结论，也不能因为一次握手失败就判启动失败。
+    #[test]
+    fn wait_for_ready_rejects_failed_candidate_then_accepts_real_one() {
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("dsh-shell-wfr-rej-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("inst.log");
+        // 先只有"假候选"：回环 + token 都满足，只有握手能证伪。
+        std::fs::write(&path, "dsh web: http://127.0.0.1:1111/?token=fake\n").unwrap();
+
+        let child = if cfg!(unix) {
+            Command::new("sleep").arg("30").spawn()
+        } else {
+            Command::new("cmd.exe")
+                .args(["/C", "ping", "-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        };
+        let child = child.expect("spawn 模拟进程");
+        let slot: Mutex<Option<DshProcess>> = Mutex::new(Some(DshProcess {
+            child,
+            log_path: path.clone(),
+        }));
+
+        // 300ms 后真身出现（模拟 dsh 打完插件日志、进程就绪后才吐 ready 行）。
+        let log_writer = path.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&log_writer)
+                .unwrap();
+            use std::io::Write as _;
+            let _ = f.write_all(b"dsh web: http://127.0.0.1:2222/?token=real\n");
+        });
+
+        // 握手：1111 一律失败，其余放行；记录每次尝试的候选，断言假候选真的被试过。
+        let tried: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let tried_w = tried.clone();
+        let mut confirm = |u: &str| -> Option<String> {
+            tried_w.lock().unwrap().push(u.to_string());
+            if u.contains(":1111/") {
+                None
+            } else {
+                Some(u.to_string())
+            }
+        };
+
+        match wait_for_ready(
+            &path,
+            &mut (|| {
+                slot.lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|d| d.child.try_wait().ok())
+                    .flatten()
+                    .map(|s| s.code().unwrap_or(-1))
+            }),
+            &mut (|| None),
+            &mut confirm,
+            Duration::from_millis(250), // stall 极短：假候选若能"顶住"就会先 Stalled
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+        ) {
+            ReadyOutcome::Ready(url) => assert_eq!(url, "http://127.0.0.1:2222/?token=real"),
+            other => panic!("换候选后应判 Ready，得到 {other:?}"),
+        }
+        let tried = tried.lock().unwrap().clone();
+        assert!(
+            tried.iter().any(|u| u.contains(":1111/")),
+            "假候选必须真被试过（否则本测试没守住任何东西）：{tried:?}"
+        );
+
         if let Some(mut d) = slot.lock().unwrap().take() {
             let _ = d.child.kill();
             let _ = d.child.wait();
@@ -776,6 +998,7 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             }),
             &mut marker,
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_millis(150),
             Duration::from_millis(500), // 宽限期
             Duration::from_secs(3),
@@ -849,6 +1072,7 @@ mod tests {
                     .map(|s| s.code().unwrap_or(-1))
             },
             &mut || None,
+            &mut (|u: &str| Some(u.to_string())),
             Duration::from_secs(20),
             Duration::from_secs(5), // 宽限期
             Duration::from_secs(60),

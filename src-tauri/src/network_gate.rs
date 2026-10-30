@@ -164,7 +164,9 @@ const EXEMPTIONS: &[NetworkEntry] = &[
         item: Some("authenticate_workbench_session"),
         kind: Kind::Exempt,
         // 条目级而非整文件：boot.rs 是启动主路径，除这一处外不得触网。
-        reason: "工作台 Token 环回兑换（AGENTS §7 2026-09-11 补登记）：127.0.0.1 GET、5s、redirects=0",
+        // 2026-10-30（ADR-0035）：同一处调用升格为工作台**身份裁定者**（启动等待期
+        // 对每个候选握手一次），故豁免仍只需这一条——回环 GET、5s、redirects=0 不变。
+        reason: "工作台 Token 环回兑换/身份裁定（AGENTS §7 2026-09-11 补登记，2026-10-30 升格）：仅回环主机、GET、5s、redirects=0",
         date: "2026-09-11",
     },
     NetworkEntry {

@@ -121,7 +121,7 @@ capability 内，本就无从调用。脚本 ≤ 16 KiB；结果由客页写进�
 | 用途 | 落点 | 边界 |
 |:---|:---|:---|
 | 插件运行态回环**只读**查询 | `plugins.rs`，`POST http://127.0.0.1:<port>/api/pluginInventory/list` | 2s 超时、仅活跃会话、一次性快照不订阅——2026-08-29 |
-| 工作台 Token 环回兑换 | `boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET | 5s、redirects=0；2026-09-04 落地、2026-09-11 补登记——原漏登 |
+| 工作台 Token 环回兑换 | `boot.rs::authenticate_workbench_session`，本地 `127.0.0.1` GET | 5s、redirects=0；2026-09-04 落地、2026-09-11 补登记——原漏登。**2026-10-30（ADR-0035）**：同一调用升格为**工作台身份裁定者**——启动等待期对每个候选握手一次（`303 + set-cookie` 才算真身），且**只接受回环主机**（拒把 token 发给别处） |
 
 ### 子进程内触网（`Kind::Registered`，本文件无 in-process 原语）
 
