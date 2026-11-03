@@ -24,6 +24,13 @@ use serde::Serialize;
 /// 真正的类型化直传需要 `emit_boot_error` 改签名，属独立意图，**本轮不动**。
 pub(crate) const SYMLINK_PRIVILEGE_MARKER: &str = "[symlink-privilege]";
 
+/// **依赖未发布类失败的稳定标记**（2026-11-03）。
+///
+/// 与 [`SYMLINK_PRIVILEGE_MARKER`] 同口径：生产侧（`engines::install_failure_message`）
+/// 与本表共用一个常量。依赖失败的原文里必然出现 registry URL（pnpm 的
+/// `while fetching it from https://registry…`），不先按标记分流就会被网络分支吸走。
+pub(crate) const DEPENDENCY_UNAVAILABLE_MARKER: &str = "[dependency-unavailable]";
+
 /// 判定一段（**已小写化**的）错误文本是否为「符号链接特权不足」（Windows 无
 /// `SeCreateSymbolicLinkPrivilege` 时 pnpm 的 global hash link 会以 `os error 5` 失败）。
 ///
@@ -64,6 +71,13 @@ pub(crate) enum BootFailure {
     /// 但出路完全不同（网络 → 重试/换镜像；特权 → 改运行环境）。此前被合并成
     /// 「registry 均不可达」，用户重试必然再失败。
     SymlinkPrivilegeRequired,
+    /// **目标版本的依赖未完整发布**（2026-11-03 真机）：上游先发布了
+    /// `@deepseek-ai/dsh@0.2.2-alpha.3`，其依赖包 75 分钟后才发布；pnpm 报
+    /// `ERR_PNPM_NO_MATCHING_VERSION`，壳当天却说成「registry 均不可达」。
+    ///
+    /// 与 `NetworkUnavailable` **必须分开**：这不是网络问题，当时重试必然失败；
+    /// 出路是等上游补齐或改选上一个版本。
+    DependencyUnavailable,
     /// **挂载行加载失败**（2026-09-16 真机事故）：dsh 的插件树在加载某条 `- insert:`
     /// 行时抛错，**整棵树拒绝加载** → 工作台永不就绪（真机：34s 后退出码 1）。
     ///
@@ -166,6 +180,9 @@ impl BootFailure {
         // 缺陷的成因。顺序在此是语义的一部分，勿调换。
         if is_symlink_privilege_detail(&d) {
             Self::SymlinkPrivilegeRequired
+        } else if d.contains(DEPENDENCY_UNAVAILABLE_MARKER) {
+            // 依赖类文本里一定有 registry URL；必须在网络判定**之前**命中标记。
+            Self::DependencyUnavailable
         } else if d.contains("credentials") || d.contains("must be a string") {
             Self::CredentialsMismatch
         } else if d.contains("unknown option") || d.contains("incompatible") {
@@ -186,6 +203,7 @@ impl BootFailure {
             Self::IncompatibleOptions => "宿主 DSH 参数不兼容",
             Self::NetworkUnavailable => "网络不可用",
             Self::SymlinkPrivilegeRequired => "系统权限不足：无法创建符号链接",
+            Self::DependencyUnavailable => "DSH 目标版本未完整发布",
             Self::PluginRowFailed { .. } => "实验插件行导致启动失败",
             Self::Unknown { .. } => "DSH 工作台启动失败",
         }
@@ -215,6 +233,12 @@ impl BootFailure {
             // 出路是"去掉那一行"，不是"重试"：把行 id 端到用户面前。行归壳所有时
             // 「展开详情 → 其它出路」里有「只移除出错的那一行并重启」；行不归壳时只剩
             // 手工编辑一条路（文件有自动备份）。两类用户层砖面的总兜底是「备份并放空」。
+            Self::DependencyUnavailable => {
+                "这不是网络问题：该版本依赖的软件包在软件源里还没有可安装的版本，\
+                 通常是上游刚发布、依赖包或镜像尚未同步。请稍后重试，或在「版本列表」中\
+                 改选上一个可用版本。"
+                    .to_string()
+            }
             Self::PluginRowFailed {
                 row_id,
                 package,
@@ -258,7 +282,10 @@ impl BootFailure {
             // 停用已随安全模式删除）；行归壳所有时由 [`BootErrorPayload::with_quarantine`]
             // 把「只移除出错的那一行并重启」提到首屏——那才是"点一次就回应用"的动作。
             Self::PluginRowFailed { .. } => Vec::new(),
-            Self::NetworkUnavailable | Self::Unknown { .. } => vec!["retry"],
+            // 依赖类：等上游补齐后 `retry` 有效，保留按钮；但文案必须先说清"不是网络"。
+            Self::DependencyUnavailable | Self::NetworkUnavailable | Self::Unknown { .. } => {
+                vec!["retry"]
+            }
         }
     }
 
@@ -482,6 +509,36 @@ mod tests {
         // 序列化 kind（前端据此取本地化文案）
         let v = serde_json::to_value(&f).unwrap();
         assert_eq!(v["kind"], "symlink_privilege_required");
+    }
+
+    /// **复现锚（2026-11-03）**：依赖未发布的失败文本里必然带 registry URL
+    /// （`while fetching it from https://registry…`）——标记必须在网络判定之前命中，
+    /// 否则用户又会被引向「检查网络」。
+    #[test]
+    fn dependency_failure_is_not_classified_as_network() {
+        let detail = "dsh 0.2.2-alpha.3 的依赖未完整发布：\
+                      @deepseek-ai/dsh-tool-pwsh-persistent@0.2.2-alpha.3 在软件源上\
+                      没有可安装的版本（这不是网络问题）。\n\
+                      各源明细：https://registry.npmmirror.com: ERR_PNPM_NO_MATCHING_VERSION\n\
+                      [dependency-unavailable]";
+        assert_eq!(
+            BootFailure::from_legacy_detail(detail),
+            BootFailure::DependencyUnavailable,
+            "依赖类文本含 registry URL，被网络分支吸走了"
+        );
+        let f = BootFailure::DependencyUnavailable;
+        assert!(
+            f.title().contains("未完整发布"),
+            "标题应点明真因：{}",
+            f.title()
+        );
+        let s = f.suggestion();
+        assert!(s.contains("不是网络问题"), "必须掐断网络排查方向：{s}");
+        assert!(s.contains("版本列表"), "必须给出路（改选版本）：{s}");
+        // 等上游补齐后重试有效 ⇒ 保留 retry
+        assert_eq!(f.actions(), vec!["retry"]);
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!(v["kind"], "dependency_unavailable");
     }
 
     /// 稳定标记是**两侧共用**的常量：生产侧拼进去的标记，本表必须认得。

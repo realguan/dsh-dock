@@ -162,6 +162,13 @@ export const enUS: AppCopy = {
         title: "DSH workbench failed to start",
         suggestion: "See the log for details; retry, and report it if it keeps happening.",
       },
+      // 2026-11-03: only the main package was published; its dependencies arrived
+      // later, so pnpm reported NO_MATCHING_VERSION. Rule out the network first.
+      dependency_unavailable: {
+        title: "The DSH target release is incomplete",
+        suggestion:
+          "This is not a network problem: a package required by this version has no installable release in the software source yet. This usually means the upstream release or its mirror sync is still in progress. Retry later, or pick the previous available version in the version list.",
+      },
     } as Record<string, { title: string; suggestion: string }>,
   },
   mode: {
