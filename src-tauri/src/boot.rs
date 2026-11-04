@@ -1206,6 +1206,9 @@ pub(crate) fn install_signal_exit_handler() {
 /// 发射 boot:step 事件（state: pending|running|done|error）。
 pub(crate) fn emit_step(app: &tauri::AppHandle, step: usize, state: &str, detail: &str) {
     use tauri::Emitter;
+    // 内部标记只服务分类，不进用户可见的步骤详情（2026-11-03；executor 的
+    // sink(1,"error",…) 会带出安装失败的原文）。
+    let detail = crate::boot_failure::strip_internal_markers(detail);
     tracing::info!("boot:step step={step} state={state} {detail}");
     let payload = serde_json::json!({
         "step": step,
@@ -1259,6 +1262,8 @@ pub(crate) fn download_progress_bridge(
 /// （前端提示「已是最新」而非「升级完成」）。
 pub(crate) fn emit_upgrade(app: &tauri::AppHandle, phase: &str, detail: &str, installed: bool) {
     use tauri::Emitter;
+    // 内部标记只服务分类，不进用户可见的关于页提示（2026-11-03）。
+    let detail = crate::boot_failure::strip_internal_markers(detail);
     let _ = app.emit(
         "dsh:upgrade",
         serde_json::json!({ "phase": phase, "detail": detail, "installed": installed }),

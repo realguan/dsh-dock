@@ -389,6 +389,9 @@ export const BOOT_FAILURE_KINDS = [
   "symlink_privilege_required",
   "plugin_row_failed",
   "unknown",
+  // 2026-11-03：目标版本的依赖未完整发布（上游发布未完成/镜像未同步；非网络问题）。
+  // 追加在末尾 = 不改既有取值与顺序（与 `boot_failure.rs` serde 值逐字对应）。
+  "dependency_unavailable",
 ] as const
 
 export type BootFailureKind = (typeof BOOT_FAILURE_KINDS)[number]

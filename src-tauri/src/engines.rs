@@ -919,17 +919,7 @@ fn run_engine_pnpm_streaming(
     }
     let status = child.wait().context("等待引擎 pnpm 子进程退出失败")?;
     if !status.success() {
-        let detail: String = stderr_thread
-            .join()
-            .unwrap_or_default()
-            .lines()
-            .rev()
-            .take(8)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let detail = pnpm_failure_detail(&stderr_thread.join().unwrap_or_default());
         bail!("pnpm {} 失败：{}", args.join(" "), detail.trim());
     }
     Ok(())
@@ -1121,36 +1111,104 @@ pub fn shim_add_node(data_dir: &Path, path_env: &str) -> Result<()> {
 /// 但 Windows 普通账户的失败根本不是网络问题（是 global package hash link 需要
 /// `SeCreateSymbolicLinkPrivilege`）。文案把真因盖住 ⇒ 错误卡给「检查网络后重试」
 /// ⇒ 重试必然再失败。分类拆开后才可能给可行动出路。
+///
+/// **2026-11-03 增依赖类**：升级 `0.2.2-alpha.3` 失败的真实原因是上游先发布了
+/// `@deepseek-ai/dsh@0.2.2-alpha.3`，其依赖 `@deepseek-ai/dsh-tool-pwsh-persistent`
+/// 直到 75 分钟后才发布；pnpm 报 `ERR_PNPM_NO_MATCHING_VERSION`，而壳把它同
+/// registry 前缀一起归类成网络类 ⇒ 又变成「registry 均不可达」。依赖未发布
+/// 是**确定性的**：当时重试必然失败，只能等上游补齐或换版本——必须单独成类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InstallFailureKind {
     /// 符号链接特权不足（Windows 普通账户；非网络问题）。
     SymlinkPrivilege,
+    /// 目标版本的依赖在 registry 上还没有对应版本（上游发布未完成 / 镜像未同步）。
+    DependencyUnavailable,
     /// 网络 / registry 不可达。
     Network,
     /// 其它（构建脚本、磁盘、未知）。
     Other,
 }
 
+/// pnpm 的「版本不存在」错误族（稳定前缀 + 人读文案两条判据）。
+///
+/// 只认 pnpm 明确说"没有这个版本"的形态；**不**把泛化的 `could not resolve` 收进来
+/// ——网络失败也会带它，收进来就把网络类误判成依赖类（与本次修复相反的方向）。
+fn is_dependency_unavailable(lowered: &str) -> bool {
+    lowered.contains("err_pnpm_no_matching_version")
+        || lowered.contains("no matching version found")
+        || lowered.contains("other releases are")
+        || lowered.contains("err_pnpm_fetch_404")
+        || lowered.contains("is not in this registry")
+}
+
+/// 网络类判据（原样保留；依赖类判定在它**之前**，见 [`classify_install_failure`]）。
+fn is_network_failure(lowered: &str) -> bool {
+    lowered.contains("network")
+        || lowered.contains("registry")
+        || lowered.contains("econnrefused")
+        || lowered.contains("etimedout")
+        || lowered.contains("tls")
+        || lowered.contains("handshake")
+        || lowered.contains("eai_again")
+}
+
 /// 归类单条安装错误文本（**纯函数**，供单测）。
 ///
-/// 判据顺序：**先特权、后网络**——特权失败的文本里可能同时出现 `registry`
-/// 与 `os error 5`（聚合文案即如此），顺序反了就会把特权类吸进网络类。
+/// 判据顺序：**先特权、再依赖、后网络**——特权失败的文本里可能同时出现 `registry`
+/// 与 `os error 5`；依赖失败的文本里必然带 registry URL（`while fetching it from
+/// https://registry…`）。顺序反了就会把可行动结论吸进网络类（两次真机缺陷的成因）。
 pub(crate) fn classify_install_failure(err: &str) -> InstallFailureKind {
     let e = err.to_lowercase();
     if crate::boot_failure::is_symlink_privilege_detail(&e) {
         InstallFailureKind::SymlinkPrivilege
-    } else if e.contains("network")
-        || e.contains("registry")
-        || e.contains("econnrefused")
-        || e.contains("etimedout")
-        || e.contains("tls")
-        || e.contains("handshake")
-        || e.contains("eai_again")
-    {
+    } else if is_dependency_unavailable(&e) {
+        InstallFailureKind::DependencyUnavailable
+    } else if is_network_failure(&e) {
         InstallFailureKind::Network
     } else {
         InstallFailureKind::Other
     }
+}
+
+/// 从 pnpm 的「没有匹配版本」错误里取出缺失的 `包@版本`（纯函数，供单测）。
+///
+/// pnpm 会按终端宽度折行（`No matching version found for\n      @scope/pkg@1.2.3
+/// while fetching it from …`），故先把空白折叠成单空格再解析。解析不出 → `None`，
+/// 调用方退回不带包名的文案，**不猜**。
+pub(crate) fn missing_package_spec(err: &str) -> Option<String> {
+    const MARK: &str = "No matching version found for ";
+    let flat = err.split_whitespace().collect::<Vec<_>>().join(" ");
+    let start = flat.find(MARK)? + MARK.len();
+    let rest = &flat[start..];
+    let end = rest
+        .find(" while fetching it from")
+        .or_else(|| rest.find(' '))
+        .unwrap_or(rest.len());
+    let spec = rest[..end].trim().trim_end_matches('.');
+    (!spec.is_empty()).then(|| spec.to_string())
+}
+
+/// 从 pnpm 完整 stderr 里截出用于展示/归类的明细（纯函数，供单测）。
+///
+/// 旧实现只取末 8 行，把 `ERR_PNPM_NO_MATCHING_VERSION` 的头部和缺失包名一起丢掉
+/// ——2026-11-03 真机日志里只剩「Other releases are:」，既归不了类也点不了名。
+/// 现在短错误原样保留；超长时才在**中部**截断（保头保尾），上限 4000 字符。
+pub(crate) fn pnpm_failure_detail(stderr: &str) -> String {
+    const MAX_CHARS: usize = 4000;
+    const TAIL_CHARS: usize = 1000;
+    let trimmed = stderr.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed
+        .chars()
+        .take(MAX_CHARS - TAIL_CHARS - 3) // 3 = 中部省略标记 `\n…\n`
+        .collect();
+    let tail: String = {
+        let reversed: Vec<char> = trimmed.chars().rev().take(TAIL_CHARS).collect();
+        reversed.into_iter().rev().collect()
+    };
+    format!("{head}\n…\n{tail}")
 }
 
 /// 由各 registry 的失败明细聚合出**面向用户**的失败原因（纯函数，供单测）。
@@ -1158,22 +1216,45 @@ pub(crate) fn classify_install_failure(err: &str) -> InstallFailureKind {
 /// 语义：
 /// - 任一条为特权类 ⇒ 归为特权类（这是**可行动**的结论，且与"网络"完全不同）；
 ///   并带 [`crate::boot_failure::SYMLINK_PRIVILEGE_MARKER`] 稳定标记，供分类表命中。
-/// - 否则若任一条为网络类 ⇒ 归为网络类（沿用原「registry 均不可达」口径）。
+/// - 否则若任一条为依赖类 ⇒ 归为依赖类（点名缺失包；**不再**说 registry 不可达）；
+/// - 否则若任一条为网络类 ⇒ 归为网络类（沿用原「registry 均不可达」口径）；
 /// - 否则落兜底文案。
 ///
-/// 保留逐条明细（`errors`）以便排查——聚合结论**不吞**证据。
-pub(crate) fn install_failure_message(errors: &[String]) -> String {
-    let kinds: Vec<InstallFailureKind> =
-        errors.iter().map(|e| classify_install_failure(e)).collect();
+/// `errors` 是 `(registry, 原始错误)`：**归类只看原始错误**——把 registry 前缀并进去
+/// 判，URL 里的 `registry` 会让所有失败都变成网络类（本次缺陷的成因）。
+/// 逐条明细仍完整保留在文案里，聚合结论**不吞**证据。
+pub(crate) fn install_failure_message(version: &str, errors: &[(String, String)]) -> String {
+    let kinds: Vec<InstallFailureKind> = errors
+        .iter()
+        .map(|(_, e)| classify_install_failure(e))
+        .collect();
     let any_privilege = kinds.contains(&InstallFailureKind::SymlinkPrivilege);
+    let any_dependency = kinds.contains(&InstallFailureKind::DependencyUnavailable);
     let any_network = kinds.contains(&InstallFailureKind::Network);
-    let detail = errors.join("；");
+    let detail = errors
+        .iter()
+        .map(|(registry, e)| format!("{registry}: {e}"))
+        .collect::<Vec<_>>()
+        .join("；");
     if any_privilege {
         format!(
             "{}引擎安装需要创建符号链接，但当前账户没有该权限（Windows 的 \
              SeCreateSymbolicLinkPrivilege）。这不是网络问题，重试不会成功。\n\
              各 registry 明细：{detail}",
             crate::boot_failure::SYMLINK_PRIVILEGE_MARKER
+        )
+    } else if any_dependency {
+        let missing = errors
+            .iter()
+            .find_map(|(_, e)| missing_package_spec(e))
+            .map(|spec| format!("：{spec} 在软件源上没有可安装的版本"))
+            .unwrap_or_default();
+        format!(
+            "dsh {version} 的依赖未完整发布{missing}（这不是网络问题）。\n\
+             通常是上游刚发布、依赖包或镜像尚未同步；请稍后重试，\
+             或在「版本列表」中改选上一个可用版本。\n\
+             各源明细：{detail}\n{}",
+            crate::boot_failure::DEPENDENCY_UNAVAILABLE_MARKER
         )
     } else if any_network {
         format!("dsh 引导安装失败（registry 均不可达）：{detail}")
@@ -1205,7 +1286,7 @@ pub fn install_dsh_project_local(
     // 前置布局（幂等）：package.json + hoisted + 壳自写 shim。放在安装**之前**，
     // 使安装中途失败时布局已就位（重试/手工排查都从同一形态出发）。
     ensure_dsh_runtime_layout(data_dir)?;
-    let mut errors = Vec::new();
+    let mut errors: Vec<(String, String)> = Vec::new();
     for registry in crate::updates::registry_chain() {
         let args = crate::updates::pnpm_project_install_args(
             &registry,
@@ -1252,13 +1333,14 @@ pub fn install_dsh_project_local(
             }
             Err(e) => {
                 tracing::warn!("dsh 引导安装（{registry}）失败：{e}");
-                errors.push(format!("{registry}: {e}"));
+                errors.push((registry, e.to_string()));
             }
         }
     }
     // 失败归类后再聚合（v1.2.0 D1）：此前一律说「registry 均不可达」，
     // 把 Windows 的符号链接特权失败也说成网络问题 ⇒ 错误卡给「检查网络后重试」。
-    Err(anyhow!(install_failure_message(&errors)))
+    // 2026-11-03：依赖未发布同理（上游只发布了主包，依赖包 75 分钟后才出现）。
+    Err(anyhow!(install_failure_message(version, &errors)))
 }
 
 // ---------- 编排入口 ----------
@@ -1389,6 +1471,19 @@ fn describe_found(found: &Option<String>) -> String {
 mod tests {
     use super::*;
 
+    fn fail(registry: &str, error: &str) -> (String, String) {
+        (registry.to_string(), error.to_string())
+    }
+
+    /// 2026-11-03 真机原文（按 pnpm 12.3.1 的折行形态，`No matching version found
+    /// for` 与包名被断成两行；registry URL 也在错误文本里）。
+    const PNPM_NO_MATCHING: &str = "Error: ERR_PNPM_NO_MATCHING_VERSION\n\n  \
+        × adding a new package\n  ╰─▶ Failed to resolve dependency tree: No matching \
+        version found for\n      @deepseek-ai/dsh-tool-pwsh-persistent@0.2.2-alpha.3 \
+        while fetching it from https://\n      registry.npmmirror.com/\n  help: The \
+        latest release of @deepseek-ai/dsh-tool-pwsh-persistent is \"0.2.1-rc.5\".\n\
+        \n        Other releases are:\n          * alpha: 0.2.2-alpha.2\n";
+
     /// **v1.2.0 D1 复现锚（纯函数层）**：Windows 普通账户的 `os error 5` 必须归为
     /// **特权类**而非网络类——否则聚合文案会继续说「registry 均不可达」。
     #[test]
@@ -1425,15 +1520,41 @@ mod tests {
         );
     }
 
-    /// 聚合文案：特权优先于网络，且带稳定标记（供 `boot_failure` 分类表命中）。
+    /// **2026-11-03 复现锚（纯函数层）**：`ERR_PNPM_NO_MATCHING_VERSION` 文本里
+    /// 必然带 registry URL（`while fetching it from https://registry…`）——
+    /// 依赖类判定必须先于网络类，否则本次升级失败又会被说成「registry 均不可达」。
+    #[test]
+    fn dependency_resolution_failure_is_not_network() {
+        assert_eq!(
+            classify_install_failure(PNPM_NO_MATCHING),
+            InstallFailureKind::DependencyUnavailable,
+            "依赖未发布被误判成网络不可用（用户会去查网络）：{PNPM_NO_MATCHING}"
+        );
+        // 404 形态（包还没发布）同属依赖类
+        assert_eq!(
+            classify_install_failure(
+                "ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/@deepseek-ai/dsh-x: \
+                 @deepseek-ai/dsh-x is not in this registry"
+            ),
+            InstallFailureKind::DependencyUnavailable
+        );
+        // 缺失包名可从折行原文里取出（空白折叠后解析）
+        assert_eq!(
+            missing_package_spec(PNPM_NO_MATCHING).as_deref(),
+            Some("@deepseek-ai/dsh-tool-pwsh-persistent@0.2.2-alpha.3")
+        );
+        assert_eq!(missing_package_spec("connect ECONNREFUSED"), None);
+    }
+
+    /// 聚合文案：特权优先于依赖/网络，且带稳定标记（供 `boot_failure` 分类表命中）。
     #[test]
     fn install_failure_message_privileges_take_precedence_and_carry_marker() {
         // 混合：一条网络 + 一条特权 ⇒ 结论必须是特权（"可行动"的那条）
         let mixed = vec![
-            "npmmirror: tls handshake eof".to_string(),
-            "npmjs.org: -> 拒绝访问。(os error 5)".to_string(),
+            fail("npmmirror", "tls handshake eof"),
+            fail("npmjs.org", "-> 拒绝访问。(os error 5)"),
         ];
-        let msg = install_failure_message(&mixed);
+        let msg = install_failure_message("0.2.2-alpha.3", &mixed);
         assert!(
             msg.contains(crate::boot_failure::SYMLINK_PRIVILEGE_MARKER),
             "特权类结论必须带稳定标记（否则分类表命中不了）：{msg}"
@@ -1450,20 +1571,88 @@ mod tests {
         assert!(msg.contains("tls handshake eof") && msg.contains("os error 5"));
 
         // 纯网络 ⇒ 沿用原口径（回归保护：不要改掉既有的网络文案）
-        let net = vec!["npmmirror: tls handshake eof".to_string()];
-        assert!(install_failure_message(&net).contains("registry 均不可达"));
+        let net = vec![fail("npmmirror", "tls handshake eof")];
+        assert!(install_failure_message("0.2.2-alpha.3", &net).contains("registry 均不可达"));
 
         // 其它 ⇒ 不冒充网络
-        let other = vec!["build script failed".to_string()];
-        let m = install_failure_message(&other);
+        let other = vec![fail("npmmirror", "build script failed")];
+        let m = install_failure_message("0.2.2-alpha.3", &other);
         assert!(!m.contains("registry 均不可达") && !m.contains("不是网络问题"));
+    }
+
+    /// **2026-11-03 复现锚（聚合层）**：与真机同形——两条 registry 都失败、错误里
+    /// 都带 registry URL、且真实原因是依赖包未发布 ⇒ 文案必须点名缺失包并否定网络，
+    /// 不得再说「registry 均不可达」。
+    #[test]
+    fn dependency_failure_message_names_missing_package_and_denies_network() {
+        let errors = vec![
+            fail("https://registry.npmmirror.com", PNPM_NO_MATCHING),
+            fail(
+                "https://registry.npmjs.org",
+                "Error: ERR_PNPM_NO_MATCHING_VERSION\n\n  × adding a new package\n  ╰─▶ \
+                 No matching version found for @deepseek-ai/dsh-tool-pwsh-persistent@0.2.2-alpha.3\n\
+                 \n        Other releases are:\n          * alpha: 0.2.2-alpha.2\n",
+            ),
+        ];
+        let msg = install_failure_message("0.2.2-alpha.3", &errors);
+        assert!(
+            !msg.contains("registry 均不可达"),
+            "依赖未发布不得说成网络不可达：{msg}"
+        );
+        assert!(msg.contains("依赖未完整发布"), "必须点明真因：{msg}");
+        assert!(
+            msg.contains("@deepseek-ai/dsh-tool-pwsh-persistent@0.2.2-alpha.3"),
+            "必须点名缺失的依赖包版本：{msg}"
+        );
+        assert!(msg.contains("不是网络问题"), "必须掐断网络排查方向：{msg}");
+        assert!(
+            msg.contains("版本列表"),
+            "必须给可行动出路（改选上一个版本）：{msg}"
+        );
+        assert!(
+            msg.contains(crate::boot_failure::DEPENDENCY_UNAVAILABLE_MARKER),
+            "依赖类结论必须带稳定标记：{msg}"
+        );
+        // 明细不吞
+        assert!(msg.contains("ERR_PNPM_NO_MATCHING_VERSION"));
+
+        // 端到端粘合：生产文案必须被分类表判为依赖类（标记常量两侧共用）
+        assert_eq!(
+            crate::boot_failure::BootFailure::from_legacy_detail(&msg),
+            crate::boot_failure::BootFailure::DependencyUnavailable,
+            "生产文案未被分类表识别——标记常量两侧漂移了"
+        );
+
+        // 依赖 + 网络混合 ⇒ 依赖结论优先（它才是可行动的那条）
+        let mixed = vec![
+            fail("https://registry.npmmirror.com", "tls handshake eof"),
+            fail("https://registry.npmjs.org", PNPM_NO_MATCHING),
+        ];
+        assert!(!install_failure_message("0.2.2-alpha.3", &mixed).contains("registry 均不可达"));
+    }
+
+    /// pnpm stderr 明细：短错误原样保留（旧实现只取末 8 行，会把错误头与缺失包名
+    /// 一起丢掉）；超长时保头保尾且不超上限。
+    #[test]
+    fn pnpm_failure_detail_keeps_head_and_tail() {
+        let short = "Error: ERR_PNPM_NO_MATCHING_VERSION\nNo matching version found for x@1";
+        assert_eq!(pnpm_failure_detail(short), short);
+        let long = format!("HEAD_MARK\n{}TAIL_MARK", "line\n".repeat(2000));
+        let out = pnpm_failure_detail(&long);
+        assert!(out.starts_with("HEAD_MARK"), "必须保留错误头部");
+        assert!(out.ends_with("TAIL_MARK"), "必须保留错误尾部");
+        assert!(out.contains('…'), "超长时应显式中部截断");
+        assert!(out.chars().count() <= 4001, "截断后仍须有上限");
     }
 
     /// 端到端粘合：生产侧聚合出的特权文案，必须被 `boot_failure` 分类表判为
     /// **特权变体**（两条判据共用同一个标记常量 ⇒ 不会各自漂移）。
     #[test]
     fn privilege_message_round_trips_through_boot_failure_classifier() {
-        let msg = install_failure_message(&["npmjs.org: -> 拒绝访问。(os error 5)".to_string()]);
+        let msg = install_failure_message(
+            "0.2.2-alpha.3",
+            &[fail("npmjs.org", "-> 拒绝访问。(os error 5)")],
+        );
         assert_eq!(
             crate::boot_failure::BootFailure::from_legacy_detail(&msg),
             crate::boot_failure::BootFailure::SymlinkPrivilegeRequired,

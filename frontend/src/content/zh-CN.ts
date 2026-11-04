@@ -161,6 +161,13 @@ export const t = {
         title: "DSH 工作台启动失败",
         suggestion: "详情见日志；可重试，若持续请反馈。",
       },
+      // 2026-11-03：上游只发布了主包、依赖包晚到 ⇒ pnpm 报 NO_MATCHING_VERSION。
+      // 后端已把真因放在 detail 首行；这里同样先否定网络方向。
+      dependency_unavailable: {
+        title: "DSH 目标版本未完整发布",
+        suggestion:
+          "这不是网络问题：该版本依赖的软件包在软件源里还没有可安装的版本，通常是上游刚发布、依赖包或镜像尚未同步。请稍后重试，或在「版本列表」中改选上一个可用版本。",
+      },
     } as Record<string, { title: string; suggestion: string }>,
   },
   mode: {
