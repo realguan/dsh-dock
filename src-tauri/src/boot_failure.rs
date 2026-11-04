@@ -31,6 +31,15 @@ pub(crate) const SYMLINK_PRIVILEGE_MARKER: &str = "[symlink-privilege]";
 /// `while fetching it from https://registry…`），不先按标记分流就会被网络分支吸走。
 pub(crate) const DEPENDENCY_UNAVAILABLE_MARKER: &str = "[dependency-unavailable]";
 
+/// 开发标记只服务**分类**，不得出现在用户界面。
+///
+/// 2026-11-03 真机截图暴露：标记随明细一起渲染进错误卡（`[dependency-unavailable]`
+/// 挂在最后一行）。载荷边界统一剥离：`classify` 用原文，展示用剥过的文本。
+pub(crate) fn strip_internal_markers(text: &str) -> String {
+    text.replace(SYMLINK_PRIVILEGE_MARKER, "")
+        .replace(DEPENDENCY_UNAVAILABLE_MARKER, "")
+}
+
 /// 判定一段（**已小写化**的）错误文本是否为「符号链接特权不足」（Windows 无
 /// `SeCreateSymbolicLinkPrivilege` 时 pnpm 的 global hash link 会以 `os error 5` 失败）。
 ///
@@ -375,7 +384,8 @@ impl BootErrorPayload {
             actions: failure.actions(),
             advanced_actions: failure.advanced_actions(),
             failure,
-            detail: detail.to_string(),
+            // 分类已由调用方用原文完成；写入载荷前剥掉内部标记（不面向用户）。
+            detail: strip_internal_markers(detail),
             log: log_tail.to_string(),
             quarantine: None,
         }
@@ -539,6 +549,32 @@ mod tests {
         assert_eq!(f.actions(), vec!["retry"]);
         let v = serde_json::to_value(&f).unwrap();
         assert_eq!(v["kind"], "dependency_unavailable");
+    }
+
+    /// 内部标记只服务分类：载荷里的 `detail` 必须已剥离（2026-11-03 真机截图
+    /// 里 `[dependency-unavailable]` 跟着明细渲染进了错误卡）。
+    #[test]
+    fn internal_markers_are_stripped_from_payload_detail() {
+        let dep = format!(
+            "升级失败：dsh 0.2.2-alpha.3 的依赖未完整发布…ERR_PNPM_NO_MATCHING_VERSION\n{DEPENDENCY_UNAVAILABLE_MARKER}"
+        );
+        let payload = BootErrorPayload::classify(&dep, "");
+        assert_eq!(payload.failure, BootFailure::DependencyUnavailable);
+        assert!(
+            !payload.detail.contains(DEPENDENCY_UNAVAILABLE_MARKER),
+            "依赖标记泄漏到用户界面：{}",
+            payload.detail
+        );
+        assert!(payload.detail.contains("依赖未完整发布"));
+
+        let priv_detail = format!("{SYMLINK_PRIVILEGE_MARKER}引擎安装需要创建符号链接…");
+        let payload = BootErrorPayload::classify(&priv_detail, "");
+        assert_eq!(payload.failure, BootFailure::SymlinkPrivilegeRequired);
+        assert!(
+            !payload.detail.contains(SYMLINK_PRIVILEGE_MARKER),
+            "特权标记泄漏到用户界面：{}",
+            payload.detail
+        );
     }
 
     /// 稳定标记是**两侧共用**的常量：生产侧拼进去的标记，本表必须认得。
