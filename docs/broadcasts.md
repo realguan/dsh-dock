@@ -31,6 +31,26 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-11-26 缺陷修复与发版准备 · **issue #32 三项修复落盘，准备发布 v1.4.3** —— guan（AI 协作）
+
+- **变更**：`b02f354`（修复实现）＋ `f9bef14`（版本号三处对齐升为 `1.4.3`）；本版同时包含 `origin/master`
+  已合入的 PR #26（`9fb678d`）与 PR #29（issue #28，`bd331f6` / `34e1b43`，依赖尚未完整发布时不再误报「registry 均不可达」，
+  且展示前剥离 `[dependency-unavailable]` / `[symlink-privilege]` 内部分类标记）。issue #32 三项修复要点：
+  1. `src-tauri/src/{engines,resolve,shell}.rs`：Windows 引擎档在项目级布局与 `dsh-boot.mjs` 在位时通过 `DshEntry::NodeScript`
+     直拉 `node.exe + dsh-boot.mjs`（绕开 `cmd.exe /C dsh.cmd` 中间壳，避免 `cmd.exe` 先退遗留持锁占端口的孤儿 `node.exe`；Unix 与存量全局布局不变），
+     抽取 `dsh_command` 令 `spawn_dsh` 与 `--no-open` 探测共用命令构造；
+  2. `src-tauri/src/boot.rs`：`guard_session` 的三条终止性退出分支统一经 `finish_session_with_error` 按
+     `teardown_session` → `emit_boot_error` → `state.window.navigate(ui::shell_app_url(app))` 收口，避免异常退出后主窗口停在远端工作台页遮挡错误卡；
+  3. `src-tauri/src/{shell,executor}.rs`：`spawn_dsh` 与 `WslExecutor::start` 改用 `open_session_log` 在启动前将非空 `dsh-shell.log` / `dsh-wsl.log`
+     轮转归档为 `.1`..`.3`，保留崩溃现场的同时保持活动日志从 byte 0 读取。
+- **影响**：仅周知（冻结期只收 fix，本次均为缺陷修复与稳定性加固）；随后生成覆盖清单、提交 `docs/RELEASE_NOTES.md` 并推 `v1.4.3` tag 触发 CI 发版；
+  Windows 平台测试（含 `#[cfg(windows)]`）及三平台安装包由 GitHub Actions 完成（注：issue #32 中涉及 GPU TDR 的 WebView2 `AppHangB1` 渲染问题不在本轮改动范围）。
+- **凭据**：合入 `origin/master` 后本地复验：`cd src-tauri && cargo fmt --check` 通过；`DSH_TEST_REQUIRE_NODE=1 cargo test`
+  `576 passed; 0 failed; 7 ignored`（含 5 条新增单测/门禁、`ipc`/`lifecycle`/`network_gate` 全绿）；
+  `cargo clippy --all-targets -- -D warnings`（`aarch64-apple-darwin` 与 `x86_64-apple-darwin`）均通过（`x86_64-pc-windows-gnu` 本机缺 `x86_64-w64-mingw32-gcc` 止步于 `ring` build script，由 CI Windows leg 覆盖）；
+  `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v` 69 passed（0 skipped）；
+  前端 `tsc -b` / `oxlint .`（0 warnings / 0 errors）/ `vitest run`（71 files / 719 tests passed）。
+
 ### 2026-10-30 发版 · **v1.4.2 已发布（工作台身份 token 握手 + 聊天内嵌插件 v0.1.2），进入冻结期** —— guan（AI 协作）
 
 - **变更**：tag `v1.4.2`（`da9a075`）已推 origin，CI `build` 三平台矩阵 + Release 全部 success；
