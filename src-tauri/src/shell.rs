@@ -10,8 +10,8 @@
 //!   - 优雅停止 = SIGTERM → 等待 grace → SIGKILL 兜底（unix；Windows 用 kill）。
 //!
 //! 与启动器/持久服务的差异：**产品壳与 dsh 严格同生命周期**（壳退 = dsh 停），
-//! 不需要独立进程组、也不需要 stdout/stderr 与壳解耦——日志文件每个启动周期
-//! 截断重建，URL 探测从文件头开始即可，省掉跨启动偏移逻辑。
+//! 不需要独立进程组、也不需要 stdout/stderr 与壳解耦——打开活动日志前把上次非空
+//! 日志轮转归档为 `.1`..`.3`，再新建截断活动日志，URL 探测仍从文件头开始且不丢崩溃现场。
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -42,45 +42,82 @@ fn ensure_dsh_home(dsh_home: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 启动 dsh：system/download/快照档 = `<node> <dsh-bin.js> --profile <p> --port 0`；
-/// 引擎档（ADR-0010）= dsh 启动器直接执行（node/pnpm 经 PATH 解析）。
+const SESSION_LOG_KEEP: usize = 3;
+
+fn rotated_log_path(log_path: &Path, idx: usize) -> PathBuf {
+    let mut name = log_path.as_os_str().to_os_string();
+    name.push(format!(".{idx}"));
+    PathBuf::from(name)
+}
+
+/// 轮转会话历史日志（best-effort）：仅在当前主日志非空时顺次归档到 `.1`..`.keep`，
+/// 避免空重启把真实崩溃现场顶掉；轮转失败只打 warn，绝不阻断会话启动。
+fn rotate_session_log(log_path: &Path, keep: usize) {
+    let non_empty = std::fs::metadata(log_path)
+        .map(|m| m.len() > 0)
+        .unwrap_or(false);
+    if !non_empty || keep == 0 {
+        return;
+    }
+    let oldest = rotated_log_path(log_path, keep);
+    if oldest.exists() {
+        if let Err(e) = std::fs::remove_file(&oldest) {
+            tracing::warn!("删除过期历史日志 {} 失败：{e}", oldest.display());
+        }
+    }
+    for idx in (1..keep).rev() {
+        let src = rotated_log_path(log_path, idx);
+        if src.exists() {
+            let dst = rotated_log_path(log_path, idx + 1);
+            // Windows 的 rename 不支持覆盖已存在目标，先尽力清理目标路径。
+            let _ = std::fs::remove_file(&dst);
+            if let Err(e) = std::fs::rename(&src, &dst) {
+                tracing::warn!("轮转日志 {} -> {} 失败：{e}", src.display(), dst.display());
+            }
+        }
+    }
+    let first = rotated_log_path(log_path, 1);
+    let _ = std::fs::remove_file(&first);
+    if let Err(e) = std::fs::rename(log_path, &first) {
+        tracing::warn!(
+            "归档日志 {} -> {} 失败：{e}",
+            log_path.display(),
+            first.display()
+        );
+    }
+}
+
+/// 打开本地/WSL 会话活动日志：先尽力将上一次非空日志轮转至 `.1`..`.3`，
+/// 再截断创建新的主日志以保证 `wait_for_ready` 仍从 byte 0 开始解析。
+pub(crate) fn open_session_log(log_path: &Path) -> Result<std::fs::File> {
+    if let Some(parent) = log_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("创建日志目录 {}", parent.display()))?;
+    }
+    rotate_session_log(log_path, SESSION_LOG_KEEP);
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(log_path)
+        .with_context(|| format!("打开日志 {}", log_path.display()))
+}
+
+/// 启动 dsh：通过 `crate::resolve::dsh_command` 构造命令（`<node> <entry>` 或启动器），
+/// 附带 `--profile <p> --port 0 [--no-open]`。
 /// `DSH_HOME` 来自 LaunchSpec（system/引擎=用户 home；bundle=兜底副本 home）。
-/// stdout/stderr 进数据目录日志文件（可排查故障）。
+/// stdout/stderr 写入轮转后的活动日志文件（崩溃后重启仍可从 `.1` 追溯现场）。
 pub fn spawn_dsh(launch: &LaunchSpec, data_dir: &Path) -> Result<DshProcess> {
     let node_bin = &launch.node_bin;
     let dsh_home = &launch.dsh_home;
 
-    // 解析出的宿主零部件缺一不可：慢一点把错误讲清楚，别让 node 裸奔报「command not found」。
-    if !node_bin.is_file() {
-        anyhow::bail!("Node 可执行文件不存在: {}", node_bin.display());
-    }
-    let mut cmd = match &launch.dsh_entry {
-        crate::resolve::DshEntry::NodeScript { bin_js } => {
-            if !bin_js.is_file() {
-                anyhow::bail!("dsh 入口不存在: {}", bin_js.display());
-            }
-            let mut c = crate::child_cmd(node_bin);
-            c.arg(bin_js);
-            c
-        }
-        crate::resolve::DshEntry::Launcher { bin } => {
-            if !bin.is_file() {
-                anyhow::bail!("dsh 启动器不存在: {}", bin.display());
-            }
-            crate::child_cmd(bin)
-        }
-    };
+    // 复用 resolve::dsh_command，与 --no-open 探测共享入口校验和 Windows 直拉分发。
+    let mut cmd = crate::resolve::dsh_command(node_bin, &launch.dsh_entry)?;
     ensure_dsh_home(dsh_home)?;
 
     std::fs::create_dir_all(data_dir).context("创建数据目录")?;
     let log_path = data_dir.join("dsh-shell.log");
-    // 每次启动重建：本进程一进程一日志，不跨启动累积（无历史偏移问题）。
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&log_path)
-        .with_context(|| format!("打开日志 {}", log_path.display()))?;
+    let log = open_session_log(&log_path)?;
 
     for arg in dsh_launcher_args(launch) {
         cmd.arg(arg);
@@ -1097,5 +1134,69 @@ dsh web: http://127.0.0.1:42135/?token=SL6rrH8emdKUA4mmfBp_IfNjO89tw_-RYyVf4pIVh
         );
         let _ = std::fs::remove_dir_all(lifecycle::procs_dir(&data_dir));
         let _ = Role::DshServer;
+    }
+
+    #[test]
+    fn open_session_log_rotates_non_empty_logs_up_to_three_and_starts_fresh() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-logrot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let log_path = dir.join("dsh-shell.log");
+
+        for run in 1..=4 {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&log_path, format!("run-{run}\n")).unwrap();
+            drop(open_session_log(&log_path).unwrap());
+            assert_eq!(
+                std::fs::read_to_string(&log_path).unwrap(),
+                "",
+                "新打开的活动日志必须从 byte 0 起且为空"
+            );
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(rotated_log_path(&log_path, 1)).unwrap(),
+            "run-4\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rotated_log_path(&log_path, 2)).unwrap(),
+            "run-3\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rotated_log_path(&log_path, 3)).unwrap(),
+            "run-2\n"
+        );
+        assert!(
+            !rotated_log_path(&log_path, 4).exists(),
+            "超过保留份数 3 的旧日志应淘汰"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_session_log_skips_rotation_for_empty_main_log() {
+        let dir = std::env::temp_dir().join(format!("dsh-shell-logskip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let log_path = dir.join("dsh-wsl.log");
+        let backup = rotated_log_path(&log_path, 1);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&backup, "crash-evidence\n").unwrap();
+
+        // 主日志尚不存在时不应挤掉 .1
+        drop(open_session_log(&log_path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "crash-evidence\n"
+        );
+        assert!(!rotated_log_path(&log_path, 2).exists());
+
+        // 主日志为空文件（0 字节）时也不应挤掉 .1
+        drop(open_session_log(&log_path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "crash-evidence\n"
+        );
+        assert!(!rotated_log_path(&log_path, 2).exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

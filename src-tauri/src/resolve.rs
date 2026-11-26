@@ -22,11 +22,37 @@ use crate::manifest::{FallbackSpec, ProductManifest, TierKind};
 /// dsh 执行形态（ADR-0010 引擎档引入）：解析器产出、spawn_dsh / no-open 探测消费。
 #[derive(Debug, Clone)]
 pub enum DshEntry {
-    /// node 前缀执行包入口 lib/bin.js（system / download / 快照档）。
+    /// node 前缀执行 JS 入口（bundle 档 `lib/bin.js`，或 Windows 引擎档项目级
+    /// 布局 `dsh-boot.mjs` 直拉——2026-11-26 修复：绕开 `cmd.exe /C dsh.cmd`，
+    /// 让壳直接持握 `node.exe` PID）。
     NodeScript { bin_js: PathBuf },
-    /// 引擎 dsh 启动器直接执行（**壳自写 shim**，ADR-0017：Unix shebang 脚本 /
-    /// Windows `.cmd`，`child_cmd` 吸收差异；不再是 pnpm 的全局 shim）。
+    /// 引擎 dsh 启动器直接执行（Unix shebang 脚本，或无项目级布局的存量 Windows
+    /// `.cmd` 回退）。
     Launcher { bin: PathBuf },
+}
+
+/// 按 `LaunchSpec` 的 `node_bin` + `dsh_entry` 构造待执行 `Command`（含文件存在校验）：
+/// `spawn_dsh` 与 `--no-open` 探测共用同一分发逻辑，避免双源偏差。
+pub fn dsh_command(node_bin: &Path, dsh_entry: &DshEntry) -> Result<Command> {
+    if !node_bin.is_file() {
+        anyhow::bail!("Node 可执行文件不存在: {}", node_bin.display());
+    }
+    match dsh_entry {
+        DshEntry::NodeScript { bin_js } => {
+            if !bin_js.is_file() {
+                anyhow::bail!("dsh 入口不存在: {}", bin_js.display());
+            }
+            let mut c = crate::child_cmd(node_bin);
+            c.arg(bin_js);
+            Ok(c)
+        }
+        DshEntry::Launcher { bin } => {
+            if !bin.is_file() {
+                anyhow::bail!("dsh 启动器不存在: {}", bin.display());
+            }
+            Ok(crate::child_cmd(bin))
+        }
+    }
 }
 
 /// 解析后的启动规格：一次具体 spawn 的全部决定。
@@ -382,6 +408,23 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 为引擎档挑选 `DshEntry`（纯函数，可跨平台单测）：
+/// 2026-11-26 修复：Windows 项目级布局直接 `node.exe dsh-boot.mjs` 启动，绕开
+/// `cmd.exe /C dsh.cmd` 中间壳，避免 `cmd.exe` 先退导致 `node.exe` 脱离生命周期
+/// 成为孤儿占用端口与写锁；Unix 与旧全局布局保持 `Launcher` 语义不变。
+fn select_engine_dsh_entry(
+    is_windows: bool,
+    launcher: PathBuf,
+    bootstrap: PathBuf,
+    use_direct_bootstrap: bool,
+) -> DshEntry {
+    if is_windows && use_direct_bootstrap {
+        DshEntry::NodeScript { bin_js: bootstrap }
+    } else {
+        DshEntry::Launcher { bin: launcher }
+    }
+}
+
 /// 引擎档 LaunchSpec 构造（引导完成后）：引擎目录定位 node + dsh 启动器 +
 /// no-open 探测。独立成函数供离线单测（引导本身的网络动作归
 /// ensure_engine_bootstrapped，见其测试）。
@@ -390,9 +433,9 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
 /// 两条启动路径都收敛于此 —— 未就绪走 `resolve_launch`（引导后），
 /// **已就绪走 `resolve_launch_engine_ready`（跳过引导，存量/升级用户走这条）**。
 /// 校正必须早于下面两件事，顺序不可调换：
-/// ① [`crate::engines::engine_dsh_bin`] 定位启动器；
-/// ② [`engine_no_open_supported`] —— 它会**真的执行一次启动器**（`--profile web --help`）
-///    去探测 `--no-open`；晚于刷新就会**拿旧 shim 去探测**，得到属于旧形态的结论。
+/// ① [`crate::engines::engine_dsh_bin`] / [`crate::engines::dsh_bootstrap_path`] 定位入口；
+/// ② [`engine_no_open_supported`] —— 它会**真的执行一次入口**（`--profile web --help`）
+///    去探测 `--no-open`；晚于刷新就会**拿旧 shim/bootstrap 去探测**，得到属于旧形态的结论。
 fn engine_launch_spec(
     data_dir: &Path,
     // 用户数据根里的 dsh home（调用方注入，见 `paths.rs`）
@@ -414,11 +457,16 @@ fn engine_launch_spec(
             "引擎引导完成但未定位到 dsh 启动器（引擎目录异常）——删除 engines 目录后重启应用可重建"
         )
     })?;
+    let bootstrap = crate::engines::dsh_bootstrap_path(data_dir);
+    let use_direct_bootstrap =
+        crate::engines::has_project_local_dsh(data_dir) && bootstrap.is_file();
+    let dsh_entry =
+        select_engine_dsh_entry(cfg!(windows), launcher, bootstrap, use_direct_bootstrap);
     let no_open =
-        engine_no_open_supported(dsh_version.unwrap_or(""), &launcher, &node_bin, data_dir);
+        engine_no_open_supported(dsh_version.unwrap_or(""), &dsh_entry, &node_bin, data_dir);
     Ok(LaunchSpec {
         node_bin,
-        dsh_entry: DshEntry::Launcher { bin: launcher },
+        dsh_entry,
         dsh_home: dsh_home.to_path_buf(),
         profile: default_profile,
         tier: TierKind::Engine,
@@ -486,19 +534,22 @@ fn save_probe_cache(
     Ok(())
 }
 
-/// 引擎档 no-open 支持性：dsh 启动器直接探测（注入引擎 bin 与选定 node 目录），
+/// 引擎档 no-open 支持性：按选定的 `DshEntry` 直接探测（注入引擎 bin 与选定 node 目录），
 /// 版本 = 引导终态版本（缓存键与 system 档同机制）。
 fn engine_no_open_supported(
     version: &str,
-    launcher: &Path,
+    dsh_entry: &DshEntry,
     node_bin: &Path,
     data_dir: &Path,
 ) -> bool {
-    let key = launcher.to_path_buf();
+    let probe_key = match dsh_entry {
+        DshEntry::NodeScript { bin_js } => (node_bin.to_path_buf(), bin_js.clone()),
+        DshEntry::Launcher { bin } => (bin.clone(), bin.clone()),
+    };
     no_open_supported(
         version,
-        (key.clone(), key),
-        || probe_no_open_launcher(launcher, node_bin, data_dir, PROBE_NO_OPEN_TIMEOUT),
+        probe_key,
+        || probe_no_open_entry(dsh_entry, node_bin, data_dir, PROBE_NO_OPEN_TIMEOUT),
         data_dir,
     )
 }
@@ -548,15 +599,18 @@ fn no_open_supported(
 /// 探测进程卡死不再永久阻塞 boot。
 const PROBE_NO_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// 引擎档探测：dsh 启动器直接执行（shebang 脚本 / .cmd shim 经 child_cmd
-/// 分发，node 经 dsh_child_path 确保私有与系统 node 均可达），参数与 system 档探测同款。
-fn probe_no_open_launcher(
-    launcher: &Path,
+/// 引擎档探测：复用 [`dsh_command`] 构造命令（Windows 项目级直拉 `node.exe + dsh-boot.mjs`，
+/// Unix / 旧布局经启动器与 `child_cmd` 分发），node 经 `dsh_child_path` 确保私有与系统
+/// node 均可达，参数与正常启动同源。
+fn probe_no_open_entry(
+    dsh_entry: &DshEntry,
     node_bin: &Path,
     data_dir: &Path,
     timeout: std::time::Duration,
 ) -> bool {
-    let mut cmd = crate::child_cmd(launcher);
+    let Ok(mut cmd) = dsh_command(node_bin, dsh_entry) else {
+        return false;
+    };
     cmd.env("PATH", dsh_child_path(node_bin, data_dir));
     cmd.args(["--profile", "web", "--help"]);
     probe_no_open_cmd(cmd, timeout)
@@ -1183,5 +1237,160 @@ sleep 60
         assert_eq!(loaded.get("0.1.0"), Some(&true));
         assert_eq!(loaded.get("0.2.0"), Some(&false));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---------- Windows 引擎直拉 dsh-boot.mjs（2026-11-26，issue #32） ----------
+
+    #[test]
+    fn select_engine_dsh_entry_windows_project_local_bypasses_cmd_shim() {
+        let launcher = PathBuf::from("/data/engines/bin/dsh.cmd");
+        let bootstrap = PathBuf::from("/data/engines/bin/dsh-boot.mjs");
+
+        match select_engine_dsh_entry(true, launcher.clone(), bootstrap.clone(), true) {
+            DshEntry::NodeScript { bin_js } => assert_eq!(
+                bin_js, bootstrap,
+                "Windows 项目级布局应绕开 dsh.cmd 直接 node + dsh-boot.mjs"
+            ),
+            DshEntry::Launcher { .. } => panic!("Windows 项目级布局不应继续套 cmd.exe /C dsh.cmd"),
+        }
+
+        match select_engine_dsh_entry(true, launcher.clone(), bootstrap.clone(), false) {
+            DshEntry::Launcher { bin } => assert_eq!(
+                bin, launcher,
+                "Windows 无项目级入口/无 bootstrap 时仍应回退 Launcher"
+            ),
+            DshEntry::NodeScript { .. } => panic!("旧全局布局或缺失 bootstrap 时应保留 Launcher"),
+        }
+
+        match select_engine_dsh_entry(false, launcher.clone(), bootstrap, true) {
+            DshEntry::Launcher { bin } => {
+                assert_eq!(bin, launcher, "Unix 应继续经 Launcher shebang 启动")
+            }
+            DshEntry::NodeScript { .. } => panic!("Unix 不应改走 NodeScript"),
+        }
+    }
+
+    #[test]
+    fn dsh_command_validates_files_and_avoids_cmd_wrapper_for_node_script() {
+        let dir = tmp();
+        std::fs::create_dir_all(&dir).unwrap();
+        let node = dir.join("node.exe");
+        let boot_js = dir.join("dsh-boot.mjs");
+        let launcher = dir.join("dsh.cmd");
+        std::fs::write(&node, "").unwrap();
+        std::fs::write(&boot_js, "").unwrap();
+        std::fs::write(&launcher, "").unwrap();
+
+        let cmd = dsh_command(
+            &node,
+            &DshEntry::NodeScript {
+                bin_js: boot_js.clone(),
+            },
+        )
+        .expect("存在的 node + dsh-boot.mjs 应能构造命令");
+        assert_eq!(cmd.get_program(), node.as_os_str());
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![boot_js.as_os_str()],
+            "NodeScript 形态必须直接以 node.exe + dsh-boot.mjs 启动，无 cmd.exe 包壳"
+        );
+
+        let launcher_cmd = dsh_command(
+            &node,
+            &DshEntry::Launcher {
+                bin: launcher.clone(),
+            },
+        )
+        .expect("存在的 node + launcher 应能构造命令");
+        assert!(
+            cfg!(windows) || launcher_cmd.get_program() == launcher.as_os_str(),
+            "Launcher 在非 Windows 下直接执行 launcher"
+        );
+
+        let missing = dir.join("missing");
+        assert!(
+            dsh_command(
+                &missing,
+                &DshEntry::NodeScript {
+                    bin_js: boot_js.clone()
+                }
+            )
+            .is_err(),
+            "node 不存在应报错"
+        );
+        assert!(
+            dsh_command(
+                &node,
+                &DshEntry::NodeScript {
+                    bin_js: missing.clone()
+                }
+            )
+            .is_err(),
+            "dsh 脚本不存在应报错"
+        );
+        assert!(
+            dsh_command(&node, &DshEntry::Launcher { bin: missing }).is_err(),
+            "dsh 启动器不存在应报错"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn engine_launch_spec_on_windows_prefers_node_script_and_keeps_legacy_fallback() {
+        let root = tmp();
+        let modern = root.join("modern");
+        let modern_bin = modern.join("engines/bin");
+        let modern_entry =
+            modern.join("engines/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js");
+        std::fs::create_dir_all(&modern_bin).unwrap();
+        std::fs::create_dir_all(modern_entry.parent().unwrap()).unwrap();
+        std::fs::write(modern_bin.join("node.exe"), "").unwrap();
+        std::fs::write(modern_bin.join("dsh.cmd"), "").unwrap();
+        std::fs::write(&modern_entry, "").unwrap();
+        let mut cache = std::collections::HashMap::new();
+        cache.insert("0.9.0".to_string(), true);
+        save_probe_cache(&modern, &cache).unwrap();
+
+        let spec = engine_launch_spec(
+            &modern,
+            &crate::paths::test_dsh_home(),
+            Some("0.9.0"),
+            false,
+            "web".to_string(),
+        )
+        .unwrap();
+        match &spec.dsh_entry {
+            DshEntry::NodeScript { bin_js } => {
+                assert_eq!(bin_js, &crate::engines::dsh_bootstrap_path(&modern));
+            }
+            DshEntry::Launcher { .. } => {
+                panic!("Windows 项目级引擎应选 NodeScript(dsh-boot.mjs)")
+            }
+        }
+
+        let legacy = root.join("legacy");
+        let legacy_bin = legacy.join("engines/bin");
+        std::fs::create_dir_all(&legacy_bin).unwrap();
+        std::fs::write(legacy_bin.join("node.exe"), "").unwrap();
+        std::fs::write(legacy_bin.join("dsh.cmd"), "").unwrap();
+        save_probe_cache(&legacy, &cache).unwrap();
+
+        let legacy_spec = engine_launch_spec(
+            &legacy,
+            &crate::paths::test_dsh_home(),
+            Some("0.9.0"),
+            false,
+            "web".to_string(),
+        )
+        .unwrap();
+        match &legacy_spec.dsh_entry {
+            DshEntry::Launcher { bin } => assert_eq!(bin, &legacy_bin.join("dsh.cmd")),
+            DshEntry::NodeScript { .. } => panic!("Windows 旧全局布局应回退 Launcher(dsh.cmd)"),
+        }
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

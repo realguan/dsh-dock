@@ -1001,12 +1001,7 @@ impl Executor for WslExecutor {
             .ok_or_else(|| "未探测 WSL 发行版（请先 probe）".to_string())?;
         sink(2, "running", &format!("在 WSL（{target}）中启动 DSH"));
         std::fs::create_dir_all(&self.data_dir).map_err(|e| e.to_string())?;
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&self.log_path)
-            .map_err(|e| format!("打开日志 {} 失败：{e}", self.log_path.display()))?;
+        let log = crate::shell::open_session_log(&self.log_path).map_err(|e| e.to_string())?;
         let mut cmd = wsl_command(Some(&target));
         cmd.arg("-e")
             .arg("bash")

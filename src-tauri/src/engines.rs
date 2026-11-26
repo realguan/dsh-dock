@@ -426,8 +426,14 @@ pub(crate) fn ensure_dsh_runtime_layout(data_dir: &Path) -> Result<()> {
 /// 旧全局布局用户（dsh 在 `global/v11/…`、`bin/dsh` 是 pnpm 全局 shim）若被覆盖成
 /// 指向**不存在**的新布局入口，就把人家本来能用的 dsh 弄坏了；且这类用户必然具备
 /// 符号链接特权 ⇒ dsh 启动期不会 EPERM ⇒ **无需修，也不得动**。
+/// 是否使用壳私有的项目级 dsh 布局（`engines/dsh-runtime/.../lib/bin.js` 存在），
+/// 区别于历史版本装在全局目录的布局。
+pub(crate) fn has_project_local_dsh(data_dir: &Path) -> bool {
+    dsh_entry_js(data_dir).is_file()
+}
+
 pub fn refresh_dsh_layout_if_project_local(data_dir: &Path) -> Result<()> {
-    if dsh_entry_js(data_dir).is_file() {
+    if has_project_local_dsh(data_dir) {
         ensure_dsh_runtime_layout(data_dir)
     } else {
         Ok(())

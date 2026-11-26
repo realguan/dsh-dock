@@ -685,6 +685,25 @@ pub(crate) fn reap_previous_session(state: &Arc<ShellState>) {
     }
 }
 
+/// 会话异常终结的统一收口（2026-11-26，issue #32 修复）：
+/// ① 清理当前会话并推进 epoch；
+/// ② 同步写入 `ShellState.boot.error` 并广播 `boot:error`；
+/// ③ 将主窗口从已失效的远端工作台页切回壳内 `BootIndex`（触发 `get_boot_status`
+///    补水展示错误卡；不得调用 `begin_boot` 以免清掉刚写入的错误）。
+fn finish_session_with_error(
+    app: &tauri::AppHandle,
+    state: &Arc<ShellState>,
+    detail: &str,
+    log_tail: &str,
+) {
+    let _ = teardown_session(state);
+    emit_boot_error(app, detail, log_tail);
+    let shell_url = ui::shell_app_url(app);
+    if let Err(e) = state.window.navigate(shell_url) {
+        tracing::warn!("会话异常退出后切回壳错误页失败：{e}");
+    }
+}
+
 /// dsh 就绪后的监护：会话与壳同生命周期——会话退出即错误卡。
 /// 在就绪导航成功后的同一监护线程内持续运行（不新开线程，避免竞态）。
 /// 只监护自己启动的代际：会话被外部切换后立即静默退出（不误监护新会话）。
@@ -716,9 +735,9 @@ pub(crate) fn guard_session(
             let data_dir = match app.path().app_data_dir() {
                 Ok(d) => d,
                 Err(_) => {
-                    let _ = teardown_session(state);
-                    emit_boot_error(
+                    finish_session_with_error(
                         app,
+                        state,
                         &format!("DSH 进程已退出（code={code}）{detail}"),
                         &tail,
                     );
@@ -738,9 +757,9 @@ pub(crate) fn guard_session(
                 if crashes.len() >= 3 {
                     tracing::warn!("60 秒内连续崩溃已达 {} 次，触发熔断保护", crashes.len());
                     crashes.clear();
-                    let _ = teardown_session(state);
-                    emit_boot_error(
+                    finish_session_with_error(
                         app,
+                        state,
                         &format!(
                             "DSH 连续崩溃（60 秒内 3 次，已暂停自动重启）：代码 {code}{detail}"
                         ),
@@ -783,9 +802,9 @@ pub(crate) fn guard_session(
                 return;
             }
 
-            let _ = teardown_session(state);
-            emit_boot_error(
+            finish_session_with_error(
                 app,
+                state,
                 &format!("DSH 进程已退出（code={code}）{detail}"),
                 &tail,
             );
@@ -1744,6 +1763,56 @@ mod handoff_tests {
         assert!(
             round.superseded(token2, true),
             "应用退出中时当前令牌同样判为被取代"
+        );
+    }
+
+    /// 回归闸门（2026-11-26，issue #32）：`guard_session` 终止性退出分支必须通过
+    /// `finish_session_with_error` 收口，且必须先写入错误卡再切回壳页面（不得 `begin_boot`）。
+    #[test]
+    fn guard_session_fatal_exits_navigate_back_to_shell_after_emitting_error() {
+        let full = include_str!("boot.rs").replace("\r\n", "\n");
+        let prod = full.split("\n#[cfg(test)]").next().unwrap_or(&full);
+
+        let fn_start = prod
+            .find("fn finish_session_with_error(")
+            .expect("finish_session_with_error 应存在");
+        let fn_rest = &prod[fn_start..];
+        let fn_end = fn_rest.find("\n}\n").unwrap_or(fn_rest.len());
+        let helper_body = &fn_rest[..fn_end];
+
+        let teardown_pos = helper_body
+            .find("teardown_session(")
+            .expect("finish_session_with_error 必须先 teardown_session");
+        let emit_pos = helper_body
+            .find("emit_boot_error(")
+            .expect("finish_session_with_error 必须 emit_boot_error");
+        let url_pos = helper_body
+            .find("ui::shell_app_url(")
+            .expect("finish_session_with_error 必须获取壳入口 URL");
+        let nav_pos = helper_body
+            .find(".window.navigate(")
+            .expect("finish_session_with_error 必须将主窗口导航回壳页面");
+        assert!(
+            teardown_pos < emit_pos && emit_pos < nav_pos && url_pos < nav_pos,
+            "必须严格按 teardown → emit_boot_error → shell_app_url → navigate 顺序，\
+             确保 BootIndex 重载时 get_boot_status 已读到错误。\n函数体：\n{helper_body}"
+        );
+        assert!(
+            !helper_body.contains("begin_boot("),
+            "finish_session_with_error 不得调用 begin_boot（否则清掉刚写入的 boot.error）"
+        );
+
+        let guard_start = prod
+            .find("pub(crate) fn guard_session(")
+            .expect("guard_session 应存在");
+        let guard_rest = &prod[guard_start..];
+        let guard_end = guard_rest.find("\n}\n").unwrap_or(guard_rest.len());
+        let guard_body = &guard_rest[..guard_end];
+        let exit_calls = guard_body.matches("finish_session_with_error(").count();
+        assert_eq!(
+            exit_calls, 3,
+            "guard_session 的 3 条终止性退出分支（无 data_dir / 3 次熔断 / 未开自动重启）\
+             应统一经 finish_session_with_error 收口，实测 {exit_calls} 处"
         );
     }
 }
