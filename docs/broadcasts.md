@@ -31,6 +31,20 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-11-27 裁定与发版返工 · **macOS 发版默认改为 ad-hoc 签名并跳过 Apple 公证，重打 `v1.4.3`** —— guan（AI 协作）
+
+- **变更**：`48c3847`（`.github/workflows/build.yml`、`README.md`、`docs/macos-signing.md`）＋ 本广播 ＋ `docs/RELEASE_NOTES.md` 覆盖清单刷新。
+  `master`（`45930009757`）四平台全绿后推 `v1.4.3`（`45932097562`），`windows-latest` 与 `ubuntu-latest` 成功、
+  `spike-0003-verify`（`45932097532`）全绿，但两个 macOS leg 在 Apple `notarytool` 公证环节因账户协议状态返回 HTTP 403 失败。
+  维护者裁定后续不再续费或依赖 Apple Developer Account 阻塞 CI：`.github/workflows/build.yml` 改为仅在仓库变量
+  `ENABLE_APPLE_SIGNING=true` 时才消费 `APPLE_*` secrets 执行 Developer ID 签名与公证，默认显式清空 `APPLE_*`
+  并沿用 `tauri.conf.json` 的 `signingIdentity: "-"`（ad-hoc 签名），同时保留 `TAURI_SIGNING_PRIVATE_KEY`（Tauri
+  自更新 `minisign` 签名不受影响）；同步更新 `README.md` 与 `docs/macos-signing.md` 说明 macOS 首次打开需在系统设置放行。
+- **影响**：公开分发的 macOS `.dmg` 转为 ad-hoc 签名（未做 Apple 公证），用户首次从浏览器下载打开需在「系统设置 → 隐私与安全性 → 仍要打开」放行一次；
+  应用内自更新校验不受影响。`v1.4.3` 此前从未生成或发布 Release（最新仍为 `v1.4.2`），删旧 tag 后刷新覆盖清单并重推 `v1.4.3`。
+- **凭据**：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v` 69 passed（0 skipped）；
+  应用源码未变动（沿用 `45930009757` 四平台 CI 全绿与本地 Rust `1.100.0` `577 passed` / 前端 `719 passed` 证据）。
+
 ### 2026-11-27 发版返工 · **修复 Rust 1.100.0 clippy 报错（`needless_bool`），先推 master 验绿再重打 `v1.4.3`** —— guan（AI 协作）
 
 - **变更**：`e9bfb37`（`src-tauri/src/resolve.rs`）＋ 本广播 ＋ `docs/RELEASE_NOTES.md` 覆盖清单刷新。
