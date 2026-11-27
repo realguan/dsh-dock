@@ -1,7 +1,16 @@
-# macOS 签名与公证（Developer ID + Notarytool）
+# macOS 签名与公证（可选：Developer ID + Notarytool）
 
-DSH Dock 的 macOS 分发闭环：`Developer ID Application 证书` 签名 + Apple 公证 + staple。
-未签名/未公证的 .app 在本机可跑，但**发给别人会被 Gatekeeper 拦截**（"无法打开，因为无法验证开发者"）。
+> **当前默认策略（2026-11-27 维护者裁定）**：CI 发布的 macOS 安装包默认采用 `ad-hoc` 签名
+> （`src-tauri/tauri.conf.json` 的 `signingIdentity: "-"`），**不依赖 Apple Developer 账号与在线公证**，
+> 避免开发者账号续费或 Apple 协议变更阻断发版流水线。应用内自动更新（`latest.json` + `.sig`）
+> 使用 Tauri 自身的 `minisign` 密钥校验，不受影响；用户首次从浏览器打开 `.dmg` 需在
+> 「系统设置 → 隐私与安全性」点击「仍要打开」。
+>
+> 如未来需要恢复正式签名与公证，在 GitHub 仓库 Settings → Secrets and variables → Actions →
+> **Variables** 新增 `ENABLE_APPLE_SIGNING=true` 并确保下述 Secrets 完整即可。
+
+以下文档说明如何配置可选的 `Developer ID Application 证书` 签名 + Apple 公证 + staple闭环：
+未公证的 .app 在本机可跑，但**发给别人会被 Gatekeeper 首次拦截**（需手动在隐私与安全性中放行）。
 
 本文告诉你**哪些必须你本人做一次**（涉及你的开发者账户凭据，无法自动化），
 以及 CI 如何消费这些凭据。
@@ -57,17 +66,19 @@ Apple 现在推荐用 **API Key** 而非账户密码公证：
 
 `.github/workflows/build.yml`：
 
-1. **仅 tag 的 macOS 构建步骤**接收 Apple secrets；PR、分支构建和 Windows/Linux 步骤均不接收。检测到任一 Apple secret 后，会要求证书、identity 和 API Key 整组完整，避免静默退化为 ad-hoc。
+1. **仅 tag 的 macOS 构建步骤**接收 Apple secrets，且**仅当仓库 Variables 中显式设置 `ENABLE_APPLE_SIGNING=true` 时才启用**；PR、分支构建、Windows/Linux 步骤，以及未开启该变量时的 tag 构建均会清空 `APPLE_*` 环境变量。开启后检测到任一 Apple secret，会要求证书、identity 和 API Key 整组完整，避免静默退化为 ad-hoc。
 2. Tauri 读取 `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` 后自动导入临时 keychain；workflow 将 secret `APPLE_API_KEY` 的 `.p8` 内容短暂写入 runner 临时目录，并把 Tauri 所需的 `APPLE_API_KEY` 设为 `APPLE_API_KEY_ID`、`APPLE_API_KEY_PATH` 设为该临时路径。
 3. `cargo tauri build`：
    - ta​​uri 用 `APPLE_SIGNING_IDENTITY` 给 `.app` 签名（Hardened Runtime + `entitlements.plist`）
    - 检测到 `APPLE_API_KEY` 组合 → 自动 **notarytool 公证 + staple**
-4. 凭据完整时，workflow 以 `codesign --verify --deep --strict` 和 `spctl --assess` 作为签名/公证闸门。
-5. tag `v*` → release job 把带公证票的 `.dmg` / updater 资产发到 GitHub Release。
+4. 凭据完整且启用 `ENABLE_APPLE_SIGNING=true` 时，workflow 以 `codesign --verify --deep --strict` 和 `spctl --assess` 作为签名/公证闸门。
+5. tag `v*` → release job 把 `.dmg` / updater 资产发到 GitHub Release。
 
-**没配 Apple secrets 时**：tag 构建仍会以 `tauri.conf.json` 的 `signingIdentity: "-"`
-生成 ad-hoc 产物，以保留内部验证能力；日志会明确告警。这种包不能作为公开 macOS 分发包，
-Gatekeeper 会拦截。配置完整证书与 API Key 组合后才会升格为 Developer ID 签名并公证。
+**未启用 `ENABLE_APPLE_SIGNING=true`（当前默认）或未配 Apple secrets 时**：tag 构建会清掉
+`APPLE_*` 变量，以 `tauri.conf.json` 的 `signingIdentity: "-"` 生成 ad-hoc 产物，并使用
+`TAURI_SIGNING_PRIVATE_KEY` 签名自动更新包；用户首次从浏览器下载安装会被 Gatekeeper 提示，
+在「系统设置 → 隐私与安全性」点击「仍要打开」即可。配置 `ENABLE_APPLE_SIGNING=true` 与完整证书/API Key
+组合后才会升格为 Developer ID 签名并公证。
 
 ---
 

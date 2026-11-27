@@ -307,6 +307,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          ENABLE_APPLE_SIGNING: ${{ vars.ENABLE_APPLE_SIGNING }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -321,7 +322,7 @@ jobs:
           }
 
           has_apple_credentials=false
-          if [[ -n "$APPLE_CERTIFICATE" || -n "$APPLE_CERTIFICATE_PASSWORD" || -n "$APPLE_API_KEY_CONTENT" || -n "$APPLE_API_KEY_ID" || -n "$APPLE_API_ISSUER" ]]; then
+          if [[ "${ENABLE_APPLE_SIGNING:-}" == "true" ]] && [[ -n "$APPLE_CERTIFICATE" || -n "$APPLE_CERTIFICATE_PASSWORD" || -n "$APPLE_API_KEY_CONTENT" || -n "$APPLE_API_KEY_ID" || -n "$APPLE_API_ISSUER" ]]; then
             has_apple_credentials=true
             for required in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
               test -n "${!required}" || {
@@ -355,12 +356,19 @@ jobs:
             echo "::notice::macOS 代码签名 Identity: $cert_cn"
             export APPLE_SIGNING_IDENTITY="$cert_cn"
           else
-            # 未配置的 GitHub secret 会以空字符串出现在 env；Tauri 将空值视为
-            # 已设置，必须清掉才能按 tauri.conf 的 '-' 回退到 ad-hoc 签名。
+            # 2026-11-27 维护者裁定：macOS 默认走 ad-hoc 签名（tauri.conf.json `signingIdentity: "-"`），
+            # 不依赖 Apple Developer 账号与在线公证，避免账号续费或协议变更阻断 CI。
+            # 未启用 ENABLE_APPLE_SIGNING=true 或未配置 secrets 时必须显式清掉 APPLE_*，
+            # 防止历史 Secrets 或空字符串触发 tauri-bundler 走 Developer ID / notarytool。
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
             unset APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER
             unset APPLE_API_KEY APPLE_API_KEY_PATH
-            echo "::warning::未配置 Apple 签名凭据，macOS 产物仅 ad-hoc 签名，不能作为公开分发包"
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            if [[ "${ENABLE_APPLE_SIGNING:-}" == "true" ]]; then
+              echo "::warning::已启用 ENABLE_APPLE_SIGNING=true 但未配置 Apple 签名凭据，macOS 产物仅 ad-hoc 签名，不能作为公证分发包"
+            else
+              echo "::notice::未启用 ENABLE_APPLE_SIGNING=true，跳过 Apple Developer 签名与公证，macOS 产物使用 ad-hoc 签名（-）"
+            fi
           fi
 
           # 公证合规（v0.9.5 发版实证，ADR-0010 spike 发版验收清单项）：notaryd
@@ -372,7 +380,7 @@ jobs:
           # **按 leg 平台份**（2026-09-11）：Intel leg 重签的是 darwin-x64 那份；
           # 硬编码 arm64 会让 Intel 包漏签、公证 Invalid。
           PNPM_TGZ="src-tauri/resources/pnpm/${{ matrix.pnpm_platform }}.tgz"
-          if [ -f "$PNPM_TGZ" ] && [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+          if [ -f "$PNPM_TGZ" ] && [[ "$has_apple_credentials" == true ]]; then
             SIGN_TMP=$(mktemp -d)
             KEYCHAIN="$SIGN_TMP/sign.keychain-db"
             KEYCHAIN_PASS=$(openssl rand -hex 16)

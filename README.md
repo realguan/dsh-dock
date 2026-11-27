@@ -240,7 +240,8 @@ DSH Dock 的三个主模块与应用内导航一一对应，另有一层贯穿�
 > **Intel Mac 选哪个包**：文件名带 `x64` 的 `.dmg` 是 Intel 原生版，带 `aarch64` 的是 Apple Silicon 版。两者是**独立构建**（非 universal 通用包），各自只内置对应架构的 pnpm 引擎，因此体积与原生性能都不打折；客户端自更新会按 CPU 架构自动取对应版本。
 
 > [!WARNING]
-> **macOS 首次打开**：若被系统安全策略拦截，在「系统设置 → 隐私与安全性」中点击「仍要打开」即可。
+> **macOS 首次打开**：安装包目前采用 ad-hoc 签名、未做 Apple 公证，首次从浏览器下载打开会被系统 Gatekeeper 拦截；
+> 在「系统设置 → 隐私与安全性」中点击「仍要打开」即可。应用内自动更新不受影响 —— 更新包用的是本项目自己的签名校验。
 
 > [!NOTE]
 > **Linux 托盘依赖**：托盘图标（及其上的「关于 / 检查更新」入口）需要 `libayatana-appindicator3`。
@@ -249,7 +250,7 @@ DSH Dock 的三个主模块与应用内导航一一对应，另有一层贯穿�
 > （Debian/Ubuntu：`libayatana-appindicator3-1`，Fedora：`libayatana-appindicator-gtk3`）。
 
 > [!NOTE]
-> **Windows 首次打开**：安装包目前**未做代码签名**（macOS 已签名并公证，Windows 侧待证书），因此 SmartScreen
+> **Windows 首次打开**：安装包目前**未做代码签名**，因此 SmartScreen
 > 可能提示「未知发布者」；点「更多信息 → 仍要运行」即可。自动更新不受影响 —— 更新包用的是本项目自己的签名校验。
 
 <br />
