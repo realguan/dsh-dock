@@ -31,6 +31,24 @@
 漏记不补改旧条目——另发一条「补记」并注明原委。
 
 ## 三、记录
+### 2026-11-27 发版返工 · **修复 Rust 1.100.0 clippy 报错（`needless_bool`），先推 master 验绿再重打 `v1.4.3`** —— guan（AI 协作）
+
+- **变更**：`e9bfb37`（`src-tauri/src/resolve.rs`）＋ 本广播 ＋ `docs/RELEASE_NOTES.md` 覆盖清单刷新。
+  `922bf84` / `v1.4.3` 推后，`build` 工作流（`45788799796` / `45788815702`）在 `ubuntu-latest`、
+  `macos-latest`、`macos-latest-x86_64` 三个非 Windows leg 均在 `Rust clippy gate` 失败
+  （`windows-latest` 成功；`release` 跳过，GitHub Release 最新仍为 `v1.4.2`）。根因：CI 工具链已升至
+  `rustc 1.100.0`（11-04 绿灯时为 `1.99.1`，本机默认 `stable` 为 `1.98.0`），在非 Windows 目标剥离
+  `#[cfg(windows)]` 块后，`executable_file` 退化为 `if path.is_file() { return true; } false`
+  触发 `clippy::needless_bool`。已改为 `cfg!(windows)` 运行时后缀切片配合布尔短路，并补充单测
+  `executable_file_recognizes_direct_files_and_windows_pathext`。
+- **影响**：删除尚未发布 Release 的旧 `v1.4.3` tag，先把修复推至 `master` 等待四 leg CI 全绿后再重打
+  `v1.4.3`（沿用 `v1.1.1` 先例：Release 从未发布过，不会留下幽灵版本号）；其余仅周知。
+- **凭据**：本机以 Rust `1.100.0` 复验：`cd src-tauri && cargo +1.100.0 fmt --check` 通过；
+  `cargo +1.100.0 clippy --all-targets -- -D warnings`（`aarch64-apple-darwin` 与 `x86_64-apple-darwin`）
+  均 0 error；`DSH_TEST_REQUIRE_NODE=1 cargo +1.100.0 test` `577 passed; 0 failed; 7 ignored`；
+  `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v` 69 passed；
+  前端 `typecheck` / `lint` / `vitest run`（71 files / 719 tests passed）。
+
 ### 2026-11-26 缺陷修复与发版准备 · **issue #32 三项修复落盘，准备发布 v1.4.3** —— guan（AI 协作）
 
 - **变更**：`b02f354`（修复实现）＋ `f9bef14`（版本号三处对齐升为 `1.4.3`）；本版同时包含 `origin/master`
