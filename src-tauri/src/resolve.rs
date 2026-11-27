@@ -298,18 +298,15 @@ pub fn command_on_path(command: &str, path_env: &str) -> bool {
 
 /// 该路径是否为可执行文件：Unix 只要存在且是文件；Windows 再按 PATHEXT 的常见后缀试。
 fn executable_file(path: &Path) -> bool {
-    if path.is_file() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        for ext in ["exe", "cmd", "bat", "com"] {
-            if path.with_extension(ext).is_file() {
-                return true;
-            }
-        }
-    }
-    false
+    let extra_exts: &[&str] = if cfg!(windows) {
+        &["exe", "cmd", "bat", "com"]
+    } else {
+        &[]
+    };
+    path.is_file()
+        || extra_exts
+            .iter()
+            .any(|ext| path.with_extension(ext).is_file())
 }
 
 /// 按档序解析本次启动的 LaunchSpec（规范化后仅 Engine / Bundle 两档）。
@@ -1392,5 +1389,31 @@ sleep 60
         }
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn executable_file_recognizes_direct_files_and_windows_pathext() {
+        let dir = tmp();
+        let exact = dir.join("node");
+        std::fs::write(&exact, "").unwrap();
+        assert!(executable_file(&exact), "精确存在的文件应判定为可执行文件");
+
+        let subdir = dir.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+        assert!(!executable_file(&subdir), "目录不应被误判为文件");
+        assert!(
+            !executable_file(&dir.join("missing")),
+            "不存在的路径不应判定为可执行文件"
+        );
+
+        let stem = dir.join("dsh");
+        std::fs::write(dir.join("dsh.cmd"), "").unwrap();
+        assert_eq!(
+            executable_file(&stem),
+            cfg!(windows),
+            "仅 Windows 应继续探测 PATHEXT 后缀"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
